@@ -28,7 +28,7 @@ pub(super) fn paint(
     let gap = (look::space::XS * scale).round() as f64;
     let dim = look::bytes(look::TEXT_DIM);
     let faint = look::bytes(look::TEXT_FAINT);
-    target.sub((x0, y0, w, h)).fill(super::BASE);
+    target.sub((x0, y0, w, h)).fill(super::RULER);
     let column = |t: f64| cols.of(t) as f64;
     let big = pen.faces.get(super::NUMBERS);
     let marks: Vec<f64> = [plot.cue, plot.cursor]

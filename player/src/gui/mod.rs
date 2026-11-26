@@ -59,6 +59,7 @@ use crate::cli::Args;
 
 pub use canvas::{font_px, Canvas};
 pub use keys::key;
+pub use screens::transition;
 
 /// The Dock icon: macOS has no window icons, and a bare executable (not
 /// in the app bundle, whose `Info.plist` names the icon) would show a

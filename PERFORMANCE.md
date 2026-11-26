@@ -132,6 +132,26 @@ few scenes, each in another scene and step (in the run before, the Diva
 peak at 11.8 ms, every step slower at once): the machine's, as the
 diploma's spike below.
 
+## The Transition tab native (the iced port's S8, November 2026)
+
+The tab's headers, lane labels, footer and the places that take the
+pointer are iced's widgets, laid out in points on the window's pixels;
+the lanes go where that layout leaves room, and the old canvas draws
+nothing of the tab. Measured as P2's, on the same machine, more loaded
+this time (Main's view cost went from 0.25 to 0.39 ms between the runs,
+nothing of it changed):
+
+| `examples/frames.rs` (ms a frame) | before, GPU | after, GPU | before, no GPU | after, no GPU |
+|---|---|---|---|---|
+| Transition, following | 0.62 (widgets 0.36, lanes 0.22) | 0.52 (widgets 0.20, lanes 0.31) | 4.96 | 4.01 |
+| Transition, held | 0.40 | 0.26 | 0.47 | 0.29 |
+
+The lanes' share now holds the plots built for them (the canvas's
+widgets held them before); no frame of the tab changes the pixmap any
+more (1 % before). `examples/view_cost.rs`, Transition: 0.043 / 0.091 ms
+(median / worst) before, 0.167 / 0.330 after (the tab's widgets, built
+every frame), within the 1.0 / 2.0 budget.
+
 
 ## The stems as parts of the output (November 2026)
 

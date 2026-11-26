@@ -383,6 +383,35 @@ fn main() {
                 jodeldiplom::core::update(&mut m, Action::Op(Op::TransitionZoomOut));
                 m
             }),
+            ("transition-held", {
+                // The playing track's view held (its cursor moved on, bars
+                // selected), the playhead going across it.
+                let mut m = common::transition_state(120, 36);
+                sung_words(&mut m);
+                for o in [Op::TransitionBarForward, Op::TransitionBarForward] {
+                    jodeldiplom::core::update(&mut m, Action::Op(o));
+                }
+                for _ in 0..3 {
+                    jodeldiplom::core::update(&mut m, Action::Op(Op::TransitionSelectForward));
+                }
+                m
+            }),
+            ("transition-edit", {
+                // Both cues set, drums first, the next track's bass fade
+                // being edited.
+                let mut m = common::transition_state(120, 36);
+                for o in [
+                    Op::Accept,
+                    Op::Down,
+                    Op::Accept,
+                    Op::Up,
+                    Op::TransitionPreset,
+                    Op::TransitionEdit,
+                ] {
+                    jodeldiplom::core::update(&mut m, Action::Op(o));
+                }
+                m
+            }),
             ("mixer", {
                 // The Mixer tab: the player at 96 kHz, a preview crossfading
                 // over it (so the master sums: not bit-perfect), the
@@ -488,6 +517,17 @@ fn main() {
         shots.cells_shot("main-narrow", &screens[0].1, (64, 22));
         let long = retagged(&screens[0].1, LONG, Some(LONG_DEVICE));
         shots.cells_shot("main-narrow-long", &long, (64, 22));
+    }
+    // The Transition tab in a narrow window, set up, at both scales.
+    if let Some((_, tab)) = screens
+        .iter()
+        .find(|(name, _)| *name == "transition-set-up")
+    {
+        if wanted("transition-narrow") {
+            let size = Size::new(800.0, 560.0);
+            shots.shot("transition-narrow", tab, size, 1.0);
+            shots.shot("transition-narrow-hidpi", tab, size, 2.0);
+        }
     }
     // The Mixer tab in the narrowest usual window, 80 columns, and in a
     // window 800 wide.

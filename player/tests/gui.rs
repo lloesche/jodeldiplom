@@ -17,7 +17,7 @@ use jodeldiplom::core::{Screen, State};
 use jodeldiplom::gui::lanes::{Lanes, Offscreen as LaneOffscreen};
 use jodeldiplom::gui::pixels::PixelRect;
 use jodeldiplom::gui::widgets::cover::{Align, Covers, Spot};
-use jodeldiplom::gui::{font_px, Canvas};
+use jodeldiplom::gui::{font_px, transition, Canvas};
 use jodeldiplom::icon::Style;
 use jodeldiplom::view::layout::{self, Grid, Layout};
 use jodeldiplom::view::{palette, Scene};
@@ -349,7 +349,11 @@ fn lanes_picture(
     (width, height, scale): (u32, u32, f32),
 ) -> Vec<u32> {
     draw_heard(canvas, state, None);
-    lanes.show(canvas.take_lanes(), scale, false);
+    lanes.show(
+        transition::lanes(canvas, state, scale, state.heard()),
+        scale,
+        false,
+    );
     lanes.frame(state.heard());
     lanes.picture(width as usize, height as usize)
 }
@@ -510,7 +514,11 @@ fn the_transition_lanes_scrolled_by_the_gpu_are_the_lanes_painted() {
         // The browser: no lanes, and none held once a frame went by.
         state.side = jodeldiplom::core::Side::Browser;
         draw_heard(&mut canvas, &state, None);
-        lanes.show(canvas.take_lanes(), 2.0, true);
+        lanes.show(
+            transition::lanes(&mut canvas, &state, 2.0, state.heard()),
+            2.0,
+            true,
+        );
         lanes.frame(state.heard());
         let (width, height) = LANES_SIZE;
         gpu.show(&lanes, width, height).unwrap();
@@ -558,7 +566,11 @@ fn same_through_gpu(
     let mut heard = time;
     at(state, heard);
     draw_heard(canvas, state, None);
-    lanes.show(canvas.take_lanes(), 2.0, true);
+    lanes.show(
+        transition::lanes(canvas, state, 2.0, state.heard()),
+        2.0,
+        true,
+    );
     for _ in 0..3 {
         lanes.frame(heard);
         gpu.show(lanes, width, height).unwrap();
@@ -568,7 +580,11 @@ fn same_through_gpu(
     }
     at(state, heard);
     draw_heard(canvas, state, None);
-    lanes.show(canvas.take_lanes(), 2.0, true);
+    lanes.show(
+        transition::lanes(canvas, state, 2.0, state.heard()),
+        2.0,
+        true,
+    );
     lanes.frame(heard);
     assert!(
         lanes.stands().iter().all(|s| s.1 == 0.0),
@@ -797,8 +813,23 @@ fn the_macos_icon_file_matches_the_drawing() {
     assert!(below > 0 && below < 128, "{below}");
 }
 
-/// The Transition tab's lanes are the window's, over the cells the canvas
-/// leaves blank for them: each painted where its cells are.
+/// The Transition tab as the window lays it out over `canvas`'s grid, at
+/// a scale of 1 (its points the pixels).
+fn transition_plan(canvas: &Canvas, state: &State) -> transition::Plan {
+    let (cw, ch) = canvas.cell();
+    let cell = (cw as f32, ch as f32);
+    let room = transition::Room::of(state, canvas.grid(), cell, 1.0).expect("the Transition tab");
+    transition::plan(state, &room)
+}
+
+/// `rect`'s pixels at a scale of 1.
+fn pixels_of(rect: iced::Rectangle) -> (u32, u32, u32, u32) {
+    let px = |v: f32| v.round() as u32;
+    (px(rect.x), px(rect.y), px(rect.width), px(rect.height))
+}
+
+/// The Transition tab's lanes are the window's, where the tab leaves room
+/// for them: each painted there.
 #[test]
 fn the_transition_lanes_are_painted_in_pixels() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
@@ -815,17 +846,16 @@ fn the_transition_lanes_are_painted_in_pixels() {
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
     };
-    let tab = m.transition.expect("the Transition tab");
+    let tab = transition_plan(&canvas, &state);
     assert_eq!(tab.blocks.len(), 2);
     assert_eq!(m.bottom.spectrum, 0);
     // The vocals of the playing track come in at 60 s: before, nothing is
     // painted in their lane but its card; the drums lane is busy.
     let card = Rgb(jodeldiplom::gui::look::bytes(
-        jodeldiplom::gui::look::SURFACE,
+        jodeldiplom::gui::look::RAISED,
     ));
     let lane_pixels = |i: usize| {
-        let (_, _, area) = tab.blocks[0].lanes[i];
-        let (x, y, w, h) = pixel_rect(&canvas, area);
+        let (x, y, w, h) = pixels_of(tab.blocks[0].lanes[i].rect);
         let mut lit = 0;
         for yy in y + 10..y + h - 10 {
             for xx in x + 10..x + w - 10 {
@@ -863,18 +893,19 @@ fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
         (1600, 1000, 1.0),
     );
     let image = rgb_image(&picture, 1600, 1000);
-    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
-        panic!("the main screen");
-    };
-    let ruler = m.transition.unwrap().blocks[0].ruler;
-    let (x0, y0, w, h) = pixel_rect(&canvas, ruler);
+    let ruler = transition_plan(&canvas, &state).blocks[0].ruler.unwrap();
+    let (x0, y0, w, h) = pixels_of(ruler);
     let (start, end) = viewport::window(&state, Block::Now, state.heard());
     let a = lanes::rhythmed(&state, Block::Now)
         .unwrap()
         .analysis
         .clone();
     let cw = canvas.cell().0 as u32;
-    let ink = |x: u32| (y0..y0 + h).any(|y| *image.get_pixel(x, y) != bg());
+    // On the panel's ground.
+    let ground = Rgb(jodeldiplom::gui::look::bytes(
+        jodeldiplom::gui::look::SURFACE,
+    ));
+    let ink = |x: u32| (y0..y0 + h).any(|y| *image.get_pixel(x, y) != ground);
     let mut checked = 0;
     for &d in &a.downbeats {
         let t = a.beats[d];
@@ -925,13 +956,10 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
         (1600, 1000, 1.0),
     );
     let image = rgb_image(&picture, 1600, 1000);
-    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
-        panic!("the main screen");
-    };
-    let tab = m.transition.unwrap();
+    let tab = transition_plan(&canvas, &state);
     assert_eq!(tab.blocks.len(), 2);
-    for (_, _, area) in &tab.blocks[1].lanes {
-        let (x, y, w, h) = pixel_rect(&canvas, *area);
+    for lane in &tab.blocks[1].lanes {
+        let (x, y, w, h) = pixels_of(lane.rect);
         let lit = (y..y + h)
             .flat_map(|yy| (x..x + w).map(move |xx| (xx, yy)))
             .filter(|&(xx, yy)| *image.get_pixel(xx, yy) != bg())

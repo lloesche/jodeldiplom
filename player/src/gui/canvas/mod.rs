@@ -2,8 +2,7 @@
 //! widgets rasterised into an RGB pixmap ([`PixelBackend`]), and the
 //! pictures painted into it at their cell rects ([`pictures`]): Karaoke
 //! mode's picture without a GPU, its stage and the controls' bar with one
-//! ([`karaoke`]). The covers and the lanes (the Transition
-//! tab's waveforms and bar numbers, the Karaoke tab's voice lane) are the
+//! ([`karaoke`]). The covers and the Karaoke tab's voice lane are the
 //! window's own widgets over the cells left for them ([`Canvas::covers`],
 //! [`Canvas::take_lanes`]). Used by the window and, headless, by the tests
 //! and the screenshots.
@@ -290,11 +289,6 @@ impl Canvas {
                         full: (usize::from(plot.rows.1) * ch).max(rect.3 + above),
                     };
                     let part = Part::Wave(plot, rows);
-                    self.lanes.push(LaneSpot { rect, part });
-                }
-                Paint::Ruler(plot) => {
-                    let rect = self.pixel_rect(plot.area);
-                    let part = Part::Ruler(plot);
                     self.lanes.push(LaneSpot { rect, part });
                 }
                 Paint::Karaoke(area, picture) => {

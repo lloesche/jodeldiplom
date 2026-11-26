@@ -177,6 +177,11 @@ impl Embed {
         self.lock().canvas.grid()
     }
 
+    /// The window's pixels a point, as the canvas was last drawn at.
+    pub fn scale(&self) -> f32 {
+        self.lock().scale
+    }
+
     /// A cell's size in logical pixels.
     pub fn cell(&self) -> (f32, f32) {
         let shared = self.lock();

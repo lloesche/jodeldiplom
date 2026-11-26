@@ -379,12 +379,17 @@ in the settings folder; the saved queues are in `queues` there.
 ### The Transition tab
 
 **Transition** takes the whole width above the transport bar, with no cover,
-track text or spectrum. It shows the track playing (**Now**) and below it
-the next one in the queue (**Next**), each with:
+track text or spectrum, on a panel under the tabs. It shows the track
+playing (**Now**) and below it the next one in the queue (**Next**), each
+with:
 
-- **a header:** the title, the tempo, the bar the cursor is in (`bar 23 /
-  96`), `grid fixed by hand` where it was, and on the playing track the
-  transition set up (below);
+- **a header:** the block's name (in the accent, with a mark, on the track
+  the keys move), the title, and its facts as chips at the right: the
+  tempo, the key, the bar the cursor is in (`bar 23 / 96`), `no stems`,
+  `grid fixed by hand` where it was, and on the playing track the
+  transition set up (below: its preset and tempo mode, `armed` or `mixing`
+  lit, what to do next, the next track's tempo and the glide); in a narrow
+  window the facts that matter least go first;
 - **an overview:** the whole track in one row, with the playhead, the
   span the lanes below show (the rest of the track shaded, when they show
   less than all of it), and the selection;
@@ -392,8 +397,9 @@ the next one in the queue (**Next**), each with:
   line, to the pixel, so they scroll with the waveforms), with the cursor
   as `▼` and the track's transition cue as `◆` in front of its number;
 - **the lanes:** `song`, and with stems `drums`, `bass`, `other` and
-  `vocals`, each in its colour, as tall as both tracks fit (one to four
-  rows a lane). Bars start where a lane is shaded (a line in the
+  `vocals`, each labelled by a small tag in its colour (lit while its fade
+  is edited), as tall as both tracks fit (18 to 64 points a lane; the next
+  track's block only where it fits with 18). Bars start where a lane is shaded (a line in the
   window), the selection is tinted, the playhead is the accent colour,
   stretches where the beat is unclear are dimmer, and a stem turned off
   (`alt+1` to `alt+4`) is grey. The `vocals` lane carries the song's
@@ -404,7 +410,7 @@ the next one in the queue (**Next**), each with:
   colour; where words crowd (zoomed out) those with no room are left out,
   and the words are laid out from the song's start, so scrolling never
   moves them. `L` turns them off and on (`transition_lyrics`); `z`, or the
-  `z fit lyrics` button at the right of the tab's bottom border, zooms the
+  `fit lyrics` button at the right of the tab's footer, zooms the
   track selected (`↑` `↓`) to the widest zoom that leaves out none of its
   words; the other track keeps its zoom.
 
@@ -466,10 +472,15 @@ Striking `5`
 again and again stutters the bar. `shift` with a digit counts on any
 keyboard layout. Not while a transition is set up.
 
+The footer shows the zoom of the track selected (or, while a fade is edited,
+which and at which bar) and the main keys as key caps; those that do not
+fit go from the end.
+
 `space` still plays and pauses, and `←` `→` move the cursor here instead
 of seeking (the progress bar still seeks). With the mouse, a click on a
 lane puts the cursor there, a double click sets the cue there (as
-`enter`), a drag selects bars, the wheel zooms the track under the
+`enter`), a drag selects bars (following the pointer anywhere, until it is
+let go of), the wheel zooms the track under the
 pointer around it (`+` `-` zoom both), a drag with
 the right button moves the view (the waveform goes with the pointer; over
 the overview, the span shown does), and over the overview the wheel

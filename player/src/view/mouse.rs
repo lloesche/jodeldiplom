@@ -2,9 +2,9 @@
 //! and what a click, drag or wheel on each does, as the core's
 //! [`Action`]s. The window reports the pointer in cells (and within its
 //! cell, [`action_at`]). The bottom bar, the list pane with its tabs, the
-//! right column's text under the cover (or the summary under the list)
-//! and the command palette are the window's own: their cells take no
-//! clicks here.
+//! right column's text under the cover (or the summary under the list),
+//! the Transition tab and the command palette are the window's own: their
+//! cells take no clicks here.
 
 use ratatui::layout::{Position, Rect};
 
@@ -64,10 +64,6 @@ pub enum Target {
     Bar,
     /// A button.
     Button(Op),
-    /// A Transition block's lanes (or its ruler).
-    TransitionLane(crate::core::lanes::Block),
-    /// A Transition block's whole-track row.
-    TransitionOverview(crate::core::lanes::Block),
     /// A Karaoke slider's row.
     KaraokeSlider(Slider),
 }
@@ -101,23 +97,6 @@ pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
                 out.push((k.show_notes, Target::Button(Op::KaraokeNotes)));
                 out.push((k.keep, Target::Button(Op::KaraokeKeep)));
                 out.push((k.sync, Target::Button(Op::KaraokeSync)));
-            }
-            if let (Some(tab), None) = (&m.transition, &state.palette) {
-                if let Some(fit) = tab.fit {
-                    out.push((fit, Target::Button(Op::TransitionFitLyrics)));
-                }
-                // The block sliding away after a hand-over takes no clicks.
-                for b in tab
-                    .blocks
-                    .iter()
-                    .filter(|b| b.block != crate::core::lanes::Block::Prev)
-                {
-                    out.push((b.overview, Target::TransitionOverview(b.block)));
-                    out.push((b.ruler, Target::TransitionLane(b.block)));
-                    for (_, _, lane) in &b.lanes {
-                        out.push((*lane, Target::TransitionLane(b.block)));
-                    }
-                }
             }
         }
         // The window's own widgets take the pointer there.
@@ -156,61 +135,6 @@ fn bar_fraction(state: &State, grid: Grid, col: u16) -> Option<f64> {
     Some(f64::from(x) / f64::from(bar.width - 1))
 }
 
-/// The seconds into a Transition block's track at column `col`: of the span the
-/// lanes show, or of the whole track for its overview.
-fn transition_time(
-    state: &State,
-    grid: Grid,
-    block: crate::core::lanes::Block,
-    col: u16,
-    overview: bool,
-) -> Option<f64> {
-    use crate::core::lanes;
-    use crate::core::transition::viewport;
-    let Layout::Main(m) = layout::compute(state, grid) else {
-        return None;
-    };
-    let b = m
-        .transition?
-        .blocks
-        .into_iter()
-        .find(|b| b.block == block)?;
-    // The lanes and the overview share their columns (the overview may be
-    // out of view while a block slides).
-    let area = b.lanes.first().map_or(b.overview, |l| l.2);
-    if area.width == 0 {
-        return None;
-    }
-    let share =
-        (f64::from(col.clamp(area.x, area.right() - 1) - area.x) + 0.5) / f64::from(area.width);
-    let (start, end) = if overview {
-        let r = lanes::rhythmed(state, block)?;
-        let duration = r
-            .waveform
-            .as_ref()
-            .map_or(0.0, |w| w.duration())
-            .max(r.analysis.duration);
-        (0.0, duration)
-    } else {
-        viewport::window(state, block, state.heard())
-    };
-    Some(start + share * (end - start))
-}
-
-/// The width of a Transition block's waveforms, in columns.
-fn transition_width(state: &State, grid: Grid, block: crate::core::lanes::Block) -> Option<u16> {
-    let Layout::Main(m) = layout::compute(state, grid) else {
-        return None;
-    };
-    let b = m
-        .transition?
-        .blocks
-        .into_iter()
-        .find(|b| b.block == block)?;
-    let width = b.lanes.first().map_or(b.overview.width, |l| l.2.width);
-    (width > 0).then_some(width)
-}
-
 /// The share of `slider`'s range with the pointer at `x` cells from the
 /// left edge. The middle of the track's first cell is 0 and of its last
 /// cell 1, where the knob is drawn for those shares.
@@ -245,7 +169,7 @@ pub fn action_at(
     x: f64,
     over: Option<Op>,
 ) -> Option<Action> {
-    use MouseButton::{Left, Right};
+    use MouseButton::Left;
     use MouseKind::*;
     // A drag on Karaoke mode's seek bar follows the pointer anywhere.
     if state.seek_drag.is_some() {
@@ -255,15 +179,7 @@ pub fn action_at(
             _ => None,
         };
     }
-    // So does a drag of a Transition block's view.
-    if state.transition.pan.is_some() {
-        return match input.kind {
-            Drag(Right) | Moved => Some(Action::TransitionPan(f32::from(input.col))),
-            Up(Right) => Some(Action::TransitionPanEnd),
-            _ => None,
-        };
-    }
-    // And a Karaoke slider held.
+    // So does a Karaoke slider held.
     if state.karaoke.dragging.is_some() {
         return match input.kind {
             Drag(Left) | Moved => state
@@ -301,48 +217,6 @@ pub fn action_at(
         .map(Target::Button)
         .or_else(|| hit(state, grid, input.col, input.row))?;
     match (input.kind, target) {
-        (Down(Right), Target::TransitionLane(block) | Target::TransitionOverview(block)) => {
-            Some(Action::TransitionPanStart {
-                block,
-                at: f32::from(input.col),
-                width: f32::from(transition_width(state, grid, block)?),
-                overview: matches!(target, Target::TransitionOverview(_)),
-            })
-        }
-        (
-            ScrollUp | ScrollDown,
-            Target::TransitionLane(block) | Target::TransitionOverview(block),
-        ) => {
-            let overview = matches!(target, Target::TransitionOverview(_));
-            Some(Action::TransitionWheel {
-                block,
-                steps: if input.kind == ScrollUp { -1 } else { 1 },
-                // Over the whole track the wheel moves the view; over the
-                // lanes it zooms that block, around the pointer.
-                scroll: overview,
-                at: (!overview)
-                    .then(|| transition_time(state, grid, block, input.col, false))
-                    .flatten(),
-            })
-        }
-        (Down(Left), Target::TransitionLane(block)) => {
-            transition_time(state, grid, block, input.col, false).map(|time| {
-                Action::TransitionPoint {
-                    block,
-                    time,
-                    extend: false,
-                }
-            })
-        }
-        (Drag(Left), Target::TransitionLane(block)) => {
-            transition_time(state, grid, block, input.col, false).map(|time| {
-                Action::TransitionPoint {
-                    block,
-                    time,
-                    extend: true,
-                }
-            })
-        }
         (Down(Left), Target::KaraokeSlider(slider)) => {
             slider_share(state, grid, slider, x).map(|share| Action::KaraokeSlide { slider, share })
         }
@@ -350,10 +224,6 @@ pub fn action_at(
             slider,
             by: if input.kind == ScrollUp { 1 } else { -1 },
         }),
-        (Down(Left), Target::TransitionOverview(block)) => {
-            transition_time(state, grid, block, input.col, true)
-                .map(|time| Action::TransitionJump { block, time })
-        }
         (ScrollUp | ScrollDown, _) => scrolled(state, input.kind == ScrollUp),
         (Down(Left), Target::Bar) => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
         (Down(Left), Target::Cover) => Some(Action::Op(Op::NowPlaying)),

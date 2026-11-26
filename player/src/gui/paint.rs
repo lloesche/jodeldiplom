@@ -280,13 +280,17 @@ impl Paint {
         embed.draw(place.scale, |canvas, gpu| {
             canvas.fit(place.size.0, place.size.1);
             let grid = canvas.grid();
-            // The list's page, the help's and the desk as the window
-            // draws them, at its cells' size.
+            // The list's page, the help's, the desk and the Transition
+            // tab's lanes as the window draws them, at its cells' size.
             let (cw, ch) = canvas.cell();
             let cell = (cw as f32 / place.scale, ch as f32 / place.scale);
             let fit = Fit {
                 desk_width: crate::view::layout::desk_width(grid, cell.0),
                 help_rows: crate::view::layout::help_rows(&app.state, grid, cell.1),
+                lane_letters: crate::view::transition::lane_letters(
+                    f32::from(grid.cols) * cell.0,
+                    cell.0,
+                ),
                 ..super::screens::list::fit(&app.state, grid, cell)
             };
             if fit != app.state.fit {
@@ -299,8 +303,10 @@ impl Paint {
                 heard,
             };
             canvas.draw(&scene, app.art());
-            // The lanes over the cells left for them.
-            lanes.show(canvas.take_lanes(), place.scale, gpu);
+            // The lanes over the cells left for them, and the Transition
+            // tab's where it leaves room.
+            let spots = super::screens::transition::lanes(canvas, &app.state, place.scale, heard);
+            lanes.show(spots, place.scale, gpu);
             lanes.frame(heard);
             let stage = gpu.then(|| stage(canvas, (app, song), heard, dt)).flatten();
             staged = stage.is_some();

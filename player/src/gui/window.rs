@@ -65,6 +65,9 @@ pub enum Message {
     /// The wheel over a widget that scrolls what the screen scrolls (the
     /// list, the bottom bar).
     Wheel(ScrollDelta),
+    /// The wheel over `on`: each whole step up does the first action, each
+    /// down the second (the Transition tab's lanes zoom in or out).
+    Steps(WheelOn, ScrollDelta, Box<(Action, Action)>),
     /// The window's last frame, for `--save-frame`.
     Shot(window::Screenshot),
     /// A choice on the setup screen.
@@ -314,6 +317,14 @@ impl Gui {
                     if let Some(action) = action {
                         self.act(action);
                     }
+                }
+                Task::none()
+            }
+            Message::Steps(on, delta, actions) => {
+                let steps = self.wheel.turn(on, delta, self.line_px());
+                let (up, down) = *actions;
+                for _ in 0..steps.unsigned_abs() {
+                    self.act(if steps > 0 { up.clone() } else { down.clone() });
                 }
                 Task::none()
             }

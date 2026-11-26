@@ -25,7 +25,7 @@ use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, Screen, State};
 use jodeldiplom::gui::lanes::Lanes;
-use jodeldiplom::gui::{font_px, Canvas};
+use jodeldiplom::gui::{font_px, transition, Canvas};
 use jodeldiplom::view::Scene;
 
 fn main() {
@@ -111,7 +111,8 @@ fn main() {
             };
             canvas.draw(&scene, app.art());
             let started = Instant::now();
-            lanes.show(canvas.take_lanes(), scale as f32, gpu);
+            let spots = transition::lanes(&mut canvas, &state, scale as f32, state.heard());
+            lanes.show(spots, scale as f32, gpu);
             lanes.frame(state.heard());
             let lanes_took = started.elapsed();
             let started = Instant::now();

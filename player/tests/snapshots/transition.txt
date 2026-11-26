@@ -1,45 +1,51 @@
-╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Now  Morning Light · 128 BPM · bar 1 / 130 · transition: fade, varispeed, enter sets the cues · next -21.9 % · tempo│
-│                                                                                                                      │
-│                                                                                                                      │
-│song                                                                                                                  │
-│                                                                                                                      │
-│drums                                                                                                                 │
-│                                                                                                                      │
-│bass                                                                                                                  │
-│                                                                                                                      │
-│other                                                                                                                 │
-│                                                                                                                      │
-│vocals                                                                                                                │
-│                                                                                                                      │
-│                                                                                                                      │
-│  Next Undertow · bar 1 / 100                                                                                         │
-│                                                                                                                      │
-│                                                                                                                      │
-│song                                                                                                                  │
-│                                                                                                                      │
-│drums                                                                                                                 │
-│                                                                                                                      │
-│bass                                                                                                                  │
-│                                                                                                                      │
-│other                                                                                                                 │
-│                                                                                                                      │
-│vocals                                                                                                                │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-╰ 16 bars · ←→ bars · 1-9 jump · enter cue · p preset · r pairing · g go · e edit · ? keys ───────────── z fit lyrics ─╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 [tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer
 [shown] Transition
+[block] ▸ Now · Morning Light · 128 BPM · bar 1 / 130 · transition fade, varispeed · enter sets the cues · next -21.9 % · tempo 128 → 100 across the window
+[lanes] song drums bass other vocals
+[block] Next · Undertow · bar 1 / 100
+[lanes] song drums bass other vocals
+[footer] 16 bars · ← → bars · 1-9 jump · enter cue · p preset · r pairing · g go · e edit · ? keys
+[button] z fit lyrics
 [time] 1:23
 [seek] 34 %
 [time] 4:05

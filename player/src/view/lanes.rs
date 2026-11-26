@@ -73,7 +73,8 @@ pub fn dimmed([r, g, b]: [u8; 3]) -> [u8; 3] {
 /// One lane's waveform over `start..end` seconds, with the marks over it.
 #[derive(Clone, Debug)]
 pub struct WavePlot {
-    /// Where it goes.
+    /// Its cells on the canvas's grid (the Karaoke tab's voice lane; the
+    /// Transition tab's lanes are placed in points, with none).
     pub area: Rect,
     /// The track's waveform.
     pub waveform: Arc<Waveform>,
@@ -107,8 +108,8 @@ pub struct WavePlot {
     pub gain: Vec<(f64, f32)>,
     /// The bar being edited.
     pub edit: Option<f64>,
-    /// The rows of the lane above `area` (out of view) and all its rows:
-    /// `area` shows part of it while its block slides.
+    /// The rows of the lane above `area` and all its rows, on the grid
+    /// (the Transition tab's lanes carry theirs apart, in pixels).
     pub rows: (u16, u16),
     /// The song's lyrics, whose timed words go along the lane (the voice's
     /// lane only): shared, never copied, frame to frame.

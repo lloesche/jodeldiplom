@@ -6,15 +6,16 @@
 //! empty and paints pixels there after the frame is drawn.
 //!
 //! Each part of the screen has its widgets: the box of a tab of its own
-//! (Transition, Karaoke, the Mixer's place). They are laid out on a grid
-//! of cells ([`layout`]), with text measured in cells ([`cells`]), and
-//! take the mouse there ([`mouse`]). The window draws the rest from their
-//! models, over the cells left to it: the list pane with its tabs
-//! ([`list`]), the right column's text under the cover or the summary
-//! under the list ([`info`]), the command palette over everything
-//! ([`command_palette`]) and the bottom bar ([`bottom`], the spectrum's
-//! [`plot`]); and whole screens: Now playing ([`now::NowPlaying`]), the
-//! settings ([`settings`]) and the keys ([`help`]).
+//! (Karaoke, the Mixer's place). They are laid out on a grid of cells
+//! ([`layout`]), with text measured in cells ([`cells`]), and take the
+//! mouse there ([`mouse`]). The window draws the rest from their models,
+//! over the cells left to it: the list pane with its tabs ([`list`]), the
+//! Transition tab ([`transition`]), the right column's text under the
+//! cover or the summary under the list ([`info`]), the command palette
+//! over everything ([`command_palette`]) and the bottom bar ([`bottom`],
+//! the spectrum's [`plot`]); and whole screens: Now playing
+//! ([`now::NowPlaying`]), the settings ([`settings`]) and the keys
+//! ([`help`]).
 
 pub mod bottom;
 pub mod bubbles;
@@ -78,12 +79,9 @@ pub trait Pictures {
     /// pane's top): the cover starts under that line, half a cell down,
     /// at the left; otherwise it is centred.
     fn cover(&mut self, frame: &mut Frame, area: Rect, below_line: bool);
-    /// A lane's waveform ([`lanes::WavePlot`]), on the Transition tab or the
-    /// Karaoke tab's voice lane.
+    /// A lane's waveform ([`lanes::WavePlot`]): the Karaoke tab's voice
+    /// lane.
     fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot);
-    /// A Transition block's bar numbers ([`transition::RulerPlot`]), where
-    /// the bars are, to the pixel.
-    fn ruler(&mut self, frame: &mut Frame, plot: &transition::RulerPlot);
     /// Karaoke mode's picture ([`karaoke::KaraokePicture`]) over the
     /// cells of `area`.
     fn karaoke(&mut self, frame: &mut Frame, area: Rect, picture: &karaoke::KaraokePicture);
@@ -143,31 +141,20 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
 /// The Mixer tab's bottom border: its keys.
 const DESK_FOOTER: &str = "← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo";
 
-/// A tab of its own (Transition, Karaoke, the Mixer) in its box (the
-/// window draws the tabs over its top border, and the Mixer's desk inside
-/// it), its keys in its bottom border; nothing for the browser and the
-/// queue, which the window draws whole.
+/// A tab of its own (Karaoke, the Mixer) in its box (the window draws the
+/// tabs over its top border, and the Mixer's desk inside it), its keys in
+/// its bottom border; nothing for the browser, the queue and the
+/// Transition tab, which the window draws whole.
 fn draw_tab(frame: &mut Frame, scene: &Scene, m: &layout::MainLayout, pictures: &mut dyn Pictures) {
     use crate::core::Side;
     let state = scene.state;
-    let footer = match state.side {
-        // The zoom first: cut, the keys go.
-        Side::Transition => keep_start(
-            &transition::footer(state),
-            usize::from(
-                m.list.width.saturating_sub(4).saturating_sub(
-                    m.transition
-                        .as_ref()
-                        .and_then(|x| x.fit)
-                        .map_or(0, |f| f.width + 1),
-                ),
-            ),
-        ),
+    let footer: String = match state.side {
         Side::Karaoke if state.karaoke.sync.is_some() => sync::footer(state).into(),
         Side::Karaoke => "enter Karaoke mode · ↑ ↓ row · ← → its value · s sync".into(),
         Side::Mixer => DESK_FOOTER.into(),
-        // The window draws the browser and the queue whole.
-        Side::Browser | Side::Queue => return,
+        // The window draws the browser, the queue and the Transition tab
+        // whole.
+        Side::Browser | Side::Queue | Side::Transition => return,
     };
     let block = bordered(Line::default()).title_bottom(Line::from(Span::styled(
         format!(" {footer} "),
@@ -175,19 +162,6 @@ fn draw_tab(frame: &mut Frame, scene: &Scene, m: &layout::MainLayout, pictures: 
     )));
     frame.render_widget(block, m.list);
     match state.side {
-        Side::Transition => {
-            if let Some(layout) = &m.transition {
-                transition::draw(frame, scene, layout, pictures);
-                if let Some(fit) = layout.fit {
-                    frame.buffer_mut().set_string(
-                        fit.x,
-                        fit.y,
-                        layout::FIT_LYRICS,
-                        Style::new().fg(TEXT).bg(BORDER),
-                    );
-                }
-            }
-        }
         Side::Karaoke => {
             if let Some(layout) = &m.karaoke {
                 karaoke::draw_tab(frame, scene, layout, pictures);
@@ -195,7 +169,7 @@ fn draw_tab(frame: &mut Frame, scene: &Scene, m: &layout::MainLayout, pictures: 
         }
         // The window draws the desk in iced's widgets over its rows
         // ([`crate::gui::mixer`]).
-        Side::Mixer | Side::Browser | Side::Queue => {}
+        Side::Mixer | Side::Browser | Side::Queue | Side::Transition => {}
     }
 }
 
@@ -256,10 +230,6 @@ impl Pictures for CellPictures {
     }
 
     fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot) {
-        blank(frame, plot.area);
-    }
-
-    fn ruler(&mut self, frame: &mut Frame, plot: &transition::RulerPlot) {
         blank(frame, plot.area);
     }
 

@@ -18,6 +18,8 @@ use iced::{Point, Rectangle};
 use crate::app::App;
 use crate::core::desk::Channel;
 use crate::core::keymap::Op;
+use crate::core::lanes::{self, Block};
+use crate::core::transition::viewport;
 use crate::core::{Action, State};
 use crate::view::layout::Grid;
 use crate::view::mouse::{self, MouseButton, MouseInput, MouseKind};
@@ -41,13 +43,34 @@ pub enum Grab {
         /// A row's height.
         row: f32,
     },
+    /// A Transition block's lanes (`bounds`, their width the span shown):
+    /// the cursor goes to the beat under the pointer, and, dragged, bars
+    /// are selected to the beat it is over across them.
+    Lanes {
+        /// The block.
+        block: Block,
+        /// Where its lanes are.
+        bounds: Rectangle,
+    },
+    /// A Transition block's view held with the secondary button over its
+    /// lanes, or over its whole track (`overview`), `bounds` wide: it moves
+    /// with the pointer.
+    Pan {
+        /// The block.
+        block: Block,
+        /// Where its lanes or its whole track are.
+        bounds: Rectangle,
+        /// Over the whole track.
+        overview: bool,
+    },
 }
 
 impl Grab {
     /// The button that holds it.
     fn button(self) -> MouseButton {
         match self {
-            Grab::Seek(_) | Grab::QueueRow { .. } => MouseButton::Left,
+            Grab::Seek(_) | Grab::QueueRow { .. } | Grab::Lanes { .. } => MouseButton::Left,
+            Grab::Pan { .. } => MouseButton::Right,
         }
     }
 
@@ -57,6 +80,21 @@ impl Grab {
         match self {
             Grab::Seek(_) => self.moved(at, state),
             Grab::QueueRow { .. } => None,
+            Grab::Lanes { block, bounds } => Some(Action::TransitionPoint {
+                block,
+                time: lanes_time(state, block, bounds, at),
+                extend: false,
+            }),
+            Grab::Pan {
+                block,
+                bounds,
+                overview,
+            } => Some(Action::TransitionPanStart {
+                block,
+                at: at.x,
+                width: bounds.width,
+                overview,
+            }),
         }
     }
 
@@ -71,14 +109,29 @@ impl Grab {
                 let index = state.queue.scroll + ((at.y - rows.y) / row) as usize;
                 (index < state.queue.paths.len()).then_some(Action::QueueDrag(index))
             }
+            Grab::Lanes { block, bounds } => {
+                // Only to another beat: a hand's tremble between the two
+                // presses of a double click selects nothing.
+                let time = lanes_time(state, block, bounds, at);
+                let a = &lanes::rhythmed(state, block)?.analysis;
+                let cursor = viewport::cursor(state, block, state.heard());
+                (a.beat_at(time).unwrap_or(0) != cursor?).then_some(Action::TransitionPoint {
+                    block,
+                    time,
+                    extend: true,
+                })
+            }
+            Grab::Pan { .. } => Some(Action::TransitionPan(at.x)),
         }
     }
 
     /// What letting go at `at` does.
-    fn released(self, at: Point) -> Action {
+    fn released(self, at: Point) -> Option<Action> {
         match self {
-            Grab::Seek(track) => Action::SeekTo(share_across(track, at)),
-            Grab::QueueRow { .. } => Action::QueueDragEnd,
+            Grab::Seek(track) => Some(Action::SeekTo(share_across(track, at))),
+            Grab::QueueRow { .. } => Some(Action::QueueDragEnd),
+            Grab::Lanes { .. } => None,
+            Grab::Pan { .. } => Some(Action::TransitionPanEnd),
         }
     }
 
@@ -88,8 +141,20 @@ impl Grab {
         match self {
             Grab::Seek(_) => state.seek_drag.is_some(),
             Grab::QueueRow { .. } => state.queue.dragging,
+            Grab::Lanes { block, .. } => lanes::rhythmed(state, block).is_some(),
+            Grab::Pan { .. } => state.transition.pan.is_some(),
         }
     }
+}
+
+/// The seconds into `block`'s track under `at` across its lanes
+/// (`bounds`, the span shown), wherever the pointer is: before them their
+/// first, past them their last.
+fn lanes_time(state: &State, block: Block, bounds: Rectangle, at: Point) -> f64 {
+    let (start, end) = viewport::window(state, block, state.heard());
+    // Short of the right edge: the time there is the next view's.
+    let share = share_across(bounds, at).min(1.0 - 1e-6);
+    start + share * (end - start)
 }
 
 /// The share of `bounds`'s width left of `at` (0 to 1).
@@ -254,7 +319,9 @@ impl PointerState {
         match self.grab {
             Some((grab, at)) if grab.button() == button => {
                 self.grab = None;
-                dispatch(app, grab.released(at));
+                if let Some(action) = grab.released(at) {
+                    dispatch(app, action);
+                }
                 true
             }
             Some(_) => false,
@@ -324,6 +391,9 @@ pub enum WheelOn {
     Canvas,
     /// A strip of the Mixer tab: its fader, a step a line.
     Strip(Channel),
+    /// A Transition block's lanes, or its whole track (`true`): zoomed or
+    /// scrolled, a step a line.
+    Lanes(Block, bool),
 }
 
 /// The wheel's turn not yet a whole step, for what it turns (a touchpad's
@@ -386,7 +456,7 @@ mod tests {
         assert!(matches!(moved(at(300.0, 508.0)), Some(Action::SeekDrag(f)) if f == 0.5));
         assert!(matches!(moved(at(20.0, 0.0)), Some(Action::SeekDrag(f)) if f == 0.0));
         assert!(matches!(moved(at(900.0, 900.0)), Some(Action::SeekDrag(f)) if f == 1.0));
-        assert!(matches!(grab.released(at(200.0, 10.0)), Action::SeekTo(f) if f == 0.25));
+        assert!(matches!(grab.released(at(200.0, 10.0)), Some(Action::SeekTo(f)) if f == 0.25));
         assert_eq!(grab.button(), MouseButton::Left);
     }
 
@@ -415,7 +485,10 @@ mod tests {
         assert!(grab.moved(at(50.0, 90.0), &state).is_none());
         state.queue.paths.truncate(14);
         assert!(grab.moved(at(50.0, 100.0 + 34.0 * 5.0), &state).is_none());
-        assert!(matches!(grab.released(at(0.0, 0.0)), Action::QueueDragEnd));
+        assert!(matches!(
+            grab.released(at(0.0, 0.0)),
+            Some(Action::QueueDragEnd)
+        ));
         assert!(grab.pressed(at(50.0, 120.0), &state).is_none());
     }
 

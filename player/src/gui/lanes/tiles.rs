@@ -397,7 +397,7 @@ pub(super) fn paint_tile(pen: &mut Pen, part: &Part, px: f64, tile: i64, h: usiz
     let ground = if part.is_wave() {
         super::GROUND
     } else {
-        super::BASE
+        super::RULER
     };
     let mut pixels = vec![pack(ground); TILE * h];
     let mut target = Target {

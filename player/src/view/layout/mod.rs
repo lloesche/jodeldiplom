@@ -29,17 +29,12 @@
 
 mod karaoke;
 mod track;
-mod transition;
 
 pub use karaoke::{
     controls_bar, controls_share, KaraokeControls, KaraokeLayout, KaraokeTabLayout, SliderLayout,
     CONTROLS_ROWS, KARAOKE_ENTER, SLIDER_LABEL, SWITCH, SYNC_BUTTON,
 };
 pub use track::Track;
-pub use transition::{
-    TransitionBlockLayout, TransitionLayout, FIT_LYRICS, TRANSITION_LANE_LABELS,
-    TRANSITION_LANE_ROWS,
-};
 
 use ratatui::layout::Rect;
 
@@ -111,9 +106,6 @@ pub struct MainLayout {
     /// The two-row track summary when there is no right column, which the
     /// window draws.
     pub mini: Option<Rect>,
-    /// The Transition tab, when it is the side shown (it then takes the
-    /// whole width, with no right column and no spectrum).
-    pub transition: Option<TransitionLayout>,
     /// The Karaoke tab, when it is the side shown (the whole width too).
     pub karaoke: Option<KaraokeTabLayout>,
     /// The bottom bar.
@@ -160,8 +152,10 @@ pub fn compute(state: &State, grid: Grid) -> Layout {
 /// ([`crate::core::Action::Fit`]): measured on the layouts the screens
 /// have on it, whichever screen and tab show (the list keeps its rows
 /// behind the other screens, the keys go round the desk's strips from any
-/// tab), the desk's width at a scale of 1 ([`CELL_WIDTH`]; the window,
-/// which knows its cells, gives the one drawn, [`desk_width`]). Nothing on
+/// tab), the desk's width and the Transition tab's lanes' letters at a
+/// scale of 1 ([`CELL_WIDTH`]; the window, which knows its cells, gives
+/// the ones drawn, [`desk_width`],
+/// [`crate::view::transition::lane_letters`]). Nothing on
 /// a grid too small to draw on. The list's page is its pane's rows inside
 /// its border, a row a cell; the window, which draws the list in rows of
 /// its own, counts those instead ([`crate::gui::screens::list::fit`]).
@@ -169,15 +163,15 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
     if grid.too_small() {
         return Fit::default();
     }
-    let area = grid.area();
     let list = main_list(grid);
-    // The wide tabs' pane, inside its border.
-    let wide = in_border(area);
     Fit {
         list_rows: list.rows.height,
         help_rows: help_rows(state, grid, CELL_HEIGHT),
         desk_width: desk_width(grid, CELL_WIDTH),
-        lane_letters: transition::lane_width(wide),
+        lane_letters: crate::view::transition::lane_letters(
+            f32::from(grid.cols) * CELL_WIDTH,
+            CELL_WIDTH,
+        ),
         controls_reach: f32::from(CONTROLS_ROWS + 2) / f32::from(grid.rows),
         spectrum: compute(state, grid)
             .bottom()
@@ -293,8 +287,6 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
         cover: None,
         info: None,
         mini: None,
-        transition: (state.side == Side::Transition)
-            .then(|| transition::compute(state, inner, list)),
         karaoke: karaoke.then(|| KaraokeTabLayout {
             voice,
             ..karaoke::tab(inner, state.karaoke.sync.as_ref())
@@ -375,7 +367,6 @@ fn main_list(grid: Grid) -> MainLayout {
         cover,
         info,
         mini,
-        transition: None,
         karaoke: None,
         bottom,
     }

@@ -23,6 +23,7 @@ use iced_test::simulator::{press_key, Simulator};
 use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
+use jodeldiplom::core::lanes::Block;
 use jodeldiplom::core::{update, Action, Effect, Gpu, Screen, Side, State};
 use jodeldiplom::gui::pointer::{Grab, PointerKind};
 use jodeldiplom::gui::window::{Gui, Message};
@@ -40,6 +41,7 @@ fn gpu() -> MutexGuard<'static, ()> {
     static GPU: Mutex<()> = Mutex::new(());
     GPU.lock().unwrap_or_else(|e| e.into_inner())
 }
+
 /// The messages a click on what `selector` finds in `gui`'s view sends
 /// (an error where it is not shown).
 fn click<S>(gui: &Gui, selector: S) -> Result<Vec<Message>, iced_test::Error>
@@ -945,4 +947,264 @@ fn the_summary_opens_now_playing() {
     sim.click("Morning Light (Live) — The Ramps").unwrap();
     let sent = acts(&sim.into_messages().collect::<Vec<_>>());
     assert!(matches!(sent[..], [Action::Op(Op::NowPlaying)]), "{sent:?}");
+}
+
+/// Where the Transition tab's `what` (`lanes` or `overview`) of `block`
+/// is in `gui`'s view.
+fn transition_area(gui: &Gui, what: &str, block: Block) -> iced::Rectangle {
+    let id = jodeldiplom::gui::transition::id(what, block);
+    simulator(gui).find(Id::from(id)).unwrap().bounds()
+}
+
+/// The messages a press of `button` at `at` over `gui`'s view sends,
+/// each taken by the window.
+fn press_at(gui: &mut Gui, at: Point, button: mouse::Button) -> Vec<Message> {
+    let mut sim = simulator(gui);
+    sim.point_at(at);
+    sim.simulate([iced::Event::Mouse(mouse::Event::ButtonPressed(button))]);
+    let messages: Vec<Message> = sim.into_messages().collect();
+    for message in messages.clone() {
+        let _ = gui.update(message);
+    }
+    messages
+}
+
+/// The pointer moved to `at`, as the window hears it.
+fn moved_to(gui: &mut Gui, at: Point) {
+    hear(
+        gui,
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: at }),
+    );
+}
+
+/// `button` let go of, as the window hears it.
+fn let_go(gui: &mut Gui, button: mouse::Button) {
+    hear(
+        gui,
+        iced::Event::Mouse(mouse::Event::ButtonReleased(button)),
+    );
+}
+
+/// The window's state (there is a player).
+fn shown(gui: &Gui) -> &State {
+    gui.state().unwrap()
+}
+
+/// A press on a lane puts the cursor on the beat at or before the
+/// pointer, holding the lanes; a second on that beat soon after cues its
+/// bar, as enter does, and playback stays where it is. The wheel over the
+/// lanes zooms that block (the tab's zoom stays).
+#[test]
+fn a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there() {
+    let _gpu = gpu();
+    use jodeldiplom::core::transition::{tab, viewport};
+    let mut gui = window(common::transition_state(160, 42));
+    let lanes = transition_area(&gui, "lanes", Block::Now);
+    let at = Point::new(lanes.center_x(), lanes.y + lanes.height * 0.4);
+    let (start, end) = viewport::window(shown(&gui), Block::Now, shown(&gui).heard());
+    let time = start + (end - start) * f64::from((at.x - lanes.x) / lanes.width);
+    let position = shown(&gui).playing.position;
+    // Two clicks there, one after the other.
+    let mut sim = simulator(&gui);
+    sim.point_at(at);
+    sim.simulate(iced_test::simulator::click());
+    sim.simulate(iced_test::simulator::click());
+    let messages: Vec<Message> = sim.into_messages().collect();
+    let [first @ Message::Grab(
+        Grab::Lanes {
+            block: Block::Now,
+            bounds,
+        },
+        _,
+    ), second] = &messages[..]
+    else {
+        panic!("{messages:?}");
+    };
+    assert_eq!(*bounds, lanes);
+    let _ = gui.update(first.clone());
+    let_go(&mut gui, mouse::Button::Left);
+    let state = shown(&gui);
+    let a = lanes_analysis(state, Block::Now);
+    let beat = viewport::cursor(state, Block::Now, state.heard()).unwrap();
+    assert!(a.beats[beat] <= time && time - a.beats[beat] < 60.0 / 128.0);
+    assert!(tab::block(state, Block::Now).cue.is_none());
+    // The same beat again: its bar cued, playback where it was.
+    let _ = gui.update(second.clone());
+    let_go(&mut gui, mouse::Button::Left);
+    let state = shown(&gui);
+    let cue = tab::block(state, Block::Now).cue.expect("cued");
+    assert!(a.downbeats.contains(&cue.beat) && cue.beat <= beat);
+    assert_eq!(state.playing.position, position);
+    // The wheel over the lanes zooms that block.
+    let zoom = state.transition.zoom;
+    let mut sim = simulator(&gui);
+    sim.point_at(at);
+    sim.simulate([iced::Event::Mouse(mouse::Event::WheelScrolled {
+        delta: ScrollDelta::Lines { x: 0.0, y: 1.0 },
+    })]);
+    let messages: Vec<Message> = sim.into_messages().collect();
+    for message in messages {
+        let _ = gui.update(message);
+    }
+    assert_eq!(viewport::zoom_of(shown(&gui), Block::Now), zoom - 1);
+    assert_eq!(shown(&gui).transition.zoom, zoom);
+}
+
+/// A press on the lanes dragged across them selects whole bars, from the
+/// beat pressed to the one the pointer is over, also past their edge; a
+/// tremble within the beat pressed selects nothing.
+#[test]
+fn dragging_across_the_lanes_selects_bars() {
+    let _gpu = gpu();
+    use jodeldiplom::core::transition::viewport;
+    let mut gui = window(common::transition_state(160, 42));
+    let lanes = transition_area(&gui, "lanes", Block::Now);
+    let at = Point::new(lanes.x + lanes.width * 0.3, lanes.center_y());
+    press_at(&mut gui, at, mouse::Button::Left);
+    moved_to(&mut gui, Point::new(at.x + 0.5, at.y + 1.0));
+    let heard = shown(&gui).heard();
+    assert_eq!(viewport::selection(shown(&gui), Block::Now, heard), None);
+    let beat = |gui: &Gui| viewport::cursor(shown(gui), Block::Now, heard).unwrap();
+    let pressed = beat(&gui);
+    // A quarter of the way on (four bars at the tab's 16): bars selected
+    // from the one pressed to the one there.
+    moved_to(&mut gui, Point::new(at.x + lanes.width * 0.25, at.y));
+    let (from, to) = viewport::selection(shown(&gui), Block::Now, heard).expect("a selection");
+    let a = lanes_analysis(shown(&gui), Block::Now);
+    assert!(from <= a.beats[pressed] && to > a.beats[beat(&gui)]);
+    assert!(beat(&gui) > pressed);
+    // Off the lanes' right edge: their last beat in view.
+    moved_to(&mut gui, Point::new(SIZE.width + 50.0, 10.0));
+    let (_, end) = viewport::window(shown(&gui), Block::Now, heard);
+    assert!(a.beats[beat(&gui)] < end && end - a.beats[beat(&gui)] < 60.0 / 128.0 * 1.01);
+    let_go(&mut gui, mouse::Button::Left);
+    assert!(viewport::selection(shown(&gui), Block::Now, heard).is_some());
+}
+
+/// The secondary button drags a block's view: dragged left, later times
+/// come in, by the span over the lanes' width a point; it follows the
+/// pointer off the lanes too, until let go. On the whole track the span
+/// shown goes with the pointer.
+#[test]
+fn the_secondary_button_drags_a_transition_view() {
+    let _gpu = gpu();
+    use jodeldiplom::core::transition::viewport;
+    let mut gui = window(common::transition_state(160, 42));
+    let lanes = transition_area(&gui, "lanes", Block::Now);
+    let heard = shown(&gui).heard();
+    let (start, end) = viewport::window(shown(&gui), Block::Now, heard);
+    let per = (end - start) / f64::from(lanes.width);
+    let at = Point::new(lanes.x + 400.0, lanes.center_y());
+    let messages = press_at(&mut gui, at, mouse::Button::Right);
+    assert!(
+        matches!(
+            messages[..],
+            [Message::Grab(
+                Grab::Pan {
+                    block: Block::Now,
+                    overview: false,
+                    ..
+                },
+                _
+            )]
+        ),
+        "{messages:?}"
+    );
+    moved_to(&mut gui, Point::new(at.x - 80.0, at.y));
+    let (moved, _) = viewport::window(shown(&gui), Block::Now, heard);
+    assert!(
+        (moved - (start + 80.0 * per)).abs() < 1e-6,
+        "dragged left: later"
+    );
+    // Off the lanes, to the window's top.
+    moved_to(&mut gui, Point::new(at.x - 40.0, 2.0));
+    let_go(&mut gui, mouse::Button::Right);
+    assert!(shown(&gui).transition.pan.is_none());
+    let (kept, _) = viewport::window(shown(&gui), Block::Now, heard);
+    assert!((kept - (start + 40.0 * per)).abs() < 1e-6);
+    // Moved after it was let go of: it stays.
+    moved_to(&mut gui, Point::new(at.x - 300.0, at.y));
+    assert_eq!(viewport::window(shown(&gui), Block::Now, heard).0, kept);
+    // On the whole track, the span shown follows the pointer.
+    let whole = transition_area(&gui, "overview", Block::Now);
+    let at = Point::new(whole.x + 100.0, whole.center_y());
+    press_at(&mut gui, at, mouse::Button::Right);
+    moved_to(&mut gui, Point::new(at.x + 20.0, at.y));
+    let_go(&mut gui, mouse::Button::Right);
+    let (now, _) = viewport::window(shown(&gui), Block::Now, heard);
+    let r = jodeldiplom::core::lanes::rhythmed(shown(&gui), Block::Now).unwrap();
+    let length = r
+        .waveform
+        .as_ref()
+        .map_or(0.0, |w| w.duration())
+        .max(r.analysis.duration);
+    assert!((now - (kept + 20.0 * length / f64::from(whole.width))).abs() < 1e-6);
+}
+
+/// A press on the playing track's whole track seeks there (its view
+/// follows the playhead again); on the next track's, only its view goes
+/// there. The wheel over the whole track scrolls the view by tenths of
+/// the span.
+#[test]
+fn a_press_on_the_whole_track_seeks_and_the_wheel_there_scrolls() {
+    let _gpu = gpu();
+    use jodeldiplom::core::transition::{tab, viewport};
+    let mut gui = window(common::transition_state(160, 42));
+    let whole = transition_area(&gui, "overview", Block::Now);
+    let r = jodeldiplom::core::lanes::rhythmed(shown(&gui), Block::Now).unwrap();
+    let length = r
+        .waveform
+        .as_ref()
+        .map_or(0.0, |w| w.duration())
+        .max(r.analysis.duration);
+    let at = Point::new(whole.x + whole.width * 0.25, whole.center_y());
+    let messages = press_at(&mut gui, at, mouse::Button::Left);
+    let [Message::Act(Action::TransitionJump { block, time })] = messages[..] else {
+        panic!("{messages:?}");
+    };
+    assert_eq!(block, Block::Now);
+    assert!((time - 0.25 * length).abs() < 1e-6);
+    assert!((shown(&gui).playing.position - time).abs() < 1e-9);
+    assert!(tab::block(shown(&gui), Block::Now).start.is_none());
+    // The next track's: its view goes there, playback stays.
+    let next = transition_area(&gui, "overview", Block::Next);
+    let position = shown(&gui).playing.position;
+    press_at(&mut gui, next.center(), mouse::Button::Left);
+    assert_eq!(shown(&gui).playing.position, position);
+    let heard = shown(&gui).heard();
+    let (start, end) = viewport::window(shown(&gui), Block::Next, heard);
+    assert!(start > 0.0 && end > start);
+    // The wheel down over the next track's whole track: a tenth later.
+    let mut sim = simulator(&gui);
+    sim.point_at(next.center());
+    sim.simulate([iced::Event::Mouse(mouse::Event::WheelScrolled {
+        delta: ScrollDelta::Lines { x: 0.0, y: -1.0 },
+    })]);
+    let messages: Vec<Message> = sim.into_messages().collect();
+    for message in messages {
+        let _ = gui.update(message);
+    }
+    let (later, _) = viewport::window(shown(&gui), Block::Next, heard);
+    assert!((later - (start + 0.1 * (end - start))).abs() < 1e-6);
+}
+
+/// The footer's button zooms the track selected to fit its lyrics, as `z`
+/// does.
+#[test]
+fn the_fit_lyrics_button_is_z() {
+    let _gpu = gpu();
+    let gui = window(common::transition_state(160, 42));
+    let clicked = acts(&click(&gui, "fit lyrics").unwrap());
+    assert!(
+        matches!(clicked[..], [Action::Op(Op::TransitionFitLyrics)]),
+        "{clicked:?}"
+    );
+}
+
+/// A block's analysis.
+fn lanes_analysis(state: &State, block: Block) -> jodel_rhythm::Analysis {
+    (*jodeldiplom::core::lanes::rhythmed(state, block)
+        .unwrap()
+        .analysis)
+        .clone()
 }

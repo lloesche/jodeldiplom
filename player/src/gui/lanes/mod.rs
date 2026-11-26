@@ -1,6 +1,7 @@
 //! The lanes: the Transition tab's waveforms and bar numbers, the Karaoke
-//! tab's voice lane with its notes and words, drawn by the window over the
-//! cells the old canvas leaves for them ([`LaneSpots`]).
+//! tab's voice lane with its notes and words, drawn by the window where the
+//! Transition tab leaves room for them ([`crate::gui::transition`]) or over
+//! the cells the old canvas leaves ([`LaneSpots`]).
 //!
 //! Each lane is painted in tiles once ([`tiles`]: [`paint`] for a
 //! waveform, [`words`] for the words along the voice's, [`ruler`] for the
@@ -11,9 +12,10 @@
 //! playhead drawn over it each frame; with iced's CPU renderer (no GPU), an
 //! image of each lane made from its tiles each frame.
 //!
-//! The waveforms' lanes are cards on the panels' ground, their corners
-//! rounded; the bar numbers stand on the window's ground. Neither takes
-//! the pointer: the canvas under them still does.
+//! The waveforms' lanes are cards (raised), their corners rounded; the
+//! bar numbers stand on the Transition tab's panel. Neither takes the
+//! pointer: what is under them does (the Transition tab's places for it,
+//! the canvas).
 
 mod gpu;
 mod keys;
@@ -44,9 +46,12 @@ use crate::view::palette;
 use paint::Melodies;
 use tiles::Strip;
 
-/// A waveform lane's ground: the panels' ([`look::SURFACE`]).
-const GROUND: [u8; 3] = [0x17, 0x17, 0x1d];
-/// The bar numbers' ground: the window's.
+/// A waveform lane's ground: a card's ([`look::RAISED`]), on the panel
+/// the Transition tab is on.
+const GROUND: [u8; 3] = [0x1f, 0x1f, 0x27];
+/// The bar numbers' ground: that panel's ([`look::SURFACE`]).
+const RULER: [u8; 3] = [0x17, 0x17, 0x1d];
+/// The window's ground.
 const BASE: [u8; 3] = palette::BG;
 /// The bar numbers' face: Nunito, semi-bold, as the interface's figures.
 const NUMBERS: Face = Face::Words(600);
@@ -500,11 +505,12 @@ impl<M> Widget<M, Theme, iced::Renderer> for LaneView<'_, M> {
 mod tests {
     use super::*;
 
-    /// The lanes' grounds are the look's: the cards the panels', the bar
-    /// numbers the window's.
+    /// The lanes' grounds are the look's: the cards raised, the bar
+    /// numbers on the panel's, over the window's.
     #[test]
     fn the_lanes_stand_on_the_looks_grounds() {
-        assert_eq!(GROUND, look::bytes(look::SURFACE));
+        assert_eq!(GROUND, look::bytes(look::RAISED));
+        assert_eq!(RULER, look::bytes(look::SURFACE));
         assert_eq!(BASE, look::bytes(look::BG));
     }
 

@@ -15,7 +15,7 @@ use jodeldiplom::core::{
     browser_rows, update, Action, DeviceChoice, Effect, Gpu, Placing, Rhythm, RhythmRecipe, Row,
     Screen, SettingsRow, Side, State, WalkPurpose,
 };
-use jodeldiplom::view::layout::{self, Grid, Layout};
+use jodeldiplom::view::layout::Grid;
 
 fn entry(path: &str, kind: EntryKind) -> Entry {
     let path = PathBuf::from(path);
@@ -33,8 +33,6 @@ fn entry(path: &str, kind: EntryKind) -> Entry {
 
 /// The window of [`listed`].
 const LISTED: Grid = Grid::new(100, 30);
-/// The window of [`common::transition_state`]`(120, 40)`.
-const TRANSITION: Grid = Grid::new(120, 40);
 
 /// `/m/Album` listed in a window of 100 × 30 cells: a parent row, a folder,
 /// three files.
@@ -2167,57 +2165,6 @@ fn grid_fixes_change_the_bars_and_are_kept() {
 }
 
 #[test]
-fn a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there() {
-    use jodeldiplom::core::lanes::Block;
-    use jodeldiplom::core::transition::{tab, viewport};
-    use jodeldiplom::view::layout::{self, Layout};
-    use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
-    let mut state = common::transition_state(120, 40);
-    let Layout::Main(m) = layout::compute(&state, TRANSITION) else {
-        panic!("the main screen");
-    };
-    let now = &m.transition.unwrap().blocks[0];
-    let lane = now.lanes[1].2;
-    let press = MouseInput {
-        kind: MouseKind::Down(MouseButton::Left),
-        col: lane.x + lane.width / 2,
-        row: lane.y,
-    };
-    let action = mouse::action(&state, TRANSITION, press).unwrap();
-    let Action::TransitionPoint {
-        block,
-        time,
-        extend,
-    } = action.clone()
-    else {
-        panic!("{action:?}");
-    };
-    assert_eq!((block, extend), (Block::Now, false));
-    let (start, end) = viewport::window(&state, Block::Now, state.playing.position);
-    assert!(time > start && time < end);
-    assert!(update(&mut state, action.clone()).is_empty());
-    let a = block_analysis(&state, Block::Now);
-    let beat = viewport::cursor(&state, Block::Now, state.playing.position).unwrap();
-    assert!(a.beats[beat] <= time && time - a.beats[beat] < 60.0 / 128.0);
-    // The same beat again soon after cues its bar, as enter does; playback
-    // stays as it is.
-    let fx = update(&mut state, action);
-    assert!(engine(&fx).is_empty(), "{fx:?}");
-    let cue = tab::block(&state, Block::Now).cue.unwrap();
-    assert!(a.downbeats.contains(&cue.beat) && cue.beat <= beat);
-    // The wheel over the lanes zooms that block (the tab's zoom stays).
-    let zoom = state.transition.zoom;
-    let wheel = MouseInput {
-        kind: MouseKind::ScrollUp,
-        ..press
-    };
-    let action = mouse::action(&state, TRANSITION, wheel).unwrap();
-    update(&mut state, action);
-    assert_eq!(viewport::zoom_of(&state, Block::Now), zoom - 1);
-    assert_eq!(state.transition.zoom, zoom);
-}
-
-#[test]
 fn a_tempo_fix_keeps_the_cursor_where_it_was_in_time() {
     use jodeldiplom::core::lanes::Block;
     use jodeldiplom::core::transition::viewport;
@@ -2650,21 +2597,20 @@ fn the_next_track_follows_its_playhead_in_and_slides_up_when_it_takes_over() {
         "kept while it slides"
     );
     assert_eq!(viewport::window(&state, Block::Prev, at).0, left_start);
-    let blocks = |state: &State| -> Vec<(Block, u16, bool)> {
-        let Layout::Main(m) = layout::compute(state, TRANSITION) else {
-            panic!()
-        };
-        m.transition
-            .unwrap()
+    // As the window lays the tab out in a window of 1280 × 800 points.
+    let blocks = |state: &State| -> Vec<(Block, bool, bool)> {
+        use jodeldiplom::gui::transition::{plan, Room};
+        let room = Room::of(state, Grid::new(160, 42), (8.0, 19.0), 1.0).unwrap();
+        plan(state, &room)
             .blocks
             .iter()
-            .map(|b| (b.block, b.header.height, b.top_cut > 0))
+            .map(|b| (b.block, b.header.is_some(), b.cut()))
             .collect()
     };
     state.drawn_ms = Some(10_000 + SLIDE_MS / 2);
     let mid = blocks(&state);
     assert_eq!(mid[0].0, Block::Prev);
-    assert_eq!(mid[0].1, 0, "its header is above the view: {mid:?}");
+    assert!(!mid[0].1, "its header is above the view: {mid:?}");
     assert_eq!(mid[1].0, Block::Now);
     // The new playing track's fades are those it came in by.
     let (shown, _) = draft::shown_plan(&state).unwrap();
@@ -2760,71 +2706,6 @@ fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
     assert_eq!(state.transition.draft.preset, Preset::DrumsFirst);
     op(&mut state, Op::SkipMix);
     assert!(!state.config.skip_mix, "back to cutting");
-}
-
-#[test]
-fn the_secondary_button_drags_a_transition_view() {
-    use jodeldiplom::core::lanes::{self, Block};
-    use jodeldiplom::core::transition::viewport;
-    use jodeldiplom::view::mouse::{action, MouseButton, MouseInput, MouseKind};
-    let mut state = common::transition_state(120, 40);
-    let Layout::Main(m) = layout::compute(&state, TRANSITION) else {
-        panic!()
-    };
-    let now = m.transition.unwrap().blocks[0].clone();
-    let lane = now.lanes[1].2;
-    let heard = state.heard();
-    let (start, end) = viewport::window(&state, Block::Now, heard);
-    let per = (end - start) / f64::from(lane.width);
-    let at = |kind, col, row| MouseInput { kind, col, row };
-    let press = |state: &mut State, input| {
-        let a = action(state, TRANSITION, input).expect("an action");
-        update(state, a);
-    };
-    press(
-        &mut state,
-        at(MouseKind::Down(MouseButton::Right), lane.x + 50, lane.y),
-    );
-    press(
-        &mut state,
-        at(MouseKind::Drag(MouseButton::Right), lane.x + 40, lane.y),
-    );
-    let (moved, _) = viewport::window(&state, Block::Now, heard);
-    assert!(
-        (moved - (start + 10.0 * per)).abs() < 1e-9,
-        "dragged left: later"
-    );
-    // It follows the pointer off the lanes too, until let go.
-    press(
-        &mut state,
-        at(MouseKind::Drag(MouseButton::Right), lane.x + 45, 0),
-    );
-    press(
-        &mut state,
-        at(MouseKind::Up(MouseButton::Right), lane.x + 45, 0),
-    );
-    assert!(state.transition.pan.is_none());
-    let (kept, _) = viewport::window(&state, Block::Now, heard);
-    assert!((kept - (start + 5.0 * per)).abs() < 1e-9);
-    // On the whole track, the span shown goes with the pointer.
-    let duration = block_analysis(&state, Block::Now).duration;
-    let o = now.overview;
-    press(
-        &mut state,
-        at(MouseKind::Down(MouseButton::Right), o.x + 10, o.y),
-    );
-    press(
-        &mut state,
-        at(MouseKind::Drag(MouseButton::Right), o.x + 20, o.y),
-    );
-    let (whole, _) = viewport::window(&state, Block::Now, heard);
-    let rhythmed = lanes::rhythmed(&state, Block::Now).unwrap();
-    let length = rhythmed
-        .waveform
-        .as_ref()
-        .map_or(0.0, |w| w.duration())
-        .max(duration);
-    assert!((whole - (kept + 10.0 * length / f64::from(o.width))).abs() < 1e-9);
 }
 
 /// A stem's mute lands on the first beat of the next bar at least 0.1 s
@@ -3636,10 +3517,9 @@ fn z_zooms_the_selected_track_to_fit_its_lyrics() {
         "the playing track keeps its zoom"
     );
     let z = viewport::zoom_of(&state, Block::Next);
-    let Layout::Main(m) = layout::compute(&state, TRANSITION) else {
-        panic!()
-    };
-    let width = m.transition.unwrap().blocks[0].lanes[0].2.width;
+    // The lanes' width in the words' letters, as the window says.
+    let width = state.fit.lane_letters;
+    assert!(width > 0);
     let lyrics = lanes::lyrics(&state, Block::Next).unwrap();
     let words = lanes::timed_words(&lyrics);
     let left_at = |state: &State| {

@@ -140,6 +140,22 @@ stem keys are their mutes.
 - **T6.** `esc` never leaves the Transition tab: only `tab` and the tab buttons
   do.
   - `the_transition_cursor_moves_by_bars_and_cues_one`
+- **T7.** The pointer on the Transition tab: a press on a lane puts the
+  cursor on the beat at or before it, and a second press on that beat
+  soon after cues its bar as `enter` does (playback stays); a drag selects
+  bars, following the pointer anywhere until it is let go of (a tremble
+  within the beat pressed selects nothing); the secondary button drags a
+  block's view; the wheel zooms the block under the pointer around it.
+  Over the whole track a press seeks the playing track (the next one's
+  view goes there), the secondary button drags the span shown, the wheel
+  scrolls it. The `fit lyrics` button is `z`.
+  - `a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there`
+  - `dragging_across_the_lanes_selects_bars`
+  - `the_secondary_button_drags_a_transition_view`
+  - `a_press_on_the_whole_track_seeks_and_the_wheel_there_scrolls`
+  - `the_wheel_zooms_the_block_under_the_pointer_around_it`
+  - `the_fit_lyrics_button_is_z`
+  - `z_zooms_the_selected_track_to_fit_its_lyrics`
 
 ## Jumps
 

@@ -3,9 +3,11 @@
 //! ([`setup`]), Now playing ([`now`]), and the settings ([`settings`])
 //! and the keys ([`help`]) over the bottom bar ([`native`]), the command
 //! palette over them. Every other screen is the old canvas filling the
-//! window ([`super::embed`]), the covers and the lanes over it where it
-//! left their cells ([`super::widgets::cover`], [`super::lanes`], neither
-//! taking the pointer), and slots over them: the Mixer tab
+//! window ([`super::embed`]), the covers over it where it left their
+//! cells ([`super::widgets::cover`], not taking the pointer), the
+//! Transition tab ([`transition`]) or nothing, the lanes over all of it
+//! ([`super::lanes`], not taking the pointer), and slots over them: the
+//! Mixer tab
 //! ([`super::mixer`]) or nothing, the bottom bar ([`bottom`]) or nothing,
 //! the list pane with its tabs ([`list`]) or nothing, the right column's
 //! text under the cover or the summary under the list ([`right`]) or
@@ -38,6 +40,7 @@ pub mod palette;
 pub mod right;
 pub mod settings;
 pub mod setup;
+pub mod transition;
 
 /// What the window has to show.
 pub(super) enum Shown<'a> {
@@ -71,9 +74,11 @@ pub(super) fn view<'a>(
     let list = state.and_then(|state| list(state, embed));
     let right = state.and_then(|state| right(state, embed, covers));
     let palette = state.and_then(palette::view);
+    let transition = state.and_then(|state| transition(state, embed));
     stack![
         embed.view(hide_pointer),
         covers.view(),
+        transition.unwrap_or_else(|| space().boxed()),
         lanes.view(),
         desk.unwrap_or_else(|| space().boxed()),
         bar.unwrap_or_else(|| space().boxed()),
@@ -201,6 +206,14 @@ fn native<'a>(
     let top = f32::from(grid.rows.saturating_sub(BAR_ROWS)) * ch;
     let bar = bottom::view(state, heard, f32::from(grid.cols) * cw, 0.0);
     Some(column![container(page).width(Fill).height(top), opaque(bar)].boxed())
+}
+
+/// The Transition tab over the list pane's place on the old canvas, while
+/// it shows: under the lanes, which it leaves room for (they take no
+/// pointer: it takes it over them).
+fn transition<'a>(state: &State, embed: &Embed) -> Option<Element<'a, Message>> {
+    let room = transition::Room::of(state, embed.grid(), embed.cell(), embed.scale())?;
+    Some(transition::view(state, &room))
 }
 
 /// The bottom bar, over its place on the old canvas (to the window's

@@ -3,8 +3,9 @@
 //! outlines of what the window draws from its models after them: the
 //! list pane's (its tabs, the browser's or the queue's rows) and the right
 //! column's text (or the summary under the list) on the main screen, the
-//! command palette's while it is open, and the bottom bar's
-//! where the screen has one; compared with the snapshots in
+//! Transition tab's while it shows, the command palette's while it is
+//! open, and the bottom bar's where the screen has one; compared with the
+//! snapshots in
 //! `tests/snapshots/` (set `UPDATE_SNAPSHOTS=1` to rewrite them after an
 //! intended change). The spectrum's model in points: its labels and where
 //! a tone peaks.
@@ -92,6 +93,9 @@ fn draw_heard(state: &State, grid: Grid, heard: f64) -> String {
         }
         if m.mini.is_some() {
             text.push_str(&Info::of(state).summary());
+        }
+        if state.side == Side::Transition {
+            text.push_str(&view::transition::Tab::of(state, heard).to_string());
         }
     }
     if let Some(palette) = Palette::of(state, 8) {
@@ -637,7 +641,7 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
     let text = draw_heard(&state, Grid::new(120, 40), heard);
     // The lane's first line: every word sung in view (but the last, which
     // may run past its edge) is there, in order.
-    let row: String = lane_words(plot)
+    let row: String = lane_words(plot, voice.width)
         .iter()
         .filter(|l| l.row == 0)
         .map(|l| format!("{} ", l.text))
@@ -763,7 +767,11 @@ fn the_words_go_on_the_voice_lane_where_they_are_sung() {
     let worded = |state: &State| -> Vec<(Lane, String)> {
         lanes(state, Grid::new(120, 40))
             .iter()
-            .flat_map(|p| lane_words(p).into_iter().map(|l| (p.lane, l.text)))
+            .flat_map(|p| {
+                lane_words(p, state.fit.lane_letters)
+                    .into_iter()
+                    .map(|l| (p.lane, l.text))
+            })
             .collect()
     };
     let words = worded(&state);
@@ -817,10 +825,7 @@ fn transition_tab_with_a_transition_being_edited() {
     }
     update(&mut state, Action::Op(Op::TransitionEdit));
     let text = draw(&state, Grid::new(120, 40));
-    assert!(
-        text.contains("transition: drums first, varispeed"),
-        "{text}"
-    );
+    assert!(text.contains("transition drums first, varispeed"), "{text}");
     assert!(text.contains("editing now bass at bar 0"), "{text}");
     snapshot("transition_edit", &text);
 }
@@ -860,16 +865,14 @@ impl Pictures for Lanes {
         CellPictures.wave(frame, plot);
     }
 
-    fn ruler(&mut self, frame: &mut Frame, plot: &view::transition::RulerPlot) {
-        CellPictures.ruler(frame, plot);
-    }
-
     fn karaoke(&mut self, frame: &mut Frame, area: Rect, picture: &view::karaoke::KaraokePicture) {
         CellPictures.karaoke(frame, area, picture);
     }
 }
 
-/// The lanes' waveforms a frame of `state` on `grid` hands the window.
+/// The lanes' waveforms a frame of `state` on `grid` hands the window:
+/// the canvas's (the Karaoke tab's voice lane), and the Transition tab's
+/// blocks', the playing track's and the next one's.
 fn lanes(state: &State, grid: Grid) -> Vec<WavePlot> {
     lanes_heard(state, grid, 0.0)
 }
@@ -882,18 +885,26 @@ fn lanes_heard(state: &State, grid: Grid, heard: f64) -> Vec<WavePlot> {
     terminal
         .draw(|frame| view::draw(frame, &scene, &mut lanes))
         .unwrap();
+    if state.side == Side::Transition {
+        use jodeldiplom::core::lanes::Block;
+        for block in [Block::Now, Block::Next] {
+            if let Some(plots) = view::transition::plots(state, block, heard, true) {
+                lanes.0.extend(plots.lanes);
+            }
+        }
+    }
     lanes.0
 }
 
 /// The words the window lays along `plot` (its lyrics, as it places them,
-/// in cells: a character [`WavePlot::text_scale`] cells wide), by where
-/// they start.
-fn lane_words(plot: &WavePlot) -> Vec<view::lanes::Label> {
+/// in letters: a character [`WavePlot::text_scale`] letters wide) on a
+/// lane `width` letters wide, by where they start.
+fn lane_words(plot: &WavePlot, width: u16) -> Vec<view::lanes::Label> {
     let Some(lyrics) = plot.lyrics.as_deref() else {
         return Vec::new();
     };
     let words = jodeldiplom::core::lanes::timed_words(lyrics);
-    let width = f64::from(plot.area.width);
+    let width = f64::from(width);
     let per = width / (plot.end - plot.start).max(1e-9);
     let lo = (plot.start * per).floor();
     let mut labels = view::lanes::lane_labels(
