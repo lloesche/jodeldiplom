@@ -103,6 +103,13 @@ const EYE: f32 = 0.011;
 const EYE_GLOW: [f32; 3] = [0.85, 1.0, 0.4];
 const PUPIL: [f32; 3] = [0.06, 0.1, 0.0];
 const BLINK: f32 = 0.35;
+/// How far apart an eye is from the pair's middle, how soft the glow's
+/// ridge between them is, and how far an eye's glow reaches (each in eye
+/// sizes): it fades smoothly to nothing there, inside the pair's cell and
+/// below the fog's inner edge, so nothing cuts it off.
+const APART: f32 = 1.4;
+const RIDGE: f32 = 0.7;
+const HALO: f32 = 3.4;
 
 /// How many times as deep the music `m` makes the fog (1 with no music),
 /// `p` its look (`x` how much).
@@ -200,11 +207,15 @@ pub fn fog(
         let open = smoothstep(0.0, 0.04, blink).max(0.05);
         let fade = smoothstep(0.0, 0.15, phase) * (1.0 - smoothstep(0.8, 1.0, phase));
         let shows = fade * clamp01(p[2]) * s;
-        let dx = (px.0 - ex).abs() - er * 1.4;
+        let dx = (px.0 - ex).abs() - er * APART;
         let dy = px.1 - ey;
         let d = (dx / er).hypot(dy / (er * 1.3 * open)) - 1.0;
         let lit = clamp01(0.5 - d * er) * shows;
-        let halo = (-(dx * dx + dy * dy) / (er * er * 6.0)).exp() * 0.35 * shows;
+        // The glow: a bell round each eye, nothing from `HALO` out, the
+        // two joined smoothly between them.
+        let hx = (px.0 - ex).hypot(er * RIDGE) - er * APART.hypot(RIDGE);
+        let bell = (1.0 - (hx * hx + dy * dy) / (er * er * HALO * HALO)).max(0.0);
+        let halo = bell * bell * 0.35 * shows;
         // A slit of a pupil each, peering in towards the other eye.
         let dp = ((dx + er * 0.3) / (er * 0.3)).hypot(dy / (er * 0.85 * open)) - 1.0;
         let pupil = clamp01(0.5 - dp * er * 0.3) * lit;
@@ -229,7 +240,7 @@ pub fn fog(
 pub fn wgsl() -> String {
     let v = |c: [f32; 3]| format!("vec3<f32>({:?}, {:?}, {:?})", c[0], c[1], c[2]);
     format!(
-        "const FOG_HIGH: f32 = {HIGH:?};\nconst FOG_SIDE: f32 = {SIDE:?};\nconst FOG_TOP: f32 = {TOP:?};\nconst FOG_BREATH: f32 = {BREATH:?};\nconst FOG_PULSE: f32 = {PULSE:?};\nconst FOG_SURGE: f32 = {SURGE:?};\nconst FOG_THICK: f32 = {THICK:?};\nconst FOG_DARK: f32 = {DARK:?};\nconst FOG_IN_BAND: f32 = {IN_BAND:?};\nconst FOG_FEATHER: f32 = {FEATHER:?};\nconst FOG_HAZE: vec3<f32> = {};\nconst FOG_COLD: vec3<f32> = {};\nconst FOG_EYE_CELL: f32 = {EYE_CELL:?};\nconst FOG_EYE_STAY: f32 = {EYE_STAY:?};\nconst FOG_EYE: f32 = {EYE:?};\nconst FOG_EYE_GLOW: vec3<f32> = {};\nconst FOG_PUPIL: vec3<f32> = {};\nconst FOG_BLINK: f32 = {BLINK:?};\n{SHADER}",
+        "const FOG_HIGH: f32 = {HIGH:?};\nconst FOG_SIDE: f32 = {SIDE:?};\nconst FOG_TOP: f32 = {TOP:?};\nconst FOG_BREATH: f32 = {BREATH:?};\nconst FOG_PULSE: f32 = {PULSE:?};\nconst FOG_SURGE: f32 = {SURGE:?};\nconst FOG_THICK: f32 = {THICK:?};\nconst FOG_DARK: f32 = {DARK:?};\nconst FOG_IN_BAND: f32 = {IN_BAND:?};\nconst FOG_FEATHER: f32 = {FEATHER:?};\nconst FOG_HAZE: vec3<f32> = {};\nconst FOG_COLD: vec3<f32> = {};\nconst FOG_EYE_CELL: f32 = {EYE_CELL:?};\nconst FOG_EYE_STAY: f32 = {EYE_STAY:?};\nconst FOG_EYE: f32 = {EYE:?};\nconst FOG_EYE_GLOW: vec3<f32> = {};\nconst FOG_PUPIL: vec3<f32> = {};\nconst FOG_BLINK: f32 = {BLINK:?};\nconst FOG_APART: f32 = {APART:?};\nconst FOG_RIDGE: f32 = {RIDGE:?};\nconst FOG_HALO: f32 = {HALO:?};\n{SHADER}",
         v(HAZE),
         v(COLD),
         v(EYE_GLOW),
@@ -299,11 +310,13 @@ fn fx_fog(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, clear: mat3x
         let open = max(smoothstep(0.0, 0.04, blink), 0.05);
         let fade = smoothstep(0.0, 0.15, phase) * (1.0 - smoothstep(0.8, 1.0, phase));
         let shows = fade * clamp(p.z, 0.0, 1.0) * s;
-        let dx = abs(px.x - ex) - er * 1.4;
+        let dx = abs(px.x - ex) - er * FOG_APART;
         let dy = px.y - ey;
         let d = length(vec2<f32>(dx / er, dy / (er * 1.3 * open))) - 1.0;
         let lit = clamp(0.5 - d * er, 0.0, 1.0) * shows;
-        let halo = exp(-(dx * dx + dy * dy) / (er * er * 6.0)) * 0.35 * shows;
+        let hx = length(vec2<f32>(px.x - ex, er * FOG_RIDGE)) - er * length(vec2<f32>(FOG_APART, FOG_RIDGE));
+        let bell = max(1.0 - (hx * hx + dy * dy) / (er * er * FOG_HALO * FOG_HALO), 0.0);
+        let halo = bell * bell * 0.35 * shows;
         let dp = length(vec2<f32>((dx + er * 0.3) / (er * 0.3), dy / (er * 0.85 * open))) - 1.0;
         let pupil = clamp(0.5 - dp * er * 0.3, 0.0, 1.0) * lit;
         let eye = mix(FOG_EYE_GLOW, FOG_PUPIL, pupil);
@@ -508,5 +521,54 @@ mod tests {
         let (none, _) = bright([LOOK[0], LOOK[1], 0.0, 0.0]);
         assert!(eyes > 0.8, "{eyes}");
         assert!(none < 0.6, "{none}");
+    }
+
+    /// The eyes' glow fades out before anything can cut it off: at their
+    /// cell's sides and at the fog's inner edge above them it is nothing
+    /// (the fog there as it is with the eyes turned off), in windows of a
+    /// few sizes, while in the cells' middles the eyes do show.
+    #[test]
+    fn the_eyes_glow_fades_out_inside_their_cell() {
+        let off = [LOOK[0], LOOK[1], 0.0, 0.0];
+        let mut shown = 0;
+        for size in [SIZE, (1600.0, 1000.0), (1280.0, 720.0)] {
+            let fog_at = |px: (f32, f32), t: f32, p: [f32; 4]| {
+                fog(
+                    px,
+                    size,
+                    t,
+                    (1.0, (0.0, 0.0)),
+                    &Clear::NONE,
+                    p,
+                    &Music::NEUTRAL,
+                )
+            };
+            let cell = size.1 * EYE_CELL;
+            let deep = size.1 * HIGH;
+            let columns = (size.0 / cell).ceil() as usize;
+            for t in 0..60 {
+                let t = t as f32;
+                for k in 0..columns {
+                    let x0 = k as f32 * cell;
+                    let middle = (x0 + cell / 2.0, size.1 - deep / 2.0);
+                    shown += usize::from(fog_at(middle, t, LOOK) != fog_at(middle, t, off));
+                    for y in 0..60 {
+                        let y = size.1 - deep * (y as f32 + 0.5) / 60.0;
+                        for x in [x0 + 0.25, x0 + cell - 0.25] {
+                            assert_eq!(
+                                fog_at((x, y), t, LOOK),
+                                fog_at((x, y), t, off),
+                                "{x} {y} {t}"
+                            );
+                        }
+                    }
+                    for x in 0..40 {
+                        let px = (x0 + cell * (x as f32 + 0.5) / 40.0, size.1 - deep + 0.25);
+                        assert_eq!(fog_at(px, t, LOOK), fog_at(px, t, off), "{px:?} {t}");
+                    }
+                }
+            }
+        }
+        assert!(shown > 50, "{shown}");
     }
 }
