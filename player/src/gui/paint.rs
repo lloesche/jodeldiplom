@@ -283,11 +283,13 @@ impl Paint {
             canvas.fit(place.size.0, place.size.1);
             canvas.hold(&app.state);
             let grid = canvas.grid();
-            // The desk as wide as the window draws it, at its cells' size.
-            let cell = canvas.cell().0 as f32 / place.scale;
+            // The list's page and the desk as wide as the window draws
+            // them, at its cells' size.
+            let (cw, ch) = canvas.cell();
+            let cell = (cw as f32 / place.scale, ch as f32 / place.scale);
             let fit = Fit {
-                desk_width: crate::view::layout::desk_width(grid, cell),
-                ..crate::view::layout::fit(&app.state, grid)
+                desk_width: crate::view::layout::desk_width(grid, cell.0),
+                ..super::screens::list::fit(&app.state, grid, cell)
             };
             if fit != app.state.fit {
                 app.dispatch(Action::Fit(fit));

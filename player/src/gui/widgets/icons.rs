@@ -42,11 +42,39 @@ pub enum Icon {
     Settings,
     /// The keys and what they do.
     Help,
+    /// A folder.
+    Folder,
+    /// A music file.
+    Note,
+    /// A playlist.
+    Playlist,
+    /// The queue.
+    Queue,
+    /// Up a folder.
+    Up,
+    /// Into a folder.
+    Chevron,
+    /// Looking for something: the filter, a search.
+    Search,
+    /// A command typed.
+    Command,
+    /// A track's key (a sharp).
+    Key,
+    /// A track's stems.
+    Stems,
+    /// A track's tempo (a metronome).
+    Tempo,
+    /// A track's lyrics.
+    Lyrics,
+    /// A track's cover.
+    Cover,
+    /// Work under way: an arc that turns ([`Glyph::turn`]).
+    Busy,
 }
 
 impl Icon {
     /// Every icon, for the look sheet.
-    pub const ALL: [Icon; 12] = [
+    pub const ALL: [Icon; 26] = [
         Icon::Check,
         Icon::Cross,
         Icon::Retry,
@@ -59,6 +87,20 @@ impl Icon {
         Icon::Stop,
         Icon::Settings,
         Icon::Help,
+        Icon::Folder,
+        Icon::Note,
+        Icon::Playlist,
+        Icon::Queue,
+        Icon::Up,
+        Icon::Chevron,
+        Icon::Search,
+        Icon::Command,
+        Icon::Key,
+        Icon::Stems,
+        Icon::Tempo,
+        Icon::Lyrics,
+        Icon::Cover,
+        Icon::Busy,
     ];
 
     /// Its name.
@@ -76,6 +118,20 @@ impl Icon {
             Icon::Stop => "stop",
             Icon::Settings => "settings",
             Icon::Help => "help",
+            Icon::Folder => "folder",
+            Icon::Note => "note",
+            Icon::Playlist => "playlist",
+            Icon::Queue => "queue",
+            Icon::Up => "up",
+            Icon::Chevron => "chevron",
+            Icon::Search => "search",
+            Icon::Command => "command",
+            Icon::Key => "key",
+            Icon::Stems => "stems",
+            Icon::Tempo => "tempo",
+            Icon::Lyrics => "lyrics",
+            Icon::Cover => "cover",
+            Icon::Busy => "busy",
         }
     }
 }
@@ -86,6 +142,7 @@ pub fn icon(icon: Icon) -> Glyph {
         icon,
         size: look::height::ICON,
         color: None,
+        turn: 0.0,
     }
 }
 
@@ -95,6 +152,7 @@ pub struct Glyph {
     icon: Icon,
     size: f32,
     color: Option<Color>,
+    turn: f32,
 }
 
 impl Glyph {
@@ -109,9 +167,22 @@ impl Glyph {
         self.color = Some(color);
         self
     }
+
+    /// Turned by `turn` of a whole turn (0 to 1), clockwise: where the
+    /// busy arc is ([`Icon::Busy`]).
+    pub fn turn(mut self, turn: f32) -> Glyph {
+        self.turn = turn;
+        self
+    }
 }
 
 impl iced::advanced::widget::Meta for Glyph {}
+
+impl<'a, Message: 'a> From<Glyph> for iced::Element<'a, Message> {
+    fn from(glyph: Glyph) -> Self {
+        iced::Widget::boxed(glyph)
+    }
+}
 
 impl<Message> Widget<Message, Theme, Renderer> for Glyph {
     fn size(&self) -> Size<Length> {
@@ -143,6 +214,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Glyph {
             self.icon,
             bounds.width,
             self.color.unwrap_or(style.text_color),
+            self.turn,
         );
         renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
             renderer.draw_geometry(frame.into_geometry());
@@ -150,8 +222,9 @@ impl<Message> Widget<Message, Theme, Renderer> for Glyph {
     }
 }
 
-/// Draws `icon` into `frame`, `size` points square, in `color`.
-fn paint(frame: &mut Frame, icon: Icon, size: f32, color: Color) {
+/// Draws `icon` into `frame`, `size` points square, in `color`, turned
+/// by `turn` of a whole turn where it turns.
+fn paint(frame: &mut Frame, icon: Icon, size: f32, color: Color, turn: f32) {
     // The icons are drawn on a 24-unit square.
     let k = size / 24.0;
     let p = |x: f32, y: f32| Point::new(x * k, y * k);
@@ -299,6 +372,100 @@ fn paint(frame: &mut Frame, icon: Icon, size: f32, color: Color) {
                 stroke,
             );
             frame.fill(&Path::circle(p(12.0, 16.9), 1.25 * k), color);
+        }
+        Icon::Folder => frame.stroke(
+            &polygon(&[
+                (3.0, 6.0),
+                (9.5, 6.0),
+                (11.5, 8.0),
+                (21.0, 8.0),
+                (21.0, 18.5),
+                (3.0, 18.5),
+            ]),
+            stroke,
+        ),
+        Icon::Note => {
+            frame.stroke(&lines(&[(11.5, 16.5), (11.5, 4.5), (17.5, 7.5)]), stroke);
+            frame.fill(&Path::circle(p(8.6, 16.6), 3.0 * k), color);
+        }
+        Icon::Playlist => {
+            frame.stroke(&lines(&[(3.5, 6.5), (14.5, 6.5)]), stroke);
+            frame.stroke(&lines(&[(3.5, 11.5), (14.5, 11.5)]), stroke);
+            frame.stroke(&lines(&[(3.5, 16.5), (9.5, 16.5)]), stroke);
+            frame.stroke(&lines(&[(19.0, 17.0), (19.0, 9.0), (21.5, 10.0)]), stroke);
+            frame.fill(&Path::circle(p(16.6, 17.2), 2.4 * k), color);
+        }
+        Icon::Queue => {
+            frame.stroke(&lines(&[(3.5, 6.5), (20.5, 6.5)]), stroke);
+            frame.stroke(&lines(&[(3.5, 11.5), (12.5, 11.5)]), stroke);
+            frame.stroke(&lines(&[(3.5, 16.5), (12.5, 16.5)]), stroke);
+            solid(frame, &polygon(&[(16.0, 11.0), (21.0, 14.0), (16.0, 17.0)]));
+        }
+        Icon::Up => {
+            frame.stroke(&lines(&[(12.0, 19.5), (12.0, 5.0)]), stroke);
+            frame.stroke(&lines(&[(6.5, 10.5), (12.0, 5.0), (17.5, 10.5)]), stroke);
+        }
+        Icon::Chevron => frame.stroke(&lines(&[(9.5, 6.0), (15.5, 12.0), (9.5, 18.0)]), stroke),
+        Icon::Search => {
+            frame.stroke(&Path::circle(p(10.5, 10.5), 6.0 * k), stroke);
+            frame.stroke(&lines(&[(15.0, 15.0), (20.0, 20.0)]), stroke);
+        }
+        Icon::Command => {
+            frame.stroke(&lines(&[(5.0, 7.0), (10.0, 12.0), (5.0, 17.0)]), stroke);
+            frame.stroke(&lines(&[(13.0, 17.0), (19.0, 17.0)]), stroke);
+        }
+        Icon::Key => {
+            frame.stroke(&lines(&[(10.5, 4.0), (9.0, 20.0)]), stroke);
+            frame.stroke(&lines(&[(16.0, 4.0), (14.5, 20.0)]), stroke);
+            frame.stroke(&lines(&[(5.0, 10.0), (20.0, 8.0)]), stroke);
+            frame.stroke(&lines(&[(4.0, 16.0), (19.0, 14.0)]), stroke);
+        }
+        Icon::Stems => {
+            for (x, half) in [(5.0, 3.0), (9.67, 7.0), (14.33, 4.5), (19.0, 6.0)] {
+                frame.stroke(&lines(&[(x, 12.0 - half), (x, 12.0 + half)]), stroke);
+            }
+        }
+        Icon::Tempo => {
+            frame.stroke(
+                &polygon(&[(7.5, 20.0), (10.5, 4.0), (13.5, 4.0), (16.5, 20.0)]),
+                stroke,
+            );
+            frame.stroke(&lines(&[(12.0, 15.5), (17.5, 7.5)]), stroke);
+        }
+        Icon::Lyrics => {
+            // A speech bubble, two lines of text in it.
+            frame.stroke(&bar(3.5, 4.0, 17.0, 12.5, 3.5), stroke);
+            frame.stroke(&lines(&[(8.0, 16.5), (7.0, 20.5), (12.0, 16.5)]), stroke);
+            frame.stroke(&lines(&[(8.0, 8.5), (16.0, 8.5)]), stroke);
+            frame.stroke(&lines(&[(8.0, 12.0), (13.0, 12.0)]), stroke);
+        }
+        Icon::Cover => {
+            frame.stroke(&bar(3.5, 3.5, 17.0, 17.0, 3.5), stroke);
+            frame.fill(&Path::circle(p(9.0, 9.0), 1.8 * k), color);
+            frame.stroke(
+                &lines(&[
+                    (4.0, 17.5),
+                    (10.0, 12.0),
+                    (14.0, 15.5),
+                    (16.5, 13.5),
+                    (20.0, 16.5),
+                ]),
+                stroke,
+            );
+        }
+        Icon::Busy => {
+            let start = turn * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+            frame.stroke(
+                &Path::new(|b| {
+                    b.arc(path::Arc {
+                        center: p(12.0, 12.0),
+                        radius: 8.0 * k,
+                        start_angle: iced::Radians(start),
+                        end_angle: iced::Radians(start + 1.5 * std::f32::consts::PI),
+                    });
+                }),
+                stroke,
+            );
         }
     }
 }

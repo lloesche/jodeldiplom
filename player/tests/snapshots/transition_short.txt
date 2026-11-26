@@ -1,4 +1,4 @@
-╭ Browser │ Queue (5) │ Transition │ Karaoke │ Mixer ──────────────────────────────────────────────╮
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │▸ Now  Morning Light · 128 BPM · bar 1 / 130 · transition: fade, varispeed, enter sets the cues · │
 │                                                                                                  │
 │                                                                                                  │
@@ -24,6 +24,8 @@
 
 
 
+[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer
+[shown] Transition
 [time] 1:23
 [seek] 34 %
 [time] 4:05

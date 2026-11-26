@@ -1,8 +1,9 @@
 //! The cell renderer's mouse: the named rects of its layout ([`layout`])
 //! and what a click, drag or wheel on each does, as the core's
 //! [`Action`]s. The window reports the pointer in cells (and within its
-//! cell, [`action_at`]). The bottom bar is the window's own: its cells
-//! take no clicks here.
+//! cell, [`action_at`]). The bottom bar, the list pane with its tabs and
+//! the command palette are the window's own: their cells take no clicks
+//! here.
 
 use ratatui::layout::{Position, Rect};
 
@@ -10,10 +11,7 @@ use crate::core::karaoke;
 use crate::core::keymap::Op;
 use crate::core::sliders::Slider;
 use crate::core::text::{self, Tone};
-use crate::core::{
-    device_window, folder_window, list_cursor, list_len, palette_window, Action, Screen,
-    SettingsRow, Side, State,
-};
+use crate::core::{device_window, folder_window, Action, Screen, SettingsRow, State};
 use crate::view::cells;
 use crate::view::layout::{self, Grid, Layout};
 
@@ -61,10 +59,6 @@ pub struct MouseInput {
 /// A named place on the screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
-    /// The Browser or Queue half of the toggle.
-    Toggle(Side),
-    /// A row of the list (its index in the list, not on screen).
-    Row(usize),
     /// The cover.
     Cover,
     /// The track text (on Now playing, a click returns).
@@ -85,12 +79,8 @@ pub enum Target {
     DeviceRow(usize),
     /// A row of the data folder's list.
     FolderRow(usize),
-    /// A palette match.
-    PaletteRow(usize),
     /// The help text.
     HelpText,
-    /// The list's rows area (for the wheel).
-    ListArea,
     /// The title, artist or album of the playing track: where it goes.
     Link(Op),
     /// A Transition block's lanes (or its ruler).
@@ -142,9 +132,6 @@ pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
     match layout::compute(state, grid) {
         Layout::TooSmall(_) => {}
         Layout::Main(m) => {
-            for (rect, side) in &m.toggle {
-                out.push((*rect, Target::Toggle(*side)));
-            }
             if let Some(info) = m.info {
                 for rect in info_device_rects(state, info) {
                     out.push((rect, Target::Device));
@@ -191,32 +178,6 @@ pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
                     }
                 }
             }
-            if state.palette.is_some() {
-                let height = usize::from(m.rows.height);
-                let (matches, start) = palette_window(state, height);
-                for (i, index) in (start..matches.len()).enumerate() {
-                    let y = m.rows.y + 1 + i as u16;
-                    if y >= m.rows.bottom() {
-                        break;
-                    }
-                    out.push((
-                        Rect::new(m.rows.x, y, m.rows.width, 1),
-                        Target::PaletteRow(index),
-                    ));
-                }
-            } else {
-                let (_, scroll) = list_cursor(state);
-                let len = list_len(state);
-                for i in 0..usize::from(m.rows.height) {
-                    let index = scroll + i;
-                    if index >= len {
-                        break;
-                    }
-                    let rect = Rect::new(m.rows.x, m.rows.y + i as u16, m.rows.width, 1);
-                    out.push((rect, Target::Row(index)));
-                }
-            }
-            out.push((m.rows, Target::ListArea));
         }
         Layout::NowPlaying(n) => {
             let lines = cells::caption_lines(state, usize::from(n.caption.width));
@@ -431,27 +392,6 @@ pub fn action_at(
             _ => {}
         }
     }
-    // And a queue row held: it goes where the pointer is.
-    if state.queue.dragging {
-        match input.kind {
-            Up(Left) => return Some(Action::QueueDragEnd),
-            Drag(Left) => {
-                return match hit(state, grid, input.col, input.row) {
-                    Some(Target::Row(row)) => Some(Action::QueueDrag(row)),
-                    _ => None,
-                };
-            }
-            _ => {}
-        }
-    }
-    // Ctrl held for a preview: the pointer over a browser row selects it
-    // (and the preview follows).
-    if input.kind == Moved && crate::core::preview::held(state) {
-        return match hit(state, grid, input.col, input.row) {
-            Some(Target::Row(row)) if row != state.browser.cursor => Some(Action::SelectRow(row)),
-            _ => None,
-        };
-    }
     let target = over
         .map(Target::Button)
         .or_else(|| hit(state, grid, input.col, input.row))?;
@@ -511,9 +451,6 @@ pub fn action_at(
         }
         (ScrollUp | ScrollDown, _) => scrolled(state, input.kind == ScrollUp),
         (Down(Left), Target::Bar) => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
-        (Down(Left), Target::Toggle(side)) => Some(Action::ShowSide(side)),
-        (Down(Left), Target::Row(row)) => Some(Action::ClickRow(row)),
-        (Down(Right), Target::Row(row)) => Some(Action::EnqueueRow(row)),
         (Down(Left), Target::Device) => Some(Action::OpenSettings(SettingsRow::Device)),
         (Down(Left), Target::Cover) => Some(Action::Op(Op::NowPlaying)),
         (Down(Left), Target::Button(op) | Target::Link(op)) => Some(Action::Op(op)),
@@ -522,7 +459,6 @@ pub fn action_at(
         (Down(Left), Target::SettingsValue(i)) => Some(Action::SettingsClick(i, 0)),
         (Down(Left), Target::DeviceRow(i)) => Some(Action::ChooseDevice(i)),
         (Down(Left), Target::FolderRow(i)) => Some(Action::FolderRow(i)),
-        (Down(Left), Target::PaletteRow(i)) => Some(Action::PaletteRun(i)),
         _ => None,
     }
 }
@@ -581,23 +517,16 @@ mod tests {
         }
     }
 
+    /// The cover takes a click; the list pane (its tabs, its rows) and the
+    /// bottom bar are the window's: their cells take none here.
     #[test]
-    fn rows_toggle_and_the_cover_are_hit() {
+    fn the_cover_is_hit_and_the_list_and_the_bar_are_the_windows() {
         let s = state();
         let Layout::Main(m) = layout::compute(&s, GRID) else {
             panic!()
         };
-        assert_eq!(hit(&s, GRID, m.rows.x + 2, m.rows.y), Some(Target::Row(0)));
-        assert_eq!(
-            hit(&s, GRID, m.rows.x + 2, m.rows.y + 3),
-            Some(Target::Row(3))
-        );
-        let (queue_rect, _) = m.toggle[1];
-        assert_eq!(
-            action(&s, GRID, down(queue_rect.x + 1, queue_rect.y)).map(|a| format!("{a:?}")),
-            Some("ShowSide(Queue)".into())
-        );
-        // The bottom bar's cells are the window's.
+        assert_eq!(hit(&s, GRID, m.rows.x + 2, m.rows.y), None);
+        assert_eq!(hit(&s, GRID, m.list.x + 2, m.list.y), None);
         let bar = m.bottom.area;
         assert_eq!(hit(&s, GRID, bar.x + 2, bar.bottom() - 1), None);
         assert!(matches!(
@@ -608,55 +537,6 @@ mod tests {
             ),
             Some(Action::Op(Op::NowPlaying))
         ));
-    }
-
-    #[test]
-    fn a_double_click_is_enter_and_the_wheel_scrolls() {
-        let mut s = state();
-        let Layout::Main(m) = layout::compute(&s, GRID) else {
-            panic!()
-        };
-        let at = down(m.rows.x + 1, m.rows.y + 2);
-        let a = action(&s, GRID, at).unwrap();
-        assert!(update(&mut s, a).is_empty() || s.browser.cursor == 2);
-        assert_eq!(s.browser.cursor, 2);
-        update(&mut s, Action::Tick(100));
-        let a = action(&s, GRID, at).unwrap();
-        let fx = update(&mut s, a);
-        // What enter does on it: queued, nothing played.
-        let mut enter = state();
-        enter.browser.cursor = 2;
-        let by_key = update(&mut enter, Action::Op(Op::Open));
-        let engine = |fx: &[crate::core::Effect]| -> Vec<jodel_playback::Command> {
-            fx.iter()
-                .filter_map(|e| match e {
-                    crate::core::Effect::Engine(c) => Some(c.clone()),
-                    _ => None,
-                })
-                .collect()
-        };
-        assert_eq!(engine(&fx), engine(&by_key));
-        assert!(matches!(
-            engine(&fx)[..],
-            [jodel_playback::Command::Enqueue(ref p)] if p.len() == 1
-        ));
-        // Clicks far apart only select.
-        update(&mut s, Action::Tick(5_000));
-        let a = action(&s, GRID, down(m.rows.x + 1, m.rows.y + 4)).unwrap();
-        update(&mut s, a);
-        update(&mut s, Action::Tick(6_000));
-        let a = action(&s, GRID, down(m.rows.x + 1, m.rows.y + 4)).unwrap();
-        assert!(update(&mut s, a)
-            .iter()
-            .all(|e| !matches!(e, crate::core::Effect::Engine(_))));
-        let wheel = MouseInput {
-            kind: MouseKind::ScrollDown,
-            col: m.rows.x + 1,
-            row: m.rows.y + 1,
-        };
-        let a = action(&s, GRID, wheel).unwrap();
-        update(&mut s, a);
-        assert_eq!(s.browser.cursor, 7);
     }
 
     #[test]

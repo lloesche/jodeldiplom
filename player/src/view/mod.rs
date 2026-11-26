@@ -5,23 +5,25 @@
 //! mode's picture) go through [`Pictures`]: the window leaves their cells
 //! empty and paints pixels there after the frame is drawn.
 //!
-//! Each part of the screen has its widgets: the list pane ([`list`]), the
-//! command palette over it ([`command_palette`]), what is playing ([`now`]:
+//! Each part of the screen has its widgets: the box of a tab of its own
+//! (Transition, Karaoke, the Mixer's place), what is playing ([`now`]:
 //! the right column and Now playing), the settings ([`settings`]) and the
 //! keys ([`help`]). They are laid out on a grid of cells ([`layout`]),
 //! with text measured in cells ([`cells`]), and take the mouse there
-//! ([`mouse`]). The bottom bar's cells are left to the window, which draws
-//! it from its model ([`bottom`], the spectrum's [`plot`]).
+//! ([`mouse`]). The window draws the rest from their models, over the
+//! cells left to it: the list pane with its tabs ([`list`]), the command
+//! palette over everything ([`command_palette`]) and the bottom bar
+//! ([`bottom`], the spectrum's [`plot`]).
 
 pub mod bottom;
 pub mod bubbles;
 pub mod cells;
-mod command_palette;
+pub mod command_palette;
 mod help;
 pub mod karaoke;
 pub mod lanes;
 pub mod layout;
-mod list;
+pub mod list;
 pub mod mouse;
 mod now;
 pub mod palette;
@@ -138,13 +140,72 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
             );
         }
         Layout::Main(m) => {
-            list::draw_pane(frame, scene, m, pictures);
+            draw_tab(frame, scene, m, pictures);
             now::draw_column(frame, scene, m, pictures);
         }
         Layout::NowPlaying(n) => now::draw_now(frame, scene, n, pictures),
         Layout::Settings(s) => settings::draw(frame, scene.state, s),
         Layout::Help(h) => help::draw(frame, scene.state, h),
         Layout::Karaoke(k) => karaoke::draw_mode(frame, scene, k, pictures),
+    }
+}
+
+/// The Mixer tab's bottom border: its keys.
+const DESK_FOOTER: &str = "← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo";
+
+/// A tab of its own (Transition, Karaoke, the Mixer) in its box (the
+/// window draws the tabs over its top border, and the Mixer's desk inside
+/// it), its keys in its bottom border; nothing for the browser and the
+/// queue, which the window draws whole.
+fn draw_tab(frame: &mut Frame, scene: &Scene, m: &layout::MainLayout, pictures: &mut dyn Pictures) {
+    use crate::core::Side;
+    let state = scene.state;
+    let footer = match state.side {
+        // The zoom first: cut, the keys go.
+        Side::Transition => keep_start(
+            &transition::footer(state),
+            usize::from(
+                m.list.width.saturating_sub(4).saturating_sub(
+                    m.transition
+                        .as_ref()
+                        .and_then(|x| x.fit)
+                        .map_or(0, |f| f.width + 1),
+                ),
+            ),
+        ),
+        Side::Karaoke if state.karaoke.sync.is_some() => sync::footer(state).into(),
+        Side::Karaoke => "enter Karaoke mode · ↑ ↓ row · ← → its value · s sync".into(),
+        Side::Mixer => DESK_FOOTER.into(),
+        // The window draws the browser and the queue whole.
+        Side::Browser | Side::Queue => return,
+    };
+    let block = bordered(Line::default()).title_bottom(Line::from(Span::styled(
+        format!(" {footer} "),
+        Style::new().fg(DIM),
+    )));
+    frame.render_widget(block, m.list);
+    match state.side {
+        Side::Transition => {
+            if let Some(layout) = &m.transition {
+                transition::draw(frame, scene, layout, pictures);
+                if let Some(fit) = layout.fit {
+                    frame.buffer_mut().set_string(
+                        fit.x,
+                        fit.y,
+                        layout::FIT_LYRICS,
+                        Style::new().fg(TEXT).bg(BORDER),
+                    );
+                }
+            }
+        }
+        Side::Karaoke => {
+            if let Some(layout) = &m.karaoke {
+                karaoke::draw_tab(frame, scene, layout, pictures);
+            }
+        }
+        // The window draws the desk in iced's widgets over its rows
+        // ([`crate::gui::mixer`]).
+        Side::Mixer | Side::Browser | Side::Queue => {}
     }
 }
 
@@ -201,7 +262,7 @@ fn row_line(left: Vec<Span<'static>>, right: Vec<Span<'static>>, w: usize) -> Li
 
 /// A search line in `rect`: `/`, what is typed (with the caret while it
 /// is edited), and how many it leaves `shown` at the right where there is
-/// room (the browser's filter, the help's search).
+/// room (the help's search).
 fn search_line(frame: &mut Frame, rect: Rect, typed: &str, editing: bool, shown: usize) {
     let mut spans = vec![
         Span::styled("/ ", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),

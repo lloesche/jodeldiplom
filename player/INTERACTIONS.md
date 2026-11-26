@@ -174,6 +174,7 @@ stem keys are their mutes.
   Karaoke mode and `esc` (in the mode itself a paused song goes on only at
   START, after its count-in: K3).
   - `a_song_picked_while_paused_plays`
+  - `a_double_click_on_a_queue_row_is_two_clicks_on_it` (the window)
   - `another_track_played_while_paused_plays` (engine)
 
 ## Karaoke

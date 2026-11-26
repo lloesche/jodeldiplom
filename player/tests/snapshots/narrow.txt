@@ -1,16 +1,16 @@
-╭ Browser │ Queue (5) │ Transition │ Karaoke │ Mixer ──────────╮
-│  ..                                                       up │
-│▸ Bonus/                                                      │
-│♪ Opening                                     FLAC 44.1   3:00│
-│▶ Morning Light                               FLAC 44.1   3:37│
-│♪ Undertow                                    FLAC 44.1   4:14│
-│♪ Glass Rooms                                 FLAC 44.1   4:51│
-│♪ Coda                                           WAV 96   5:28│
-│                                                              │
-│                                                              │
-│                                                              │
-│                                                              │
-╰ /music/Album ────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
  ▶ Morning Light — The Ramps
  ○ PCM  file 44.1 → USB Audio DAC
 
@@ -20,6 +20,16 @@
 
 
 
+[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer
+[shown] Browser
+[path] /music/Album
+[row] ..  up
+[row] ▸ Bonus/
+[row] ♪ Opening  [chip] FLAC 44.1  3:00
+[row selected playing] ▶ Morning Light  [chip] FLAC 44.1  3:37
+[row] ♪ Undertow  [chip] FLAC 44.1  4:14
+[row] ♪ Glass Rooms  [chip] FLAC 44.1  4:51
+[row] ♪ Coda  [chip] WAV 96  5:28
 [spectrum] 0 dB | 20 Hz · 50 · 100 · 200 · 500 · 1k · 2k · 5k · 10k · 20k · [source] 88k
 [time] 1:23
 [seek] 34 %

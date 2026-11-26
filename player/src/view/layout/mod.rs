@@ -5,12 +5,13 @@
 //! Main screen, wide:
 //!
 //! ```text
-//! ╭ Browser │ Queue (3) ───────────╮╭─────────────╮
-//! │ ..                             ││   cover     │
-//! │ ▸ Album/                       │╰─────────────╯
-//! │ ♪ Song             FLAC 44.1   │ title, artist
-//! │ / filter                       │ ○ PCM
-//! ╰ C:\Music ──────────────────────╯ signal path
+//! ┌ the list pane ([`MainLayout::list`]): ┐╭─────────────╮
+//! │ its tabs on its top edge, the browser ││   cover     │
+//! │ or the queue, drawn by the window; a  │╰─────────────╯
+//! │ tab of its own (Transition, Karaoke,  │ title, artist
+//! │ the Mixer) in a box drawn here, the   │ ○ PCM
+//! │ tabs over its top border              │ signal path
+//! └───────────────────────────────────────┘
 //! ┌ the bottom bar ([`Bottom`]), drawn by the window ┐
 //! │ the spectrum and its labels                      │
 //! │ 0:12 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────── 4:01  │
@@ -42,7 +43,6 @@ pub use transition::{
 
 use ratatui::layout::Rect;
 
-use crate::core::text;
 use crate::core::{Fit, Screen, Side, State};
 use crate::view::cells::{self, width};
 
@@ -114,14 +114,11 @@ pub const BAR_ROWS: u16 = 3;
 /// The main screen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainLayout {
-    /// The bordered list pane.
+    /// The list pane, its tabs on its top row (the window draws them, and
+    /// the browser and the queue whole).
     pub list: Rect,
-    /// The Browser / Queue toggle pieces in its top border.
-    pub toggle: Vec<(Rect, Side)>,
-    /// The rows inside it.
+    /// Inside its border.
     pub rows: Rect,
-    /// The filter line, when a filter is set.
-    pub filter: Option<Rect>,
     /// The right column.
     pub right: Option<Rect>,
     /// The cover, in the right column.
@@ -252,7 +249,9 @@ pub fn compute(state: &State, grid: Grid) -> Layout {
 /// behind the other screens, the keys go round the desk's strips from any
 /// tab), the desk's width at a scale of 1 ([`CELL_WIDTH`]; the window,
 /// which knows its cells, gives the one drawn, [`desk_width`]). Nothing on
-/// a grid too small to draw on.
+/// a grid too small to draw on. The list's page is its pane's rows inside
+/// its border, a row a cell; the window, which draws the list in rows of
+/// its own, counts those instead ([`crate::gui::screens::list::fit`]).
 pub fn fit(state: &State, grid: Grid) -> Fit {
     if grid.too_small() {
         return Fit::default();
@@ -263,7 +262,7 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
     // The wide tabs' pane, inside its border.
     let wide = in_border(area);
     Fit {
-        list_rows: list.rows.height + u16::from(list.filter.is_some()),
+        list_rows: list.rows.height,
         help_rows: help.text.height + u16::from(help.search.is_some()),
         desk_width: desk_width(grid, CELL_WIDTH),
         lane_letters: transition::lane_width(wide),
@@ -284,6 +283,12 @@ pub const CELL_WIDTH: f32 = 8.0;
 /// desk there, `gui::mixer`).
 pub fn desk_width(grid: Grid, cell: f32) -> f32 {
     f32::from(in_border(grid.area()).width) * cell
+}
+
+/// The browser's and the queue's pane on `grid`, whichever side shows
+/// (the list keeps its page behind the other tabs).
+pub fn list_pane(state: &State, grid: Grid) -> Rect {
+    main_list(state, grid).list
 }
 
 /// `rect` inside its border.
@@ -374,9 +379,7 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
     let inner = in_border(list);
     MainLayout {
         list,
-        toggle: toggle_rects(state, list),
         rows: inner,
-        filter: None,
         right: None,
         cover: None,
         info: None,
@@ -389,20 +392,6 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
         }),
         bottom,
     }
-}
-
-/// The list toggle's pieces in the top border of `list`.
-fn toggle_rects(state: &State, list: Rect) -> Vec<(Rect, Side)> {
-    let mut toggle = Vec::new();
-    let mut x = list.x + 1;
-    for (label, side, _) in text::toggle(state) {
-        let w = width(&label) as u16;
-        if let Some(side) = side {
-            toggle.push((Rect::new(x, list.y, w, 1), side));
-        }
-        x += w;
-    }
-    toggle
 }
 
 /// The main screen on `grid`: a wide tab's, or the browser's or the
@@ -450,24 +439,6 @@ fn main_list(state: &State, grid: Grid) -> MainLayout {
     } else {
         (left, None)
     };
-    let inner = in_border(list);
-    let (rows, filter) = if state.browser.filter.is_some() && state.side == Side::Browser {
-        (
-            Rect {
-                height: inner.height.saturating_sub(1),
-                ..inner
-            },
-            Some(Rect::new(
-                inner.x,
-                inner.bottom().saturating_sub(1),
-                inner.width,
-                1,
-            )),
-        )
-    } else {
-        (inner, None)
-    };
-    let toggle = toggle_rects(state, list);
     let (cover, info) = match right {
         Some(r) => {
             // The cover, a free row, then the text (at least 7 rows).
@@ -493,9 +464,7 @@ fn main_list(state: &State, grid: Grid) -> MainLayout {
     };
     MainLayout {
         list,
-        toggle,
-        rows,
-        filter,
+        rows: in_border(list),
         right,
         cover,
         info,
@@ -703,8 +672,6 @@ mod tests {
         assert_eq!(b.spectrum, 10);
         assert_eq!(b.area, Rect::new(0, 48 - 10 - BAR_ROWS, 160, 10 + BAR_ROWS));
         assert_eq!(m.list.bottom(), b.area.y);
-        assert_eq!(m.toggle.len(), 5);
-        assert_eq!(m.toggle[0].0.y, m.list.y);
     }
 
     #[test]

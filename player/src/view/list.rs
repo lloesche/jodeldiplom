@@ -1,157 +1,460 @@
-//! The list pane: its box with the Browser / Queue toggle and its footer,
-//! and what it shows (the browser's and the queue's rows, the command
-//! palette over them, the Transition and Karaoke tabs; the Mixer tab is the
-//! window's own), the filter line under it.
+//! The list pane's model ([`Pane`]): the tabs over it (the browser, the
+//! queue with its length, Transition, Karaoke, the Mixer) and, on the
+//! browser's or the queue's side, what it shows of them: where the
+//! browser is, the rows in view (what each is, its title, format and
+//! length; in the queue how far each is got ready, and the icons of what
+//! is known of it), a note where there is nothing to list, and the
+//! filter line. The window draws it ([`crate::gui::screens::list`]),
+//! row by row from the first in view: a folder of thousands costs what a
+//! folder of ten does.
 
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
-use ratatui::Frame;
+use std::fmt;
+use std::path::Path;
 
-use super::colors::*;
-use super::{bordered, command_palette, karaoke, row_line, search_line, sync, transition};
-use super::{keep_start, Pictures, Scene};
-use crate::browser::EntryKind;
+use jodel_playback::PlayState;
+
+use crate::browser::{self, EntryKind};
+use crate::core::karaoke::SongLyrics;
 use crate::core::text::{self, clock};
-use crate::core::{browser_rows, list_cursor, row_entry, Row, Side, State};
-use crate::view::cells::width;
-use crate::view::layout::MainLayout;
+use crate::core::{
+    browser_rows, list_cursor, list_height, readiness, row_entry, Job, LyricsFacts, QueueFacts,
+    Readiness, Rhythm, RhythmFacts, Row, Side, State,
+};
 
-/// The Mixer tab's bottom border: its keys.
-const DESK_FOOTER: &str = "← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo";
+/// What the empty queue says, and how to fill it.
+pub const QUEUE_EMPTY: &str = "The queue is empty.";
+/// How to fill the queue.
+pub const QUEUE_HINT: &str =
+    "enter queues a file or playlist, shift+enter plays it too; alt+enter plays a file with its whole folder.";
 
-/// The list pane of the main screen, and the filter line under it.
-pub(super) fn draw_pane(
-    frame: &mut Frame,
-    scene: &Scene,
-    m: &MainLayout,
-    pictures: &mut dyn Pictures,
-) {
-    let state = scene.state;
-    // The list pane with the Browser / Queue toggle in its border.
-    let mut title = vec![Span::raw("")];
-    for (label, side, shown) in text::toggle(state) {
-        let style = match (side, shown) {
-            (None, _) => Style::new().fg(BORDER),
-            (Some(_), true) => Style::new()
-                .fg(Color::Rgb(20, 20, 24))
-                .bg(ACCENT)
-                .add_modifier(Modifier::BOLD),
-            (Some(_), false) => Style::new().fg(DIM),
+/// The narrowest pane, in points, whose queue rows show the icons of what
+/// is known of each track.
+pub const FACTS_WIDTH: f32 = 448.0;
+
+/// The list pane as it is now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pane {
+    /// The tabs, left to right.
+    pub tabs: Vec<Tab>,
+    /// What the pane shows under them.
+    pub body: Body,
+}
+
+/// A tab over the pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tab {
+    /// The side it shows.
+    pub side: Side,
+    /// Its name.
+    pub label: &'static str,
+    /// The count beside its name (the queue's length).
+    pub count: Option<usize>,
+    /// It is the side shown.
+    pub shown: bool,
+}
+
+/// What the pane shows under its tabs.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Body {
+    /// The browser.
+    Browser(Browser),
+    /// The queue.
+    Queue(Queue),
+    /// A tab of its own (Transition, Karaoke, the Mixer), drawn apart.
+    Tab,
+}
+
+/// The browser's side.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Browser {
+    /// Where it is.
+    pub place: Place,
+    /// The rows in view.
+    pub rows: Vec<BrowserRow>,
+    /// What there is to say where there is nothing (else) to list.
+    pub note: Option<Note>,
+    /// The filter line, while the folder is filtered.
+    pub filter: Option<FilterLine>,
+}
+
+/// Where the browser is: its folder (or the drives), and whether it is
+/// being listed or searched below.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Place {
+    /// The folder, as written for people (`Drives` for the drives).
+    pub path: String,
+    /// Its parts, from the root.
+    pub crumbs: Vec<String>,
+    /// While a search below it lists what it found: how many, and
+    /// whether it is still at it.
+    pub found: Option<(usize, bool)>,
+    /// The folder is being listed.
+    pub listing: bool,
+}
+
+/// What a browser row is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// The folder above (`..`).
+    Parent,
+    /// A folder.
+    Folder,
+    /// A playlist.
+    Playlist,
+    /// A music file.
+    File,
+    /// "Search all subfolders for …", under a filtered folder.
+    SearchBelow,
+}
+
+/// A file's format and rate, as its chip says it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chip {
+    /// `FLAC 44.1`, `WAV 96`; `?` when the file could not be read.
+    pub text: String,
+    /// The file could not be read.
+    pub failed: bool,
+}
+
+/// What a row knows of a file: its chip and length, or that they are
+/// still being read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Known {
+    /// Not a file.
+    Nothing,
+    /// Still being read.
+    Pending,
+    /// Read: its chip, and its length where it has one.
+    Read(Chip, Option<String>),
+}
+
+/// A row of the browser.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowserRow {
+    /// Its index in the browser's rows.
+    pub index: usize,
+    /// What it is.
+    pub kind: Kind,
+    /// Its title: the folder's or file's name, the title tag, the path
+    /// below the folder searched; what is searched for, for
+    /// [`Kind::SearchBelow`].
+    pub title: String,
+    /// A file's chip and length.
+    pub known: Known,
+    /// The row selected.
+    pub selected: bool,
+    /// The file playing.
+    pub playing: bool,
+}
+
+/// What there is to say where there is nothing (else) to list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Note {
+    /// The folder could not be listed: why.
+    Failed(String),
+    /// It is being listed.
+    Listing,
+    /// A search found nothing yet.
+    NothingFound,
+    /// Nothing to play here.
+    Empty,
+}
+
+impl Note {
+    /// What it says.
+    pub fn text(&self) -> &str {
+        match self {
+            Note::Failed(why) => why,
+            Note::Listing => "listing…",
+            Note::NothingFound => "nothing found yet",
+            Note::Empty => "no folders or music files here",
+        }
+    }
+}
+
+/// The filter line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FilterLine {
+    /// What is typed.
+    pub typed: String,
+    /// It is being typed (the caret shows).
+    pub editing: bool,
+    /// How many rows it leaves (the search row not counted).
+    pub shown: usize,
+}
+
+/// The queue's side.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Queue {
+    /// Which track plays of how many ("playing 2 of 5"), or how many
+    /// there are.
+    pub summary: String,
+    /// The rows in view (none: the queue is empty).
+    pub rows: Vec<QueueRow>,
+}
+
+/// A thing known of a track in the queue, as it is got ready.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fact {
+    /// Its key (found as soon as the file is decoded).
+    Key,
+    /// Its stems (separated alongside, on the GPU).
+    Stems,
+    /// Its tempo (decided last, from the beats and the stems).
+    Tempo,
+    /// Its lyrics (looked up and timed alongside).
+    Lyrics,
+    /// Its cover, taken apart.
+    Cover,
+}
+
+impl Fact {
+    /// Its sign in the outline.
+    fn sign(self) -> &'static str {
+        match self {
+            Fact::Key => "♯",
+            Fact::Stems => "▥",
+            Fact::Tempo => "♩",
+            Fact::Lyrics => "¶",
+            Fact::Cover => "◐",
+        }
+    }
+}
+
+/// A fact as a queue row shows it: lit once it is known; the lyrics
+/// `heard` when no trusted source had them and machine learning heard
+/// them from the voice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Status {
+    /// What.
+    pub fact: Fact,
+    /// Known.
+    pub lit: bool,
+    /// Heard by machine learning.
+    pub heard: bool,
+}
+
+/// A row of the queue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueRow {
+    /// Its index in the queue.
+    pub index: usize,
+    /// Its title.
+    pub title: String,
+    /// The track playing (or paused, or stopped on it).
+    pub current: Option<PlayState>,
+    /// How far it is got ready.
+    pub readiness: Readiness,
+    /// What is known of it, where the pane is wide enough (empty
+    /// otherwise), in the order the work finds it.
+    pub facts: Vec<Status>,
+    /// Its chip and length.
+    pub known: Known,
+    /// The row selected.
+    pub selected: bool,
+}
+
+impl Pane {
+    /// The pane for `state`, `width` points wide.
+    pub fn of(state: &State, width: f32) -> Pane {
+        let tabs = [
+            (Side::Browser, "Browser"),
+            (Side::Queue, "Queue"),
+            (Side::Transition, "Transition"),
+            (Side::Karaoke, "Karaoke"),
+            (Side::Mixer, "Mixer"),
+        ]
+        .into_iter()
+        .map(|(side, label)| Tab {
+            side,
+            label,
+            count: (side == Side::Queue).then_some(state.queue.paths.len()),
+            shown: state.side == side,
+        })
+        .collect();
+        let body = match state.side {
+            Side::Browser => Body::Browser(Browser::of(state)),
+            Side::Queue => Body::Queue(Queue::of(state, width)),
+            Side::Transition | Side::Karaoke | Side::Mixer => Body::Tab,
         };
-        title.push(Span::styled(label, style));
+        Pane { tabs, body }
     }
-    let footer = match state.side {
-        Side::Browser => {
-            let b = &state.browser;
-            let mut text = if crate::browser::is_drives(&b.dir) {
-                "Drives".to_owned()
-            } else {
-                b.dir.to_string_lossy().into_owned()
-            };
-            if let Some(search) = &b.search {
-                let status = if search.done { "" } else { ", searching…" };
-                text = format!("{} found below {text}{status}", search.hits.len());
-            } else if b.loading {
-                text.push_str(&format!(" (listing {})", text::spinner(state)));
-            }
-            keep_end(&text, usize::from(m.list.width.saturating_sub(4)))
-        }
-        Side::Queue => match state.queue.current {
-            Some(i) => format!("playing {} of {}", i + 1, state.queue.paths.len()),
-            None => format!("{} in the queue", state.queue.paths.len()),
-        },
-        // The zoom first: cut, the keys go.
-        Side::Transition => keep_start(
-            &transition::footer(state),
-            usize::from(
-                m.list.width.saturating_sub(4).saturating_sub(
-                    m.transition
-                        .as_ref()
-                        .and_then(|x| x.fit)
-                        .map_or(0, |f| f.width + 1),
-                ),
-            ),
-        ),
-        Side::Karaoke if state.karaoke.sync.is_some() => sync::footer(state).into(),
-        Side::Karaoke => "enter Karaoke mode · ↑ ↓ row · ← → its value · s sync".into(),
-        Side::Mixer => DESK_FOOTER.into(),
+}
+
+/// The rows of the browser from `first`, `count` of them at most: found
+/// one by one (the folder's own and the search's), the folder's filtered
+/// rows listed whole.
+fn browser_window(state: &State, first: usize, count: usize) -> Vec<(usize, Row)> {
+    let b = &state.browser;
+    let filtered = b.search.is_none() && b.filter.as_ref().is_some_and(|f| !f.text.is_empty());
+    if filtered {
+        return browser_rows(state)
+            .into_iter()
+            .enumerate()
+            .skip(first)
+            .take(count)
+            .collect();
+    }
+    let len = match &b.search {
+        Some(search) => search.hits.len(),
+        None => b.entries.len(),
     };
-    let block = bordered(Line::from(title)).title_bottom(Line::from(Span::styled(
-        format!(" {footer} "),
-        Style::new().fg(DIM),
-    )));
-    frame.render_widget(block, m.list);
-    if state.palette.is_some() {
-        command_palette::draw(frame, state, m.rows);
-    } else {
-        match state.side {
-            Side::Browser => draw_browser(frame, state, m.rows),
-            Side::Queue => draw_queue(frame, state, m.rows),
-            Side::Transition => {
-                if let Some(layout) = &m.transition {
-                    transition::draw(frame, scene, layout, pictures);
-                    if let Some(fit) = layout.fit {
-                        frame.buffer_mut().set_string(
-                            fit.x,
-                            fit.y,
-                            crate::view::layout::FIT_LYRICS,
-                            Style::new().fg(TEXT).bg(BORDER),
-                        );
-                    }
-                }
-            }
-            Side::Karaoke => {
-                if let Some(layout) = &m.karaoke {
-                    karaoke::draw_tab(frame, scene, layout, pictures);
-                }
-            }
-            // The window draws the desk in iced's widgets over its rows
-            // ([`crate::gui::mixer`]).
-            Side::Mixer => {}
-        }
-    }
-    if let (Some(rect), Some(filter)) = (m.filter, &state.browser.filter) {
-        let shown = browser_rows(state)
-            .iter()
-            .filter(|r| !matches!(r, Row::SearchBelow))
-            .count();
-        search_line(frame, rect, &filter.text, filter.editing, shown);
+    (first..len.min(first.saturating_add(count)))
+        .map(|i| {
+            let row = if b.search.is_some() {
+                Row::Hit(i)
+            } else {
+                Row::Entry(i)
+            };
+            (i, row)
+        })
+        .collect()
+}
+
+/// What a row knows of the file at `path`.
+fn known(state: &State, path: &Path) -> Known {
+    match state.details.get(path) {
+        Some(d) => Known::Read(
+            Chip {
+                text: d.chip.clone(),
+                failed: d.error.is_some(),
+            },
+            d.seconds.map(clock),
+        ),
+        None => Known::Pending,
     }
 }
 
-/// Shortens `text` to `max` cells, keeping its end (for paths).
-fn keep_end(text: &str, max: usize) -> String {
-    if width(text) <= max {
-        return text.to_owned();
-    }
-    let mut out: Vec<char> = Vec::new();
-    let mut used = 1;
-    for c in text.chars().rev() {
-        let w = width(c.encode_utf8(&mut [0; 4]));
-        if used + w > max {
-            break;
+impl Browser {
+    fn of(state: &State) -> Browser {
+        let b = &state.browser;
+        let (cursor, scroll) = list_cursor(state);
+        let window = browser_window(state, scroll, list_height(state));
+        let playing = state.playing.track.as_ref().map(|t| t.info.path.as_path());
+        let rows: Vec<BrowserRow> = window
+            .into_iter()
+            .map(|(index, row)| {
+                let (kind, title, known, path) = match (row, row_entry(state, row)) {
+                    (Row::SearchBelow, _) | (_, None) => (
+                        Kind::SearchBelow,
+                        b.filter.as_ref().map_or("", |f| f.text.as_str()).to_owned(),
+                        Known::Nothing,
+                        None,
+                    ),
+                    (_, Some(e)) => match e.kind {
+                        EntryKind::Parent => (Kind::Parent, "..".to_owned(), Known::Nothing, None),
+                        EntryKind::Dir => {
+                            (Kind::Folder, e.label().to_owned(), Known::Nothing, None)
+                        }
+                        EntryKind::Playlist => {
+                            (Kind::Playlist, e.label().to_owned(), Known::Nothing, None)
+                        }
+                        EntryKind::File => {
+                            let title = if e.relative.is_some() {
+                                e.label().to_owned()
+                            } else {
+                                state
+                                    .details
+                                    .get(&e.path)
+                                    .and_then(|d| d.title.clone())
+                                    .unwrap_or_else(|| e.name.clone())
+                            };
+                            (Kind::File, title, known(state, &e.path), Some(&e.path))
+                        }
+                    },
+                };
+                BrowserRow {
+                    index,
+                    kind,
+                    title,
+                    known,
+                    selected: index == cursor,
+                    playing: path.is_some_and(|p| Some(p.as_path()) == playing),
+                }
+            })
+            .collect();
+        // Only the `..` row: nothing to play here (the row stays usable).
+        let only_parent = || {
+            let parent = |e: &browser::Entry| e.kind == EntryKind::Parent;
+            match b.filter.as_ref().filter(|f| !f.text.is_empty()) {
+                Some(_) => browser_rows(state)
+                    .iter()
+                    .all(|&r| row_entry(state, r).is_some_and(parent)),
+                None => b.entries.iter().all(parent),
+            }
+        };
+        let note = if let Some(error) = &b.error {
+            Some(Note::Failed(error.clone()))
+        } else if b.loading {
+            Some(Note::Listing)
+        } else if b.search.as_ref().is_some_and(|s| s.hits.is_empty()) {
+            Some(Note::NothingFound)
+        } else if b.search.is_none() && only_parent() {
+            Some(Note::Empty)
+        } else {
+            None
+        };
+        let filter = b.filter.as_ref().map(|f| FilterLine {
+            typed: f.text.clone(),
+            editing: f.editing,
+            shown: browser_rows(state)
+                .iter()
+                .filter(|r| !matches!(r, Row::SearchBelow))
+                .count(),
+        });
+        Browser {
+            place: Place::of(state),
+            rows,
+            note,
+            filter,
         }
-        used += w;
-        out.push(c);
     }
-    out.reverse();
-    format!("…{}", out.into_iter().collect::<String>())
 }
 
-/// A queue row's icons: each grey until the track has that thing, lit once
-/// it has, in the order the work finds them, so they light up one after
-/// the other as the queue is got ready:
-/// - `♯` its key (found as soon as the file is decoded);
-/// - `▥` its stems (separated alongside, on the GPU);
-/// - `♩` its tempo (decided last, from the beats and the stems);
-/// - `¶` its lyrics (looked up and timed alongside, by another worker);
-///   orange when no trusted source had them and machine learning heard
-///   them from the voice.
-fn status_spans(state: &State, path: &std::path::Path) -> Vec<Span<'static>> {
-    use crate::core::karaoke::SongLyrics;
-    use crate::core::{Job, LyricsFacts, QueueFacts, Rhythm, RhythmFacts};
+impl Place {
+    fn of(state: &State) -> Place {
+        let b = &state.browser;
+        let drives = browser::is_drives(&b.dir);
+        let path = if drives {
+            "Drives".to_owned()
+        } else {
+            b.dir.to_string_lossy().into_owned()
+        };
+        let crumbs = if drives {
+            vec![path.clone()]
+        } else {
+            crumbs(&b.dir)
+        };
+        Place {
+            path,
+            crumbs,
+            found: b.search.as_ref().map(|s| (s.hits.len(), !s.done)),
+            listing: b.loading,
+        }
+    }
+}
+
+/// `dir`'s parts, from its root (a drive's root as `C:`, the root as
+/// `/`).
+fn crumbs(dir: &Path) -> Vec<String> {
+    use std::path::Component;
+    let mut out: Vec<String> = Vec::new();
+    for part in dir.components() {
+        match part {
+            Component::Prefix(prefix) => {
+                out.push(prefix.as_os_str().to_string_lossy().into_owned());
+            }
+            Component::RootDir if out.is_empty() => out.push("/".to_owned()),
+            Component::Normal(name) => out.push(name.to_string_lossy().into_owned()),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The facts of `path` as its queue row shows them, for the jobs the
+/// queue is got ready by, in the order they come.
+fn facts(state: &State, path: &Path) -> Vec<Status> {
     let mut facts = state.facts.get(path).cloned().unwrap_or_default();
     // Known here already (the songs wanted now), though not told yet.
     if let Some(Rhythm::Ready(r)) = state.rhythm.get(path) {
@@ -166,273 +469,217 @@ fn status_spans(state: &State, path: &std::path::Path) -> Vec<Span<'static>> {
         lyrics,
         cover,
     } = facts;
-    // Heard by machine learning (no trusted source): lit in orange.
     let known = state.karaoke.lyrics.get(path);
     let heard = lyrics == Some(LyricsFacts::Heard) || known.is_some_and(SongLyrics::heard);
     let lyrics = heard
         || matches!(lyrics, Some(LyricsFacts::Timed | LyricsFacts::Untimed))
         || matches!(known, Some(SongLyrics::Found { .. }));
-    // Each job's icons, lit when it found them (the lyrics heard by
-    // machine learning in orange): the analysis's key, stems and tempo, the
-    // lyrics, the cover taken apart; for the jobs the queue is got ready
-    // by, in that order.
-    let icons = |job: &Job| -> Vec<(&'static str, bool, bool)> {
-        match job {
-            Job::Rhythm => vec![
-                ("♯", key == Some(true), false),
-                ("▥", stems == Some(true), false),
-                ("♩", tempo == Some(true), false),
-            ],
-            Job::Lyrics => vec![("¶", lyrics, heard)],
-            Job::Cover => vec![("◐", cover == Some(true), false)],
-        }
+    let status = |fact, lit: Option<bool>| Status {
+        fact,
+        lit: lit == Some(true),
+        heard: false,
     };
     let mut out = Vec::new();
     for job in [Job::Rhythm, Job::Lyrics, Job::Cover] {
         if !state.preparing.contains(&job) {
             continue;
         }
-        for (icon, has, warn) in icons(&job) {
-            let color = match (has, warn) {
-                (true, true) => WARN,
-                (true, false) => ACCENT,
-                (false, _) => DIM,
-            };
-            out.push(Span::styled(icon, Style::new().fg(color)));
-            out.push(Span::raw(" "));
+        match job {
+            Job::Rhythm => out.extend([
+                status(Fact::Key, key),
+                status(Fact::Stems, stems),
+                status(Fact::Tempo, tempo),
+            ]),
+            Job::Lyrics => out.push(Status {
+                fact: Fact::Lyrics,
+                lit: lyrics,
+                heard,
+            }),
+            Job::Cover => out.push(status(Fact::Cover, cover)),
         }
     }
-    out.push(Span::raw(" "));
     out
 }
 
-/// A file's chip (its format) right-aligned in a column, and its length.
-fn chip_spans(state: &State, path: &std::path::Path) -> Vec<Span<'static>> {
-    match state.details.get(path) {
-        Some(d) => {
-            let chip_style = if d.error.is_some() {
-                Style::new().fg(FAIL)
-            } else {
-                Style::new().fg(DIM)
-            };
-            // Right-aligned in a column, so what stands left of it lines up.
-            let mut out = vec![Span::styled(format!("{:>9}", d.chip), chip_style)];
-            if let Some(seconds) = d.seconds {
-                out.push(Span::styled(
-                    format!(" {:>6}", clock(seconds)),
-                    Style::new().fg(DIM),
-                ));
-            }
-            out
-        }
-        None => vec![Span::styled(format!("{:>9}", "…"), Style::new().fg(BORDER))],
-    }
-}
-
-fn draw_browser(frame: &mut Frame, state: &State, area: Rect) {
-    let b = &state.browser;
-    let rows = browser_rows(state);
-    // A note under the rows (the `..` row stays usable above it).
-    let only_parent = rows
-        .iter()
-        .all(|&r| row_entry(state, r).is_some_and(|e| e.kind == EntryKind::Parent));
-    let note = if let Some(error) = &b.error {
-        Some(Span::styled(error.clone(), Style::new().fg(FAIL)))
-    } else if b.loading {
-        Some(Span::styled(
-            format!("{} listing…", text::spinner(state)),
-            Style::new().fg(DIM),
-        ))
-    } else if b.search.is_some() && rows.is_empty() {
-        Some(Span::styled("nothing found yet", Style::new().fg(DIM)))
-    } else if only_parent && b.search.is_none() {
-        Some(Span::styled(
-            "no folders or music files here",
-            Style::new().fg(DIM),
-        ))
-    } else {
-        None
-    };
-    let shown = u16::try_from(rows.len())
-        .unwrap_or(u16::MAX)
-        .min(area.height);
-    let note_area = (shown < area.height).then(|| Rect {
-        y: area.y + shown,
-        height: area.height - shown,
-        ..area
-    });
-    if let (Some(note), Some(at)) = (note, note_area) {
-        frame.render_widget(Paragraph::new(note), at);
-    }
-    if rows.is_empty() {
-        return;
-    }
-    let (cursor, scroll) = list_cursor(state);
-    let w = usize::from(area.width);
-    let lines: Vec<Line> = rows
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(usize::from(area.height))
-        .map(|(i, &row)| {
-            let mut l = match (row, row_entry(state, row)) {
-                (Row::SearchBelow, _) => {
-                    let query = b.filter.as_ref().map_or("", |f| f.text.as_str());
-                    row_line(
-                        vec![Span::styled(
-                            format!("» search all subfolders for “{query}”  (enter)"),
-                            Style::new().fg(ACCENT),
-                        )],
-                        Vec::new(),
-                        w,
-                    )
-                }
-                (_, Some(e)) => match e.kind {
-                    EntryKind::Parent => row_line(
-                        vec![Span::styled("  ..", Style::new().fg(DIM))],
-                        vec![Span::styled("up ", Style::new().fg(BORDER))],
-                        w,
-                    ),
-                    EntryKind::Dir => row_line(
-                        vec![
-                            Span::styled("▸ ", Style::new().fg(FOLDER)),
-                            Span::styled(format!("{}/", e.label()), Style::new().fg(FOLDER)),
-                        ],
-                        Vec::new(),
-                        w,
-                    ),
-                    EntryKind::Playlist => row_line(
-                        vec![
-                            Span::styled("≡ ", Style::new().fg(FOLDER)),
-                            Span::styled(e.label().to_owned(), Style::new().fg(TEXT)),
-                        ],
-                        vec![Span::styled("playlist ", Style::new().fg(BORDER))],
-                        w,
-                    ),
-                    EntryKind::File => {
-                        let details = state.details.get(&e.path);
-                        let title = if e.relative.is_some() {
-                            e.label().to_owned()
-                        } else {
-                            details
-                                .and_then(|d| d.title.clone())
-                                .unwrap_or_else(|| e.name.clone())
-                        };
-                        let current = state
-                            .playing
-                            .track
-                            .as_ref()
-                            .is_some_and(|t| t.info.path == e.path);
-                        let mark = if current { "▶ " } else { "♪ " };
-                        let mark_style = if current {
-                            Style::new().fg(ACCENT)
-                        } else {
-                            Style::new().fg(BORDER)
-                        };
-                        row_line(
-                            vec![
-                                Span::styled(mark, mark_style),
-                                Span::styled(title, Style::new().fg(TEXT)),
-                            ],
-                            chip_spans(state, &e.path),
-                            w,
-                        )
-                    }
+impl Queue {
+    fn of(state: &State, width: f32) -> Queue {
+        let q = &state.queue;
+        let summary = match q.current {
+            Some(i) => format!("playing {} of {}", i + 1, q.paths.len()),
+            None => format!("{} in the queue", q.paths.len()),
+        };
+        let (cursor, scroll) = list_cursor(state);
+        let rows = q
+            .paths
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(list_height(state))
+            .map(|(i, path)| QueueRow {
+                index: i,
+                title: state
+                    .details
+                    .get(path)
+                    .and_then(|d| d.title.clone())
+                    .unwrap_or_else(|| {
+                        path.file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                    }),
+                current: (q.current == Some(i)).then_some(state.playing.state),
+                readiness: readiness(state, path),
+                facts: if width >= FACTS_WIDTH {
+                    facts(state, path)
+                } else {
+                    Vec::new()
                 },
-                _ => Line::default(),
-            };
-            if i == cursor && state.side == Side::Browser {
-                l = l.style(Style::new().bg(SELECTED).add_modifier(Modifier::BOLD));
-            }
-            l
-        })
-        .collect();
-    let rows_area = Rect {
-        height: shown,
-        ..area
-    };
-    frame.render_widget(Paragraph::new(lines), rows_area);
+                known: known(state, path),
+                selected: i == cursor,
+            })
+            .collect();
+        Queue { summary, rows }
+    }
 }
 
-fn draw_queue(frame: &mut Frame, state: &State, area: Rect) {
-    let q = &state.queue;
-    if q.paths.is_empty() {
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(Span::styled("The queue is empty.", Style::new().fg(DIM))),
-                Line::from(Span::styled(
-                    "enter queues a file or playlist, shift+enter plays it too; alt+enter plays a file with its whole folder.",
-                    Style::new().fg(DIM),
-                )),
-            ])
-            .wrap(Wrap { trim: true }),
-            area,
-        );
-        return;
+/// An outline of the pane, one line a piece with its tone in brackets:
+/// for the snapshots.
+impl fmt::Display for Pane {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let names: Vec<String> = self
+            .tabs
+            .iter()
+            .map(|t| match t.count {
+                Some(n) => format!("{} ({n})", t.label),
+                None => t.label.to_owned(),
+            })
+            .collect();
+        writeln!(f, "[tabs] {}", names.join(" │ "))?;
+        if let Some(shown) = self.tabs.iter().find(|t| t.shown) {
+            writeln!(f, "[shown] {}", shown.label)?;
+        }
+        match &self.body {
+            Body::Browser(b) => b.fmt(f),
+            Body::Queue(q) => q.fmt(f),
+            Body::Tab => Ok(()),
+        }
     }
-    let (cursor, scroll) = list_cursor(state);
-    let w = usize::from(area.width);
-    let digits = q.paths.len().to_string().len();
-    let lines: Vec<Line> = q
-        .paths
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(usize::from(area.height))
-        .map(|(i, path)| {
-            let current = q.current == Some(i);
-            let title = state
-                .details
-                .get(path)
-                .and_then(|d| d.title.clone())
-                .unwrap_or_else(|| {
-                    path.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                });
-            // The play symbol on the current track.
-            let symbol = if current {
-                text::play_symbol(state.playing.state)
+}
+
+/// A row's chip and length in the outline.
+fn known_text(known: &Known) -> String {
+    match known {
+        Known::Nothing => String::new(),
+        Known::Pending => "  …".to_owned(),
+        Known::Read(chip, length) => {
+            let failed = if chip.failed { " failed" } else { "" };
+            match length {
+                Some(length) => format!("  [chip{failed}] {}  {length}", chip.text),
+                None => format!("  [chip{failed}] {}", chip.text),
+            }
+        }
+    }
+}
+
+impl fmt::Display for Browser {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let place = &self.place;
+        let mut path = match place.found {
+            Some((n, _)) => format!("{n} found below {}", place.path),
+            None => place.path.clone(),
+        };
+        if place.found.is_some_and(|(_, searching)| searching) {
+            path.push_str(", searching…");
+        } else if place.listing {
+            path.push_str(" (listing)");
+        }
+        writeln!(f, "[path] {path}")?;
+        for row in &self.rows {
+            let mut marks = Vec::new();
+            if row.selected {
+                marks.push(" selected");
+            }
+            if row.playing {
+                marks.push(" playing");
+            }
+            let marks = marks.concat();
+            let known = known_text(&row.known);
+            match row.kind {
+                Kind::Parent => writeln!(f, "[row{marks}] ..  up")?,
+                Kind::Folder => writeln!(f, "[row{marks}] ▸ {}/", row.title)?,
+                Kind::Playlist => writeln!(f, "[row{marks}] ≡ {}  playlist", row.title)?,
+                Kind::File => {
+                    let mark = if row.playing { "▶" } else { "♪" };
+                    writeln!(f, "[row{marks}] {mark} {}{known}", row.title)?;
+                }
+                Kind::SearchBelow => writeln!(
+                    f,
+                    "[row{marks}] » search all subfolders for “{}”  (enter)",
+                    row.title
+                )?,
+            }
+        }
+        if let Some(note) = &self.note {
+            let tone = match note {
+                Note::Failed(_) => "fail",
+                _ => "dim",
+            };
+            writeln!(f, "[{tone}] {}", note.text())?;
+        }
+        if let Some(filter) = &self.filter {
+            let caret = if filter.editing { "▏" } else { "" };
+            writeln!(
+                f,
+                "[filter] / {}{caret}  {} shown",
+                filter.typed, filter.shown
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Queue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "[summary] {}", self.summary)?;
+        if self.rows.is_empty() {
+            writeln!(f, "[dim] {QUEUE_EMPTY}")?;
+            writeln!(f, "[dim] {QUEUE_HINT}")?;
+        }
+        for row in &self.rows {
+            let selected = if row.selected { " selected" } else { "" };
+            let readiness = match row.readiness {
+                Readiness::Working => " working",
+                Readiness::Waiting => " waiting",
+                Readiness::Done => "",
+            };
+            let symbol = match row.current {
+                Some(play) => format!("{} ", text::play_symbol(play)),
+                None => String::new(),
+            };
+            let facts: Vec<String> = row
+                .facts
+                .iter()
+                .map(|s| {
+                    let lit = match (s.lit, s.heard) {
+                        (true, true) => "!",
+                        (true, false) => "*",
+                        (false, _) => "",
+                    };
+                    format!("{}{lit}", s.fact.sign())
+                })
+                .collect();
+            let facts = if facts.is_empty() {
+                String::new()
             } else {
-                " "
+                format!("  {}", facts.join(" "))
             };
-            // A spinner while work on it is on (an analysis, a look-up, a
-            // timing), a dot while some is still to come.
-            let (busy, busy_color) = match crate::core::readiness(state, path) {
-                crate::core::Readiness::Working => (text::spinner(state), ACCENT),
-                crate::core::Readiness::Waiting => ('·', DIM),
-                crate::core::Readiness::Done => (' ', DIM),
-            };
-            // How far it is got ready, left of its format (where there is
-            // room for its title too).
-            let mut right = chip_spans(state, path);
-            if w >= 56 {
-                let mut icons = status_spans(state, path);
-                icons.append(&mut right);
-                right = icons;
-            }
-            let mut l = row_line(
-                vec![
-                    Span::styled(symbol, Style::new().fg(ACCENT)),
-                    Span::styled(busy.to_string(), Style::new().fg(busy_color)),
-                    Span::styled(format!("{:>digits$} ", i + 1), Style::new().fg(DIM)),
-                    Span::styled(
-                        title,
-                        if current {
-                            Style::new().fg(ACCENT)
-                        } else {
-                            Style::new().fg(TEXT)
-                        },
-                    ),
-                ],
-                right,
-                w,
-            );
-            if i == cursor && state.side == Side::Queue {
-                l = l.style(Style::new().bg(SELECTED).add_modifier(Modifier::BOLD));
-            }
-            l
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), area);
+            writeln!(
+                f,
+                "[row{selected}{readiness}] {symbol}{} {}{facts}{}",
+                row.index + 1,
+                row.title,
+                known_text(&row.known)
+            )?;
+        }
+        Ok(())
+    }
 }

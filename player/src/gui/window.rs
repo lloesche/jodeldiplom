@@ -57,12 +57,12 @@ pub enum Message {
     /// A widget's action for the core.
     Act(Action),
     /// A widget's press at a point holds the pointer until its button is
-    /// let go of (the seek bar's).
+    /// let go of (the seek bar's, a queue row's).
     Grab(Grab, Point),
     /// The wheel over a strip of the Mixer tab.
     DeskWheel(Channel, ScrollDelta),
     /// The wheel over a widget that scrolls what the screen scrolls (the
-    /// bottom bar).
+    /// list, the bottom bar).
     Wheel(ScrollDelta),
     /// The window's last frame, for `--save-frame`.
     Shot(window::Screenshot),
@@ -282,7 +282,10 @@ impl Gui {
                 Task::none()
             }
             Message::Wheel(delta) => {
-                let steps = self.wheel.turn(WheelOn::Canvas, delta, self.line_px());
+                // A step scrolls three rows: a touchpad's pixels move the
+                // list as far as they go.
+                let line = 3.0 * super::look::height::ROW;
+                let steps = self.wheel.turn(WheelOn::Canvas, delta, line);
                 for _ in 0..steps.unsigned_abs() {
                     let action = self
                         .app()

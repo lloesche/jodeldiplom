@@ -74,7 +74,8 @@ impl Shots {
     /// `state` in a window of `size` (logical pixels) at `scale`, as
     /// `gui-{name}.png` and `.txt`: told the window's size and scale as a
     /// window would, ticked once (the frame drawn whole), then the view
-    /// drawn and rendered.
+    /// drawn, and drawn again once what eases in has settled, and
+    /// rendered.
     fn shot(&mut self, name: &str, state: &State, size: Size, scale: f32) {
         let event = |e| Message::Event(iced::Event::Window(e), self.id);
         self.gui.show(state.clone());
@@ -82,6 +83,9 @@ impl Shots {
         let _ = self.gui.update(event(window::Event::Rescaled(scale)));
         let _ = self.gui.update(Message::Frame(Instant::now()));
         self.headless.frame(&self.gui, size);
+        // What eases (the tabs' pill, a row's selection, the palette
+        // coming in) settled, as a person sees it a moment later.
+        self.headless.settled(&self.gui, size);
         let path = self.out.join(format!("gui-{name}.png"));
         write_png(&path, &self.headless.screenshot(scale));
         durable::write_atomic(

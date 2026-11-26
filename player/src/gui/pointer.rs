@@ -31,21 +31,46 @@ pub enum Grab {
     /// The seek bar's track: the share across it under the pointer is
     /// where a drag would go, sought on release.
     Seek(Rectangle),
+    /// A queue row (its click told apart, [`Action::ClickRow`]): the
+    /// track goes to the row under the pointer as it moves. `rows` is
+    /// where the rows in view are, the first at its top, each `row`
+    /// points high.
+    QueueRow {
+        /// The rows in view.
+        rows: Rectangle,
+        /// A row's height.
+        row: f32,
+    },
 }
 
 impl Grab {
     /// The button that holds it.
     fn button(self) -> MouseButton {
         match self {
-            Grab::Seek(_) => MouseButton::Left,
+            Grab::Seek(_) | Grab::QueueRow { .. } => MouseButton::Left,
         }
     }
 
-    /// What the pointer at `at` does while it holds: as it goes down and
-    /// as it moves.
-    fn moved(self, at: Point) -> Action {
+    /// What the press at `at` does (a queue row's click is told by the
+    /// row itself).
+    fn pressed(self, at: Point, state: &State) -> Option<Action> {
         match self {
-            Grab::Seek(track) => Action::SeekDrag(share_across(track, at)),
+            Grab::Seek(_) => self.moved(at, state),
+            Grab::QueueRow { .. } => None,
+        }
+    }
+
+    /// What the pointer at `at` does while it holds.
+    pub fn moved(self, at: Point, state: &State) -> Option<Action> {
+        match self {
+            Grab::Seek(track) => Some(Action::SeekDrag(share_across(track, at))),
+            Grab::QueueRow { rows, row } => {
+                if !rows.contains(at) || row <= 0.0 {
+                    return None;
+                }
+                let index = state.queue.scroll + ((at.y - rows.y) / row) as usize;
+                (index < state.queue.paths.len()).then_some(Action::QueueDrag(index))
+            }
         }
     }
 
@@ -53,14 +78,16 @@ impl Grab {
     fn released(self, at: Point) -> Action {
         match self {
             Grab::Seek(track) => Action::SeekTo(share_across(track, at)),
+            Grab::QueueRow { .. } => Action::QueueDragEnd,
         }
     }
 
     /// Whether the core took the press (with nothing to seek, no drag
-    /// starts): it holds on only then.
+    /// starts; a row is held on the queue's side): it holds on only then.
     fn taken(self, state: &State) -> bool {
         match self {
             Grab::Seek(_) => state.seek_drag.is_some(),
+            Grab::QueueRow { .. } => state.queue.dragging,
         }
     }
 }
@@ -143,7 +170,9 @@ impl PointerState {
         if self.held.is_some() || self.grab.is_some() {
             return false;
         }
-        dispatch(app, grab.moved(at));
+        if let Some(action) = grab.pressed(at, &app.state) {
+            dispatch(app, action);
+        }
         if grab.taken(&app.state) {
             self.grab = Some((grab, at));
         }
@@ -160,7 +189,10 @@ impl PointerState {
             return false;
         }
         *last = at;
-        dispatch(app, grab.moved(at));
+        let Some(action) = grab.moved(at, &app.state) else {
+            return false;
+        };
+        dispatch(app, action);
         true
     }
 
@@ -204,10 +236,9 @@ impl PointerState {
                 if let Some(button) = self.held {
                     // A held button drags wherever the pointer is.
                     dirty |= self.mouse(app, grid, MouseKind::Drag(button), shift);
-                } else if karaoke || (pointer.over && crate::core::preview::held(&app.state)) {
+                } else if karaoke {
                     // Karaoke mode shows its pointer, and its controls near
-                    // the bottom, while it moves; a preview selects the row
-                    // under it.
+                    // the bottom, while it moves.
                     dirty |= self.mouse(app, grid, MouseKind::Moved, shift);
                 }
                 dirty
@@ -372,11 +403,42 @@ mod tests {
             iced::Size::new(400.0, 16.0),
         ));
         let at = |x, y| Point::new(x, y);
-        assert!(matches!(grab.moved(at(300.0, 508.0)), Action::SeekDrag(f) if f == 0.5));
-        assert!(matches!(grab.moved(at(20.0, 0.0)), Action::SeekDrag(f) if f == 0.0));
-        assert!(matches!(grab.moved(at(900.0, 900.0)), Action::SeekDrag(f) if f == 1.0));
+        let state = State::new("/m".into(), crate::config::Config::default());
+        let moved = |p| grab.moved(p, &state);
+        assert!(matches!(moved(at(300.0, 508.0)), Some(Action::SeekDrag(f)) if f == 0.5));
+        assert!(matches!(moved(at(20.0, 0.0)), Some(Action::SeekDrag(f)) if f == 0.0));
+        assert!(matches!(moved(at(900.0, 900.0)), Some(Action::SeekDrag(f)) if f == 1.0));
         assert!(matches!(grab.released(at(200.0, 10.0)), Action::SeekTo(f) if f == 0.25));
         assert_eq!(grab.button(), MouseButton::Left);
+    }
+
+    /// A queue row held goes to the row in view under the pointer, scrolled
+    /// or not; off the rows, or past the queue's end, it stays; the
+    /// release ends the drag.
+    #[test]
+    fn a_queue_row_grab_moves_the_track_to_the_row_under_the_pointer() {
+        let grab = Grab::QueueRow {
+            rows: Rectangle::new(Point::new(10.0, 100.0), iced::Size::new(300.0, 340.0)),
+            row: 34.0,
+        };
+        let mut state = State::new("/m".into(), crate::config::Config::default());
+        state.queue.paths = (0..30).map(|i| format!("/q/{i}.flac").into()).collect();
+        let at = |x, y| Point::new(x, y);
+        assert!(matches!(
+            grab.moved(at(50.0, 100.0 + 34.0 * 3.5), &state),
+            Some(Action::QueueDrag(3))
+        ));
+        state.queue.scroll = 12;
+        assert!(matches!(
+            grab.moved(at(50.0, 101.0), &state),
+            Some(Action::QueueDrag(12))
+        ));
+        assert!(grab.moved(at(400.0, 120.0), &state).is_none());
+        assert!(grab.moved(at(50.0, 90.0), &state).is_none());
+        state.queue.paths.truncate(14);
+        assert!(grab.moved(at(50.0, 100.0 + 34.0 * 5.0), &state).is_none());
+        assert!(matches!(grab.released(at(0.0, 0.0)), Action::QueueDragEnd));
+        assert!(grab.pressed(at(50.0, 120.0), &state).is_none());
     }
 
     #[test]

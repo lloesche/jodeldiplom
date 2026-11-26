@@ -132,9 +132,13 @@ downloaded whole is kept. About 45 s on a fast line. To spare a computer
 the downloads, put the `models` folder beside the executable.
 
 ## Screen
-One list pane with a **Browser / Queue / Transition / Karaoke / Mixer**
-toggle in its top border (click it or press `tab`, which goes round all
-five); the right column has the cover, the title, the status
+One list pane with **Browser / Queue / Transition / Karaoke / Mixer**
+tabs on its top edge (click one or press `tab`, which goes round all
+five; the queue's tab carries its length); the browser shows where it
+is above its rows, and the filter line at their foot. The command
+palette (`:`) opens over everything, the window dimmed under it: a click
+on a command runs it, a click beside it closes it. The right column has
+the cover, the title, the status
 light and the signal path, for example `file 48 → DAC`.
 The output device is opened once, as the player starts, shared, through
 the system's mixer: other applications play beside it, and a call's
@@ -1405,7 +1409,8 @@ fixture track playing into the null output.
 `cargo run --release -p jodeldiplom --example view_cost -- [FRAMES] [--budget MEDIAN_MS WORST_MS]`
 times what building the window's view costs a frame (`Gui::view`, laid out
 and drawn headless at 1512 × 982 at scale 2), for the screens drawn by
-iced's widgets (the Mixer tab so far).
+iced's widgets: the main screen (also on a folder of 2,000 files: only
+the rows in view are made), the queue and the Mixer tab.
 
 `cargo run --release -p jodeldiplom --example beats -- [--methods flux,network] [--beats] [--levels] [--presence] [--clicks OUT.wav] FILE...`
 analyses files as the player does (with the methods given, default both).

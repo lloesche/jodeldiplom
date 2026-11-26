@@ -1,5 +1,6 @@
 //! The screens drawn in iced's own widgets, through the window's view in
-//! iced's simulator: what their buttons, keys, drags and wheel do.
+//! iced's simulator: what their buttons, rows, tabs, keys, drags and
+//! wheel do.
 
 mod common;
 #[path = "common/setup.rs"]
@@ -19,7 +20,7 @@ use iced_test::simulator::{press_key, Simulator};
 use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::{Action, Gpu, State};
+use jodeldiplom::core::{update, Action, Effect, Gpu, Side, State};
 use jodeldiplom::gui::pointer::Grab;
 use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::view::setup::Choice;
@@ -266,4 +267,286 @@ fn the_setup_screen_offers_try_again_and_quit_by_click_and_key() {
         let _ = std::fs::remove_dir_all(dir.join("offline-keys"));
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The simulator over `gui`'s view.
+fn simulator(gui: &Gui) -> Simulator<'_, Message> {
+    Simulator::with_size(jodeldiplom::gui::iced_settings(), SIZE, gui.view())
+}
+
+/// The browser's row titled `title` in `state`.
+fn row_of(state: &State, title: &str) -> usize {
+    state
+        .browser
+        .entries
+        .iter()
+        .position(|e| e.name.contains(title))
+        .unwrap()
+}
+
+/// Each tab shows its side, by a click on its name; the queue's carries
+/// its length.
+#[test]
+fn the_tabs_show_each_side() {
+    let gui = window(common::playing_state(160, 42));
+    for (name, side) in [
+        ("Browser", Side::Browser),
+        ("Queue", Side::Queue),
+        ("Transition", Side::Transition),
+        ("Karaoke", Side::Karaoke),
+        ("Mixer", Side::Mixer),
+    ] {
+        let shown = acts(&click(&gui, name).unwrap());
+        assert!(
+            matches!(shown[..], [Action::ShowSide(s)] if s == side),
+            "{name}: {shown:?}"
+        );
+    }
+    assert!(simulator(&gui).find("5").is_ok(), "the queue's length");
+}
+
+/// A click on a browser row is the core's click on it: two on one row
+/// make a double click, which is enter on it (queued, nothing played);
+/// clicks far apart only select. The wheel over the list scrolls it, a
+/// right press queues the row.
+#[test]
+fn a_double_click_on_a_row_is_enter_and_the_wheel_scrolls() {
+    let state = common::playing_state(160, 42);
+    let row = row_of(&state, "Undertow");
+    let gui = window(state);
+    let mut sim = simulator(&gui);
+    sim.click("Undertow").unwrap();
+    sim.click("Undertow").unwrap();
+    let clicks = acts(&sim.into_messages().collect::<Vec<_>>());
+    assert!(
+        matches!(clicks[..], [Action::ClickRow(a), Action::ClickRow(b)] if a == row && b == row),
+        "{clicks:?}"
+    );
+    // The core's double click is enter on the row.
+    let engine = |fx: &[Effect]| -> Vec<jodel_playback::Command> {
+        fx.iter()
+            .filter_map(|e| match e {
+                Effect::Engine(c) => Some(c.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut s = gui.state().unwrap().clone();
+    update(&mut s, Action::Tick(1_000));
+    update(&mut s, clicks[0].clone());
+    update(&mut s, Action::Tick(1_100));
+    let fx = update(&mut s, clicks[1].clone());
+    let mut enter = gui.state().unwrap().clone();
+    enter.browser.cursor = row;
+    let by_key = update(&mut enter, Action::Op(Op::Open));
+    assert_eq!(engine(&fx), engine(&by_key));
+    assert!(matches!(
+        engine(&fx)[..],
+        [jodel_playback::Command::Enqueue(ref p)] if p.len() == 1
+    ));
+    // Far apart: only selected.
+    update(&mut s, Action::Tick(5_000));
+    update(&mut s, clicks[0].clone());
+    update(&mut s, Action::Tick(6_000));
+    assert!(engine(&update(&mut s, clicks[0].clone())).is_empty());
+
+    // A right press queues the row.
+    let mut sim = simulator(&gui);
+    let at = sim.find("Undertow").unwrap().bounds().center();
+    sim.point_at(at);
+    sim.simulate([iced::Event::Mouse(mouse::Event::ButtonPressed(
+        mouse::Button::Right,
+    ))]);
+    let queued = acts(&sim.into_messages().collect::<Vec<_>>());
+    assert!(
+        matches!(queued[..], [Action::EnqueueRow(r)] if r == row),
+        "{queued:?}"
+    );
+
+    // The wheel over the rows scrolls the list: three rows a notch.
+    let mut gui = gui;
+    let before = gui.state().unwrap().browser.cursor;
+    let mut sim = simulator(&gui);
+    sim.point_at(at);
+    sim.scroll(ScrollDelta::Lines { x: 0.0, y: -1.0 });
+    let messages: Vec<Message> = sim.into_messages().collect();
+    assert!(matches!(messages[..], [Message::Wheel(_)]), "{messages:?}");
+    for message in messages {
+        let _ = gui.update(message);
+    }
+    let after = gui.state().unwrap().browser.cursor;
+    assert_eq!(
+        after,
+        (before + 3).min(gui.state().unwrap().browser.entries.len() - 1)
+    );
+}
+
+/// Q4: a double click on a queue row is two clicks on it, each holding
+/// the row (as a drag would): the core's double click, which plays it.
+#[test]
+fn a_double_click_on_a_queue_row_is_two_clicks_on_it() {
+    let mut state = common::playing_state(160, 42);
+    update(&mut state, Action::ShowSide(Side::Queue));
+    let mut gui = window(state);
+    let mut sim = simulator(&gui);
+    sim.click("Glass Rooms").unwrap();
+    sim.click("Glass Rooms").unwrap();
+    let messages: Vec<Message> = sim.into_messages().collect();
+    let clicks: Vec<&Action> = messages
+        .iter()
+        .filter_map(|m| match m {
+            Message::Act(action) => Some(action),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        matches!(clicks[..], [Action::ClickRow(3), Action::ClickRow(3)]),
+        "{messages:?}"
+    );
+    let grabs = messages
+        .iter()
+        .filter(|m| matches!(m, Message::Grab(Grab::QueueRow { .. }, _)))
+        .count();
+    assert_eq!(grabs, 2, "{messages:?}");
+    // Through the window: held while pressed, let go of on release.
+    let up = || iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+    let mut pressed = messages.into_iter();
+    for _ in 0..2 {
+        for message in pressed.by_ref().take(2) {
+            let _ = gui.update(message);
+        }
+        assert!(gui.state().unwrap().queue.dragging);
+        hear(&mut gui, up());
+        assert!(!gui.state().unwrap().queue.dragging);
+    }
+    assert_eq!(gui.state().unwrap().queue.cursor, 3);
+}
+
+/// A queue row held goes where the pointer takes it: over another row
+/// its track moves there (the selection with it); let go of, it stays.
+#[test]
+fn dragging_a_queue_row_moves_its_track() {
+    let mut state = common::playing_state(160, 42);
+    update(&mut state, Action::ShowSide(Side::Queue));
+    let first = state.queue.paths[0].clone();
+    let mut gui = window(state);
+    let mut sim = simulator(&gui);
+    let to = sim.find("Glass Rooms").unwrap().bounds().center();
+    sim.click("Opening").unwrap();
+    let messages: Vec<Message> = sim.into_messages().take(2).collect();
+    for message in messages {
+        let _ = gui.update(message);
+    }
+    assert!(gui.state().unwrap().queue.dragging);
+    hear(
+        &mut gui,
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: to }),
+    );
+    let q = &gui.state().unwrap().queue;
+    assert_eq!(q.paths[3], first, "{:?}", q.paths);
+    assert_eq!(q.cursor, 3);
+    // Off the rows: it stays where it was taken.
+    hear(
+        &mut gui,
+        iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(SIZE.width - 4.0, 4.0),
+        }),
+    );
+    assert_eq!(gui.state().unwrap().queue.paths[3], first);
+    hear(
+        &mut gui,
+        iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+    );
+    assert!(!gui.state().unwrap().queue.dragging);
+}
+
+/// With Ctrl held for a preview, the pointer moving over a browser row
+/// selects it (the preview follows); without Ctrl it does not.
+#[test]
+fn ctrl_over_a_row_selects_it() {
+    let state = common::playing_state(160, 42);
+    let row = row_of(&state, "Coda");
+    let mut gui = window(state);
+    let moved_over = |gui: &Gui| {
+        let mut sim = simulator(gui);
+        let at = sim.find("Coda").unwrap().bounds().center();
+        sim.point_at(at);
+        sim.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: at,
+        })]);
+        // The old canvas under the pane hears every move too (as off it).
+        sim.into_messages()
+            .filter_map(|m| match m {
+                Message::Act(action) => Some(action),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(moved_over(&gui).is_empty());
+    hear(
+        &mut gui,
+        iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(
+            iced::keyboard::Modifiers::CTRL,
+        )),
+    );
+    assert!(gui.state().unwrap().preview.ctrl);
+    let selected = moved_over(&gui);
+    assert!(
+        matches!(selected[..], [Action::SelectRow(r)] if r == row),
+        "{selected:?}"
+    );
+}
+
+/// The list shows the core's page: as many rows as the window told the
+/// core, from the first in view; the keys page by them, and the last
+/// page ends on the last row.
+#[test]
+fn the_list_shows_the_page_the_keys_turn() {
+    let mut state = common::playing_state(160, 42);
+    let parent = state.browser.entries[0].clone();
+    state.browser.entries = std::iter::once(parent)
+        .chain((0..200).map(|i| jodeldiplom::browser::Entry {
+            name: format!("Track {i:03}.flac"),
+            path: format!("/music/Album/Track {i:03}.flac").into(),
+            kind: jodeldiplom::browser::EntryKind::File,
+            relative: None,
+        }))
+        .collect();
+    state.browser.cursor = 0;
+    let mut gui = window(state);
+    let rows = usize::from(gui.state().unwrap().fit.list_rows);
+    assert!((8..30).contains(&rows), "{rows} rows");
+    let shown = |gui: &Gui, i: usize| simulator(gui).find(format!("Track {i:03}.flac")).is_ok();
+    // The first page: the parent row and the tracks after it.
+    assert!(shown(&gui, rows - 2) && !shown(&gui, rows - 1));
+    // A page down moves a page less a row.
+    press(&mut gui, Key::Named(Named::PageDown));
+    assert_eq!(gui.state().unwrap().browser.cursor, rows - 1);
+    // The end: the last row last.
+    press(&mut gui, Key::Named(Named::End));
+    let s = gui.state().unwrap();
+    assert_eq!(s.browser.cursor, 200);
+    assert_eq!(s.browser.scroll, 201 - rows);
+    assert!(shown(&gui, 199) && shown(&gui, 200 - rows) && !shown(&gui, 199 - rows));
+}
+
+/// The command palette over everything: a click on a command runs it; a
+/// press beside the card closes the palette, and nothing under it takes
+/// the press.
+#[test]
+fn the_palette_runs_a_click_and_closes_beside_it() {
+    let mut state = common::playing_state(160, 42);
+    update(&mut state, Action::Op(Op::Palette));
+    for c in "ne".chars() {
+        update(&mut state, Action::Type(c));
+    }
+    let gui = window(state);
+    let run = acts(&click(&gui, "Next track").unwrap());
+    assert!(matches!(run[..], [Action::PaletteRun(_)]), "{run:?}");
+    let mut sim = simulator(&gui);
+    // Over a browser row, under the palette's shade.
+    sim.point_at(Point::new(40.0, SIZE.height - 120.0));
+    sim.simulate(iced_test::simulator::click());
+    let closed = acts(&sim.into_messages().collect::<Vec<_>>());
+    assert!(matches!(closed[..], [Action::Op(Op::Back)]), "{closed:?}");
 }

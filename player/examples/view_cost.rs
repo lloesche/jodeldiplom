@@ -7,9 +7,11 @@
 //! window (the old canvas drawn: not timed). For each screen, each part's
 //! median and worst, and the same of the frames' totals.
 //!
-//! The main screen (the browser, its bottom bar native: the spectrum, the
-//! seek bar and the buttons) and the Mixer tab; the rest of each screen is
-//! the old canvas, one widget, until it is ported.
+//! The main screen (its list pane native: the tabs and the browser's rows;
+//! its bottom bar native: the spectrum, the seek bar and the buttons), the
+//! same on a folder of 2,000 files (the cost must not grow with the
+//! folder), the queue, and the Mixer tab; the rest of each screen is the
+//! old canvas, one widget, until it is ported.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example view_cost -- [FRAMES] [--budget MEDIAN_MS WORST_MS]
@@ -86,8 +88,32 @@ fn main() {
     });
     assert!(playing, "the track did not start");
 
+    // A folder of `n` files, the selection in the middle: the list makes
+    // only the rows in view, a page whatever the folder.
+    let folder = |n: usize| {
+        let mut big = app.state.clone();
+        let dir = big.browser.dir.clone();
+        big.browser.entries.truncate(1);
+        big.browser
+            .entries
+            .extend((0..n).map(|i| jodeldiplom::browser::Entry {
+                name: format!("{i:04} Track.flac"),
+                path: dir.join(format!("{i:04} Track.flac")),
+                kind: jodeldiplom::browser::EntryKind::File,
+                relative: None,
+            }));
+        jodeldiplom::core::update(&mut big, Action::SelectRow(n / 2));
+        big
+    };
     let screens: Vec<(&str, State)> = vec![
         ("main", app.state.clone()),
+        ("main, 50 entries", folder(50)),
+        ("main, 2,000 entries", folder(2_000)),
+        ("queue", {
+            let mut q = app.state.clone();
+            q.side = Side::Queue;
+            q
+        }),
         ("mixer", {
             // The player at 96 kHz, a preview crossfading over it, the
             // microphone's strip selected and hearing (as the shots).

@@ -1,48 +1,75 @@
-//! The command palette over the list pane's rows: what is typed, the
-//! commands it matches with their keys.
+//! The command palette's model ([`Palette`]): what is typed, and the
+//! commands it matches in view, each with its keys, the one selected
+//! marked. The window draws it over everything
+//! ([`crate::gui::screens::palette`]).
 
-use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
-use ratatui::Frame;
+use std::fmt;
 
-use super::colors::*;
-use super::row_line;
 use crate::core::{palette_window, State};
 
-/// The palette in `area`, where it is open.
-pub(super) fn draw(frame: &mut Frame, state: &State, area: Rect) {
-    let Some(palette) = &state.palette else {
-        return;
-    };
-    let (matches, start) = palette_window(state, usize::from(area.height));
-    let mut lines = vec![Line::from(vec![
-        Span::styled(": ", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
-        Span::styled(palette.text.clone(), Style::new().fg(TEXT)),
-        Span::styled("▏", Style::new().fg(ACCENT)),
-    ])];
-    let w = usize::from(area.width);
-    for (i, entry) in matches.iter().enumerate().skip(start) {
-        let mut l = row_line(
-            vec![Span::styled(
-                format!("  {}", entry.name),
-                Style::new().fg(TEXT),
-            )],
-            vec![Span::styled(entry.keys.clone(), Style::new().fg(DIM))],
-            w,
-        );
-        if i == palette.cursor {
-            l = l.style(Style::new().bg(SELECTED).add_modifier(Modifier::BOLD));
+/// The palette as it is now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Palette {
+    /// What is typed.
+    pub typed: String,
+    /// The commands it matches in view.
+    pub matches: Vec<Match>,
+    /// How many it matches in all.
+    pub total: usize,
+}
+
+/// A command the palette matches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Match {
+    /// Its index among the matches.
+    pub index: usize,
+    /// Its name.
+    pub name: &'static str,
+    /// Its keys, each as written for people (`N`, `shift+→`).
+    pub keys: Vec<String>,
+    /// The one selected.
+    pub selected: bool,
+}
+
+impl Palette {
+    /// The palette for `state`, where it is open, `rows` matches in view
+    /// at most (the one selected among them).
+    pub fn of(state: &State, rows: usize) -> Option<Palette> {
+        let palette = state.palette.as_ref()?;
+        let (matches, start) = palette_window(state, rows.max(1) + 1);
+        let total = matches.len();
+        let matches = matches
+            .into_iter()
+            .enumerate()
+            .skip(start)
+            .take(rows.max(1))
+            .map(|(index, entry)| Match {
+                index,
+                name: entry.name,
+                keys: entry.keys.split(" / ").map(str::to_owned).collect(),
+                selected: index == palette.cursor,
+            })
+            .collect();
+        Some(Palette {
+            typed: palette.text.clone(),
+            matches,
+            total,
+        })
+    }
+}
+
+/// An outline of the palette, one line a piece with its tone in
+/// brackets: for the snapshots.
+impl fmt::Display for Palette {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "[palette] : {}▏", self.typed)?;
+        for m in &self.matches {
+            let selected = if m.selected { " selected" } else { "" };
+            writeln!(f, "[match{selected}] {}  {}", m.name, m.keys.join(" / "))?;
         }
-        lines.push(l);
+        if self.total == 0 {
+            writeln!(f, "[dim] no command matches")?;
+        }
+        Ok(())
     }
-    if matches.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  no command matches",
-            Style::new().fg(DIM),
-        )));
-    }
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines), area);
 }

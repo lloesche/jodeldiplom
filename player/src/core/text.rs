@@ -1,10 +1,10 @@
 //! Text the screens show, whatever lays it out: rates, times, the signal
-//! path, the status light, the list toggle and the playing track's links.
+//! path, the status light and the playing track's links.
 
 use jodel_playback::{PlayState, Stem};
 
 use crate::core::keymap::Op;
-use crate::core::{Rhythm, Side, State};
+use crate::core::{Rhythm, State};
 
 /// A rate in kHz without the unit: `44.1`, `48`, `352.8`.
 pub fn khz_short(rate: u32) -> String {
@@ -155,39 +155,6 @@ pub fn play_symbol(state: PlayState) -> &'static str {
         PlayState::Paused => "▮▮",
         PlayState::Stopped => "■",
     }
-}
-
-/// The list toggle in the list pane's top border: the pieces, which side
-/// each selects, and whether it is the shown side.
-pub fn toggle(state: &State) -> Vec<(String, Option<Side>, bool)> {
-    let queue = format!(" Queue ({}) ", state.queue.paths.len());
-    vec![
-        (
-            " Browser ".into(),
-            Some(Side::Browser),
-            state.side == Side::Browser,
-        ),
-        ("│".into(), None, false),
-        (queue, Some(Side::Queue), state.side == Side::Queue),
-        ("│".into(), None, false),
-        (
-            " Transition ".into(),
-            Some(Side::Transition),
-            state.side == Side::Transition,
-        ),
-        ("│".into(), None, false),
-        (
-            " Karaoke ".into(),
-            Some(Side::Karaoke),
-            state.side == Side::Karaoke,
-        ),
-        ("│".into(), None, false),
-        (
-            " Mixer ".into(),
-            Some(Side::Mixer),
-            state.side == Side::Mixer,
-        ),
-    ]
 }
 
 /// The link tones and where each goes.

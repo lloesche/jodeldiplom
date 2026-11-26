@@ -1,26 +1,26 @@
-╭ Browser │ Queue (5) │ Transition │ Karaoke │ Mixer ──────────────────────────╮╭──────────────────────────────────────╮
-│: ne▏                                                                         ││                                      │
-│  Next track                                                       N / shift+→││                                      │
-│  Transition: lyrics on the vocals lane on/off                               L││                                      │
-│  Transition: next preset                                                    p││                                      │
-│  Microphone: the next one                                                   i││                                      │
-│  Key: a semitone down                                                       -││                                      │
-│  Key: a semitone up                                                     + / =││                   ♪                  │
-│  Microphone: the echo canceller on or off                                   e││                                      │
-│                                                                              ││                                      │
-│                                                                              ││                                      │
-│                                                                              ││                                      │
-│                                                                              ││                                      │
-│                                                                              ││                                      │
-│                                                                              │╰──────────────────────────────────────╯
-│                                                                              │
-│                                                                              │ Morning Light
-│                                                                              │ The Ramps
-│                                                                              │ Synthetic Sessions
-│                                                                              │
-│                                                                              │ ○ PCM
-│                                                                              │ ♩ 128 BPM
-╰ /music/Album ────────────────────────────────────────────────────────────────╯ file 44.1 → USB Audio DAC
+                                                                                ╭──────────────────────────────────────╮
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                   ♪                  │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                ╰──────────────────────────────────────╯
+
+                                                                                 Morning Light
+                                                                                 The Ramps
+                                                                                 Synthetic Sessions
+
+                                                                                 ○ PCM
+                                                                                 ♩ 128 BPM
+                                                                                 file 44.1 → USB Audio DAC
 
 
 
@@ -34,6 +34,24 @@
 
 
 
+[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer
+[shown] Browser
+[path] /music/Album
+[row] ..  up
+[row] ▸ Bonus/
+[row] ♪ Opening  [chip] FLAC 44.1  3:00
+[row selected playing] ▶ Morning Light  [chip] FLAC 44.1  3:37
+[row] ♪ Undertow  [chip] FLAC 44.1  4:14
+[row] ♪ Glass Rooms  [chip] FLAC 44.1  4:51
+[row] ♪ Coda  [chip] WAV 96  5:28
+[palette] : ne▏
+[match selected] Next track  N / shift+→
+[match] Transition: lyrics on the vocals lane on/off  L
+[match] Transition: next preset  p
+[match] Microphone: the next one  i
+[match] Key: a semitone down  -
+[match] Key: a semitone up  + / =
+[match] Microphone: the echo canceller on or off  e
 [spectrum] 0 dB · -40 · -80 · -120 | 20 Hz · 50 · 100 · 200 · 500 · 1k · 2k · 5k · 10k · 20k · 50k · [source] 88k
 [time] 1:23
 [seek] 34 %

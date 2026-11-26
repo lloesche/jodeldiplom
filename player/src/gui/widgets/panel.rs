@@ -1,12 +1,13 @@
 //! Surfaces: a panel ([`panel`]: the list pane, a screen's body) and a
 //! card on it ([`card`]); a tinted note for what needs attention
-//! ([`note`]); a disc for a status mark ([`badge`]). Grouping comes from
-//! these and from space, not from lines.
+//! ([`note`]); a disc for a status mark ([`badge`]); a tinted label on a
+//! pill ([`tag`]) and a key's cap ([`key`]). Grouping comes from these
+//! and from space, not from lines.
 
-use iced::widget::{container, Container};
-use iced::{Background, Border, Color};
+use iced::widget::{container, text, Container};
+use iced::{Background, Border, Color, Element, Padding, Widget as _};
 
-use crate::gui::look::{self, radius, space};
+use crate::gui::look::{self, radius, size, space};
 
 /// `content` on a panel: the `surface`, padded, its corners rounded.
 pub fn panel<'a, W>(content: W) -> Container<'a, W> {
@@ -49,6 +50,60 @@ pub fn badge<'a, W>(content: W, size: f32, fill: Color, edge: Color) -> Containe
             },
             ..container::Style::default()
         })
+}
+
+/// `label` on a pill tinted with `tone`: a file's format and rate, a
+/// tier. It says, it does not switch (a switch is [`super::chip`]).
+pub fn tag<'a, Message: 'a>(label: impl Into<String>, tone: Color) -> Element<'a, Message> {
+    container(
+        text(label.into())
+            .size(size::CAPTION)
+            .font(look::font::label())
+            .color(tone)
+            .wrapping(text::Wrapping::None),
+    )
+    .padding(Padding::from([2.0, space::S]))
+    .style(move |_| container::Style {
+        // See-through, so it shows on a selected row as on the panel.
+        background: Some(Background::Color(look::alpha(tone, 0.13))),
+        border: Border {
+            radius: radius::PILL.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    })
+    .boxed()
+}
+
+/// A key's cap, `key` on it: what to press for a command.
+pub fn key<'a, Message: 'a>(key: impl Into<String>) -> Element<'a, Message> {
+    keycap(key, look::alpha(look::BG, 0.7), look::TEXT_DIM)
+}
+
+/// A key's cap of `fill`, `key` on it in `ink` (a button's key after its
+/// label takes the button's tones).
+pub fn keycap<'a, Message: 'a>(
+    key: impl Into<String>,
+    fill: Color,
+    ink: Color,
+) -> Element<'a, Message> {
+    container(
+        text(key.into())
+            .size(size::CAPTION)
+            .font(look::font::label())
+            .color(ink)
+            .wrapping(text::Wrapping::None),
+    )
+    .padding(Padding::from([1.0, 6.0]))
+    .style(move |_| container::Style {
+        background: Some(Background::Color(fill)),
+        border: Border {
+            radius: radius::CONTROL.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    })
+    .boxed()
 }
 
 fn surface<'a, W>(content: W, fill: Color) -> Container<'a, W> {

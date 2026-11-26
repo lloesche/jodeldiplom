@@ -1,7 +1,9 @@
 //! The screens drawn into a ratatui test buffer, the pictures' cells blank
 //! as the window leaves them for its pixels ([`CellPictures`]), with the
-//! bottom bar's outline after them where the screen has one (the window
-//! draws the bar from its model), compared with the snapshots in
+//! outlines of what the window draws from its models after them: the
+//! list pane's (its tabs, the browser's or the queue's rows) on the main
+//! screen, the command palette's while it is open, and the bottom bar's
+//! where the screen has one; compared with the snapshots in
 //! `tests/snapshots/` (set `UPDATE_SNAPSHOTS=1` to rewrite them after an
 //! intended change). The spectrum's model in points: its labels and where
 //! a tone peaks.
@@ -18,13 +20,14 @@ use jodeldiplom::core::{update, Action, DeviceChoice, Screen, Side, State};
 use jodeldiplom::gui::mixer::{self, said};
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
 use jodeldiplom::view::bottom::Bar;
+use jodeldiplom::view::command_palette::Palette;
 use jodeldiplom::view::lanes::WavePlot;
 use jodeldiplom::view::layout::{self, Bottom, Grid, Layout};
+use jodeldiplom::view::list::Pane;
 use jodeldiplom::view::plot::{LabelTone, Plot};
 use jodeldiplom::view::{self, CellPictures, Pictures, Scene};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use ratatui::{Frame, Terminal};
 
 fn spectrum() -> SpectrumFrame {
@@ -80,7 +83,15 @@ fn draw_heard(state: &State, grid: Grid, heard: f64) -> String {
         .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
         .unwrap();
     let mut text = view::buffer_text(terminal.backend().buffer());
-    if let Some(&place) = layout::compute(state, grid).bottom() {
+    let shown = layout::compute(state, grid);
+    if let Layout::Main(m) = &shown {
+        let (cw, _) = cell();
+        text.push_str(&Pane::of(state, f32::from(m.list.width) * cw).to_string());
+    }
+    if let Some(palette) = Palette::of(state, 8) {
+        text.push_str(&palette.to_string());
+    }
+    if let Some(&place) = shown.bottom() {
         text.push_str(&bar_outline(state, grid, place));
     }
     text
@@ -917,54 +928,20 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
         );
     }
     assert!(state.working.is_empty());
-    // Grey until the track has each thing, lit once it has, left of its
-    // format.
+    // Grey until the track has each thing, lit once it has, in the order
+    // the work finds them (the key, the stems, the tempo, the lyrics).
     use jodeldiplom::core::{Facts, LyricsFacts, RhythmFacts};
-    use jodeldiplom::view::palette::{ACCENT, DIM};
-    let icons = |state: &State| -> Vec<(String, Color)> {
-        let grid = Grid::new(120, 40);
-        let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-        let scene = Scene {
-            state,
-            grid,
-            pointer: None,
-            heard: 0.0,
+    use jodeldiplom::view::list::{Body, Fact};
+    const ACCENT: bool = true;
+    const DIM: bool = false;
+    let colors = |state: &State| -> Vec<bool> {
+        let Body::Queue(q) = Pane::of(state, 960.0).body else {
+            panic!("the queue");
         };
-        terminal
-            .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
-            .unwrap();
-        let buf = terminal.backend().buffer();
-        let text = view::buffer_text(buf);
-        let y = text
-            .lines()
-            .position(|l| l.contains(&format!("{} {title}", current + 2)))
-            .unwrap() as u16;
-        let line: Vec<&str> = (0..grid.cols).map(|x| buf[(x, y)].symbol()).collect();
-        let chip = state.details[&busy]
-            .chip
-            .split(' ')
-            .next()
-            .unwrap()
-            .to_owned();
-        let chip_x = (0..usize::from(grid.cols))
-            .find(|&x| line[x..].concat().starts_with(&chip))
-            .unwrap();
-        ["♯", "▥", "♩", "¶"]
-            .iter()
-            .map(|icon| {
-                let x = (0..chip_x).rev().find(|&x| line[x] == *icon).expect(icon);
-                ((*icon).to_owned(), buf[(x as u16, y)].fg)
-            })
-            .collect()
-    };
-    let colors = |state: &State| -> Vec<[u8; 3]> {
-        icons(state)
-            .into_iter()
-            .map(|(icon, c)| match c {
-                Color::Rgb(r, g, b) => [r, g, b],
-                other => panic!("{icon} in {other:?}"),
-            })
-            .collect()
+        let row = q.rows.iter().find(|r| r.index == current + 1).unwrap();
+        let facts: Vec<Fact> = row.facts.iter().map(|s| s.fact).collect();
+        assert_eq!(facts, [Fact::Key, Fact::Stems, Fact::Tempo, Fact::Lyrics]);
+        row.facts.iter().map(|s| s.lit).collect()
     };
     assert_eq!(colors(&state), [DIM, DIM, DIM, DIM]);
     // One after the other as the analysis goes: the key once decoded, the
@@ -1031,7 +1008,7 @@ fn the_mixer_tab_is_a_desk() {
     use iced::Size;
     let state = common::desk_state(120, 36);
     let text = draw(&state, Grid::new(120, 36));
-    has(&text, &[" Mixer ", "← → strip", "m mute"]);
+    has(&text, &["[shown] Mixer", "← → strip", "m mute"]);
     let wide = layout::desk_width(Grid::new(120, 36), layout::CELL_WIDTH);
     assert_eq!(wide, 944.0);
     assert_eq!(state.fit.desk_width, wide);

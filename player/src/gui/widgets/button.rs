@@ -199,22 +199,7 @@ fn keycap<'a, Message: 'a>(key: &'a str, kind: Kind) -> Element<'a, Message> {
         ),
         _ => (look::alpha(look::BG, 0.7), look::TEXT_DIM),
     };
-    container(
-        text(key)
-            .size(size::CAPTION)
-            .font(look::font::label())
-            .color(ink),
-    )
-    .padding(Padding::from([1.0, 6.0]))
-    .style(move |_| container::Style {
-        background: Some(Background::Color(fill)),
-        border: Border {
-            radius: radius::CONTROL.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    })
-    .boxed()
+    super::panel::keycap(key, fill, ink)
 }
 
 impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message> {

@@ -219,8 +219,7 @@ mod tests {
     use crate::config::Config;
     use crate::core::keymap::{self, Key, KeyCode, Meaning};
     use crate::core::update;
-    use crate::view::layout::{self, Grid, Layout};
-    use crate::view::mouse::{self, MouseInput, MouseKind};
+    use crate::view::layout::{self, Grid};
     use jodel_playback::{Command, PlayState};
 
     /// The window the tests have.
@@ -345,18 +344,9 @@ mod tests {
         assert_eq!(previews(&fx), [play(6)]);
         let fx = update(&mut s, Action::Scroll(3));
         assert_eq!(previews(&fx), [play(9)]);
-        // So does the pointer over a row.
-        let Layout::Main(m) = layout::compute(&s, GRID) else {
-            panic!()
-        };
-        let over = MouseInput {
-            kind: MouseKind::Moved,
-            col: m.rows.x + 1,
-            row: m.rows.y + 5,
-        };
-        let a = mouse::action(&s, GRID, over).unwrap();
-        assert!(matches!(a, Action::SelectRow(5)));
-        let fx = update(&mut s, a);
+        // So does the pointer over a row (it selects the row:
+        // `ctrl_over_a_row_selects_it`).
+        let fx = update(&mut s, Action::SelectRow(5));
         assert_eq!(previews(&fx), [play(5)]);
         assert!(!touches_the_queue(&fx));
         assert_eq!(s.playing.state, PlayState::Playing);

@@ -79,15 +79,35 @@ impl Headless {
         self.draw(view, size, started)
     }
 
+    /// `gui`'s view as it stands once what eases (a tab's pill, a row's
+    /// selection, an overlay coming in) has come to rest: a frame whose
+    /// redraw is a second from now.
+    pub fn settled(&mut self, gui: &Gui, size: Size) -> Took {
+        let started = Instant::now();
+        let view = gui.view();
+        self.draw_at(view, size, started, started + Duration::from_secs(1))
+    }
+
     /// One frame of `view` (built from `started`) in a window of `size`.
     pub fn draw(&mut self, view: Element<'_, Message>, size: Size, started: Instant) -> Took {
+        self.draw_at(view, size, started, Instant::now())
+    }
+
+    /// [`Headless::draw`] with its redraw at `at`.
+    fn draw_at(
+        &mut self,
+        view: Element<'_, Message>,
+        size: Size,
+        started: Instant,
+        at: Instant,
+    ) -> Took {
         self.size = size;
         let viewed = Instant::now();
         let cache = std::mem::take(&mut self.cache);
         let mut ui = UserInterface::build(view, size, cache, &mut self.renderer);
         let laid = Instant::now();
         let mut messages = shell::Bus::<Message>::new();
-        let redraw = Event::Window(window::Event::RedrawRequested(Instant::now()));
+        let redraw = Event::Window(window::Event::RedrawRequested(at));
         let cursor = mouse::Cursor::Unavailable;
         let _ = ui.update(
             &window::Headless,
