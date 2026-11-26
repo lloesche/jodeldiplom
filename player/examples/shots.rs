@@ -3,8 +3,9 @@
 //! as the window draws them ([`Gui::view`], with iced's headless renderer:
 //! the widgets iced draws and what the GPU draws itself, Karaoke mode's
 //! stage among it), and for each a `gui-*.txt` with the outline of its
-//! models (none for Karaoke mode). Each screen at 1280 × 800 at scale 1,
-//! and as `gui-*-hidpi` at 1512 × 982 at scale 2.
+//! models (none for Karaoke mode); the lyrics editor on a made-up song
+//! whose voice is made from its words. Each screen at 1280 × 800 at scale
+//! 1, and as `gui-*-hidpi` at 1512 × 982 at scale 2.
 //! The main screen also with tags and a device name too long for any
 //! column (`gui-main-long`), with tags in Japanese (`gui-main-cjk`),
 //! narrow (`gui-main-narrow`, `gui-main-narrow-long`), and last without
@@ -107,7 +108,7 @@ impl Shots {
     /// The outline of what shows in a window of `size`: its screen's
     /// models (none for Karaoke mode, a picture).
     fn text(&self, size: Size) -> String {
-        use jodeldiplom::view::{help, now, settings};
+        use jodeldiplom::view::{help, lyrics, now, settings};
         match self.gui.state() {
             Some(s) if s.screen == Screen::NowPlaying => {
                 now::NowPlaying::of(s, s.heard()).to_string()
@@ -115,6 +116,9 @@ impl Shots {
             Some(s) if s.screen == Screen::Settings => settings::Settings::of(s).to_string(),
             Some(s) if s.screen == Screen::Help => help::Page::of(s).to_string(),
             Some(s) if s.screen == Screen::Main => main_outline(s, size),
+            Some(s) if s.screen == Screen::Lyrics => lyrics::Editor::of(s)
+                .map(|e| e.to_string())
+                .unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -259,6 +263,194 @@ const CJK: [&str; 3] = [
     "山田花子と星の楽団",
     "夏の終わりのメロディー 第二集",
 ];
+
+/// A made-up song for the lyrics editor on the Transition tab's tracks:
+/// two lines sung from 62 s on the playing track, its voice's stem made
+/// from them (each word's attack, its held note with a little vibrato,
+/// its release), and the words as the aligner timed them a little off
+/// the voice in places, the second line's first two a backing vocal; the
+/// editor open on them, the song paused in the first line.
+fn lyrics_song() -> State {
+    use jodel_lyrics::{Lyrics, Source};
+    use jodel_rhythm::waveform::FPS;
+    use jodeldiplom::core::{Rhythm, Rhythmed};
+    let mut state = common::transition_state(120, 36);
+    state.side = Side::Karaoke;
+    let index = state.playing.track.as_ref().map_or(1, |t| t.index);
+    let path = state.queue.paths[index].clone();
+    let lines: [&[(&str, f64)]; 2] = [
+        &[
+            ("Mister", 0.55),
+            ("rock", 0.35),
+            ("and", 0.2),
+            ("roll,", 0.7),
+            ("take", 0.3),
+            ("me", 0.25),
+            ("home", 0.45),
+            ("tonight", 0.95),
+        ],
+        &[
+            ("(oh", 0.3),
+            ("yeah)", 0.5),
+            ("the", 0.2),
+            ("lights", 0.45),
+            ("are", 0.25),
+            ("low", 0.6),
+            ("along", 0.4),
+            ("the", 0.2),
+            ("river", 1.0),
+        ],
+    ];
+    // Where each word is sung.
+    let mut sung = Vec::new();
+    let mut t = 62.0;
+    for line in lines {
+        for &(_, length) in line {
+            sung.push((t, t + length));
+            t += length + 0.09;
+        }
+        t += 1.1;
+    }
+    let text: String = lines
+        .iter()
+        .map(|l| l.iter().map(|w| w.0).collect::<Vec<_>>().join(" ") + "\n")
+        .collect();
+    let mut timed = Lyrics::parse_text(&text, Source::Lrclib);
+    // The aligner a little off in places: "roll," early, "lights" short.
+    let off = |k: usize| match k {
+        3 => (-0.12, -0.18),
+        11 => (0.0, -0.2),
+        _ => (0.0, 0.0),
+    };
+    for (k, w) in timed
+        .lines
+        .iter_mut()
+        .flat_map(|l| &mut l.words)
+        .enumerate()
+    {
+        let (a, b) = sung[k];
+        let (da, db) = off(k);
+        (w.start, w.end, w.confidence) = (Some(a + da), Some(b + db), 0.8);
+    }
+    timed.timing.by = Some(jodel_lyrics::Maker::new("ctc:shots", 1));
+    timed.timing.detail = jodel_lyrics::Detail::Words;
+    // The voice's stem from what is sung.
+    let Some(Rhythm::Ready(r)) = state.rhythm.get(&path).cloned() else {
+        panic!("the playing track is analysed");
+    };
+    let mut waveform = common::waveform(245.0, 128.0, 0.4, 1e9);
+    let level = |t: f64| -> f64 {
+        sung.iter()
+            .map(|&(a, b)| {
+                if t < a - 0.01 || t > b + 0.08 {
+                    return 0.0;
+                }
+                let attack = ((t - a) / 0.03).clamp(0.0, 1.0);
+                let release = (1.0 - (t - b) / 0.08).clamp(0.0, 1.0);
+                let held =
+                    0.82 + 0.1 * ((t - a) * 34.0).sin() - 0.25 * ((t - a) / (b - a)).min(1.0);
+                attack * release * held.max(0.3)
+            })
+            .fold(0.0, f64::max)
+    };
+    if let Some(stems) = waveform.stems.as_mut() {
+        let vocals = &mut stems[3];
+        for (i, (peak, rms)) in vocals.peak.iter_mut().zip(&mut vocals.rms).enumerate() {
+            let breath = 0.03 + 0.02 * ((i as f64) * 0.37).sin().abs();
+            let v = level(i as f64 / FPS).max(breath);
+            *peak = (v * 235.0) as u8;
+            *rms = (v * 170.0) as u8;
+        }
+    }
+    state.rhythm.insert(
+        path.clone(),
+        Rhythm::Ready(Arc::new(Rhythmed::new(
+            (*r.analysis).clone(),
+            Some(waveform),
+        ))),
+    );
+    state.karaoke.lyrics.insert(
+        path,
+        jodeldiplom::core::karaoke::SongLyrics::Found {
+            lyrics: Arc::new(Lyrics::parse_text(&text, Source::Lrclib)),
+            shown: Arc::new(timed),
+        },
+    );
+    state.karaoke.lyrics_wanted = jodeldiplom::core::karaoke::lyrics_wanted(&state);
+    state.playing.state = jodel_playback::PlayState::Paused;
+    state.playing.position = 63.1;
+    state.drawn_heard = Some(63.1);
+    jodeldiplom::core::update(&mut state, Action::Op(Op::LyricsEditor));
+    if let Some(editor) = state.karaoke.editor.as_mut() {
+        (editor.screen.start, editor.screen.span) = (61.4, 12.0);
+    }
+    state
+}
+
+/// The lyrics editor's shots: a word set by hand, the backing vocal not to
+/// be sung with the voice raised over it, "roll," selected (`lyrics-editor`)
+/// and its end being dragged later onto its voice (`lyrics-editor-drag`);
+/// the second line being written (`lyrics-editor-write`).
+fn lyrics_shots() -> Vec<(&'static str, State)> {
+    use jodeldiplom::core::lyric_edit::screen::{Input, Part};
+    use jodeldiplom::core::lyric_edit::{Edit, LyricsEdit, WordAt};
+    let act = |s: &mut State, what: LyricsEdit| {
+        jodeldiplom::core::update(s, Action::LyricsEdit(what));
+    };
+    let mut base = lyrics_song();
+    for (line, word) in [(1, 0), (1, 1)] {
+        act(
+            &mut base,
+            LyricsEdit::Edit(Edit::Select(WordAt { line, word })),
+        );
+        act(&mut base, LyricsEdit::Edit(Edit::NotSung(true)));
+    }
+    act(&mut base, LyricsEdit::Edit(Edit::Voice(Some(-3.0))));
+    act(
+        &mut base,
+        LyricsEdit::Edit(Edit::Select(WordAt { line: 0, word: 6 })),
+    );
+    act(&mut base, LyricsEdit::Edit(Edit::Move(0.04)));
+    act(
+        &mut base,
+        LyricsEdit::Edit(Edit::Select(WordAt { line: 0, word: 3 })),
+    );
+    let mut drag = base.clone();
+    let end = drag
+        .karaoke
+        .editor
+        .as_ref()
+        .and_then(|e| e.word())
+        .and_then(|w| w.end)
+        .unwrap_or(0.0);
+    act(
+        &mut drag,
+        LyricsEdit::Screen(Input::Hold {
+            word: WordAt { line: 0, word: 3 },
+            part: Part::End,
+            time: end,
+            slop: 0.01,
+        }),
+    );
+    act(&mut drag, LyricsEdit::Screen(Input::Drag(end + 0.16)));
+    let mut write = base.clone();
+    act(
+        &mut write,
+        LyricsEdit::Edit(Edit::Select(WordAt { line: 1, word: 3 })),
+    );
+    act(&mut write, LyricsEdit::Screen(Input::Write { line: true }));
+    act(
+        &mut write,
+        LyricsEdit::Screen(Input::Draft(
+            "(oh yeah) the lights are low along the river bend".into(),
+        )),
+    );
+    vec![
+        ("lyrics-editor", base),
+        ("lyrics-editor-drag", drag),
+        ("lyrics-editor-write", write),
+    ]
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -541,6 +733,9 @@ fn main() {
                 k
             }),
         ]
+        .into_iter()
+        .chain(lyrics_shots())
+        .collect()
     };
     let mut shots = Shots {
         gui: Gui::headless(app),
@@ -552,6 +747,9 @@ fn main() {
     // was drawn:
     // the first shot paints what the GPU does not draw.
     shots.headless.frame(&shots.gui, Size::new(1280.0, 800.0));
+    // What the player still had to tell (its queue, its track) taken in
+    // now, not over the first shot's state.
+    let _ = shots.gui.update(Message::Frame(Instant::now()));
     for (name, s) in screens.iter().filter(|(name, _)| wanted(name)) {
         for (suffix, size, scale) in SIZES {
             shots.shot(&format!("{name}{suffix}"), s, size, scale);

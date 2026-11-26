@@ -758,8 +758,8 @@ there again before the timing (`jodel_lyrics::repeats`), and are shown as
 sung. On 152 songs it filled in 22, DMX's "Ruff Ryders' Anthem" its hook
 seven times over where its text has it once.
 
-A song's lyrics can be edited by hand (`core::lyric_edit`; the editor's
-screen is still to come): a word moved, made longer or shorter, marked as
+A song's lyrics can be edited by hand (`core::lyric_edit`, on the lyrics
+editor's screen: `e` or Edit lyrics on the Karaoke tab): a word moved, made longer or shorter, marked as
 not to be sung (a backing vocal, an ad-lib), the voice's level set over
 it, a word or a line replaced, put in or taken out, every change undone
 and redone. The edits are the user's own (`lyric-edits` in the data
@@ -773,6 +773,31 @@ voice all the way down (smoothed over 50 ms; a level set over a word
 takes its place): the vocals part's automation on the desk, timed on the
 playing head's frames (`core::voice_curve`).
 
+The **lyrics editor** shows the song's words as boxes over its voice
+stem's waveform (the whole song's where it has no stems), where they are
+sung, the time across the top and the voice's level over each word under
+it; the word selected, its line, and the bottom bar under it all. A word
+set by hand carries a pin; one not to be sung is dimmed. The song plays
+from the word under it (`space`), the view paging after the playhead, so
+the timing is heard while it is set; the song timed again with each
+change comes back to the open editor. Revert (asked first) forgets every
+edit: the text as found, timed again.
+
+| Key | Lyrics editor |
+|---|---|
+| `←` `→` / a click on a word | the word before, the next |
+| `↑` `↓` | the line above, below |
+| `shift+←` `shift+→` / drag the left edge | its start 20 ms earlier, later (set by hand) |
+| `alt+←` `alt+→` / drag the right edge | its end 20 ms earlier, later |
+| `ctrl+←` `ctrl+→` / drag the middle | the whole word 20 ms earlier, later |
+| `space` | play from just before the word, again: pause |
+| `n` | not to be sung, or to be sung again |
+| `+` `-` `0` | the voice over it in Karaoke mode 3 dB louder, quieter, as the Voice slider |
+| `enter` / a double click, `shift+enter` | write the word, its line (enter keeps it, `esc` leaves it) |
+| `del` | take the word out |
+| `ctrl+z` `ctrl+y` | undo, redo |
+| the wheel, the secondary button dragged | zoom round the pointer, move the view |
+| `esc` / Done | close (every change is kept as it is made) |
 | Key | Karaoke tab |
 |---|---|
 | `enter` / the button | Karaoke mode |

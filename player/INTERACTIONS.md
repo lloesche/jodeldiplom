@@ -905,7 +905,7 @@ stem keys are their mutes.
     `the_bus_level_glides_while_a_sound_plays` (synth)
   - `a_song_is_measured_once_and_kept` (`loudness`)
 - **K26.** A song's lyrics edited by hand (the editor's actions, its
-  screen to come) are the user's own, kept beside the lyrics' cache and
+  screen K27) are the user's own, kept beside the lyrics' cache and
   never forgotten with it, read where they are while the data folder
   moves. Their text is the song's; a word moved or made longer or shorter
   stays exactly where it was set whenever the song is timed again (a new
@@ -923,7 +923,41 @@ stem keys are their mutes.
   - `the_voice_rises_over_a_word_not_to_be_sung` (mixer)
   - `a_word_moved_and_nudged_is_set_by_hand_and_its_neighbours_make_room`,
     `every_change_is_undone_and_redone_until_a_new_one` (`core::lyric_edit`)
-
+- **K27.** The lyrics editor is a screen of its own over the bottom bar,
+  opened on the song karaoke is about by `e` or the Edit lyrics button on
+  the Karaoke tab (or the palette), closed by `esc` or Done back to where
+  it was opened; nothing else leaves it (no palette, settings, help or
+  tabs there). Its words are boxes over the voice stem's waveform where
+  they are sung, the time across the view over them, the voice's level
+  over each under them: a word set by hand carries a pin, one not to be
+  sung is dimmed and says so, the one selected is ringed in the accent
+  with grips at its edges. A click selects a word, a second one soon
+  after writes it; its middle dragged moves it, an edge makes it longer
+  or shorter (a tremble of a few points is no drag), set by hand, one
+  step of the history, kept as it is let go of. A press off the words
+  puts the playhead there, the secondary button drags the view and the
+  wheel zooms it round the pointer. ← → select, ↑ ↓ the line above or
+  below (the word brought into view), shift+← → its start and alt+← →
+  its end 20 ms, ctrl+← → the whole word; `space` plays the song from
+  just before the word, the view paging after the playhead until it is
+  moved by hand (again: pause); `n` not to be sung, `+` `-` the voice's
+  level over it 3 dB, `0` back to the slider's; enter writes the word
+  and shift+enter its line in a field that takes every key but enter
+  (kept) and `esc` (left as it was); `del` takes it out; ctrl+z ctrl+y
+  undo and redo. Revert asks first. The song timed again with the edits
+  comes back to the open editor.
+  - `the_lyrics_editor_opens_from_the_karaoke_tab_and_closes`,
+    `dragging_a_words_end_moves_it_and_sets_it_by_hand`,
+    `the_lyrics_editors_keys_nudge_mark_and_undo`,
+    `a_word_is_written_in_the_lyrics_editors_field`,
+    `space_plays_from_the_word_and_the_view_follows` (screens)
+  - `the_editor_opens_on_its_screen_and_esc_closes_it`,
+    `a_word_dragged_by_its_end_is_set_by_hand_in_one_step`,
+    `a_click_selects_and_a_second_writes_the_word`,
+    `the_keys_nudge_mark_level_write_and_undo`,
+    `the_view_zooms_round_the_pointer_and_pans`
+    (`core::lyric_edit::screen`)
+  - `the_rows_go_down_the_page_and_stay_on_its_pixels` (`gui::lyrics`)
 ## Mixer
 
 - **M1.** The file as it is is the default: every start has each strip

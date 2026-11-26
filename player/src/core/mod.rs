@@ -167,6 +167,9 @@ pub enum Screen {
     /// Karaoke mode ([`karaoke`]): the lyrics over the cover, fullscreen in
     /// the window.
     Karaoke,
+    /// The lyrics editor ([`lyric_edit`]): a song's words over its voice's
+    /// waveform, the bottom bar under it.
+    Lyrics,
 }
 
 /// What the list pane shows.

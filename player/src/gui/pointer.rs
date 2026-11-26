@@ -13,6 +13,8 @@ use iced::{Point, Rectangle};
 use crate::app::App;
 use crate::core::desk::Channel;
 use crate::core::lanes::{self, Block};
+use crate::core::lyric_edit::screen::{self, Input, Part};
+use crate::core::lyric_edit::{LyricsEdit, WordAt};
 use crate::core::sliders::Slider;
 use crate::core::transition::viewport;
 use crate::core::{Action, State};
@@ -71,16 +73,33 @@ pub enum Grab {
     /// track: set to the share across it under the pointer, as pressed and
     /// as it moves (landing on its finest step, [`crate::core::sliders::Slider::unit`]).
     Slider(Slider, Rectangle),
+    /// A word of the lyrics editor, by its start, middle or end, over its
+    /// lane (`lane`, its width the span shown): selected as pressed, then
+    /// that part goes to the time under the pointer as it moves, set by
+    /// hand.
+    LyricWord {
+        /// The word.
+        word: WordAt,
+        /// What of it.
+        part: Part,
+        /// Where the lane is.
+        lane: Rectangle,
+    },
+    /// The lyrics editor's view held with the secondary button over its
+    /// lane (`lane`): it moves with the pointer.
+    LyricView(Rectangle),
 }
 
 impl Grab {
     /// The button that holds it.
     fn button(self) -> MouseButton {
         match self {
-            Grab::Seek(_) | Grab::QueueRow { .. } | Grab::Lanes { .. } | Grab::Slider(..) => {
-                MouseButton::Left
-            }
-            Grab::Pan { .. } => MouseButton::Right,
+            Grab::Seek(_)
+            | Grab::QueueRow { .. }
+            | Grab::Lanes { .. }
+            | Grab::Slider(..)
+            | Grab::LyricWord { .. } => MouseButton::Left,
+            Grab::Pan { .. } | Grab::LyricView(_) => MouseButton::Right,
         }
     }
 
@@ -105,6 +124,21 @@ impl Grab {
                 width: bounds.width,
                 overview,
             }),
+            Grab::LyricWord { word, part, lane } => {
+                let (start, end) = screen::window(state)?;
+                // A tremble of a few points is no drag.
+                let slop = f64::from(SLOP / lane.width.max(1.0)) * (end - start);
+                Some(lyrics(Input::Hold {
+                    word,
+                    part,
+                    time: lyric_time(state, lane, at)?,
+                    slop,
+                }))
+            }
+            Grab::LyricView(lane) => Some(lyrics(Input::PanStart {
+                at: at.x,
+                width: lane.width,
+            })),
         }
     }
 
@@ -136,6 +170,8 @@ impl Grab {
                 slider,
                 share: share_across(track, at),
             }),
+            Grab::LyricWord { lane, .. } => Some(lyrics(Input::Drag(lyric_time(state, lane, at)?))),
+            Grab::LyricView(_) => Some(lyrics(Input::Pan(at.x))),
         }
     }
 
@@ -147,6 +183,8 @@ impl Grab {
             Grab::Lanes { .. } => None,
             Grab::Pan { .. } => Some(Action::TransitionPanEnd),
             Grab::Slider(..) => Some(Action::KaraokeSlideEnd),
+            Grab::LyricWord { .. } => Some(lyrics(Input::Drop)),
+            Grab::LyricView(_) => Some(lyrics(Input::PanEnd)),
         }
     }
 
@@ -159,8 +197,32 @@ impl Grab {
             Grab::Lanes { block, .. } => lanes::rhythmed(state, block).is_some(),
             Grab::Pan { .. } => state.transition.pan.is_some(),
             Grab::Slider(..) => state.karaoke.dragging.is_some(),
+            Grab::LyricWord { .. } => editing(state).is_some_and(|s| s.held.is_some()),
+            Grab::LyricView(_) => editing(state).is_some_and(|s| s.pan.is_some()),
         }
     }
+}
+
+/// How far, in points, the pointer may tremble on a word it presses and
+/// change nothing.
+const SLOP: f32 = 3.0;
+
+/// `input` for the lyrics editor's screen, as the core's action.
+fn lyrics(input: Input) -> Action {
+    Action::LyricsEdit(LyricsEdit::Screen(input))
+}
+
+/// The lyrics editor's screen, while it is open.
+fn editing(state: &State) -> Option<&screen::EditorScreen> {
+    state.karaoke.editor.as_ref().map(|e| &e.screen)
+}
+
+/// The seconds into the lyrics editor's song under `at` across its lane
+/// (`lane`, the span shown), wherever the pointer is: before it the view's
+/// start, past it its end.
+fn lyric_time(state: &State, lane: Rectangle, at: Point) -> Option<f64> {
+    let (start, end) = screen::window(state)?;
+    Some(start + share_across(lane, at) * (end - start))
 }
 
 /// The seconds into `block`'s track under `at` across its lanes
@@ -264,6 +326,8 @@ pub enum WheelOn {
     /// A slider of the Karaoke tab or of Karaoke mode's controls: a step
     /// of its own a line.
     Slider(Slider),
+    /// The lyrics editor's lane: zoomed, a step a line.
+    Lyrics,
 }
 
 /// The wheel's turn not yet a whole step, for what it turns (a touchpad's

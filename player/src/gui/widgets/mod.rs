@@ -2,14 +2,15 @@
 //! [`super::look`]: buttons, surfaces, the progress bar, the track (a
 //! seek bar's or a slider's), the spectrum, the icons, the covers, a
 //! list's rows and the tabs; a card's items that take a click and
-//! segmented controls, switches and checks, key hints, links; keeping
-//! what the keys are on in view; and an area that takes the pointer over
-//! what something else draws. A screen that needs one that is not here
+//! segmented controls, switches and checks, key hints, links, a text
+//! field; keeping what the keys are on in view; and an area that takes the
+//! pointer over what something else draws. A screen that needs one that is not here
 //! adds it here, made generically, and never makes its own.
 
 pub mod area;
 pub mod button;
 pub mod cover;
+pub mod field;
 pub mod hide;
 pub mod hints;
 pub mod icons;
@@ -26,6 +27,7 @@ pub mod track;
 
 pub use area::area;
 pub use button::{chip, ghost, primary, round, secondary};
+pub use field::field;
 pub use hide::hide_pointer;
 pub use hints::hints;
 pub use icons::{icon, Icon};

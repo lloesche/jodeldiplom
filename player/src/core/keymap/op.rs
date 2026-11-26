@@ -222,6 +222,44 @@ pub enum Op {
     KeyUp,
     /// The song in its own key again.
     KeyReset,
+    /// The lyrics editor, on the song karaoke is about.
+    LyricsEditor,
+    /// Lyrics editor: the word before.
+    LyricsPrevious,
+    /// Lyrics editor: the next word.
+    LyricsNext,
+    /// Lyrics editor: the word's start a step earlier.
+    LyricsStartEarlier,
+    /// Lyrics editor: the word's start a step later.
+    LyricsStartLater,
+    /// Lyrics editor: the word's end a step earlier.
+    LyricsEndEarlier,
+    /// Lyrics editor: the word's end a step later.
+    LyricsEndLater,
+    /// Lyrics editor: the whole word a step earlier.
+    LyricsMoveEarlier,
+    /// Lyrics editor: the whole word a step later.
+    LyricsMoveLater,
+    /// Lyrics editor: the song played from the word, or paused.
+    LyricsPlay,
+    /// Lyrics editor: the word not to be sung, or to be sung again.
+    LyricsNotSung,
+    /// Lyrics editor: the voice a step louder over the word.
+    LyricsLouder,
+    /// Lyrics editor: the voice a step quieter over the word.
+    LyricsQuieter,
+    /// Lyrics editor: the voice over the word as the Voice slider has it.
+    LyricsLevelReset,
+    /// Lyrics editor: write the word's text.
+    LyricsWrite,
+    /// Lyrics editor: write its line's text.
+    LyricsWriteLine,
+    /// Lyrics editor: take the word out.
+    LyricsDelete,
+    /// Lyrics editor: undo a change.
+    LyricsUndo,
+    /// Lyrics editor: redo a change undone.
+    LyricsRedo,
 }
 
 impl Op {
@@ -333,6 +371,27 @@ impl Op {
             Op::KeyDown => "Key: a semitone down",
             Op::KeyUp => "Key: a semitone up",
             Op::KeyReset => "Key: the song's own",
+            Op::LyricsEditor => {
+                "Lyrics: edit the song's words (times, text, not sung, the voice's level)"
+            }
+            Op::LyricsPrevious => "Lyrics: the word before",
+            Op::LyricsNext => "Lyrics: the next word",
+            Op::LyricsStartEarlier => "Lyrics: its start earlier",
+            Op::LyricsStartLater => "Lyrics: its start later",
+            Op::LyricsEndEarlier => "Lyrics: its end earlier",
+            Op::LyricsEndLater => "Lyrics: its end later",
+            Op::LyricsMoveEarlier => "Lyrics: the word earlier",
+            Op::LyricsMoveLater => "Lyrics: the word later",
+            Op::LyricsPlay => "Lyrics: play from the word",
+            Op::LyricsNotSung => "Lyrics: not to be sung",
+            Op::LyricsLouder => "Lyrics: the voice louder over the word",
+            Op::LyricsQuieter => "Lyrics: the voice quieter over the word",
+            Op::LyricsLevelReset => "Lyrics: the voice over the word as the slider",
+            Op::LyricsWrite => "Lyrics: write the word",
+            Op::LyricsWriteLine => "Lyrics: write the line",
+            Op::LyricsDelete => "Lyrics: take the word out",
+            Op::LyricsUndo => "Lyrics: undo",
+            Op::LyricsRedo => "Lyrics: redo",
         }
     }
 
@@ -399,6 +458,24 @@ impl Op {
                 | Op::SyncKeep
                 | Op::SyncAgain
                 | Op::KaraokeDemo
+                | Op::LyricsPrevious
+                | Op::LyricsNext
+                | Op::LyricsStartEarlier
+                | Op::LyricsStartLater
+                | Op::LyricsEndEarlier
+                | Op::LyricsEndLater
+                | Op::LyricsMoveEarlier
+                | Op::LyricsMoveLater
+                | Op::LyricsPlay
+                | Op::LyricsNotSung
+                | Op::LyricsLouder
+                | Op::LyricsQuieter
+                | Op::LyricsLevelReset
+                | Op::LyricsWrite
+                | Op::LyricsWriteLine
+                | Op::LyricsDelete
+                | Op::LyricsUndo
+                | Op::LyricsRedo
         )
     }
 }

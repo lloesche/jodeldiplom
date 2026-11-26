@@ -278,6 +278,7 @@ impl Gui {
                 _ => Task::none(),
             };
         }
+        let writing = self.writing();
         let task = match message {
             Message::Frame(at) => self.tick(at, true),
             Message::Rest(at) => self.tick(at, false),
@@ -340,7 +341,23 @@ impl Gui {
         if matches!(&self.phase, Phase::Running(app) if app.state.quit) {
             return self.leave();
         }
+        // A text to write in the lyrics editor: its field takes the keys,
+        // the text in it selected to be typed over.
+        if !writing && self.writing() {
+            let field = super::screens::lyrics::FIELD;
+            return Task::batch([
+                task,
+                iced::widget::operation::focus(field),
+                iced::widget::operation::text_input::select_all(field),
+            ]);
+        }
         task
+    }
+
+    /// Whether a text is being written in the lyrics editor.
+    fn writing(&self) -> bool {
+        self.app()
+            .is_some_and(|app| crate::core::lyric_edit::screen::writing(&app.state))
     }
 
     /// The core's `action`, with the clock first.

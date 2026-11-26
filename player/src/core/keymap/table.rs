@@ -27,6 +27,16 @@ const fn alt(code: K) -> Key {
     }
 }
 
+/// A key other than a character, with control.
+const fn ctrl(code: K) -> Key {
+    Key {
+        code,
+        ctrl: true,
+        alt: false,
+        shift: false,
+    }
+}
+
 const UP: Key = Key::plain(K::Up);
 const DOWN: Key = Key::plain(K::Down);
 const LEFT: Key = Key::plain(K::Left);
@@ -50,6 +60,8 @@ const ALT_DOWN: Key = alt(K::Down);
 const ALT_LEFT: Key = alt(K::Left);
 const ALT_RIGHT: Key = alt(K::Right);
 const ALT_ENTER: Key = alt(K::Enter);
+const CTRL_LEFT: Key = ctrl(K::Left);
+const CTRL_RIGHT: Key = ctrl(K::Right);
 
 const fn ch(c: char) -> Key {
     Key::ch(c)
@@ -196,6 +208,7 @@ pub const KEYMAP: &[Binding] = &[
     b(Karaoke, &[ch('-')], Op::KeyDown, "the key a semitone down (the tempo kept; not the drums)"),
     b(Karaoke, &[ch('+'), ch('=')], Op::KeyUp, "the key a semitone up"),
     b(Karaoke, &[ch('0')], Op::KeyReset, "the song's own key (the Delay row at hand: not nudged)"),
+    b(Karaoke, &[ch('e')], Op::LyricsEditor, "edit the song's lyrics: its words over the voice, moved, longer or shorter, their text, not sung, the voice's level over them"),
     // Syncing.
     b(Sync, &[ENTER], Op::SyncKeep, "keep the delay measured, for this output and microphone"),
     b(Sync, &[ch('r')], Op::SyncAgain, "again"),
@@ -226,6 +239,31 @@ pub const KEYMAP: &[Binding] = &[
     b(Desk, &[ch('-')], Op::KeyDown, "the song a semitone down (on the PLAYER strip)"),
     b(Desk, &[ch('+'), ch('=')], Op::KeyUp, "the key a semitone up"),
     b(Desk, &[ch('0')], Op::KeyReset, "the song's own key"),
+    // The lyrics editor.
+    b(LyricsEditor, &[LEFT], Op::LyricsPrevious, "the word before (or click a word)"),
+    b(LyricsEditor, &[RIGHT], Op::LyricsNext, "the next word"),
+    b(LyricsEditor, &[UP], Op::Up, "the line above"),
+    b(LyricsEditor, &[DOWN], Op::Down, "the line below"),
+    b(LyricsEditor, &[SHIFT_LEFT], Op::LyricsStartEarlier, "its start 20 ms earlier (or drag its left edge): set by hand, the words round it fitted to it"),
+    b(LyricsEditor, &[SHIFT_RIGHT], Op::LyricsStartLater, "its start 20 ms later"),
+    b(LyricsEditor, &[ALT_LEFT], Op::LyricsEndEarlier, "its end 20 ms earlier (or drag its right edge)"),
+    b(LyricsEditor, &[ALT_RIGHT], Op::LyricsEndLater, "its end 20 ms later"),
+    b(LyricsEditor, &[CTRL_LEFT], Op::LyricsMoveEarlier, "the whole word 20 ms earlier (or drag its middle)"),
+    b(LyricsEditor, &[CTRL_RIGHT], Op::LyricsMoveLater, "the whole word 20 ms later"),
+    b(LyricsEditor, &[ch(' ')], Op::LyricsPlay, "play the song from just before the word, the view following (again: pause)"),
+    b(LyricsEditor, &[ch('n')], Op::LyricsNotSung, "not to be sung (a backing vocal: no bubble, the voice up over it in Karaoke mode), or to be sung again"),
+    b(LyricsEditor, &[ch('+'), ch('=')], Op::LyricsLouder, "the voice 3 dB louder over the word in Karaoke mode"),
+    b(LyricsEditor, &[ch('-')], Op::LyricsQuieter, "the voice 3 dB quieter over the word"),
+    b(LyricsEditor, &[ch('0')], Op::LyricsLevelReset, "the voice over the word as the Voice slider has it"),
+    b(LyricsEditor, &[ENTER], Op::LyricsWrite, "write the word (or double-click it): two words put one in after it, none takes it out"),
+    b(LyricsEditor, &[SHIFT_ENTER], Op::LyricsWriteLine, "write its whole line"),
+    b(LyricsEditor, &[DELETE], Op::LyricsDelete, "take the word out"),
+    b(LyricsEditor, &[Key::ctrl('z')], Op::LyricsUndo, "undo a change"),
+    b(LyricsEditor, &[Key::ctrl('y')], Op::LyricsRedo, "redo it"),
+    b(LyricsEditor, &[ESC], Op::Back, "close the editor (every change is kept as it is made)"),
+    // Writing in the lyrics editor.
+    b(LyricsText, &[ENTER], Op::Accept, "keep the text"),
+    b(LyricsText, &[ESC], Op::Back, "leave it as it was"),
     // Now playing.
     b(NowPlaying, &[ESC], Op::Back, "back"),
     // The settings, their device list and their data folder list.

@@ -23,7 +23,7 @@ pub use result::{
     best_words, date_words, plain_lines, result_now, DiplomaWords, ResultShown, DIPLOMA,
 };
 pub use tab::{
-    keys_line, track_id, Control, Enter, Hint, LyricsRow, Mic, SliderRow, Switch, Tab, ENTER,
+    keys_line, track_id, Control, Enter, Hint, LyricsRow, Mic, SliderRow, Switch, Tab, EDIT, ENTER,
     MEASURE,
 };
 

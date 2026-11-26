@@ -97,26 +97,32 @@ impl SongLyrics {
 }
 
 /// The songs whose lyrics are wanted: while the tab or the mode shows, the one
-/// playing (or held), then the next two in the queue; while the Transition tab
+/// playing (or held), then the next two in the queue (the lyrics editor's song
+/// before them while it shows); while the Transition tab
 /// shows, its tracks' ([`crate::core::transition::tab::lyrics_wanted`]).
 pub fn lyrics_wanted(state: &State) -> Vec<PathBuf> {
     if let Some(paths) = crate::core::transition::tab::lyrics_wanted(state) {
         return paths;
     }
-    if !(on_tab(state) || in_mode(state)) {
+    // The lyrics editor's song first, its timing taken as it comes again.
+    let editing = state
+        .karaoke
+        .editor
+        .as_ref()
+        .filter(|_| state.screen == crate::core::Screen::Lyrics)
+        .map(|e| e.path.clone());
+    if !(on_tab(state) || in_mode(state) || editing.is_some()) {
         return Vec::new();
     }
-    let Some(first) = song_index(state) else {
-        return Vec::new();
-    };
-    state
-        .queue
-        .paths
-        .iter()
-        .skip(first)
-        .take(3)
-        .cloned()
-        .collect()
+    let mut out: Vec<PathBuf> = editing.into_iter().collect();
+    if let Some(first) = song_index(state) {
+        for path in state.queue.paths.iter().skip(first).take(3) {
+            if !out.contains(path) {
+                out.push(path.clone());
+            }
+        }
+    }
+    out
 }
 
 /// Asks for the lyrics wanted that are not known yet, when what is wanted

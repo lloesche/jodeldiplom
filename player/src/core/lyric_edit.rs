@@ -21,12 +21,13 @@
 //! - **History:** each change is a step; undo goes back one, redo forward
 //!   again, until a new change.
 //!
-//! In the app ([`act`]): the editor opens on the song karaoke is about, and
-//! each change is shown at once (the song's lyrics as shown are the
-//! editor's, so its bubbles' notes are read from the melody over the new
-//! times) and kept ([`Effect::SaveLyricEdits`]): the lyrics' worker keeps
-//! the edits and times the song again with them, and the song timed comes
-//! back as any lyrics do.
+//! In the app ([`act`]): the editor opens on the song karaoke is about, on
+//! its screen ([`screen`], [`Screen::Lyrics`]), and each change is shown at
+//! once (the song's lyrics as shown are the editor's, so its bubbles' notes
+//! are read from the melody over the new times) and kept
+//! ([`Effect::SaveLyricEdits`]): the lyrics' worker keeps the edits and
+//! times the song again with them, and the song timed comes back as any
+//! lyrics do.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,8 +35,10 @@ use std::sync::Arc;
 use jodel_lyrics::{Line, Lyrics, Word, GIVEN};
 
 use super::karaoke::{self, SongLyrics};
-use super::{Effect, State};
+use super::{Effect, Screen, State};
 use crate::lyrics::edits::edits_of;
+
+pub mod screen;
 
 /// The shortest a word can be made by hand, in seconds.
 pub const SHORTEST: f64 = 0.05;
@@ -110,6 +113,8 @@ pub struct LyricEditor {
     pub lyrics: Lyrics,
     /// The word selected.
     pub selected: Option<WordAt>,
+    /// What its screen shows and holds.
+    pub screen: screen::EditorScreen,
     undo: Vec<Lyrics>,
     redo: Vec<Lyrics>,
 }
@@ -130,9 +135,12 @@ impl LyricEditor {
     /// The editor on `lyrics` (the song at `path`'s, as shown), its first
     /// word selected.
     pub fn open(path: PathBuf, lyrics: &Lyrics) -> LyricEditor {
+        let selected = words_in(lyrics).first().copied();
+        let first = selected.and_then(|at| lyrics.lines[at.line].words[at.word].start);
         LyricEditor {
             path,
-            selected: words_in(lyrics).first().copied(),
+            selected,
+            screen: screen::EditorScreen::at(first),
             lyrics: lyrics.clone(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -202,6 +210,34 @@ impl LyricEditor {
                 }
             }
         }
+    }
+
+    /// While a word is dragged: `edit` (a nudge or a move of the word
+    /// selected; `None`, no change yet) made to `from` (the lyrics as the
+    /// drag found them) in place of what is shown, out of the history until
+    /// the drag ends ([`LyricEditor::dragged`]). Whether it could be made.
+    pub fn drag(&mut self, from: &Lyrics, edit: Option<Edit>) -> bool {
+        let shown = std::mem::replace(&mut self.lyrics, from.clone());
+        let Some(edit) = edit else {
+            return true;
+        };
+        if self.change(edit) {
+            true
+        } else {
+            self.lyrics = shown;
+            false
+        }
+    }
+
+    /// The drag that found the lyrics as `from` ended: what it changed one
+    /// step of the history. Whether it changed anything.
+    pub fn dragged(&mut self, from: Lyrics) -> bool {
+        if self.lyrics == from {
+            return false;
+        }
+        self.undo.push(from);
+        self.redo.clear();
+        true
     }
 
     /// Undoes (`back`) or redoes a change.
@@ -443,50 +479,97 @@ fn clip_letters(w: &mut Word) {
 /// What the app does with the editor.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LyricsEdit {
-    /// Opens it on the song karaoke is about (its lyrics found).
+    /// Opens it on the song karaoke is about (its lyrics found), on its
+    /// screen.
     Open,
-    /// Closes it.
+    /// Closes it, back to the screen it was opened from.
     Close,
     /// An action of the editor's.
     Edit(Edit),
+    /// Asks whether every edit is to be forgotten (`true`), or calls the
+    /// question off.
+    AskRevert(bool),
     /// Forgets every edit of the song: its text as found, timed again
     /// (the editor closes).
     Revert,
+    /// What the screen's pointer and text field do ([`screen::Input`]).
+    Screen(screen::Input),
 }
 
 /// Carries out `what` for the app: a change shown at once on the song's
 /// lyrics and kept ([`Effect::SaveLyricEdits`]).
 pub(crate) fn act(state: &mut State, what: LyricsEdit, fx: &mut Vec<Effect>) {
+    // Anything else calls the question of forgetting every edit off.
+    if !matches!(what, LyricsEdit::AskRevert(_) | LyricsEdit::Revert) {
+        if let Some(editor) = &mut state.karaoke.editor {
+            editor.screen.asking = false;
+        }
+    }
     match what {
         LyricsEdit::Open => {
             let Some(path) = karaoke::song_index(state).and_then(|i| state.queue.paths.get(i))
             else {
-                return;
+                return super::update::say_info(state, "No song to edit the lyrics of");
             };
-            if let Some(SongLyrics::Found { shown, .. }) = state.karaoke.lyrics.get(path) {
-                state.karaoke.editor = Some(LyricEditor::open(path.clone(), shown));
+            match state.karaoke.lyrics.get(path) {
+                Some(SongLyrics::Found { shown, .. }) => {
+                    state.karaoke.editor = Some(LyricEditor::open(path.clone(), shown));
+                    state.screen = Screen::Lyrics;
+                }
+                _ => {
+                    let title = super::shown_title(state, path);
+                    super::update::say_info(state, format!("No lyrics of {title} to edit yet"));
+                }
             }
         }
-        LyricsEdit::Close => state.karaoke.editor = None,
+        LyricsEdit::Close => close(state),
+        LyricsEdit::AskRevert(on) => {
+            if let Some(editor) = &mut state.karaoke.editor {
+                editor.screen.asking = on;
+            }
+        }
         LyricsEdit::Revert => {
             if let Some(editor) = state.karaoke.editor.take() {
                 fx.push(Effect::SaveLyricEdits(editor.path, None));
+                close(state);
+                super::update::say_info(
+                    state,
+                    "Every edit forgotten: the lyrics as found, timed again",
+                );
             }
         }
         LyricsEdit::Edit(edit) => {
             let Some(editor) = &mut state.karaoke.editor else {
                 return;
             };
-            if !editor.apply(edit) {
-                return;
+            let changed = editor.apply(edit);
+            screen::reveal(state);
+            if changed {
+                kept(state, fx);
             }
-            let (path, lyrics) = (editor.path.clone(), editor.lyrics.clone());
-            if let Some(SongLyrics::Found { shown, .. }) = state.karaoke.lyrics.get_mut(&path) {
-                *shown = Arc::new(lyrics.clone());
-            }
-            fx.push(Effect::SaveLyricEdits(path, Some(edits_of(&lyrics))));
         }
+        LyricsEdit::Screen(what) => screen::act(state, what, fx),
     }
+}
+
+/// The editor closed: its screen left for the one it was opened from.
+fn close(state: &mut State) {
+    state.karaoke.editor = None;
+    if state.screen == Screen::Lyrics {
+        state.screen = Screen::Main;
+    }
+}
+
+/// The editor's lyrics changed: shown at once as the song's, and kept.
+fn kept(state: &mut State, fx: &mut Vec<Effect>) {
+    let Some(editor) = &state.karaoke.editor else {
+        return;
+    };
+    let (path, lyrics) = (editor.path.clone(), editor.lyrics.clone());
+    if let Some(SongLyrics::Found { shown, .. }) = state.karaoke.lyrics.get_mut(&path) {
+        *shown = Arc::new(lyrics.clone());
+    }
+    fx.push(Effect::SaveLyricEdits(path, Some(edits_of(&lyrics))));
 }
 
 /// A song's lyrics arrived: the editor on it takes them when they are its

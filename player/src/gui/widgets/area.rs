@@ -24,6 +24,7 @@ pub fn area<'a, Message>() -> Area<'a, Message> {
         on_right_press: None,
         on_scroll: None,
         id: None,
+        interaction: mouse::Interaction::None,
     }
 }
 
@@ -33,6 +34,7 @@ pub struct Area<'a, Message> {
     on_right_press: Option<Said<'a, Message>>,
     on_scroll: Option<Turned<'a, Message>>,
     id: Option<Id>,
+    interaction: mouse::Interaction,
 }
 
 impl<'a, Message> Area<'a, Message> {
@@ -62,6 +64,13 @@ impl<'a, Message> Area<'a, Message> {
     /// Found by `id` (the tests find it so).
     pub fn id(mut self, id: impl Into<Id>) -> Self {
         self.id = Some(id.into());
+        self
+    }
+
+    /// The pointer looks `interaction` over it (a hand over what it drags,
+    /// arrows over an edge it moves).
+    pub fn interaction(mut self, interaction: mouse::Interaction) -> Self {
+        self.interaction = interaction;
         self
     }
 }
@@ -117,6 +126,21 @@ impl<Message> Widget<Message, Theme, Renderer> for Area<'_, Message> {
         if let Some(message) = message {
             shell.publish(message);
             shell.capture_event();
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        _tree: &Tree,
+        layout: Layout,
+        cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &Renderer,
+    ) -> mouse::Interaction {
+        if cursor.is_over(layout.bounds()) {
+            self.interaction
+        } else {
+            mouse::Interaction::None
         }
     }
 

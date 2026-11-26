@@ -193,6 +193,11 @@ pub enum Context {
     Sync,
     /// The Mixer tab.
     Desk,
+    /// The lyrics editor.
+    LyricsEditor,
+    /// Writing a word's or a line's text in the lyrics editor (the text
+    /// field takes the rest of the keys).
+    LyricsText,
 }
 
 impl Context {
@@ -216,6 +221,8 @@ impl Context {
             Context::KaraokeMode => "Karaoke mode (fullscreen)",
             Context::Sync => "Syncing (s on the Karaoke tab)",
             Context::Desk => "Mixer tab",
+            Context::LyricsEditor => "Lyrics editor (e on the Karaoke tab)",
+            Context::LyricsText => "Lyrics editor, writing (after enter)",
         }
     }
 
@@ -298,6 +305,10 @@ pub fn contexts(state: &State) -> Vec<Context> {
         }
         Screen::Help => vec![Context::Help, Context::Global],
         Screen::Karaoke => vec![Context::KaraokeMode, Context::Global],
+        Screen::Lyrics if crate::core::lyric_edit::screen::writing(state) => {
+            vec![Context::LyricsText]
+        }
+        Screen::Lyrics => vec![Context::LyricsEditor, Context::Global],
     }
 }
 

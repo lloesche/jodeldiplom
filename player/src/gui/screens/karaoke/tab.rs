@@ -2,7 +2,8 @@
 //! the main screen's side pane, on the list pane's panel: beside the
 //! cover (at its place's top left, [`cover`]; a card in its place without
 //! art), the
-//! song with the button into the mode, then the controls (the sliders,
+//! song with the button into the mode and the one into the lyrics editor,
+//! then the controls (the sliders,
 //! the sync's row under the delay; the game's switches) and what is known
 //! (the lyrics of the song and the next two, the microphone and its
 //! meter, the echo canceller, the word timing; a few notes on the mode),
@@ -35,7 +36,7 @@ use crate::gui::pointer::{Grab, WheelOn};
 use crate::gui::widgets::{self, Icon};
 use crate::gui::window::Message;
 use crate::view::karaoke::{
-    track_id, Control, Hint, LyricsRow, Mic, SliderRow, Switch, Tab, ENTER, MEASURE,
+    track_id, Control, Hint, LyricsRow, Mic, SliderRow, Switch, Tab, EDIT, ENTER, MEASURE,
 };
 use crate::view::sync::{Dot, Panel, Said, HEARS, SAY, TITLE};
 
@@ -191,10 +192,18 @@ fn head<'a>(tab: &Tab) -> Element<'a, Message> {
     .leading(Icon::Play)
     .key(keymap::hint(Context::Karaoke, tab.enter.op))
     .on_press(press);
+    let edit = match tab.edit {
+        true => widgets::secondary(EDIT),
+        false => widgets::ghost(EDIT),
+    }
+    .leading(Icon::Lyrics)
+    .key(keymap::hint(Context::Karaoke, Op::LyricsEditor))
+    .on_press(Message::Act(Action::Op(Op::LyricsEditor)));
     let mut button = Row::<Element<'a, Message>>::new()
         .spacing(space::M)
         .align_y(Alignment::Center)
-        .push(enter.into());
+        .push(enter.into())
+        .push(edit.into());
     if let Some(why) = tab.enter.why {
         button = button.push(dim(why, look::TEXT_DIM));
     }

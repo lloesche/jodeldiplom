@@ -1700,7 +1700,7 @@ fn move_by(state: &mut State, delta: i32, fx: &mut Vec<Effect>) {
             state.settings.row = offset(state.settings.row, delta).min(SettingsRow::ALL.len() - 1);
         }
         Screen::Help => scroll_help(state, delta),
-        Screen::NowPlaying | Screen::Karaoke => {}
+        Screen::NowPlaying | Screen::Karaoke | Screen::Lyrics => {}
     }
 }
 
@@ -1713,7 +1713,11 @@ fn page(state: &State) -> i32 {
 }
 
 fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
-    if karaoke::apply(state, op, fx) || tab::apply(state, op, fx) || desk::apply(state, op, fx) {
+    if super::lyric_edit::screen::apply(state, op, fx)
+        || karaoke::apply(state, op, fx)
+        || tab::apply(state, op, fx)
+        || desk::apply(state, op, fx)
+    {
         return;
     }
     match op {
@@ -2028,6 +2032,33 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         }
         Op::ValueDown => settings_step(state, -1, fx),
         Op::ValueUp => settings_step(state, 1, fx),
+        Op::LyricsEditor => {
+            // From anywhere (the palette): the song karaoke is about.
+            state.palette = None;
+            super::lyric_edit::act(state, super::lyric_edit::LyricsEdit::Open, fx);
+        }
+        Op::LyricsPrevious
+        | Op::LyricsNext
+        | Op::LyricsStartEarlier
+        | Op::LyricsStartLater
+        | Op::LyricsEndEarlier
+        | Op::LyricsEndLater
+        | Op::LyricsMoveEarlier
+        | Op::LyricsMoveLater
+        | Op::LyricsPlay
+        | Op::LyricsNotSung
+        | Op::LyricsLouder
+        | Op::LyricsQuieter
+        | Op::LyricsLevelReset
+        | Op::LyricsWrite
+        | Op::LyricsWriteLine
+        | Op::LyricsDelete
+        | Op::LyricsUndo
+        | Op::LyricsRedo => say(
+            state,
+            Level::Info,
+            "That is for the lyrics editor (e on the Karaoke tab)",
+        ),
     }
 }
 

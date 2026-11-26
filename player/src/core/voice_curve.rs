@@ -19,7 +19,7 @@
 //! change of the slider, the song, the words, and a seek (until two
 //! positions tell the speed again, one gain at the slider's level).
 
-use jodel_lyrics::Lyrics;
+use jodel_lyrics::{Lyrics, Word};
 
 use super::desk::taper;
 use super::transition::Status;
@@ -41,16 +41,25 @@ pub const SMOOTH: f64 = 0.05;
 /// where the positions told now put them before it is timed again.
 const DRIFT: f64 = 0.005;
 
+/// The voice's level over `word` in the mode when it has one of its own (a
+/// level set over it, or raised over a word not to be sung), in dB against
+/// the voice as recorded; `voice_db` the slider's. `None`: the slider's.
+pub fn own_level(word: &Word, voice_db: f64) -> Option<f64> {
+    match (word.voice_db, word.not_sung) {
+        (Some(db), _) => Some(f64::from(db)),
+        (None, true) => Some((voice_db + NOT_SUNG_RAISE_DB).max(NOT_SUNG_LEAST_DB)),
+        (None, false) => None,
+    }
+}
+
 /// The voice's level over each word with one of its own, in order and none
 /// overlapping the one before: from, to (seconds) and the level in dB
 /// against the voice as recorded; `voice_db` the slider's.
 pub fn spans(lyrics: &Lyrics, voice_db: f64) -> Vec<(f64, f64, f64)> {
     let mut out: Vec<(f64, f64, f64)> = Vec::new();
     for w in lyrics.lines.iter().flat_map(|l| &l.words) {
-        let db = match (w.voice_db, w.not_sung) {
-            (Some(db), _) => f64::from(db),
-            (None, true) => (voice_db + NOT_SUNG_RAISE_DB).max(NOT_SUNG_LEAST_DB),
-            (None, false) => continue,
+        let Some(db) = own_level(w, voice_db) else {
+            continue;
         };
         let (Some(a), Some(b)) = (w.start, w.end) else {
             continue;

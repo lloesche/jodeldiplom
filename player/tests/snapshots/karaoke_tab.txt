@@ -3,6 +3,7 @@
 [title] Morning Light
 [dim] The Ramps
 [primary] Enter Karaoke Mode (enter)
+[button] Edit lyrics (e)
 [slider focused] Voice 0 % −∞ dB
 [slider] Delay 25 % 150 ms
 [row] Sync  [button] Measure (s)  [dim] default

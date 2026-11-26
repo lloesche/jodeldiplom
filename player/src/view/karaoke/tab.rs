@@ -23,6 +23,8 @@ use crate::view::sync::{self, Panel};
 pub const ENTER: &str = "Enter Karaoke Mode";
 /// The sync's button, on its row under the delay.
 pub const MEASURE: &str = "Measure";
+/// The button into the lyrics editor.
+pub const EDIT: &str = "Edit lyrics";
 
 /// What to do about a microphone giving only silence, for this system.
 const SILENT_HINT: &str = if cfg!(target_os = "macos") {
@@ -191,6 +193,9 @@ pub struct Tab {
     pub artist: String,
     /// The button into the mode.
     pub enter: Enter,
+    /// The song's lyrics are there to edit (the button into the editor
+    /// lit).
+    pub edit: bool,
     /// The sliders, the sync's row under the delay.
     pub controls: Vec<Control>,
     /// The game's settings.
@@ -240,6 +245,9 @@ impl Tab {
                 shifted: Op::KaraokeEnterHere,
                 why,
             },
+            edit: karaoke::song_index(state)
+                .and_then(|i| karaoke::lyrics_of(state, i))
+                .is_some_and(|l| matches!(l, SongLyrics::Found { .. })),
             controls: controls(state),
             switches: switches(state),
             lyrics: lyrics(state),
@@ -434,6 +442,9 @@ impl fmt::Display for Tab {
             None => writeln!(f, "[primary] {ENTER} ({key})")?,
             Some(why) => writeln!(f, "[greyed] {ENTER} ({key})  [dim] {why}")?,
         }
+        let key = keymap::hint(Context::Karaoke, Op::LyricsEditor);
+        let tone = if self.edit { "button" } else { "greyed" };
+        writeln!(f, "[{tone}] {EDIT} ({key})")?;
         for control in &self.controls {
             match control {
                 Control::Slider(s) => {

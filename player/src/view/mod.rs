@@ -5,8 +5,8 @@
 //! summary under the list ([`info`]), the command palette over everything
 //! ([`command_palette`]) and the bottom bar ([`bottom`], the spectrum's
 //! [`plot`]); and whole screens: Now playing ([`now::NowPlaying`]), the
-//! settings ([`settings`]) and the keys ([`help`]), in the player's
-//! colours ([`palette`]).
+//! settings ([`settings`]), the keys ([`help`]) and the lyrics editor
+//! ([`lyrics`]), in the player's colours ([`palette`]).
 
 pub mod bottom;
 pub mod bubbles;
@@ -16,6 +16,7 @@ pub mod info;
 pub mod karaoke;
 pub mod lanes;
 pub mod list;
+pub mod lyrics;
 pub mod now;
 pub mod palette;
 pub mod plot;

@@ -70,13 +70,19 @@ pub enum Icon {
     Cover,
     /// The microphone.
     Mic,
+    /// Set by hand, to stay where it is (a pushpin).
+    Pin,
+    /// Back a change.
+    Undo,
+    /// Forward a change undone.
+    Redo,
     /// Work under way: an arc that turns ([`Glyph::turn`]).
     Busy,
 }
 
 impl Icon {
     /// Every icon, for the look sheet.
-    pub const ALL: [Icon; 27] = [
+    pub const ALL: [Icon; 30] = [
         Icon::Check,
         Icon::Cross,
         Icon::Retry,
@@ -103,6 +109,9 @@ impl Icon {
         Icon::Lyrics,
         Icon::Cover,
         Icon::Mic,
+        Icon::Pin,
+        Icon::Undo,
+        Icon::Redo,
         Icon::Busy,
     ];
 
@@ -135,6 +144,9 @@ impl Icon {
             Icon::Lyrics => "lyrics",
             Icon::Cover => "cover",
             Icon::Mic => "mic",
+            Icon::Pin => "pin",
+            Icon::Undo => "undo",
+            Icon::Redo => "redo",
             Icon::Busy => "busy",
         }
     }
@@ -473,6 +485,54 @@ fn paint(frame: &mut Frame, icon: Icon, size: f32, color: Color, turn: f32) {
             );
             frame.stroke(&lines(&[(12.0, 17.0), (12.0, 20.5)]), stroke);
             frame.stroke(&lines(&[(8.5, 20.5), (15.5, 20.5)]), stroke);
+        }
+        Icon::Pin => {
+            // A pushpin's head and collar, its needle under them.
+            frame.stroke(
+                &polygon(&[
+                    (9.0, 4.0),
+                    (15.0, 4.0),
+                    (14.0, 9.5),
+                    (17.5, 13.5),
+                    (6.5, 13.5),
+                    (10.0, 9.5),
+                ]),
+                stroke,
+            );
+            frame.stroke(&lines(&[(12.0, 13.5), (12.0, 20.5)]), stroke);
+        }
+        Icon::Undo | Icon::Redo => {
+            // An arrow back to the left (to the right: redo), round a turn
+            // under it.
+            let x = |v: f32| if icon == Icon::Undo { v } else { 24.0 - v };
+            let a = |v: f32| {
+                if icon == Icon::Undo {
+                    v
+                } else {
+                    std::f32::consts::PI - v
+                }
+            };
+            frame.stroke(
+                &lines(&[(x(8.5), 5.0), (x(4.5), 9.5), (x(8.5), 14.0)]),
+                stroke,
+            );
+            frame.stroke(&lines(&[(x(4.5), 9.5), (x(14.5), 9.5)]), stroke);
+            frame.stroke(&lines(&[(x(14.5), 19.0), (x(9.5), 19.0)]), stroke);
+            let (from, to) = (
+                a(-std::f32::consts::FRAC_PI_2),
+                a(std::f32::consts::FRAC_PI_2),
+            );
+            frame.stroke(
+                &Path::new(|b| {
+                    b.arc(path::Arc {
+                        center: p(x(14.5), 14.25),
+                        radius: 4.75 * k,
+                        start_angle: iced::Radians(from.min(to)),
+                        end_angle: iced::Radians(from.max(to)),
+                    });
+                }),
+                stroke,
+            );
         }
         Icon::Busy => {
             let start = turn * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;

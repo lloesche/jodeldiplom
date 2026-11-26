@@ -99,8 +99,11 @@ built-in fonts (some tests) it is iced's sans-serif.
   (two units of a 24-unit square), round ends, sized from the type scale,
   in the colour of the text round them: check, cross, retry, download,
   alert, play, pause, previous, next, stop, settings, help, folder, note,
-  playlist, queue, up, chevron, search, command. No icon fonts and no
-  emoji for the chrome.
+  playlist, queue, up, chevron, search, command, pin, undo, redo. No
+  icon fonts and no emoji for the chrome.
+- **Field** (`field`): a text input on the panel's ground, a 1-point
+  edge, the accent's ring while it has the keys (the lyrics editor's
+  word).
 
 ## Checking a screen
 

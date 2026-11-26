@@ -1348,7 +1348,8 @@ impl App {
 
     /// Whether what moves needs 60 frames a second to look smooth: what
     /// follows the pointer (a seek drag, a view being dragged), a block
-    /// sliding, and words to be read as they go by (Karaoke mode; the
+    /// sliding, the lyrics editor's playhead over the words it times, and
+    /// words to be read as they go by (Karaoke mode; the
     /// Karaoke tab's voice lane is [`App::layer_moves`]). The spectrum, the
     /// clock and the Transition tab's lanes going by as a track plays (a few
     /// pixels a frame at 30) do with 30.
@@ -1366,6 +1367,8 @@ impl App {
             || state.karaoke.resume_at.is_some()
             // Karaoke mode's controls fading in or out.
             || core::karaoke::controls::fading(state)
+            // The lyrics editor's playhead, or a word or its view dragged.
+            || core::lyric_edit::screen::moving(state)
     }
 
     /// Whether a lane that follows the playhead goes by (a song playing:

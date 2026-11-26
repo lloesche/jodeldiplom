@@ -1,6 +1,7 @@
 //! What the window shows, screen by screen, in iced's widgets: the setup
-//! screen ([`setup`]), Now playing ([`now`]), the settings
-//! ([`settings`]) and the keys ([`help`]) over the bottom bar
+//! screen ([`setup`]), Now playing ([`now`]), the lyrics editor
+//! ([`lyrics`], its lane over it), the settings ([`settings`]) and the keys
+//! ([`help`]) over the bottom bar
 //! ([`bottom`]), and the main screen laid out in rows and columns from
 //! the window's measures ([`crate::gui::metrics`]): the tabs' header
 //! along the top ([`list::tabs`]), under it the side pane (the browser
@@ -39,6 +40,7 @@ pub mod bottom;
 pub mod help;
 pub mod karaoke;
 pub mod list;
+pub mod lyrics;
 pub mod now;
 pub mod palette;
 pub mod right;
@@ -82,6 +84,7 @@ pub(super) fn view<'a>(shown: Shown<'a>, parts: &Parts<'a>) -> Element<'a, Messa
         Screen::NowPlaying => now::view(state, parts.covers),
         Screen::Settings => page(state, settings::view(state), parts),
         Screen::Help => page(state, help::view(state), parts),
+        Screen::Lyrics => lyrics::view(state, parts),
         Screen::Main => main(state, parts),
         Screen::Karaoke => karaoke::mode::view(state, parts.stage),
     };
@@ -103,7 +106,11 @@ fn ground(content: Element<'_, Message>) -> Element<'_, Message> {
 
 /// A screen the window lays out whole (the settings, the keys), over the
 /// bottom bar as the main screen has it, without the spectrum.
-fn page<'a>(state: &State, page: Element<'a, Message>, parts: &Parts<'a>) -> Element<'a, Message> {
+pub(super) fn page<'a>(
+    state: &State,
+    page: Element<'a, Message>,
+    parts: &Parts<'a>,
+) -> Element<'a, Message> {
     let bar = bottom::view(state, parts.heard, parts.size.width, 0.0);
     column![
         container(page).width(Fill).height(Fill),
@@ -295,7 +302,7 @@ pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
                 Side::Transition | Side::Mixer => None,
             }
         }
-        Screen::Settings | Screen::Help | Screen::Karaoke => None,
+        Screen::Settings | Screen::Help | Screen::Karaoke | Screen::Lyrics => None,
     };
     place
         .filter(|p| p.width > 0.0 && p.height > 0.0)
@@ -306,7 +313,8 @@ pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
 
 /// The lanes `state`'s screen shows in a window of `size` at `scale`
 /// pixels a point, painted at `metrics`, `heard` seconds into the playing
-/// track: the Transition tab's, the Karaoke tab's voice lane.
+/// track: the Transition tab's, the Karaoke tab's voice lane, the lyrics
+/// editor's.
 pub fn lane_spots(
     state: &State,
     size: Size,
@@ -317,6 +325,9 @@ pub fn lane_spots(
     let mut spots = Vec::new();
     if let Some(room) = transition::Room::of(state, size, scale) {
         spots = transition::spots(state, &room, heard);
+    }
+    if let Some(room) = lyrics::Room::of(state, size, scale) {
+        spots = lyrics::spots(state, &room);
     }
     let m = metrics::main(size, state.side);
     if let (Screen::Main, Some(v)) = (state.screen, m.voice) {
