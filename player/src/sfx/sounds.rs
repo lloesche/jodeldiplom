@@ -9,10 +9,12 @@
 //! - [`Sound::Diploma`]: the diploma's own, from its paper unrolling to
 //!   the examiner's signature ([`super::diploma`]).
 //!
-//! Each is set to its own peak ([`Sound::peak_db`]), well under the
-//! song's; the Effects strip on the desk turns them all up or down. The
-//! bank holds them in one list, kind by kind ([`Sound::all`]); a sound's
-//! place is where it is in it.
+//! Each is made at its own peak ([`Sound::peak_db`]), and played lifted as
+//! the conductor's synth is ([`super::conductor::LEVEL`]), so the paper
+//! and the stamps keep their place among the result's music; the Effects
+//! strip on the desk turns them all up or down. The bank holds them in one
+//! list, kind by kind ([`Sound::all`]); a sound's place is where it is in
+//! it.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -71,8 +73,8 @@ impl Sound {
         }
     }
 
-    /// The peak it is made at, dBFS: under the song, the bigger moments a
-    /// little louder.
+    /// The peak it is made at, dBFS (before it is lifted as played): the
+    /// bigger moments a little louder.
     pub fn peak_db(self) -> f64 {
         match self {
             Sound::Medal(Medal::Bronze) => -14.0,
@@ -153,8 +155,8 @@ mod tests {
     use super::*;
 
     /// Each sound in its place in the bank, under a name of its own; each
-    /// set to its peak, under the song's (none over -12 dBFS), ending on
-    /// silence.
+    /// set to its peak (none over -12 dBFS, so lifted as played it stays
+    /// well under full scale), ending on silence.
     #[test]
     fn every_sound_has_its_place_and_its_peak() {
         let all = Sound::all();

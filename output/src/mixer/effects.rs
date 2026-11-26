@@ -288,12 +288,12 @@ impl Effects {
         let _ = self.tx.send(Msg::EffectsBank(bank));
     }
 
-    /// `synth` played live from now on, at `gain` (linear) on the strip,
-    /// in place of any before (which is let go of off the mixer thread);
-    /// heard while the device runs at its rate. Its commands come through
-    /// [`Effects::commands`].
-    pub fn live(&self, synth: Synth, gain: f32) {
-        let _ = self.tx.send(Msg::EffectsLive(Box::new(synth), gain));
+    /// `synth` played live from now on, as it renders (its level is its
+    /// own bus's, under its limiter's ceiling), in place of any before
+    /// (which is let go of off the mixer thread); heard while the device
+    /// runs at its rate. Its commands come through [`Effects::commands`].
+    pub fn live(&self, synth: Synth) {
+        let _ = self.tx.send(Msg::EffectsLive(Box::new(synth)));
     }
 
     /// Where commands go to the live synth, their frames the stream frames

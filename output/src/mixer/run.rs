@@ -292,9 +292,9 @@ impl Run {
                 }
                 self.fit_effects();
             }
-            Msg::EffectsLive(synth, gain) => {
+            Msg::EffectsLive(synth) => {
                 let old = match &mut self.effects {
-                    Some(fx) => fx.set_live(Some(synth), gain),
+                    Some(fx) => fx.set_live(Some(synth)),
                     None => Some(synth),
                 };
                 if let Some(old) = old {

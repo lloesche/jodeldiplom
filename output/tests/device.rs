@@ -212,7 +212,7 @@ fn notes_on_the_desks_frames_from_before_a_reopening_never_play() {
     let group = mixer.strip("Player");
     let effects = mixer.effects(&mixer.strip("Effects"));
     let (synth, patch) = tone_synth(RATE, 0.05);
-    effects.live(synth, 1.0);
+    effects.live(synth);
     let (mut lead, _fader) = mixer.input(&group, Role::Lead, 1.0);
     let level = 1_000;
     let mut out = open_started(&mut lead, RATE, level);

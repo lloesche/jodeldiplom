@@ -93,12 +93,12 @@ impl EffectsRun {
         self.live.reserve(frames);
     }
 
-    /// `synth` played live from now on at `gain`; the one before, to be
-    /// let go of elsewhere.
-    pub(super) fn set_live(&mut self, synth: Option<Box<Synth>>, gain: f32) -> Option<Box<Synth>> {
+    /// `synth` played live from now on; the one before, to be let go of
+    /// elsewhere.
+    pub(super) fn set_live(&mut self, synth: Option<Box<Synth>>) -> Option<Box<Synth>> {
         let rate = synth.as_ref().map_or(0, |s| s.rate().round() as u64);
         self.queue.live_rate.store(rate, Ordering::Relaxed);
-        self.live.set(synth, gain, &self.queue)
+        self.live.set(synth, &self.queue)
     }
 
     /// Its live synth, taken (to be let go of elsewhere).

@@ -116,8 +116,6 @@ struct Chunk {
 pub(crate) struct LiveRun {
     rx: Consumer<Sent>,
     synth: Option<Box<Synth>>,
-    /// Its level on the strip, linear.
-    gain: f32,
     held: Vec<Held>,
     bound: [Option<u64>; BOUND],
     /// Frames rendered since it was last busy or heard (past its tail: at
@@ -179,7 +177,6 @@ impl LiveRun {
         LiveRun {
             rx,
             synth: None,
-            gain: 1.0,
             held: Vec::with_capacity(HELD),
             bound: [None; BOUND],
             quiet: u64::MAX,
@@ -188,15 +185,13 @@ impl LiveRun {
         }
     }
 
-    /// `synth` played from now on, at `gain`; the one before, to be let go
-    /// of elsewhere. What waited for the one before is dropped (counted).
+    /// `synth` played from now on; the one before, to be let go of
+    /// elsewhere. What waited for the one before is dropped (counted).
     pub(super) fn set(
         &mut self,
         synth: Option<Box<Synth>>,
-        gain: f32,
         queue: &CueQueue,
     ) -> Option<Box<Synth>> {
-        self.gain = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
         self.drop_held(queue);
         self.bound = [None; BOUND];
         self.quiet = u64::MAX;
@@ -205,7 +200,7 @@ impl LiveRun {
 
     /// Its synth, taken (to be let go of elsewhere).
     pub(super) fn take_synth(&mut self, queue: &CueQueue) -> Option<Box<Synth>> {
-        self.set(None, 1.0, queue)
+        self.set(None, queue)
     }
 
     /// The rate of its synth (`None`: none).
@@ -394,14 +389,13 @@ impl LiveRun {
         self.scratch.clear();
         self.scratch.resize(2 * n, 0.0);
         synth.render_to(&mut self.scratch);
-        let gain = self.gain;
         let mut heard = false;
         for (s, out) in self
             .scratch
             .chunks_exact(2)
             .zip(samples.chunks_exact_mut(ch))
         {
-            let (l, r) = (s[0] * gain, s[1] * gain);
+            let (l, r) = (s[0], s[1]);
             if l.abs() < SILENT && r.abs() < SILENT {
                 continue;
             }

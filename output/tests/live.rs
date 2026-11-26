@@ -80,7 +80,7 @@ fn desk_with(rate: u32, synth_rate: u32) -> Desk {
     let effects = mixer.effects(&strip);
     let (synth, patch) = tone_synth(synth_rate, 0.02);
     let latency = synth.latency() as u64;
-    effects.live(synth, 1.0);
+    effects.live(synth);
     let (lead, fader) = mixer.input(&player, Role::Lead, 1.0);
     Desk {
         mixer,
@@ -182,7 +182,7 @@ fn a_note_on_the_desks_frames_sounds_after_the_song() {
     let effects = mixer.effects(&strip);
     let (synth, patch) = tone_synth(RATE, 0.05);
     let latency = synth.latency() as u64;
-    effects.live(synth, 1.0);
+    effects.live(synth);
     wait_until("open", || mixer.desk().master.stream.is_some());
     let at = mixer.timebase().frame + 9_600;
     assert!(effects.commands(None).send(tone(patch, at, 1.0)));

@@ -369,8 +369,8 @@ pub(crate) enum Msg {
     },
     /// The effects input's sounds from now on.
     EffectsBank(Arc<effects::SoundBank>),
-    /// The effects input's live synth from now on, at a gain.
-    EffectsLive(Box<jodel_synth::Synth>, f32),
+    /// The effects input's live synth from now on.
+    EffectsLive(Box<jodel_synth::Synth>),
     Monitor(Option<Box<dyn Monitor>>),
     /// An output started or paused: something to mix, or to settle.
     Wake,

@@ -59,8 +59,9 @@ mod tests;
 use jodel_rhythm::grid::When;
 use jodel_synth::chorus::ChorusSettings;
 use jodel_synth::delay::DelaySettings;
+use jodel_synth::dynamics::CompressorSettings;
 use jodel_synth::hall::HallSettings;
-use jodel_synth::{Command, Commands, Synth};
+use jodel_synth::{Command, Commands, Synth, GENTLE};
 
 pub use clock::Clock;
 pub use layers::{Chime, Layers, Streak};
@@ -77,6 +78,15 @@ const VOICES: usize = 96;
 const CUES: usize = 1_024;
 /// Clinks closer than this, seconds, come softer.
 const CLINK_GAP: f64 = 0.2;
+/// How far the synth's bus lifts the sounds, dB: after its gentle
+/// compressor (which hears them as the patches set them, so it takes the
+/// same edge off), into its limiter at -1 dBFS. So the game sits on top of
+/// a loud song (a modern track's instrumental, about -11 LUFS) as a game's
+/// sounds do over its music, the Effects strip at 0 dB: a word's pop peaks
+/// about -7 dBFS, a clink -2, the top phrase's chime and the jackpot -2 to
+/// -3; the limiter takes only the biggest pile-ups (the high rungs'
+/// stingers, their plucks struck together).
+pub const LEVEL: f32 = 8.0;
 
 /// The most commands one event (or a clock or a cancel) sends: what a
 /// queue to the synth must hold at least for one at a time (the top
@@ -161,8 +171,9 @@ pub struct Conductor {
 impl Conductor {
     /// A conductor planning at `rate` Hz for the tiers' rows (at the free
     /// tempo, no key known), and the synth its notes are for, its bus set
-    /// (to be moved to where it renders: a synth on the effects path, at
-    /// the device's rate).
+    /// (lifted by [`LEVEL`]: the effects path adds no gain of its own; to
+    /// be moved to where it renders: a synth on the effects path, at the
+    /// device's rate).
     ///
     /// # Panics
     ///
@@ -181,6 +192,10 @@ impl Conductor {
             ..DelaySettings::default()
         });
         synth.set_chorus(ChorusSettings::default());
+        synth.set_compressor(CompressorSettings {
+            makeup: LEVEL,
+            ..GENTLE
+        });
         let clock = Clock::free(rate);
         synth.set_tempo(clock.tempo() as f32);
         let conductor = Conductor {

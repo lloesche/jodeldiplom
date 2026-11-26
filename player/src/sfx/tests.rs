@@ -10,7 +10,7 @@ fn the_bank_has_every_sound_ending_in_silence() {
         assert!(x.len() > 2_000, "{s:?}");
         assert!(x[x.len() - 2..].iter().all(|v| v.abs() < 1e-6), "{s:?}");
         let peak = x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        assert!(peak < 0.3, "{s:?} under the song: {peak}");
+        assert!(peak < 0.3, "{s:?} made soft: {peak}");
     }
 }
 

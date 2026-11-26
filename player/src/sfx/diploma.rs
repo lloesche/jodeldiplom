@@ -150,9 +150,9 @@ impl Diploma {
         }
     }
 
-    /// The peak it is made at, dBFS: under the song, the paper's own
-    /// sounds the softest, the bigger moments a little louder (a verdict
-    /// without a medal under every medal's).
+    /// The peak it is made at, dBFS: the paper's own sounds the softest,
+    /// the bigger moments a little louder (a verdict without a medal under
+    /// every medal's).
     pub fn peak_db(self) -> f64 {
         match self {
             Diploma::Unroll | Diploma::Star(_) => -25.0,

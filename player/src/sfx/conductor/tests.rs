@@ -5,8 +5,9 @@
 //! (a jump in the run missing none), the tier table's rows growing their
 //! sounds up the tiers, the held sounds and the payout stopping with the
 //! streak, held sounds ending by themselves when their release is lost, no
-//! key meaning no pitched layer, the most commands an event sends, and the
-//! bus never clipping.
+//! key meaning no pitched layer, the most commands an event sends, the
+//! bus never clipping, and the sounds' levels (over a loud song, under its
+//! ceiling).
 
 use jodel_rhythm::grid::When;
 use jodel_rhythm::{Analysis, Region};
@@ -554,4 +555,42 @@ fn a_pile_of_everything_never_clips_through_the_bus() {
     }
     assert!(peak > 0.3, "heard: {peak}");
     assert!(peak <= ceiling + 1e-3, "peak {peak} over -1 dBFS");
+}
+
+/// The peak of `events` on frame 1 000 through a fresh synth, dBFS.
+fn peak_db(events: &[Event]) -> f32 {
+    let (mut c, mut s) = playing();
+    for &e in events {
+        c.event(&mut s, 1_000, e);
+    }
+    let mut out = vec![0.0; 2 * RATE as usize * 6];
+    s.render_to(&mut out);
+    let peak = out.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    20.0 * peak.max(1e-9).log10()
+}
+
+#[test]
+fn the_sounds_sit_on_top_of_a_loud_song_under_the_ceiling() {
+    // A word's pop clearly heard yet short; the big ones bold, a few dB
+    // under full scale; none over the limiter's ceiling.
+    for streak in 1..=4 {
+        let pop = peak_db(&[word(streak)]);
+        assert!((-9.0..=-6.0).contains(&pop), "a pop at {pop:.1} dBFS");
+    }
+    let top = RUNGS[RUNGS.len() - 1];
+    let big = [
+        ("the top phrase's chime", vec![Event::Phrase(Tier::TOP)]),
+        (
+            "the jackpot",
+            vec![Event::Phrase(Tier::TOP), Event::Jackpot],
+        ),
+        ("the top rung's stinger", vec![word(top - 1), word(top)]),
+    ];
+    for (what, events) in big {
+        let peak = peak_db(&events);
+        assert!(
+            (-6.0..=-1.0 + 1e-3).contains(&peak),
+            "{what} at {peak:.1} dBFS"
+        );
+    }
 }

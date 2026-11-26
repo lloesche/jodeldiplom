@@ -255,7 +255,7 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
         let effects = mixer.effects(&strip);
         let (mut target, fader) = mixer.input(&player, Role::Lead, 1.0);
         let (synth, patch) = tone_synth(rate, 0.01);
-        effects.live(synth, 0.5);
+        effects.live(synth);
         let request = OpenRequest::new(rate, 2)
             .formats(&[device.format()])
             .prefill(Duration::ZERO);
@@ -294,7 +294,7 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
             .commands(Some(&fader))
             .send(Command::Cancel { tag: None });
         let (synth, patch) = tone_synth(rate, 0.01);
-        effects.live(synth, 0.5);
+        effects.live(synth);
         effects
             .commands(Some(&fader))
             .send(tone(patch, 22_000, 0.0));

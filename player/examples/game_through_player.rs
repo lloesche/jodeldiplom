@@ -2,9 +2,10 @@
 //! game's sounds as the desk plays them: the player on a memory device in
 //! real time (as the window runs it: its frames drawn every 1/60 s, the
 //! game's sounds played with each), a song of its own (112 beats a minute
-//! in 4/4, E minor: drums, a bass and chords made on our synth), its words
-//! and their notes given, the beat grid and the key as the analysis would
-//! find them, Karaoke mode started and the demo key held, so the game
+//! in 4/4, E minor: drums, a bass and chords made on our synth, as loud as
+//! a modern track's instrumental, about -11 LUFS), its words and their
+//! notes given, the beat grid and the key as the analysis would find
+//! them, Karaoke mode started and the demo key held, so the game
 //! hears a perfect singer: every word pops up the ladder, the rungs come
 //! on the beat, a word missed alone is rescued by a shot, two missed lose
 //! the streak (from ×16), it builds up again to ×32 (the payout); each
@@ -31,6 +32,7 @@ use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::PlayState;
 use jodel_rhythm::waveform::{Melody, Waveform};
 use jodel_rhythm::{Analysis, Region};
+use jodel_synth::dynamics::CompressorSettings;
 use jodel_synth::engines::{analog, drum, supersaw};
 use jodel_synth::patch::Adsr;
 use jodel_synth::{Bank, NoteOn, Patch, Synth};
@@ -111,33 +113,36 @@ fn analysis() -> Analysis {
 }
 
 /// The song: kick and clap on the beats, hats on the eighths, a bass and
-/// chords a bar each (Em, C, G, D), made on a synth of its own.
+/// chords a bar each (Em, C, G, D), made on a synth of its own and
+/// mastered loud on its bus (squeezed 3:1 from -22 dBFS, lifted 12 dB into
+/// the limiter at -1 dBFS): about -11 LUFS, as a modern track's
+/// instrumental is.
 fn song() -> Vec<f32> {
     let mut bank = Bank::new();
     let kick = bank.add(Patch {
         gate: 2.0,
-        level: -8.0,
+        level: -4.0,
         ..Patch::new(drum::KICK.into())
     });
     let clap = bank.add(Patch {
         gate: 2.0,
-        level: -12.0,
+        level: -2.0,
         reverb: 0.15,
         ..Patch::new(drum::CLAP.into())
     });
     let hat = bank.add(Patch {
         gate: 1.0,
-        level: -20.0,
+        level: -8.0,
         ..Patch::new(drum::HAT.into())
     });
     let bass = bank.add(Patch {
         adsr: Adsr::hit(1.2),
-        level: -10.0,
+        level: 0.0,
         ..Patch::new(analog::BASS.into())
     });
     let pad = bank.add(Patch {
         adsr: Adsr::held(0.3, 0.6),
-        level: -24.0,
+        level: 0.0,
         reverb: 0.3,
         chorus: 0.5,
         ..Patch::new(supersaw::CHOIR_PAD.into())
@@ -145,6 +150,14 @@ fn song() -> Vec<f32> {
     let frame = |beats: f64| (seconds(beats) * f64::from(RATE)).round() as u64;
     let mut s = Synth::new(RATE, bank, 64);
     s.set_tempo(TEMPO as f32);
+    s.set_compressor(CompressorSettings {
+        threshold: -22.0,
+        ratio: 3.0,
+        knee: 6.0,
+        attack: 0.01,
+        release: 0.15,
+        makeup: 12.0,
+    });
     let mut seed = 0;
     let mut cue = |s: &mut Synth, at: u64, p, note: f32, velocity: f32, length: Option<u64>| {
         seed += 1;

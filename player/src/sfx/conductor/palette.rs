@@ -7,11 +7,11 @@
 //! glitter, a riser and a whoosh, the register's clack, thud, bell and
 //! drawer, a low tonic, and the slam's drums.
 //!
-//! Levels are set so the sounds sit under a song's voice, about where the
-//! game's made sounds do: the pops soft, the clinks quieter still, the big
-//! ones bigger; the synth's bus (its compressor and a limiter at -1 dBFS)
-//! keeps a pile of them from clipping. The held ones (the pad, the riser)
-//! are given their lengths note by note.
+//! Levels set the sounds against each other: the pops soft, the clinks
+//! quieter still, the big ones bigger; the synth's bus lifts them all
+//! together over the song ([`super::LEVEL`], after its compressor, into
+//! its limiter at -1 dBFS, which keeps a pile of them from clipping). The
+//! held ones (the pad, the riser) are given their lengths note by note.
 
 use std::ops::Index;
 

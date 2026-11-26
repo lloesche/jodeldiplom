@@ -7,7 +7,8 @@
 //!
 //! The conductor is made for the device's rate (here, off the mixer
 //! thread) and its synth handed to the effects input
-//! ([`jodel_output::mixer::Effects::live`]); each frame drawn it is told
+//! ([`jodel_output::mixer::Effects::live`]), heard there at the level its
+//! own bus sets ([`conductor::LEVEL`]); each frame drawn it is told
 //! the music clock (the song's beat grid about where it is heard, and the
 //! next sung lines, [`conductor::Clock`]) and, as a song comes, its key
 //! (the analysis's, shifted as the song is heard). A moment's time is the
@@ -58,11 +59,6 @@ use crate::core::desk::StripKind;
 use crate::core::{HeadFrame, State};
 use conductor::{Clock, Conductor, Event};
 use reveal::Heard;
-
-/// The live synth's level on the Effects strip, linear: as it plays (its
-/// patches sit under the song as the bank's sounds do, a pop at about -15
-/// dBFS, the top's jackpot at about -11).
-pub const LIVE_GAIN: f32 = 1.0;
 
 // The queue to the desk's synth takes a frame's worth of the most an
 // event sends, several times over (a ripple of pops, a rung and a phrase
@@ -155,7 +151,7 @@ impl Sfx {
             return;
         }
         let (conductor, synth) = Conductor::new(rate);
-        desk.effects.live(synth, LIVE_GAIN);
+        desk.effects.live(synth);
         self.conductor = Some(conductor);
         self.on_song = false;
         self.told = None;
@@ -319,20 +315,23 @@ impl Sfx {
     }
 
     /// The result's reveal's sounds of this frame played on `desk`: the
-    /// bank's for now, the conductor's on the desk's frames (on a clock of
-    /// their own: every hit as the reveal draws it).
+    /// bank's for now (lifted as the conductor's synth is,
+    /// [`conductor::LEVEL`], so its paper and stamps keep their place among
+    /// the result's music), the conductor's on the desk's frames (on a
+    /// clock of their own: every hit as the reveal draws it).
     fn reveal(&mut self, state: &State, desk: &Desk<'_>) {
         let now = crate::core::karaoke::result_now(state).map(|(s, t)| (&**s, t));
         let heard = self.reveal.frame(now);
         if state.desk.setting(StripKind::Effects).gain() == 0.0 {
             return;
         }
+        let lift = 10f32.powf(conductor::LEVEL / 20.0);
         for h in heard {
             match h {
                 Heard::Bank(sound, gain, pan) => {
                     desk.effects.play(EffectCue {
                         sound: sound.index(),
-                        gain,
+                        gain: lift * gain,
                         pan,
                     });
                 }

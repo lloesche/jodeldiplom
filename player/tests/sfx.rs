@@ -23,7 +23,7 @@ use jodeldiplom::core::{karaoke, Action, Rhythm, Side};
 use jodeldiplom::core::{Anchor, HeadFrame, Playing};
 use jodeldiplom::sfx::conductor::{Clock, Conductor, Event};
 use jodeldiplom::sfx::diploma::Diploma;
-use jodeldiplom::sfx::{Sound, LIVE_GAIN};
+use jodeldiplom::sfx::Sound;
 use jodeldiplom::tiers::Tier;
 
 /// Runs `app` as the window does (its events taken, a frame drawn every
@@ -145,7 +145,7 @@ fn live_desk(
     let player = mixer.strip("Player");
     let strip = mixer.strip("Effects");
     let effects = mixer.effects(&strip);
-    effects.live(synth, LIVE_GAIN);
+    effects.live(synth);
     let (lead, fader) = mixer.input(&player, Role::Lead, 1.0);
     (mixer, fader, lead, effects, captures)
 }
@@ -492,7 +492,7 @@ fn the_desk_is_bit_for_bit_once_the_game_s_synth_rests() {
     };
     let mixer = Mixer::open(Box::new(target), options);
     let effects = mixer.effects(&mixer.strip("Effects"));
-    effects.live(synth, LIVE_GAIN);
+    effects.live(synth);
     let (mut lead, fader) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let request = OpenRequest::new(RATE, 2)
         .formats(&[FORMAT])
