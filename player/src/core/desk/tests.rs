@@ -4,7 +4,7 @@
 use super::*;
 use crate::config::Config;
 use crate::core::{update, Action};
-use jodel_output::mixer::Timebase;
+use jodel_output::mixer::{AutomationView, Timebase};
 
 /// `config`'s state on the Mixer tab of a 960 × 684 window (the old
 /// 120 × 36 cells).
@@ -349,4 +349,54 @@ fn a_strip_is_heard_as_its_faders_mutes_and_solos_say() {
         },
     );
     assert_eq!(desk.heard_gain(StripKind::Other), 0.0);
+}
+
+/// The tab stands still (the window may rest) until something on it
+/// moves: a meter lit, the LIMIT lamp, a head's automation playing, the
+/// microphone's strip listening; off the tab nothing of it moves.
+#[test]
+fn the_tab_moves_only_while_something_on_it_does() {
+    let mut s = tab();
+    assert!(!moving(&s, 0), "nothing looked at yet");
+    // Looks of silence: the meters stay dark.
+    feed(&mut s, look(0.0, false), 1_000);
+    feed(&mut s, look(0.0, false), 1_250);
+    assert!(!moving(&s, 1_250));
+    // A peak: the meters light, and go dark again in a few seconds.
+    feed(&mut s, look(0.5, false), 1_500);
+    assert!(moving(&s, 1_500));
+    let mut at = 1_500;
+    while moving(&s, at) {
+        at += 250;
+        feed(&mut s, look(0.0, false), at);
+        assert!(at < 10_000, "the meters never went dark");
+    }
+    // The limiter: its lamp, a while.
+    at += 250;
+    feed(&mut s, look(0.0, true), at);
+    assert!(moving(&s, at));
+    assert!(!moving(&s, at + LIMIT_HOLD_MS));
+    // A head's automation playing, until it settles.
+    let late = at + LIMIT_HOLD_MS;
+    let automation = |settled| AutomationView {
+        input: 1.0,
+        main: 0.5,
+        parts: Vec::new(),
+        settled,
+    };
+    let mut player = look_with_stems().strips[0].clone().unwrap().view;
+    player.inputs[0].automation = Some(automation(false));
+    s.desk.views[StripKind::Player.index()] = Some(player.clone());
+    assert!(moving(&s, late));
+    player.inputs[0].automation = Some(automation(true));
+    s.desk.views[StripKind::Player.index()] = Some(player);
+    assert!(!moving(&s, late));
+    // The microphone's strip listening, its meters moving with the room.
+    s.mic = Some(crate::core::mic::MicReading::default());
+    assert!(!moving(&s, late), "the microphone's strip not selected");
+    s.desk.selected = Channel::Mic;
+    assert!(moving(&s, late));
+    // Away from the tab, nothing of it moves.
+    s.side = Side::Browser;
+    assert!(!moving(&s, late));
 }

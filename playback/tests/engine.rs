@@ -19,7 +19,7 @@ use jodel_playback::{
     Captures, Error, Event, Headroom, MemoryTarget, OutputTarget, PlayState, Player, Settings,
     Source, TapMiss,
 };
-use jodel_testkit::{fixture, real_time, TempDir};
+use jodel_testkit::{fixture, TempDir};
 use SampleFormat::*;
 
 fn play_all(caps: Capabilities, files: &[&str]) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
@@ -187,16 +187,26 @@ fn a_format_change_between_tracks_reopens_the_output() {
     assert_eq!(starts[1].output.format.rate, 48_000);
 }
 
+/// Lets a period of the device's time pass on the newest stream a
+/// [`SimClock::Manual`] target opened (none yet: nothing).
+fn play_a_period(captures: &Captures) {
+    if let Some(time) = captures.list().last().and_then(|c| c.time.clone()) {
+        // A stream closed meanwhile plays nothing more.
+        let _ = time.advance(480);
+    }
+}
+
 /// New settings while the output plays out before it opens again at the
 /// target's new format: the next track takes them, there.
 #[test]
 fn new_settings_during_the_play_out_reach_the_next_track() {
-    let _guard = real_time();
     let dir = TempDir::new("engine-play-out");
     let path = dir.join("ramp.wav");
     // A second, so the play-out lasts the output's ring.
     ramp_wav(&path, 48_000, 48_000);
-    let (target, captures, asked) = Moving::new((48_000, 44_100), SimClock::Realtime);
+    // The device's time passes only as the test lets it, so the play-out
+    // lasts until the engine has the settings, however slowly it runs.
+    let (target, captures, asked) = Moving::new((48_000, 44_100), SimClock::Manual);
     let (player, events) = Player::new(Box::new(target), player_options());
     player.load(vec![path.clone(), path]).unwrap();
     player.play(0).unwrap();
@@ -205,11 +215,38 @@ fn new_settings_during_the_play_out_reach_the_next_track() {
     let deadline = std::time::Instant::now() + TIMEOUT;
     while !asked.load(Ordering::SeqCst) {
         assert!(std::time::Instant::now() < deadline, "never asked again");
+        play_a_period(&captures);
         std::thread::sleep(Duration::from_millis(1));
     }
+    // The device stands still. The settings, then a command answered
+    // after them: once its answer comes, the engine has them.
+    let mut seen: Vec<Event> = events.try_iter().collect();
     let headroom = Headroom(10);
     player.set_settings(Settings { headroom }).unwrap();
-    let seen = until_queue_end(&events);
+    player.enqueue(Vec::new()).unwrap();
+    seen.extend(collect_until(&events, |e| {
+        matches!(e, Event::QueueChanged { .. })
+    }));
+    // The play-out, the next track and the end of the queue, a period at
+    // a time.
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the queue never ended; seen: {seen:#?}"
+        );
+        play_a_period(&captures);
+        match events.recv_timeout(Duration::from_millis(1)) {
+            Ok(event) => {
+                let end = matches!(event, Event::QueueEnded);
+                seen.push(event);
+                if end {
+                    break;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(e) => panic!("{e}; seen: {seen:#?}"),
+        }
+    }
     drop(player);
     assert!(
         !seen

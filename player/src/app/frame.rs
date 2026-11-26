@@ -95,8 +95,9 @@ impl App {
             || self.state.playing.state == PlayState::Playing
             // The Karaoke tab's meter moves with the voice, music or not.
             || (self.mic.input().is_some() && core::karaoke::on_tab(&self.state))
-            // The Mixer tab's meters move (and fall) by themselves.
-            || core::desk::shown(&self.state)
+            // Something on the Mixer tab moves by itself (a meter lit, the
+            // microphone listened to); a still one rests.
+            || core::desk::moving(&self.state, self.now_ms())
             || self.state.seek_drag.is_some()
             || self.state.transition.slide.is_some()
             || self.state.karaoke.resume_at.is_some()

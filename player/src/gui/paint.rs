@@ -87,8 +87,10 @@ struct Moves {
     moving: bool,
     /// A lane follows the playhead.
     layer: bool,
-    /// The Mixer tab's meters and caps (iced's): every refresh.
-    mixer: bool,
+    /// A fader's cap on the Mixer tab glides: every refresh. Its meters
+    /// lit are [`Moves::moving`] ([`crate::core::desk::moving`]): they
+    /// fall a pixel or two a calm frame.
+    gliding: bool,
     /// Something is due within the rest's tick.
     due_soon: bool,
 }
@@ -154,7 +156,7 @@ impl Paint {
             smooth: app.smooth() || result == Some(Motion::Revealing),
             moving: app.animating() || result == Some(Motion::Twinkling) || settling,
             layer: app.layer_moves(),
-            mixer: crate::core::desk::on_tab(state) || seen.gliding,
+            gliding: seen.gliding,
             due_soon: state
                 .due()
                 .is_some_and(|due| due.saturating_sub(app.now_ms()) < REST.as_millis() as u64),
@@ -167,11 +169,11 @@ impl Paint {
         let Moves {
             smooth,
             layer,
-            mixer,
+            gliding,
             ..
         } = moves;
         let moving = moves.moving || seen.pictures_moving;
-        let pace = if self.dirty || smooth || layer || mixer {
+        let pace = if self.dirty || smooth || layer || gliding {
             Pace::Refresh
         } else if moving {
             Pace::Every(CALM)
@@ -374,6 +376,67 @@ mod tests {
         );
     }
 
+    /// The Mixer tab with nothing on it moving (nothing playing, its
+    /// meters dark, no cap gliding, the microphone not listened to:
+    /// [`crate::core::desk::moving`] false) rests like any other: the
+    /// rest's ticks, nothing drawn.
+    #[test]
+    fn an_idle_mixer_tab_rests() {
+        let mut paint = Paint::new();
+        paint.dirty = false;
+        let t0 = Instant::now();
+        paint.last_whole = Some(t0);
+        for k in 1..20 {
+            let plan = paint.decide(Moves::default(), still(), t0 + REST * k);
+            assert_eq!(
+                plan,
+                Plan {
+                    pace: Pace::Every(REST),
+                    draw: Draw::Nothing
+                }
+            );
+        }
+    }
+
+    /// The Mixer tab keeps its pace while something on it moves: a cap
+    /// gliding or a fader dragged at the refresh; its meters lit (a
+    /// track playing, a peak falling, the microphone listened to) at the
+    /// calm rate, each calm frame whole.
+    #[test]
+    fn a_mixer_tab_with_something_moving_keeps_its_pace() {
+        let mut paint = Paint::new();
+        paint.dirty = false;
+        let t0 = Instant::now();
+        paint.last_whole = Some(t0);
+        let at = t0 + CALM;
+        let gliding = Moves {
+            gliding: true,
+            ..Moves::default()
+        };
+        assert_eq!(paint.decide(gliding, still(), at).pace, Pace::Refresh);
+        // A fader dragged moves smoothly ([`crate::app::App::smooth`]).
+        let dragged = Moves {
+            smooth: true,
+            ..Moves::default()
+        };
+        assert_eq!(paint.decide(dragged, still(), at).pace, Pace::Refresh);
+        let lit = Moves {
+            moving: true,
+            ..Moves::default()
+        };
+        assert_eq!(
+            paint.decide(lit, still(), at),
+            Plan {
+                pace: Pace::Every(CALM),
+                draw: Draw::Whole
+            }
+        );
+        // Between two calm frames, nothing.
+        paint.last_whole = Some(at);
+        let between = at + Duration::from_millis(16);
+        assert_eq!(paint.decide(lit, still(), between).draw, Draw::Nothing);
+    }
+
     /// A window nobody can see (its frames stopped coming) draws nothing,
     /// whatever moves, so its frames make no background GPU work give way
     /// ([`jodel_gpu::pace::frame`] is told only of frames drawn); its ticks
@@ -386,7 +449,7 @@ mod tests {
             smooth: true,
             moving: true,
             layer: true,
-            mixer: true,
+            gliding: true,
             due_soon: true,
         };
         let at = Instant::now();

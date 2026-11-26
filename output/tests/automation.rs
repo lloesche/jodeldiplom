@@ -26,7 +26,7 @@ use jodel_output::mixer::{
     equal_power, Automation, AutomationView, Fader, GainCurve, InputTarget, MicPort, Mixer, Role,
 };
 use jodel_output::pack::unpack;
-use jodel_output::{Error, OpenRequest, Output, OutputTarget};
+use jodel_output::{Error, OpenRequest, Output, OutputTarget, VoiceBlock};
 use jodel_testkit::real_time;
 
 /// A level that reads back exactly and leaves room under full scale.
@@ -600,13 +600,14 @@ fn a_guest_made_lead_takes_the_microphone() {
     mixer.set_mic(Some(singer.input.clone()));
     let (mut a, fa) = mixer.input(&sa, Role::Lead, 1.0);
     let (mut b, fb) = mixer.input(&sb, Role::Guest, 1.0);
-    let mut oa = open_with(&mut a, Duration::from_secs(3));
-    oa.write(&frames(0, 96_000, |_| 0), None).unwrap();
+    // Long enough to play on however slowly the test goes: 3 s and 2 s.
+    let mut oa = open_with(&mut a, Duration::from_secs(4));
+    oa.write(&frames(0, 144_000, |_| 0), None).unwrap();
     wait_until("the lead plays", || oa.position().unwrap() > 24_000);
     // A guest is offered the desk's format alone, as the Lead is.
     assert_eq!(b.capabilities().unwrap().iter().count(), 1);
     let mut ob = open_with(&mut b, Duration::from_secs(3));
-    ob.write(&frames(0, 48_000, |_| 0), None).unwrap();
+    ob.write(&frames(0, 96_000, |_| 0), None).unwrap();
     wait_until("the guest plays", || ob.position().unwrap() > 4_800);
     // The voice told since (the cleaner, on its thread, comes when it is
     // let), in the lead's frames.
@@ -618,9 +619,23 @@ fn a_guest_made_lead_takes_the_microphone() {
     // frames; it is offered the same one format.
     fb.set_role(Role::Lead).unwrap();
     assert_eq!(b.capabilities().unwrap().iter().count(), 1);
-    singer.voice();
-    let told = singer.voice_until("the voice told", |v| !v.is_empty());
-    let told = told.iter().map(|v| v.stream_frame).max().unwrap();
+    // What the cleaner had in hand still comes in the old lead's frames,
+    // rising; the first block in the new lead's goes back (it started
+    // 24 000 frames later), and every one from it is in them.
+    let last = lead_frames.unwrap();
+    let back = |voice: &[VoiceBlock]| {
+        let mut previous = last;
+        voice.iter().position(|v| {
+            let back = v.stream_frame < previous;
+            previous = v.stream_frame;
+            back
+        })
+    };
+    let voice = singer.voice_until("the voice told in the new lead's frames", |v| {
+        back(v).is_some()
+    });
+    let from = back(&voice).unwrap();
+    let told = voice[from..].iter().map(|v| v.stream_frame).max().unwrap();
     let (played, guest) = (oa.position().unwrap(), ob.position().unwrap());
     // In the new lead's frames (at most where it has played to, plus a
     // period or two in flight), well behind the old lead's however slowly

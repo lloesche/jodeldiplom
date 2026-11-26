@@ -227,9 +227,10 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
     assert_eq!(level(&app, StripKind::Player), (1.0, false, false));
     assert_eq!(level(&app, StripKind::Effects), (1.0, false, false));
     app.dispatch(Action::ShowSide(Side::Mixer));
-    // The tab keeps drawing; the microphone stays closed until its strip
-    // is selected (K6), and closes when another one is.
-    assert!(app.animating());
+    // Nothing on the tab moves: the window rests. The microphone stays
+    // closed until its strip is selected (K6), and closes when another
+    // one is.
+    assert!(common::wait_for(&mut app, WAIT, |a| !a.animating()));
     let mic_open = |a: &App| a.state.karaoke.mic.name.is_some();
     assert!(!common::wait_for(
         &mut app,

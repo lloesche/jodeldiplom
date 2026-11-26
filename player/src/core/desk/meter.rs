@@ -86,6 +86,13 @@ impl Meter {
             .is_some_and(|at| now_ms.saturating_sub(at) < CLIP_HOLD_MS)
     }
 
+    /// Whether it shows anything at `now_ms`: its bar or its tick above
+    /// the floor (falling, or held to fall), or its clip lamp lit. One that
+    /// shows nothing stands still until a peak comes.
+    pub fn lit(&self, now_ms: u64) -> bool {
+        Meter::share(self.db) > 0.0 || Meter::share(self.peak_db) > 0.0 || self.clipped(now_ms)
+    }
+
     /// The share of the meter's height lit by `db` (0: the floor or below,
     /// 1: full scale or above).
     pub fn share(db: f32) -> f32 {
@@ -134,6 +141,30 @@ mod tests {
         // Long after, it is out.
         m.take(None, 10_000);
         assert_eq!(m.db, f32::NEG_INFINITY);
+    }
+
+    /// A meter is lit while its bar falls, while its tick is held and
+    /// falls after it, and while its clip lamp is lit; then it stands
+    /// still, dark, until a peak comes.
+    #[test]
+    fn a_meter_is_lit_until_bar_tick_and_lamp_are_out() {
+        let mut m = Meter::default();
+        assert!(!m.lit(0));
+        m.take(Some(0.0), 0);
+        assert!(!m.lit(0), "silence lights nothing");
+        m.take(Some(0.5), 100);
+        assert!(m.lit(100));
+        // The bar falls from −6 dB to the floor in 2.7 s; the tick is held
+        // 1.5 s, then falls as far.
+        let mut at = 100;
+        while m.lit(at) {
+            at += 33;
+            m.take(None, at);
+        }
+        assert!((4_100..4_400).contains(&(at - 100)), "{at} {m:?}");
+        // A clip lights the lamp a while after the bar is out.
+        m.take(Some(1.0), 10_000);
+        assert!(m.lit(10_000 + CLIP_HOLD_MS - 1));
     }
 
     #[test]

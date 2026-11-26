@@ -342,6 +342,30 @@ pub fn listens(state: &State) -> bool {
     shown(state) && state.desk.selected == Channel::Mic
 }
 
+/// Whether the Mixer tab shows something that moves by itself at `now_ms`:
+/// a meter lit ([`meter::Meter::lit`]: falling, or a tick or a clip lamp
+/// to go out), the LIMIT lamp lit, a head's automation playing, or the
+/// microphone's strip listening (its meters move with the room). Otherwise
+/// the tab stands still until something changes it.
+pub fn moving(state: &State, now_ms: u64) -> bool {
+    let desk = &state.desk;
+    let r = &desk.readings;
+    let lit = r
+        .master
+        .iter()
+        .chain(r.strips.iter().flatten())
+        .chain([&r.mic_in, &r.mic_voice])
+        .any(|m| m.lit(now_ms));
+    let automated = desk
+        .views
+        .iter()
+        .flatten()
+        .flat_map(|v| &v.inputs)
+        .any(|i| i.automation.as_ref().is_some_and(|a| !a.settled));
+    let mic = listens(state) && state.mic.is_some();
+    shown(state) && (lit || desk.limiting(now_ms) || automated || mic)
+}
+
 /// What the left button let go of does to the desk, wherever the pointer
 /// is: a fader held is let go of. The core knows a fader is held, whatever
 /// became of the widget that took it (the strips changed meanwhile: stems

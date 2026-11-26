@@ -1030,11 +1030,19 @@ stem keys are their mutes.
   - `the_mixer_tab_is_a_desk` (view)
 - **M5.** The meters are read once a drawn frame, by the app alone, and
   only while the tab shows; a look long after the last takes no peaks (nor
-  the limiter); the window keeps drawing while it shows. A strip's meter
-  is on its fader's ruler, so its marks read both.
+  the limiter). While something on the tab moves by itself (a meter lit,
+  falling or its tick or clip lamp to go out, the LIMIT lamp, a head's
+  automation playing, the microphone's strip listening) the window draws
+  30 frames a second; while a cap glides or a fader is dragged, every
+  refresh; otherwise it rests as on any tab. A strip's meter is on its
+  fader's ruler, so its marks read both.
   - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
   - `a_meter_rises_at_once_and_falls_at_its_rate`
+  - `a_meter_is_lit_until_bar_tick_and_lamp_are_out`
   - `strips_are_found_by_id_and_a_stale_look_takes_no_peaks`
+  - `the_tab_moves_only_while_something_on_it_does`
+  - `an_idle_mixer_tab_rests`,
+    `a_mixer_tab_with_something_moving_keeps_its_pace` (`gui::paint`)
 - **M7.** A transition's next track plays on a second input of the player
   (its second head), on the same strips: the player's fader, its stems'
   strips, the Karaoke voice (both heads' vocals lanes) and the preview's
