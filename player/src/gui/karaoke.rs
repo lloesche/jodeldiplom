@@ -112,11 +112,24 @@ fn big_of(height: usize) -> f32 {
     (height as f32 / 11.0).clamp(20.0, 160.0).round()
 }
 
-/// The score's sizes in a picture `height` pixels high: its figures', the
-/// margin it keeps from the corner, and its rung's under it.
-fn score_sizes(height: usize) -> (f32, f32, f32) {
-    let px = (big_of(height) * 0.42).round().max(12.0);
-    (px, px * 0.8, (px * 0.45).round().max(10.0))
+/// The score's sizes in the window's `area` (left, top, width, height):
+/// its figures', the margin it keeps from the corner, and its rung's
+/// under it. Its figures a share of the line sung's, smaller where the
+/// corner would come down past the HUD's band over the lane
+/// ([`super::stage::Lane::hud`]: over the marquee bulbs).
+fn score_sizes((x, y, w, h): (f32, f32, f32, f32)) -> (f32, f32, f32) {
+    let sizes = |px: f32| (px, px * 0.8, (px * 0.45).round().max(10.0));
+    let (_, bottom) = super::stage::Lane::new((x, y, w, h), 0.0).hud((x, y, w, h));
+    let mut px = (big_of(h as usize) * 0.42).round().max(12.0);
+    while px > 12.0 && score_bottom(y, sizes(px)) > bottom {
+        px -= 1.0;
+    }
+    sizes(px)
+}
+
+/// The score's corner's bottom under the window's top `y`, at its sizes.
+fn score_bottom(y: f32, (px, margin, small): (f32, f32, f32)) -> f32 {
+    y + margin * 0.6 + px * 1.25 + small * 1.5
 }
 
 /// How many of its figures' sizes wide the score's corner is: room for a
@@ -128,9 +141,14 @@ const SCORE_WIDE: f32 = 6.5;
 /// effects over the frame keep it clear (the edges on fire), as they do
 /// the lyric band.
 pub fn score_corner((x, y, w, h): (f32, f32, f32, f32)) -> [f32; 4] {
-    let (px, margin, small) = score_sizes(h as usize);
-    let bottom = y + margin * 0.6 + px * 1.25 + small * 1.5;
-    [x + w - margin - px * SCORE_WIDE, y, x + w, bottom]
+    let sizes = score_sizes((x, y, w, h));
+    let (px, margin, _) = sizes;
+    [
+        x + w - margin - px * SCORE_WIDE,
+        y,
+        x + w,
+        score_bottom(y, sizes),
+    ]
 }
 
 /// How far into `line` (at `px`, glyphs made at `base`) character `at` is,
@@ -550,7 +568,7 @@ fn text_ops(
     // up, last (however many pieces they are, those before keep their
     // places in the list: they are not drawn again for it).
     if let Some(score) = picture.score {
-        let (px, margin, small) = score_sizes(ah);
+        let (px, margin, small) = score_sizes((ax as f32, ay as f32, aw as f32, ah as f32));
         // Under it the multiplier's rung, named as the badge names it.
         if let Some(times) = score.rung_label() {
             let lw = faces.get(Face::SHOUT).measure_from(&times, small, small);

@@ -91,6 +91,15 @@ impl Frame {
     pub fn looks(&self) -> Looks {
         self.looks
     }
+
+    /// Whether an effect the phrase fired this frame shouts its verdict
+    /// itself ([`super::Spec::shouts`]).
+    pub fn shouts_verdict(&self) -> bool {
+        Fx::ALL.into_iter().any(|fx| {
+            let i = fx.index();
+            self.fired[i] && matches!(self.by[i], Some(By::Phrase(_))) && fx.spec().shouts
+        })
+    }
 }
 
 /// What the effects keep between frames: each its own [`Slot`], the

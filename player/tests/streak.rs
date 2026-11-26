@@ -136,9 +136,8 @@ fn the_bands_shine_by_the_tier() {
         }
         let swirls = frame.instances.iter().filter(|i| i.params[0] == SWIRL);
         assert_eq!(swirls.count(), usize::from(shines), "round the arrow");
-        let rainbow = frame
-            .instances
-            .iter()
+        // The multiplier is over everything.
+        let rainbow = (frame.instances.iter().chain(&frame.top))
             .filter(|i| i.params[0] == kind::TEXT && shine_of(i).is_some());
         assert_eq!(
             rainbow.count(),

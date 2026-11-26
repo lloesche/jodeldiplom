@@ -53,7 +53,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use jodeldiplom::art::Art;
-use jodeldiplom::core::shine::{Shone, Tier};
+use jodeldiplom::core::shine::{Reference, Shone, Tier};
 use jodeldiplom::core::singing::{Reveal, Shown, Singing, SongResult, UNROLL};
 use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
@@ -665,6 +665,9 @@ fn main() {
                 &lyrics,
                 &jodeldiplom::core::singing::melodic(&melody),
             );
+            // A reference to sing against: the meter shows, as in a game.
+            let phrases = vec![None; singing.notes.lines.len()];
+            singing.set_reference(Some(Arc::new(Reference { phrases })));
             let mut rig = Rig {
                 stage: Stage::default(),
                 visualiser: Visualiser::default(),

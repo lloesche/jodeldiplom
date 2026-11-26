@@ -3,9 +3,11 @@
 //! up the sides, short along the top. They are white-yellow at their
 //! roots and orange to red at their tips, rising and flickering, with a
 //! warm glow behind them and embers drifting up out of them. The lyric band
-//! and the score's corner are kept clear: the flames shrink back as they
-//! come to them, and anything of the fire inside them shows at [`IN_BAND`]
-//! at most.
+//! is kept clear: the flames shrink back as they come to it, and anything
+//! of the fire inside it shows at [`IN_BAND`] at most. What the singer
+//! reads ([`Clear`]: the score's corner, the multiplier's badge, the meter
+//! and its verdict) is kept wholly clear: the flames shrink back and fade
+//! out round each, and nothing of the fire is inside one.
 //!
 //! [`edge_fire`] is the shader's reference ([`wgsl`]: `fx_edge_fire`),
 //! held to it on the GPU ([`REFERENCE`]). It is drawn only in strips along
@@ -26,13 +28,12 @@
 use jodel_rhythm::stems::Stem;
 
 use super::helpers::{clamp01, heat, lattice, mix3, smoothstep, speed, vnoise};
-use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
+use super::{At, Clear, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
 use crate::gui::stage_gpu::Instance;
 
 /// The fire: a strip along an edge (`quad`), the lyric band's top and
-/// bottom in `shape[0..2]`, the score's corner in `color2` (left, top,
-/// right, bottom), `params[1]` its strength (its look the shaders'
-/// `looks`).
+/// bottom in `shape[0..2]`, what it keeps clear as [`Clear::on`] puts it,
+/// `params[1]` its strength (its look the shaders' `looks`).
 pub const EDGE_FIRE: f32 = Fx::EdgeFire.kind(0);
 
 /// The screen's edges on fire.
@@ -52,7 +53,7 @@ pub const SPEC: Spec = Spec {
 
 fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
     let &At::Screen {
-        area, band, score, ..
+        area, band, clear, ..
     } = at
     else {
         return;
@@ -61,17 +62,15 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
         return;
     }
     let (grow, _) = swell(&live.music, live.look);
-    out.shapes.extend(
-        strips(area, live.strength, grow)
-            .into_iter()
-            .map(|quad| Instance {
+    out.shapes
+        .extend(strips(area, live.strength, grow).into_iter().map(|quad| {
+            clear.on(Instance {
                 quad,
                 shape: [band.0, band.1, 0.0, 0.0],
-                color2: score,
                 params: [EDGE_FIRE, live.strength, 0.0, 0.0],
                 ..Instance::default()
-            }),
-    );
+            })
+        }));
 }
 
 /// The strips of `area` (left, top, width, height) the fire can reach at
@@ -140,9 +139,9 @@ pub fn swell(m: &Music, p: [f32; 4]) -> (f32, f32) {
 /// The fire at pixel `px` of a frame `size` (pixels) at `time` (seconds),
 /// `strength` 0 (none) to 1 (the flames reaching about a sixth of the way
 /// in at the bottom), `band` the lyric band's top and bottom (pixels; none
-/// where the bottom is not below the top), `score` the score's corner
-/// (left, top, right, bottom, pixels; none where it is not wider than
-/// nothing), `p` its look: `x` 0 classic
+/// where the bottom is not below the top), what it keeps `clear` (each
+/// box none where it is not wider than nothing), `p` its look: `x` 0
+/// classic
 /// orange to 1 a ghostly green, `y` how fast it flickers (1 as made; 0
 /// taken as 1), `z` and `w` how much it flares and breathes with the music
 /// `m` ([`swell`]). Premultiplied colour and coverage, in the stage's
@@ -152,7 +151,8 @@ pub fn edge_fire(
     px: (f32, f32),
     size: (f32, f32),
     time: f32,
-    (strength, band, score): (f32, (f32, f32), [f32; 4]),
+    (strength, band): (f32, (f32, f32)),
+    clear: &Clear,
     p: [f32; 4],
     m: &Music,
 ) -> [f32; 4] {
@@ -162,16 +162,17 @@ pub fn edge_fire(
     let s = strength.min(1.0);
     let h = size.1;
     let (grow, hot) = swell(m, p);
-    // The lyric band and the score's corner (their edges feathered
-    // wide): the flames shrink back as they come to them, and only a
-    // little of anything shows in them.
+    // The lyric band and what is kept clear (their edges feathered wide):
+    // the flames shrink back as they come to them, and only a little of
+    // anything shows in the band, nothing in the rest.
     let f = h * FEATHER;
     let across = |a: f32, b: f32, v: f32| smoothstep(a - f, a, v) * (1.0 - smoothstep(b, b + f, v));
+    let in_box = |r: [f32; 4]| {
+        across(r[0], r[2], px.0) * across(r[1], r[3], px.1) * f32::from(u8::from(r[2] > r[0]))
+    };
     let in_band = across(band.0, band.1, px.1) * f32::from(u8::from(band.1 > band.0));
-    let in_score = across(score[0], score[2], px.0)
-        * across(score[1], score[3], px.1)
-        * f32::from(u8::from(score[2] > score[0]));
-    let inside = in_band.max(in_score);
+    let kept = clear.boxes().into_iter().map(in_box).fold(0.0, f32::max);
+    let inside = in_band.max(kept);
     let reach = h * REACH * (0.3 + 0.7 * s) * grow * (1.0 - 0.6 * inside);
     // How deep in, in reaches, from the nearest edge.
     let u = ((size.1 - px.1) / reach)
@@ -220,7 +221,7 @@ pub fn edge_fire(
         a = e + a * (1.0 - e);
     }
     // Coming in with the strength.
-    let keep = (1.0 - (1.0 - IN_BAND) * inside) * smoothstep(0.0, 0.15, s);
+    let keep = (1.0 - (1.0 - IN_BAND) * inside) * (1.0 - kept) * smoothstep(0.0, 0.15, s);
     [rgb[0] * keep, rgb[1] * keep, rgb[2] * keep, a * keep]
 }
 
@@ -235,7 +236,7 @@ pub fn wgsl() -> String {
 
 const SHADER: &str = r"
 fn edge_fire_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let c = fx_edge_fire(p, screen.size, screen.time, vec3<f32>(o.params.y, o.shape.xy), o.color2, looks[FX_EDGE_FIRE], music);
+    let c = fx_edge_fire(p, screen.size, screen.time, vec3<f32>(o.params.y, o.shape.xy), mat3x4<f32>(o.color2, o.color, o.uv), looks[FX_EDGE_FIRE], music);
     return vec4<f32>(out_rgb(c.rgb), c.a);
 }
 
@@ -248,7 +249,11 @@ fn edge_fire_across(a: f32, b: f32, v: f32, f: f32) -> f32 {
     return smoothstep(a - f, a, v) * (1.0 - smoothstep(b, b + f, v));
 }
 
-fn fx_edge_fire(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, score: vec4<f32>, p: vec4<f32>, m: Music) -> vec4<f32> {
+fn edge_fire_in_box(r: vec4<f32>, px: vec2<f32>, f: f32) -> f32 {
+    return edge_fire_across(r.x, r.z, px.x, f) * edge_fire_across(r.y, r.w, px.y, f) * select(0.0, 1.0, r.z > r.x);
+}
+
+fn fx_edge_fire(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, clear: mat3x4<f32>, p: vec4<f32>, m: Music) -> vec4<f32> {
     let strength = sb.x;
     let band = sb.yz;
     if strength <= 0.0 {
@@ -259,10 +264,8 @@ fn fx_edge_fire(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, score:
     let swell = edge_fire_swell(m, p);
     let f = h * EDGE_FIRE_FEATHER;
     let in_band = edge_fire_across(band.x, band.y, px.y, f) * select(0.0, 1.0, band.y > band.x);
-    let in_score = edge_fire_across(score.x, score.z, px.x, f)
-        * edge_fire_across(score.y, score.w, px.y, f)
-        * select(0.0, 1.0, score.z > score.x);
-    let inside = max(in_band, in_score);
+    let kept = max(max(edge_fire_in_box(clear[0], px, f), edge_fire_in_box(clear[1], px, f)), edge_fire_in_box(clear[2], px, f));
+    let inside = max(in_band, kept);
     let reach = h * EDGE_FIRE_REACH * (0.3 + 0.7 * s) * swell.x * (1.0 - 0.6 * inside);
     let u = min(
         min((size.y - px.y) / reach, px.x / (reach * EDGE_FIRE_SIDE)),
@@ -304,13 +307,14 @@ fn fx_edge_fire(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, score:
         rgb = ember * e + rgb * (1.0 - e);
         a = e + a * (1.0 - e);
     }
-    let keep = (1.0 - (1.0 - EDGE_FIRE_IN_BAND) * inside) * smoothstep(0.0, 0.15, s);
+    let keep = (1.0 - (1.0 - EDGE_FIRE_IN_BAND) * inside) * (1.0 - kept) * smoothstep(0.0, 0.15, s);
     return vec4<f32>(rgb * keep, a * keep);
 }
 ";
 
 /// The fire at pixels near every edge, in and round the lyric band and
-/// the score's corner (none in a few), at
+/// what is kept clear (the score's corner, the badge and the meter: each
+/// none in a few), at
 /// strengths, times, looks and music (still, flaring on a bar's first
 /// beat, the bass loud): the shader's `fx_edge_fire` as [`edge_fire`].
 pub const REFERENCE: Reference = Reference {
@@ -318,6 +322,8 @@ pub const REFERENCE: Reference = Reference {
         let size = (3024.0f32, 1964.0f32);
         let band = (1330.0, 1650.0);
         let score = [2500.0, 0.0, 3024.0, 160.0];
+        let badge = [300.0, 40.0, 1000.0, 150.0];
+        let meter = [1100.0, 30.0, 1900.0, 160.0];
         (0..3000)
             .flat_map(|k| {
                 let f = k as f32;
@@ -345,27 +351,35 @@ pub const REFERENCE: Reference = Reference {
                     [fr(0.733), fr(0.417) * 2.0, fr(0.157) * 1.5, fr(0.889)],
                     if k % 7 == 0 { [0.0; 4] } else { score },
                 ];
-                ins.into_iter().chain(music.uniform())
+                let badge = if k % 11 == 0 { [0.0; 4] } else { badge };
+                let meter = if k % 13 == 0 { [0.0; 4] } else { meter };
+                ins.into_iter().chain(music.uniform()).chain([badge, meter])
             })
             .collect()
     },
-    ins: 9,
+    ins: 11,
     outs: 1,
     body: "
-    let a = ins[i * 9u];
-    let b = ins[i * 9u + 1u];
-    let m = Music(ins[i * 9u + 4u], ins[i * 9u + 5u], ins[i * 9u + 6u], ins[i * 9u + 7u], ins[i * 9u + 8u]);
-    outs[i] = fx_edge_fire(a.xy, b.xy, a.z, vec3<f32>(a.w, b.zw), ins[i * 9u + 3u], ins[i * 9u + 2u], m);",
+    let a = ins[i * 11u];
+    let b = ins[i * 11u + 1u];
+    let m = Music(ins[i * 11u + 4u], ins[i * 11u + 5u], ins[i * 11u + 6u], ins[i * 11u + 7u], ins[i * 11u + 8u]);
+    let clear = mat3x4<f32>(ins[i * 11u + 3u], ins[i * 11u + 9u], ins[i * 11u + 10u]);
+    outs[i] = fx_edge_fire(a.xy, b.xy, a.z, vec3<f32>(a.w, b.zw), clear, ins[i * 11u + 2u], m);",
     cpu: |s| {
         let px = (s[0][0], s[0][1]);
         let size = (s[1][0], s[1][1]);
         let band = (s[1][2], s[1][3]);
         let m = Music::from_uniform(&[s[4], s[5], s[6], s[7], s[8]]);
-        vec![edge_fire(px, size, s[0][2], (s[0][3], band, s[3]), s[2], &m)]
+        let clear = Clear {
+            score: s[3],
+            badge: s[9],
+            meter: s[10],
+        };
+        vec![edge_fire(px, size, s[0][2], (s[0][3], band), &clear, s[2], &m)]
     },
     near: (4e-3, 0.0),
     shows: |o| o[0][3] > 0.05,
-    least: 600,
+    least: 500,
 };
 
 #[cfg(test)]
@@ -375,6 +389,14 @@ mod tests {
     const SIZE: (f32, f32) = (3024.0, 1964.0);
     const BAND: (f32, f32) = (1330.0, 1650.0);
     const SCORE: [f32; 4] = [2500.0, 0.0, 3024.0, 160.0];
+    const BADGE: [f32; 4] = [300.0, 40.0, 1000.0, 150.0];
+    const METER: [f32; 4] = [1100.0, 30.0, 1900.0, 160.0];
+    /// What the fire keeps clear in these.
+    const CLEAR: Clear = Clear {
+        score: SCORE,
+        badge: BADGE,
+        meter: METER,
+    };
     /// Its look as made.
     const LOOK: [f32; 4] = SPEC.params;
 
@@ -387,12 +409,16 @@ mod tests {
         band: (f32, f32),
         p: [f32; 4],
     ) -> [f32; 4] {
-        edge_fire(px, size, t, (s, band, SCORE), p, &Music::NEUTRAL)
+        let score = Clear {
+            score: SCORE,
+            ..Clear::NONE
+        };
+        edge_fire(px, size, t, (s, band), &score, p, &Music::NEUTRAL)
     }
 
     /// The fire at full strength, its look as made, to the music `m`.
     fn full(px: (f32, f32), t: f32, m: &Music) -> [f32; 4] {
-        edge_fire(px, SIZE, t, (1.0, BAND, SCORE), LOOK, m)
+        edge_fire(px, SIZE, t, (1.0, BAND), &CLEAR, LOOK, m)
     }
 
     /// The music with a bar's pulse `downbeat`, the grid `sure`, the bass
@@ -559,10 +585,10 @@ mod tests {
         assert!(outside > 0.8, "{outside}");
     }
 
-    /// So is the score's corner, the flames flaring at their fullest, while
-    /// the top burns on beside it.
+    /// The score's corner is kept wholly clear, the flames flaring at their
+    /// fullest, while the top burns on beside it.
     #[test]
-    fn the_score_s_corner_is_kept_mostly_clear() {
+    fn the_score_s_corner_is_kept_clear() {
         let m = music(1.0, 1.0, 1.0);
         let mut most = 0.0f32;
         let mut beside = 0.0f32;
@@ -572,11 +598,33 @@ mod tests {
                 most = most.max(c[3]);
             }
         }
-        for x in (0..1500).step_by(7) {
+        for x in (2030..2370).step_by(7) {
             let c = full((x as f32, 2.0), 4.2, &m);
             beside = beside.max(c[3]);
         }
-        assert!(most <= IN_BAND + 1e-6, "{most}");
+        assert_eq!(most, 0.0);
+        assert!(beside > 0.8, "{beside}");
+    }
+
+    /// The badge and the meter are kept wholly clear, the flames flaring at
+    /// their fullest, while the top burns on beside them.
+    #[test]
+    fn the_badge_and_the_meter_are_kept_clear() {
+        let m = music(1.0, 1.0, 1.0);
+        for b in [BADGE, METER] {
+            for x in (b[0] as usize..=b[2] as usize).step_by(5) {
+                for y in (b[1] as usize..=b[3] as usize).step_by(5) {
+                    for t in [0.7, 4.2] {
+                        let c = full((x as f32, y as f32), t, &m);
+                        assert_eq!(c, [0.0; 4], "{x} {y}");
+                    }
+                }
+            }
+        }
+        let beside = (2030..2370)
+            .step_by(7)
+            .map(|x| full((x as f32, 2.0), 4.2, &m)[3])
+            .fold(0.0, f32::max);
         assert!(beside > 0.8, "{beside}");
     }
 

@@ -538,10 +538,9 @@ mod tests {
         // The text itself, drawn where the score's is.
         let mut faces = Faces::default();
         let text = faces.get(Face::NUMBER);
-        let px = (super::super::big_of(h) * 0.42).round().max(12.0);
+        let (px, margin, _) = super::super::score_sizes((0.0, 0.0, w as f32, h as f32));
         let points = crate::view::karaoke::points_text(12_400);
         let tw = text.measure_from(&points, px, px);
-        let margin = px * 0.8;
         let mut plain = backdrop.pixels.clone();
         let mut target = Target {
             pixels: &mut plain,

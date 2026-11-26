@@ -18,6 +18,9 @@ use super::raster::{over, union, PixelRect, Target};
 
 /// The pixels round text made for the atlas ([`BigText::coverage`]).
 pub const COVER_PAD: usize = 2;
+/// How tall a line of text is in the atlas, in its sizes (its coverage's
+/// rows, [`BigText::coverage`], less its pad).
+pub const LINE: f32 = 1.3;
 
 /// A face text is drawn in, and the fonts it falls back on for what it
 /// lacks (the main font, then the system's).
@@ -252,7 +255,7 @@ impl BigText {
     /// down. Returns its width, height and coverage.
     pub fn coverage(&mut self, text: &str, px: f32) -> (usize, usize, Vec<u8>) {
         let w = self.measure(text, px).ceil().max(0.0) as usize + 2 * COVER_PAD;
-        let h = (px * 1.3).ceil().max(1.0) as usize + 2 * COVER_PAD;
+        let h = (px * LINE).ceil().max(1.0) as usize + 2 * COVER_PAD;
         let mut out = vec![0u8; w * h];
         let mut pen = COVER_PAD as f32;
         for c in text.chars() {

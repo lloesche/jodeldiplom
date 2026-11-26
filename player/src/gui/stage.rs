@@ -44,7 +44,6 @@ use self::atlas::Atlas;
 use self::shade::Shade;
 use super::sparks::noise;
 use super::stage_gpu::{kind, Instance, StageFrame};
-pub use effects::{over_at, screen_at};
 pub use result::Tint;
 
 use crate::core::State;
@@ -58,6 +57,8 @@ pub const AHEAD: f64 = 4.0;
 const BAND: (f32, f32) = (0.17, 0.55);
 /// A pill's height, a share of the window's height.
 const PILL: f32 = 0.052;
+/// The air round the HUD's band ([`Lane::hud`]), a share of the height.
+const AIR: f32 = 0.008;
 /// The progress bar: its middle, a share of the height.
 const PROGRESS: f32 = 0.935;
 /// A gap between notes this long or longer is a break on the progress bar.
@@ -268,6 +269,19 @@ impl Lane {
     /// The seconds of song behind the playhead that show.
     pub fn behind(&self) -> f64 {
         f64::from((self.head / self.pps).max(0.0))
+    }
+
+    /// The band over the lane the HUD keeps to in the window's `area` (the
+    /// multiplier's badge, the meter and its verdict), its top and bottom:
+    /// from a little under the stage's top to a little over the highest
+    /// the marquee bulbs round the glass light
+    /// ([`super::fx::bulbs::lit_top`]), whether they show or not, so
+    /// nothing moves as they come and go. What is in it is made smaller
+    /// where it is lower than they would be.
+    pub fn hud(&self, area: (f32, f32, f32, f32)) -> (f32, f32) {
+        let air = area.3 * AIR;
+        let bulbs = super::fx::bulbs::lit_top(self.glass(area).rect(), super::fx::far_corner(area));
+        (area.1 + air, (bulbs - air).max(area.1 + air))
     }
 
     /// The lane's glass in the window's `area` (round the band, a little
@@ -565,7 +579,8 @@ impl Stage {
         self.shake = [0.0; 2];
         // Over everything, lettered before any other text of the frame: the
         // effects' big words and their light.
-        let (over, over_light) = self.over(&over_at(area, lane_box), &effects);
+        let over_at = self.over_at(area, &lane);
+        let (over, over_light) = self.over(&over_at, &effects);
         let under = At::Under {
             head: (lane.head, lane_box.middle.1),
             lane: lane_box,
@@ -707,16 +722,17 @@ impl Stage {
             self.effects_at(&arrow, &effects, (&mut out, &mut Vec::new()));
         }
 
-        // The multiplier, over the playhead ([`badge`]).
+        // The multiplier, over the playhead ([`badge`]): over everything.
         let mut top = Vec::new();
         if song.demo {
             self.demo_tag(&mut top, area);
         }
+        let mut multiplier = Vec::new();
         self.draw_badge(
-            (&mut out, &mut top),
+            &mut multiplier,
             (singing, game),
-            (&lane, area.0),
-            (p, dt),
+            (&lane, area),
+            dt,
             &effects,
         );
 
@@ -748,10 +764,12 @@ impl Stage {
         let (out, mut top, mut lights, mut light_sprays) =
             (drawn.out, drawn.top, drawn.lights, drawn.light_sprays);
         top.extend(over);
+        top.append(&mut multiplier);
         lights.extend(over_light);
-        // The screen passes over it all, clear of the lyric band.
+        // The screen passes over it all, clear of the lyric band and what
+        // the singer reads.
         let mut screen = Vec::new();
-        let at = screen_at(area, lane_box);
+        let at = self.screen_at(area, &lane);
         self.effects_at(&at, &effects, (&mut screen, &mut Vec::new()));
         lights.append(&mut shots.lights);
         self.lights.retain(|s| s.alive(clock));

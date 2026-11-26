@@ -1,7 +1,12 @@
 //! The shine on the stage ([`super::Stage::shine`]): the meter at the top
 //! (filling as the phrase is sung, its words hit, then springing to the
 //! shine the phrase reached, its tier's name popping under it, in what the
-//! shouts are in), the tiers' effects round the lane and over the screen
+//! shouts are in, unless an effect the phrase fired shouts it itself:
+//! [`crate::gui::fx::Frame::shouts_verdict`]), in the HUD's band over the
+//! lane right of the multiplier's badge and left of the score's corner
+//! (made smaller where they leave it less room: [`Stage::meter_spot`],
+//! whose box the effects keep clear),
+//! the tiers' effects round the lane and over the screen
 //! (each row's glow round the lane and flames off its edges, the angels,
 //! the jackpot from the meter as a phrase reaches the top: their slots,
 //! [`crate::gui::fx::At`]), and the song's progress along the bottom: its
@@ -41,13 +46,44 @@ pub fn tier_color(tier: Option<Tier>) -> [f32; 3] {
 }
 
 /// The meter between frames: where its fill springs from and to, and
-/// since when (the singing's clock); the last phrase shown, and when.
+/// since when (the singing's clock); the last phrase shown, and when;
+/// whether an effect it fired shouts its verdict (none shown then); where
+/// it stands in the area it was last placed in.
 #[derive(Debug, Default)]
 pub struct Meter {
     from: f32,
     to: f32,
     since: f32,
     shown: Option<(Shone, f32)>,
+    shouted: bool,
+    placed: Option<((f32, f32, f32, f32), Spot)>,
+}
+
+/// Where the meter stands on a stage: its middle, half its capsule's
+/// size, the room round the capsule (its glow), its verdict's size, and
+/// the box it all keeps to (left, top, right, bottom: the capsule and the
+/// room round it, the widest tier's verdict on its pill at rest).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Spot {
+    at: (f32, f32),
+    half: (f32, f32),
+    pad: f32,
+    px: f32,
+    /// The box.
+    pub(super) rect: [f32; 4],
+}
+
+/// The room round the meter's capsule (its glow), in its half heights.
+const PAD: f32 = 1.6;
+
+/// The verdict a phrase at `tier` shows.
+fn verdict(tier: Tier) -> String {
+    format!("{}!", tier.name())
+}
+
+/// Half the verdict's pill at rest, its text `tw` wide at `px`.
+fn verdict_half(tw: f32, px: f32) -> (f32, f32) {
+    (tw / 2.0 + px * 0.45, px * 0.62)
 }
 
 impl Meter {
@@ -130,6 +166,62 @@ fn shape(k: f32, quad: [f32; 4], shape: [f32; 4], color: [f32; 4], params: [f32;
 }
 
 impl Stage {
+    /// Where the meter stands on a stage in the window's `area` over
+    /// `lane` ([`Spot`]): across its middle (or, where the multiplier's
+    /// badge and the score's corner leave too little room there, in the
+    /// middle of what they leave), in the middle of the HUD's band
+    /// ([`Lane::hud`]); its capsule a third of the width long, its verdict
+    /// 7 % of the height, each smaller where the band is lower than it or
+    /// the room between the badge and the score's corner narrower. Worked
+    /// out once an area.
+    pub(super) fn meter_spot(&mut self, area: (f32, f32, f32, f32), lane: &Lane) -> Spot {
+        if let Some((_, spot)) = self.meter.placed.filter(|(a, _)| *a == area) {
+            return spot;
+        }
+        let (x, _, w, h) = area;
+        let (top, bottom) = lane.hud(area);
+        let tall = bottom - top;
+        let badge = self.badge_box(lane, area);
+        let score = crate::gui::karaoke::score_corner(area);
+        let air = h * super::AIR;
+        let hy = (h * 0.016).max(5.0).min(tall / (2.0 * (1.0 + PAD)));
+        let pad = hy * PAD;
+        let mut px = (h * 0.07).clamp(18.0, 140.0).min(tall / 1.24).floor();
+        let widest = |stage: &mut Stage, px: f32| {
+            (Tier::ALL.into_iter())
+                .map(|t| stage.measure(Face::SHOUT, &verdict(t), px))
+                .fold(0.0, f32::max)
+        };
+        let mut v = verdict_half(widest(self, px), px);
+        // Across the middle where it has the room, else in the middle of
+        // what the badge and the score's corner leave; half that room
+        // across, short of them.
+        let (from, to) = (badge[2] + air, score[0] - air);
+        let want = (w * 0.17 + pad).max(v.0).min((to - from) / 2.0);
+        let mx = if from + want <= to - want {
+            (x + w * 0.5).clamp(from + want, to - want)
+        } else {
+            (from + to) / 2.0
+        };
+        let my = (top + bottom) / 2.0;
+        let room = (mx - from).min(to - mx).max(1.0);
+        let hx = (w * 0.17).min(room - pad).max(hy);
+        while v.0 > room && px > 1.0 {
+            px = (px * room / v.0).floor().min(px - 1.0).max(1.0);
+            v = verdict_half(widest(self, px), px);
+        }
+        let (rx, ry) = ((hx + pad).max(v.0), (hy + pad).max(v.1));
+        let spot = Spot {
+            at: (mx, my),
+            half: (hx, hy),
+            pad,
+            px,
+            rect: [mx - rx, my - ry, mx + rx, my + ry],
+        };
+        self.meter.placed = Some((area, spot));
+        spot
+    }
+
     /// The shine for `singing` (the game on: `game`) at `at`, its streak's
     /// `step` this frame and the `effects` as strong as it holds them, into
     /// `d`; the song `length` seconds long.
@@ -163,12 +255,17 @@ impl Stage {
         at: &Where,
         (step, effects): (&Step, &Frame),
     ) {
-        let (x, y, w, h) = at.area;
         let clock = at.clock as f32;
-        let (mx, my) = (x + w * 0.5, y + h * 0.075);
-        let half = (w * 0.17, (h * 0.016).max(5.0));
+        let Spot {
+            at: (mx, my),
+            half,
+            pad,
+            px,
+            ..
+        } = self.meter_spot(at.area, &at.lane);
         if let Some(p) = step.phrase {
             self.meter.shown = Some((p, clock));
+            self.meter.shouted = effects.shouts_verdict();
             // Within the tier reached (a shine past a bar with the pitch short
             // of the next's shows short of it).
             let next = p.tier.map_or(0, |t| t.index() + 1);
@@ -186,9 +283,10 @@ impl Stage {
                 self.meter.aim(position(live), clock);
             }
         }
+        // Over everything (the bursts falling through it, the light's bloom),
+        // so it always reads.
         let m = &self.meter;
-        let pad = half.1 * 1.6;
-        d.out.push(shape(
+        d.top.push(shape(
             kind::METER,
             [
                 mx - half.0 - pad,
@@ -200,8 +298,8 @@ impl Stage {
             [1.0; 4],
             [m.from, m.to, m.since],
         ));
-        // The tier's name, popping and fading.
-        let Some((p, t)) = self.meter.shown else {
+        // The tier's name, popping and fading (unless shouted).
+        let Some((p, t)) = self.meter.shown.filter(|_| !self.meter.shouted) else {
             return;
         };
         let age = clock - t;
@@ -211,8 +309,7 @@ impl Stage {
         let Some(tier) = p.tier else {
             return;
         };
-        let label = format!("{}!", tier.name());
-        let px = (h * 0.07).round().clamp(18.0, 140.0);
+        let label = verdict(tier);
         let tw = self.measure(Face::SHOUT, &label, px);
         // Over the meter, its middle on the meter's.
         let ty = my - self.cap_middle(Face::SHOUT, px) + super::COVER_PAD as f32;
@@ -221,7 +318,7 @@ impl Stage {
         // over the light (its bloom would wash it out); both popping round
         // the meter's middle and fading as the shader times them
         // ([`crate::gui::glory::label_pop`]).
-        let half = (tw / 2.0 + px * 0.45, px * 0.62);
+        let half = verdict_half(tw, px);
         let m = half.0.max(half.1) * 2.0;
         d.top.push(Instance {
             quad: [mx - m, my - m, mx + m, my + m],
@@ -516,6 +613,56 @@ mod tests {
         let rest =
             |f: &[Instance]| -> Vec<Instance> { f.iter().filter(|i| !low(i)).copied().collect() };
         assert_eq!(rest(&frame(&song, (w, h), Some(1.0))), rest(&hidden));
+    }
+
+    /// A phrase whose row fires an effect that shouts its verdict itself
+    /// (the word slam) shows no verdict under the meter: one at a time. A
+    /// row that does not, its verdict.
+    #[test]
+    fn a_row_that_shouts_owns_the_verdict() {
+        use crate::gui::fx::{Effects, Fx, Music, Use};
+        static SLAM: [Use; 1] = [Use::of(Fx::Slam, 1.0)];
+        let (singing, _) = singing();
+        let slams = Effects {
+            on_phrase: &SLAM,
+            ..Effects::NONE
+        };
+        let tier = Tier::TOP;
+        for (effects, shown) in [(&slams, false), (&Effects::NONE, true)] {
+            let rows: Vec<(f32, &Effects)> = (Tier::ALL.into_iter())
+                .map(|t| (1.0, if t == tier { effects } else { &Effects::NONE }))
+                .collect();
+            let phrase = Shone {
+                line: 0,
+                end: 1.0,
+                value: 1.0,
+                top: 0.9,
+                tier: Some(tier),
+            };
+            let step = Step {
+                phrase: Some(phrase),
+                tier: Some(tier),
+                ..Step::default()
+            };
+            let mut stage = Stage::default();
+            let frame = (stage.board).frame_of(rows.iter().copied(), &step, &Music::NEUTRAL, 1.2);
+            assert_eq!(frame.shouts_verdict(), !shown);
+            let area = (0.0, 0.0, 1600.0, 900.0);
+            let lane = Lane::new(area, 1.2);
+            let at = Where {
+                area,
+                lane,
+                lane_box: lane.glass(area),
+                now: 1.2,
+                clock: 1.2,
+                gone: 0.0,
+            };
+            let mut d = Drawn::default();
+            stage.meter_and_verdict(&mut d, &singing, &at, (&step, &frame));
+            let verdict = d.top.iter().any(|i| i.params[0] == kind::BADGE);
+            assert_eq!(verdict, shown);
+            assert!(d.top.iter().any(|i| i.params[0] == kind::METER));
+        }
     }
 
     /// In a tall, narrow window the ring of the time left stays inside it,

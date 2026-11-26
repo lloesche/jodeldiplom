@@ -396,7 +396,7 @@ mod tests {
     fn the_screen_passes_draw_only_strips() {
         let area = (0.0, 0.0, 3024.0, 1964.0);
         let lane = crate::gui::stage::Lane::new(area, 10.0);
-        let at = crate::gui::stage::screen_at(area, lane.glass(area));
+        let at = crate::gui::stage::Stage::default().screen_at(area, &lane);
         for fx in Fx::ALL.into_iter().filter(|f| f.spec().is_screen()) {
             let uses: &'static [fx::Use] = Box::leak(Box::new([fx::Use::of(fx, 1.0)]));
             let row = fx::Effects {

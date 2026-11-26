@@ -1,16 +1,18 @@
-//! The word slam: a big word slamming down onto the stage, in the free
-//! space between the top of the screen and the lane (never over the lane's
-//! tubes nor the lyric band: what is sung stays clear). Fired by a phrase
+//! The word slam: a big word slamming down onto the stage, in the lane
+//! behind the playhead (what has been sung: [`super::At::Over`]'s room;
+//! never over what is coming to be sung, the lyric band, nor the HUD over
+//! the lane). Fired by a phrase
 //! reaching a row's tier it shouts the tier's name ("DIVA!"), by the row's
 //! rung of the multiplier the multiplier reached ("×32") ([`word`]): the
 //! word comes from what fired it ([`super::By`]), any row, no tier named
 //! here (fired by both in one frame, the phrase's: its name). It falls in
-//! from close (large and faint, growing solid), lands on the lane's top
-//! with a squash and springs back ([`pose`]), the screen shaking with the
+//! from close (large and faint, growing solid), lands in the middle of its
+//! room with a squash and springs back ([`pose`]), the screen shaking with the
 //! blow ([`shake`]), a ring of dust and sparkles thrown up along the lane
 //! where it landed ([`dust`]), a shine sweeping over it; it rests, and
 //! rises and fades a second or so on. Fired again while it shows, the new
-//! word takes its place.
+//! word takes its place. Fired by a phrase it is the phrase's verdict, and
+//! the meter's stays away ([`super::Spec::shouts`]).
 //!
 //! It lands where the sound fired with it lands, by the grid's one rule
 //! ([`when`], [`super::Music::land`]): a rung's on the next beat with its
@@ -25,7 +27,9 @@
 //! and a dark outline round them ([`cover`]: 9 taps of the atlas a pixel,
 //! one where it is inside a letter), its face lit from the top, in the
 //! tier's colour ([`ink`], the shader's reference held to it on the GPU:
-//! [`REFERENCE`]). Its glow is the light's bloom: a copy of the word goes
+//! [`REFERENCE`]): a row's strong colour its own, a pale one's (the top
+//! row's near white) the rainbow running across the letters ([`colours`]).
+//! Its glow is the light's bloom: a copy of the word goes
 //! into the light ([`super::Letters::glow`]). Its look ([`Spec::params`],
 //! `p`): `x` how much it glows (1 as made).
 
@@ -33,10 +37,10 @@ use jodel_rhythm::grid::When;
 
 use super::helpers::{mix3, smoothstep};
 use super::{At, By, Fx, Layer, Letters, Live, Out, Playing, Reference, Slot, Spec};
-use crate::gui::big_text::Face;
+use crate::gui::big_text::{Face, COVER_PAD, LINE};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
+use crate::gui::rainbow::hue;
 use crate::gui::sparks::{mix, rand, TAU, WHITE};
-use crate::gui::stage::LaneBox;
 use crate::gui::stage_gpu::Instance;
 use crate::tiers::{Tier, TIERS};
 
@@ -57,6 +61,7 @@ pub const SPEC: Spec = Spec {
     wgsl: Some(wgsl),
     params: [1.0, 0.0, 0.0, 0.0],
     reference: Some(REFERENCE),
+    shouts: true,
     ..Spec::NONE
 };
 
@@ -70,6 +75,12 @@ pub const BEATS: f64 = crate::sfx::conductor::JACKPOT_BEATS;
 const FROM: f32 = 2.2;
 /// How far it squashes as it lands: wider by most of this, lower by it.
 const SQUASH: f32 = 0.3;
+/// The widest it is squashed, a share of its width.
+const SPREAD: f32 = 1.0 + SQUASH * 0.8;
+/// How much it grows as it fades, and how far it rises then (in its
+/// sizes).
+const GROW: f32 = 0.12;
+const LIFT: f32 = 0.25;
 /// Its spring back: how many times a second it wobbles, how fast that
 /// dies away (seconds).
 const SPRING: f32 = 5.5;
@@ -82,14 +93,9 @@ const LANDED: f32 = 0.95;
 const REST: f32 = 0.85;
 /// The least it shows to be drawn at all (falling in, faded out).
 const SHOWS: f32 = 0.02;
-/// Its size: at most this share of the stage's height, and of the room
-/// between the screen's top and the lane; the widest it may be, a share
-/// of the stage's width (clear of the multiplier over the playhead); how
-/// far above the lane's glass its foot is, a share of its size.
+/// Its size: at most this share of the stage's height (and as large as
+/// its room holds it: [`place`]).
 const SIZE: f32 = 0.085;
-const ROOM: f32 = 0.62;
-const WIDEST: f32 = 0.3;
-const GAP: f32 = 0.06;
 /// Its quad's margin round its box (its outline), a share of its size.
 const MARGIN: f32 = 0.1;
 /// How far the screen shakes as it lands, a share of the stage's height;
@@ -118,7 +124,7 @@ const DUST_SIZE: f32 = 0.12;
 const GOLD: [f32; 3] = [1.0, 0.76, 0.26];
 
 fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
-    let &At::Over { area, lane, .. } = at else {
+    let &At::Over { area, room, .. } = at else {
         return;
     };
     let t = live.clock as f32;
@@ -154,15 +160,19 @@ fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
     if pose.alpha < SHOWS {
         return;
     }
-    let ((x, y), px) = place(area, lane);
-    let (fill, deep, glow) = colours(p.by);
+    let ((x, y), px) = place(area, room);
+    let widest = widest(room, px);
+    if widest <= 0.0 {
+        return;
+    }
+    let (fill, deep, glow, bow) = colours(p.by);
     let seed = (p.next * 1000.0) as u32 ^ 0x51_A700;
     let k = p.strength.clamp(0.3, 1.0);
     out.letters.push(Letters {
         text,
         face: Face::SHOUT,
         px,
-        widest: area.2 * WIDEST,
+        widest,
         foot: (x, y - pose.lift * px),
         scale: (pose.scale.0 * k, pose.scale.1 * k),
         margin: px * MARGIN,
@@ -170,7 +180,7 @@ fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
             color: [fill[0], fill[1], fill[2], 1.0],
             color2: [glow[0], glow[1], glow[2], 1.0],
             params: [SLAM, pose.alpha, pose.shine, 0.0],
-            strain: [deep[0], deep[1], deep[2], 0.0],
+            strain: [deep[0], deep[1], deep[2], bow],
             ..Instance::default()
         },
         glow: GLOW,
@@ -204,25 +214,48 @@ pub fn word(by: By) -> Option<String> {
 }
 
 /// Its colours, fired `by` a row: its face the row's tier's warmed a
-/// little with gold, its outline that darkened, its glow leaning to gold.
-fn colours(by: By) -> ([f32; 3], [f32; 3], [f32; 3]) {
+/// little with gold, its outline that darkened, its glow leaning to gold;
+/// and how much its face is the rainbow instead: all of it for a pale
+/// row's (the top's, near white), none for a strong colour's.
+fn colours(by: By) -> ([f32; 3], [f32; 3], [f32; 3], f32) {
     let (By::Phrase(row) | By::Rung(row)) = by;
     let c = TIERS.get(row).map_or(GOLD, |t| t.color);
     let face = mix3(c, GOLD, 0.25);
-    (face, face.map(|v| v * 0.16), mix3(c, GOLD, 0.5))
+    let most = c[0].max(c[1]).max(c[2]).max(1e-4);
+    let pale = 1.0 - smoothstep(0.15, 0.45, (most - c[0].min(c[1]).min(c[2])) / most);
+    (face, face.map(|v| v * 0.16), mix3(c, GOLD, 0.5), pale)
 }
 
-/// Where it lands over the stage in `area` (left, top, width, height)
-/// round `lane`: the foot of its box (the middle of its bottom) and its
-/// size, fixed for the stage. In the free space over the lane, its foot
-/// just above the lane's glass, the middle of the stage across: it grows
-/// from there only up and out, so neither the lane's tubes (their words)
-/// nor the lyric band under them are ever under it.
-pub fn place(area: (f32, f32, f32, f32), lane: LaneBox) -> ((f32, f32), f32) {
-    let (x, y, w, h) = area;
-    let glass = lane.middle.1 - lane.half.1;
-    let px = ((glass - y) * ROOM).min(h * SIZE).round().max(1.0);
-    ((x + w * 0.5, glass - px * GAP), px)
+/// Where it lands in `room` (left, top, right, bottom) on a stage in
+/// `area` (left, top, width, height): the foot of its box (the middle of
+/// its bottom) and its size, fixed for the stage. As large as the room
+/// holds it at its tallest (risen and grown as it fades, its outline
+/// round it, [`high`]), at most [`SIZE`] of the stage's height; its
+/// tallest in the middle of the room.
+pub fn place(area: (f32, f32, f32, f32), room: [f32; 4]) -> ((f32, f32), f32) {
+    let tall = room[3] - room[1];
+    let px = ((tall - high(0.0)) / (high(1.0) - high(0.0)))
+        .min(area.3 * SIZE)
+        .floor()
+        .max(1.0);
+    let slack = (tall - high(px)).max(0.0);
+    let foot = room[3] - slack / 2.0 - px * MARGIN * SPREAD;
+    (((room[0] + room[2]) / 2.0, foot), px)
+}
+
+/// How tall the word `px` large is at its tallest, its outline round it:
+/// its box (the atlas's line and its pad) grown as it fades, risen, and
+/// its quad's margin either side.
+pub fn high(px: f32) -> f32 {
+    (px * LINE + 2.0 * COVER_PAD as f32 + 1.0) * (1.0 + GROW) + px * (LIFT + 2.0 * MARGIN * SPREAD)
+}
+
+/// The widest the word `px` large may be lettered in `room` (left, top,
+/// right, bottom): as wide as keeps it, squashed its widest as it lands
+/// with its outline round it, inside the room (none where it has none).
+pub fn widest(room: [f32; 4], px: f32) -> f32 {
+    let pad = 2.0 * COVER_PAD as f32 + 1.0;
+    (room[2] - room[0] - 2.0 * px * MARGIN * SPREAD) / SPREAD - pad
 }
 
 /// How the word is `u` seconds after it lands (before: falling, for
@@ -259,10 +292,10 @@ pub fn pose(u: f32, fall: f32) -> Option<Pose> {
     }
     let k = (-u / SETTLE).exp() * (TAU * SPRING * u).cos();
     let fade = smoothstep(HOLD, HOLD + FADE, u);
-    let grow = 1.0 + 0.12 * fade;
+    let grow = 1.0 + GROW * fade;
     Some(Pose {
-        scale: ((1.0 + SQUASH * 0.8 * k) * grow, (1.0 - SQUASH * k) * grow),
-        lift: 0.25 * fade,
+        scale: ((1.0 + (SPREAD - 1.0) * k) * grow, (1.0 - SQUASH * k) * grow),
+        lift: LIFT * fade,
         alpha: (LANDED + (REST - LANDED) * smoothstep(0.1, 0.6, u)) * (1.0 - fade),
         shine: (u - SHINE_FROM) / SHINE_FOR,
     })
@@ -423,16 +456,23 @@ fn draw_puff(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<
 /// round the pixel as far as the outline goes (`c`: [`cover`]); where the
 /// pixel is in its box (`t`, 0 to 1 across and down); how much it shows
 /// and where its shine is (`shown`); its face's and outline's colours
-/// (sRGB). Its colour and coverage, straight: its face lit from its top,
-/// the shine sweeping over it, the dark outline round it.
+/// (sRGB) and how much its face is the rainbow (`bow`, running across the
+/// letters, moving on as the shine sweeps). Its colour and coverage,
+/// straight: its face lit from its top, the shine sweeping over it, the
+/// dark outline round it.
 pub fn ink(
     c: [f32; 2],
     t: (f32, f32),
     (alpha, shine): (f32, f32),
-    (fill, deep): ([f32; 3], [f32; 3]),
+    (fill, deep, bow): ([f32; 3], [f32; 3], f32),
 ) -> [f32; 4] {
     let (face, rim) = (c[0], c[1].max(c[0]));
-    let top = mix3(fill, [1.0; 3], 0.7);
+    let fill = mix3(
+        fill,
+        hue(t.0 * 0.8 + t.1 * 0.25 - shine.clamp(0.0, 1.0) * 0.4),
+        bow,
+    );
+    let top = mix3(fill, [1.0; 3], 0.35);
     let mut col = mix3(top, fill, smoothstep(0.1, 0.8, t.1));
     let s = t.0 + 0.4 * t.1 - (shine * 1.6 - 0.3);
     let sweeping = f32::from(u8::from((0.0..=1.0).contains(&shine)));
@@ -520,15 +560,17 @@ fn slam_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
         let lit = c.y * o.params.y * o.params.w * looks[FX_SLAM].x;
         return vec4<f32>(out_rgb(o.color2.rgb) * lit, 0.0);
     }
-    let ink = fx_slam_ink(c, t, o.params.yz, o.color.rgb, o.strain.rgb);
+    let ink = fx_slam_ink(c, t, o.params.yz, o.color.rgb, o.strain);
     return over_plus(ink.rgb, ink.a, vec3<f32>(0.0));
 }
 
 // The word's colour and coverage at a pixel (straight).
-fn fx_slam_ink(c: vec2<f32>, t: vec2<f32>, shown: vec2<f32>, fill: vec3<f32>, deep: vec3<f32>) -> vec4<f32> {
+fn fx_slam_ink(c: vec2<f32>, t: vec2<f32>, shown: vec2<f32>, own: vec3<f32>, deep_bow: vec4<f32>) -> vec4<f32> {
     let face = c.x;
     let rim = max(c.y, c.x);
-    let top = mix(fill, vec3<f32>(1.0), 0.7);
+    let deep = deep_bow.rgb;
+    let fill = mix(own, hue(t.x * 0.8 + t.y * 0.25 - clamp(shown.y, 0.0, 1.0) * 0.4), deep_bow.w);
+    let top = mix(fill, vec3<f32>(1.0), 0.35);
     var col = mix(top, fill, smoothstep(0.1, 0.8, t.y));
     let s = t.x + 0.4 * t.y - (shown.y * 1.6 - 0.3);
     let sweeping = select(0.0, 1.0, shown.y >= 0.0 && shown.y <= 1.0);
@@ -555,23 +597,29 @@ pub const REFERENCE: Reference = Reference {
                     [cover, rim, fr(0.733), fr(0.157) * 2.0 - 0.5],
                     [fr(0.417) * 1.4 - 0.2, fr(0.519) * 1.4 - 0.2, 0.0, 0.0],
                     [fr(0.123), fr(0.456), fr(0.789), 0.0],
-                    [fr(0.321) * 0.3, fr(0.654) * 0.3, fr(0.987) * 0.3, 0.0],
+                    [
+                        fr(0.321) * 0.3,
+                        fr(0.654) * 0.3,
+                        fr(0.987) * 0.3,
+                        [0.0, 1.0, fr(0.246)][(k / 9) % 3],
+                    ],
                 ]
             })
             .collect()
     },
     ins: 4,
     outs: 1,
-    body: "
+    body:
+        "
     let a = ins[i * 4u];
-    outs[i] = fx_slam_ink(a.xy, ins[i * 4u + 1u].xy, a.zw, ins[i * 4u + 2u].xyz, ins[i * 4u + 3u].xyz);",
+    outs[i] = fx_slam_ink(a.xy, ins[i * 4u + 1u].xy, a.zw, ins[i * 4u + 2u].xyz, ins[i * 4u + 3u]);",
     cpu: |s| {
         let rgb = |v: [f32; 4]| [v[0], v[1], v[2]];
         vec![ink(
             [s[0][0], s[0][1]],
             (s[1][0], s[1][1]),
             (s[0][2], s[0][3]),
-            (rgb(s[2]), rgb(s[3])),
+            (rgb(s[2]), rgb(s[3]), s[3][3]),
         )]
     },
     near: (2e-3, 2e-3),

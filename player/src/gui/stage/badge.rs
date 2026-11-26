@@ -1,12 +1,17 @@
-//! The multiplier's badge over the playhead: its × (popping as it goes up
-//! a rung, in the shouts' treatment, the rainbow while the singing
-//! shines), and before it on a dark pill of their own (to read over the
-//! flames) the rung's name in its tier's colour and the streak: "Amazing
-//! 42 in a row ×16". Right of the playhead is the meter's, over the lane
-//! the bulbs': the pill keeps left of the ×, made smaller where the
-//! screen's edge is near, never past it. It is laid out by the widest it
-//! can be (the top rung's ×, the longest name, [`WIDEST`]), so nothing
-//! moves or changes size as the rung or the streak does.
+//! The multiplier's badge over the playhead, in the HUD's band over the
+//! lane ([`Lane::hud`], over the marquee bulbs: made smaller where the
+//! band is lower than it): its × (popping as it goes up a rung, in the
+//! shouts' treatment, the rainbow while the singing shines), and before it
+//! on a dark pill of their own (to read over the flames) the rung's name
+//! in its tier's colour and the streak: "Amazing 42 in a row ×16". Right
+//! of it is the meter ([`Stage::meter_spot`]): the pill keeps left of the
+//! ×, made smaller where the screen's edge is near, never past it. It is
+//! laid out by the widest it can be (the top rung's ×, the longest name,
+//! [`WIDEST`]), so nothing moves or changes size as the rung or the streak
+//! does, and the box that holds it at its widest ([`Stage::badge_box`])
+//! is clear of the effects round it (over the bulbs' light, the edges on
+//! fire keeping it clear, the word slammed down landing in the lane). It
+//! is drawn over everything, the bursts too, so it always reads.
 
 use super::{disc, pill, rgba, Lane, Stage, GOLD, GOLD_TOP, WHITE};
 use crate::core::singing::{multiplier, Singing};
@@ -84,6 +89,61 @@ struct Place {
     right: f32,
 }
 
+/// Where the badge stands over a lane: the ×'s size and its middle's
+/// height, its pill's text ([`place`]), and the box that holds it all at
+/// its widest (left, top, right, bottom: the widest pill and the widest ×
+/// at rest).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Spot {
+    px: f32,
+    cy: f32,
+    place: Place,
+    rect: [f32; 4],
+}
+
+/// How tall the badge is at rest, in its units: its × (the tallest of
+/// it: [`times_px`], 0.62 of that either side of its middle).
+const TALL: f32 = 1.05 * 1.24;
+
+/// The ×'s size at a unit `p`.
+fn times_px(p: f32) -> f32 {
+    (p * 1.05).floor()
+}
+
+/// The badge's unit over `lane` in the window's `area`: a pill's height,
+/// smaller where the HUD's band ([`Lane::hud`]) is lower than the badge
+/// would be at that.
+fn unit(lane: &Lane, area: (f32, f32, f32, f32)) -> f32 {
+    let (top, bottom) = lane.hud(area);
+    lane.pill.min((bottom - top) / TALL).floor().max(1.0)
+}
+
+/// Where the badge stands over the playhead of `lane` in the window's
+/// `area` (laid out by `w`, at its unit: [`unit`]), in the middle of the
+/// HUD's band ([`Spot`]).
+fn spot(lane: &Lane, area: (f32, f32, f32, f32), w: &Widths) -> Spot {
+    let left = area.0;
+    let px = times_px(w.p);
+    let (top, bottom) = lane.hud(area);
+    let cy = (top + bottom) / 2.0;
+    let place = place(lane.head, left, w);
+    let (named, small) = sizes(w.p);
+    let wide = w.pill * (place.named / named).max(place.small / small);
+    let pad = place.small * 0.45;
+    let half = (px * 0.62).max(place.named * 0.62);
+    Spot {
+        px,
+        cy,
+        place,
+        rect: [
+            text_left(place.right, wide, pad, left) - pad,
+            cy - half,
+            lane.head + w.label / 2.0,
+            cy + half,
+        ],
+    }
+}
+
 /// The full sizes of the name and the streak, at a unit `p`.
 fn sizes(p: f32) -> (f32, f32) {
     (p * 0.5, p * 0.36)
@@ -119,7 +179,7 @@ impl Stage {
         }
         let (named, small) = sizes(p);
         let top = format!("×{}", multiplier(u32::MAX));
-        let label = self.measure(Face::SHOUT, &top, (p * 1.05).round());
+        let label = self.measure(Face::SHOUT, &top, times_px(p));
         let name = (Tier::ALL.into_iter())
             .map(|t| self.measure(Face::SHOUT, t.name(), named))
             .fold(0.0, f32::max);
@@ -129,27 +189,46 @@ impl Stage {
         w
     }
 
-    /// The multiplier over the playhead of `lane` (the stage's left edge
-    /// at `left`), `p` a unit of the lane's, `dt` the frame's step: its ×
-    /// into `out`, the rung's name and the streak of `singing` (with the
-    /// game on, `game`) into `top`, over the light.
+    /// The box the multiplier's badge over the playhead of `lane` in the
+    /// window's `area` keeps to at its widest (left, top, right, bottom):
+    /// what the effects round it keep clear.
+    pub(super) fn badge_box(&mut self, lane: &Lane, area: (f32, f32, f32, f32)) -> [f32; 4] {
+        let widths = self.badge_widths(unit(lane, area));
+        spot(lane, area, &widths).rect
+    }
+
+    /// The multiplier over the playhead of `lane` in the window's `area`,
+    /// `dt` the frame's step: its ×, the rung's name and the streak of
+    /// `singing` (with the game on, `game`) into `out`, to go over
+    /// everything.
     pub(super) fn draw_badge(
         &mut self,
-        (out, top): (&mut Vec<Instance>, &mut Vec<Instance>),
+        out: &mut Vec<Instance>,
         (singing, game): (&Singing, bool),
-        (lane, left): (&Lane, f32),
-        (p, dt): (f32, f32),
+        (lane, area): (&Lane, (f32, f32, f32, f32)),
+        dt: f32,
         effects: &fx::Frame,
     ) {
         let rung = if game { singing.rung() } else { None };
         let Some(Showing { tier, alpha, pop }) = self.badge.step(rung, dt) else {
             return;
         };
+        let left = area.0;
+        let p = unit(lane, area);
         let widths = self.badge_widths(p);
-        let px = (p * 1.05).round();
+        let Spot {
+            px,
+            cy,
+            place:
+                Place {
+                    named,
+                    small,
+                    right,
+                },
+            ..
+        } = spot(lane, area, &widths);
         let label = format!("×{}", tier.multiplier());
         let tw = self.measure(Face::SHOUT, &label, px) * pop;
-        let cy = lane.band.0 - p * 1.55;
         // Its glow, stronger up the rungs.
         let up = (tier.index() + 1) as f32 / Tier::COUNT as f32;
         out.push(disc(
@@ -173,18 +252,13 @@ impl Stage {
         if let (Some(n), Some(t)) = (number, fx::treatment(Text::Shout, effects)) {
             t.apply(n);
         }
-        let Place {
-            named,
-            small,
-            right,
-        } = place(lane.head, left, &widths);
         let streak = (game && singing.tally.streak > 0)
             .then(|| format!("{} in a row", singing.tally.streak));
         let (gap, pad) = (small * 0.6, small * 0.45);
         let nw = self.measure(Face::SHOUT, tier.name(), named);
         let sw = (streak.as_ref()).map_or(0.0, |s| gap + self.measure(Face::NUMBER, s, small));
         let x = text_left(right, nw + sw, pad, left);
-        top.push(pill(
+        out.push(pill(
             (x + (nw + sw) / 2.0, cy),
             ((nw + sw) / 2.0 + pad, named * 0.62),
             [0.04, 0.03, 0.09, 0.6 * alpha],
@@ -197,7 +271,7 @@ impl Stage {
         let ny = cy - self.cap_middle(Face::SHOUT, named) + COVER_PAD as f32;
         let at = (x, ny);
         self.text(
-            top,
+            out,
             Face::SHOUT,
             tier.name(),
             (named, 1.0),
@@ -210,7 +284,7 @@ impl Stage {
             let ty = cy - self.cap_middle(Face::NUMBER, small) + COVER_PAD as f32;
             let at = (x + nw + gap, ty);
             self.text(
-                top,
+                out,
                 Face::NUMBER,
                 &streak,
                 (small, 1.0),

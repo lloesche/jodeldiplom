@@ -3,7 +3,8 @@ use crate::core::shine::{Shone, Tier};
 use crate::gui::fx::{Board, Effects, Music, Use};
 use crate::gui::particles::sprite;
 use crate::gui::rainbow::Glow;
-use crate::gui::stage::{over_at, Lane};
+use crate::gui::stage::{Lane, Stage};
+use crate::gui::stage_gpu::StageFrame;
 use crate::gui::streak::Step;
 
 /// The stage the tests draw over.
@@ -63,12 +64,17 @@ fn rung(step: Step) -> Step {
     }
 }
 
-/// What the slam draws over everything at `t`, `step` and `music` then:
-/// its words, the shake.
-fn over(board: &mut Board, step: &Step, music: &Music, t: f64) -> (Vec<Letters>, [f32; 2]) {
+/// What the slam draws over everything at `at` at `t`, `step` and `music`
+/// then: its words, the shake.
+fn over(
+    board: &mut Board,
+    at: &At,
+    step: &Step,
+    music: &Music,
+    t: f64,
+) -> (Vec<Letters>, [f32; 2]) {
     let rows = rows();
     let frame = board.frame_of(rows.iter().map(|(g, e)| (*g, e)), step, music, t);
-    let lane = Lane::new(AREA, t).glass(AREA);
     let (mut shapes, mut sprays, mut letters, mut shake) =
         (Vec::new(), Vec::new(), Vec::new(), [0.0; 2]);
     let mut out = Out {
@@ -77,20 +83,31 @@ fn over(board: &mut Board, step: &Step, music: &Music, t: f64) -> (Vec<Letters>,
         letters: &mut letters,
         shake: &mut shake,
     };
-    board.draw(&over_at(AREA, lane), &frame, &mut out);
+    board.draw(at, &frame, &mut out);
     assert!(shapes.is_empty() && sprays.is_empty());
     (letters, shake)
+}
+
+/// Where the slam draws over a stage in `area`.
+fn over_at(area: (f32, f32, f32, f32)) -> At {
+    Stage::default().over_at(area, &Lane::new(area, 0.0))
 }
 
 /// Fired at `fire` by `step`, with `music`: the frames at 60 a second
 /// after it for ten seconds, each its time and what it drew.
 fn played(step_fired: Step, music: Music, fire: f64) -> Vec<Played> {
+    played_in(AREA, step_fired, music, fire)
+}
+
+/// [`played`] over a stage in `area`.
+fn played_in(area: (f32, f32, f32, f32), step_fired: Step, music: Music, fire: f64) -> Vec<Played> {
+    let at = over_at(area);
     let mut board = Board::default();
-    let (l, k) = over(&mut board, &step_fired, &music, fire);
+    let (l, k) = over(&mut board, &at, &step_fired, &music, fire);
     let mut frames = vec![(fire, l, k)];
     for f in 1..600 {
         let t = fire + f64::from(f) / 60.0;
-        let (l, k) = over(&mut board, &step(None), &music, t);
+        let (l, k) = over(&mut board, &at, &step(None), &music, t);
         frames.push((t, l, k));
     }
     frames
@@ -282,34 +299,75 @@ fn it_lands_where_its_sound_does() {
 fn a_seek_back_takes_it_away() {
     let mut board = Board::default();
     let music = Music::steady(10.5, 120.0, 4, 1.0, 5.0);
-    over(&mut board, &step(Some(5.0)), &music, 5.0);
-    let (letters, _) = over(&mut board, &step(None), &music, 3.0);
+    let at = over_at(AREA);
+    over(&mut board, &at, &step(Some(5.0)), &music, 5.0);
+    let (letters, _) = over(&mut board, &at, &step(None), &music, 3.0);
     assert!(letters.is_empty());
-    let (letters, _) = over(&mut board, &step(None), &music, 5.9);
+    let (letters, _) = over(&mut board, &at, &step(None), &music, 5.9);
     assert!(letters.is_empty());
 }
 
-/// The word never covers what is sung: its foot above the lane's glass
-/// (so above every tube there and the word riding in it, however high its
-/// note) and the lyric band under that, and it grows only up and out from
-/// its foot; it stays on the stage, clear of the multiplier over the
-/// playhead.
+/// Whether boxes `a` and `b` (left, top, right, bottom) are apart.
+fn apart(a: [f32; 4], b: [f32; 4]) -> bool {
+    a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1]
+}
+
+/// The word lands in the lane's glass behind the playhead (what has been
+/// sung): never over what is coming to be sung, the lyric band, nor what
+/// the singer reads (the multiplier's badge, the meter and its verdict,
+/// the score's corner), at every size. Its quads as the stage letters
+/// them, from the frame it lands (falling in, large and faint, it comes
+/// from beyond) to the last it shows (squashed, springing back, risen and
+/// grown as it fades), all inside its room, the phrase's and the rung's.
 #[test]
-fn it_lands_clear_of_the_tubes_and_the_lyrics() {
-    for area in [AREA, (0.0, 0.0, 3024.0, 1964.0), (0.0, 0.0, 800.0, 1200.0)] {
+fn it_lands_clear_of_what_is_sung_and_what_is_read() {
+    for area in [
+        AREA,
+        (0.0, 0.0, 3024.0, 1964.0),
+        (0.0, 0.0, 3840.0, 2160.0),
+        (0.0, 0.0, 1600.0, 1000.0),
+        (0.0, 0.0, 900.0, 1400.0),
+        (0.0, 0.0, 500.0, 900.0),
+    ] {
+        let mut stage = Stage::default();
         let lane = Lane::new(area, 0.0);
-        let glass = lane.glass(area);
-        let At::Over { band, .. } = over_at(area, glass) else {
+        let At::Over { band, room, .. } = stage.over_at(area, &lane) else {
             panic!("over");
         };
-        let ((x, foot), px) = place(area, glass);
-        // The highest a tube's word box can reach: its note at the top.
-        let tubes = lane.y(1.0) - lane.pill / 2.0;
-        assert!(foot <= glass.middle.1 - glass.half.1, "{area:?}");
-        assert!(foot < tubes && foot < band.0, "{area:?}: {foot} {tubes}");
-        assert!(foot - px * 1.4 > area.1, "{area:?}: on the stage at rest");
-        assert_eq!(x, area.0 + area.2 / 2.0);
-        assert!(x - area.2 * WIDEST / 2.0 > lane.head, "{area:?}");
+        let glass = lane.glass(area).rect();
+        assert!(
+            room[0] >= glass[0] && room[1] >= glass[1],
+            "{area:?} {room:?}"
+        );
+        assert!(
+            room[2] <= lane.head - lane.pill && room[3] <= glass[3],
+            "{area:?} {room:?}"
+        );
+        assert!(room[3] < band.0, "{area:?}: over the lyric band");
+        for b in stage.clear(area, &lane).boxes() {
+            assert!(apart(room, b), "{area:?}: {room:?} {b:?}");
+        }
+        let ((x, _), px) = place(area, room);
+        assert!(px >= 8.0 && widest(room, px) >= 40.0, "{area:?}: {px}");
+        assert_eq!(x, (room[0] + room[2]) / 2.0);
+        for fired in [step(Some(5.0)), rung(step(None))] {
+            let frames = played_in(area, fired, Music::NEUTRAL, 5.0);
+            let (_, landed) = shown_and_landed(&frames);
+            let mut lettered = 0;
+            for (t, letters, _) in frames.iter().filter(|f| f.0 >= landed) {
+                let mut frame = StageFrame::default();
+                stage.letter_into(letters, &mut frame);
+                for q in frame.top.iter().map(|i| i.quad) {
+                    let inside = q[0] >= room[0] - 0.5
+                        && q[1] >= room[1] - 0.5
+                        && q[2] <= room[2] + 0.5
+                        && q[3] <= room[3] + 0.5;
+                    assert!(inside, "{area:?} at {t}: {q:?} out of {room:?}");
+                    lettered += 1;
+                }
+            }
+            assert!(lettered > 30, "{area:?}: {lettered}");
+        }
     }
 }
 
@@ -350,10 +408,11 @@ fn the_dust_rolls_out_and_the_sparkles_fly_up() {
 }
 
 /// The ink: its face lit from its top, outlined dark round it, none shown
-/// at none, the shine whitening as it sweeps.
+/// at none, the shine whitening as it sweeps; the rainbow's running across
+/// the letters, its own colour none of it.
 #[test]
 fn the_ink_is_lit_and_outlined() {
-    let colours = (GOLD, GOLD.map(|v| v * 0.16));
+    let colours = (GOLD, GOLD.map(|v| v * 0.16), 0.0);
     let face_top = ink([1.0, 1.0], (0.5, 0.05), (1.0, -1.0), colours);
     let face_low = ink([1.0, 1.0], (0.5, 0.95), (1.0, -1.0), colours);
     assert!(face_top[2] > face_low[2] && face_top[3] == 1.0);
@@ -364,6 +423,31 @@ fn the_ink_is_lit_and_outlined() {
     let shine = ink([1.0, 1.0], (0.3, 0.5), (1.0, 0.5), colours);
     let plain = ink([1.0, 1.0], (0.3, 0.5), (1.0, -1.0), colours);
     assert!(shine[2] > plain[2] + 0.2, "{shine:?} {plain:?}");
+    let bow = (GOLD, GOLD.map(|v| v * 0.16), 1.0);
+    let (a, b) = (
+        ink([1.0, 1.0], (0.1, 0.9), (1.0, 2.0), bow),
+        ink([1.0, 1.0], (0.6, 0.9), (1.0, 2.0), bow),
+    );
+    assert!(
+        (a[0] - b[0]).abs() + (a[1] - b[1]).abs() + (a[2] - b[2]).abs() > 0.5,
+        "{a:?} {b:?}"
+    );
+    assert_eq!(
+        &rim[..3],
+        &ink([0.0, 1.0], (0.5, 0.5), (1.0, -1.0), bow)[..3]
+    );
+}
+
+/// A pale row's word (the top's, near white) is the rainbow; a strong
+/// colour's its own.
+#[test]
+fn a_pale_row_shouts_in_the_rainbow() {
+    for (row, t) in TIERS.iter().enumerate() {
+        let (.., bow) = colours(By::Phrase(row));
+        let c = t.color;
+        let pale = c.iter().all(|&v| v > 0.9);
+        assert_eq!(bow, if pale { 1.0 } else { 0.0 }, "{}: {bow}", t.name);
+    }
 }
 
 /// The taps: a texel's own coverage at its middle, between texels the

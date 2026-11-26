@@ -145,6 +145,18 @@ const SPOOKY: Palette = Palette {
     rim: [0.5, 0.22, 0.6],
 };
 
+/// The highest any bulb round `lane` (left, top, right, bottom) in a
+/// screen of `size` lights: its top row's middle less its glow's reach
+/// (the lane's top where it has no bulbs). What is over the lane keeps
+/// above it ([`crate::gui::stage::Lane::hud`]).
+pub fn lit_top(lane: [f32; 4], size: (f32, f32)) -> f32 {
+    let r = (lane[3] - lane[1]) * DIAMETER * 0.5;
+    if r <= 0.0 {
+        return lane[1];
+    }
+    ring(lane, size, r)[1] - r * REACH
+}
+
 /// The row's corners (left, top, right, bottom) round `lane` in a screen
 /// of `size`, for bulbs of radius `r`.
 fn ring(lane: [f32; 4], size: (f32, f32), r: f32) -> [f32; 4] {

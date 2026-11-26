@@ -1,40 +1,64 @@
 //! The tiers' effects at the stage's points ([`super::super::fx`]): where
-//! they draw as screen passes and over everything ([`screen_at`],
-//! [`over_at`]), each slot drawn with the screen's shake they make added
+//! they draw as screen passes and over everything ([`Stage::screen_at`],
+//! [`Stage::over_at`]) and what they keep clear there ([`Stage::clear`]:
+//! from the placements of what they keep clear, so they never drift
+//! apart), each slot drawn with the screen's shake they make added
 //! up over the frame ([`Stage::effects_at`]), and their big words lettered
 //! from the stage's atlas ([`Stage::over`]: before any other text of the
 //! frame, and only where the atlas has room, so it never starts again
 //! under text already lettered), with their light and their bursts.
 
-use super::super::fx::{self, At, Letters};
+use super::super::fx::{self, At, Clear, Letters};
 use super::super::particles::Spray;
 use super::super::stage_gpu::{Instance, StageFrame};
-use super::{lines, LaneBox, Stage};
-
-/// Where the effects' screen passes draw over a stage in the window's
-/// `area` round its `lane`: the area, the lyric band and the score's
-/// corner they keep mostly clear, the lane.
-pub fn screen_at(area: (f32, f32, f32, f32), lane: LaneBox) -> At {
-    At::Screen {
-        area,
-        band: lines::band(area),
-        score: super::super::karaoke::score_corner(area),
-        lane,
-    }
-}
-
-/// Where the effects draw over everything on a stage in the window's
-/// `area` round its `lane`: the area, the lane, the lyric band they keep
-/// clear.
-pub fn over_at(area: (f32, f32, f32, f32), lane: LaneBox) -> At {
-    At::Over {
-        area,
-        lane,
-        band: lines::band(area),
-    }
-}
+use super::{lines, Lane, Stage};
 
 impl Stage {
+    /// What the effects keep clear on a stage in the window's `area` round
+    /// `lane` ([`Clear`]): the score's corner, the multiplier's badge, the
+    /// meter and its verdict, each where it is placed.
+    pub fn clear(&mut self, area: (f32, f32, f32, f32), lane: &Lane) -> Clear {
+        Clear {
+            score: super::super::karaoke::score_corner(area),
+            badge: self.badge_box(lane, area),
+            meter: self.meter_spot(area, lane).rect,
+        }
+    }
+
+    /// Where the effects' screen passes draw over a stage in the window's
+    /// `area` round `lane`: the area, the lyric band they keep mostly
+    /// clear, what else they keep clear ([`Stage::clear`]), the lane's
+    /// glass.
+    pub fn screen_at(&mut self, area: (f32, f32, f32, f32), lane: &Lane) -> At {
+        At::Screen {
+            area,
+            band: lines::band(area),
+            clear: self.clear(area, lane),
+            lane: lane.glass(area),
+        }
+    }
+
+    /// Where the effects draw over everything on a stage in the window's
+    /// `area` round `lane`: the area, the lyric band, and the room big
+    /// words land in: the lane's glass behind the playhead (what has been
+    /// sung), short of the playhead by a pill and of the glass's edges by
+    /// a little air; under the HUD's band (the badge, the meter), over
+    /// the lyric band, never over what is coming to be sung.
+    pub fn over_at(&self, area: (f32, f32, f32, f32), lane: &Lane) -> At {
+        let [left, top, _, bottom] = lane.glass(area).rect();
+        let air = area.3 * super::AIR;
+        At::Over {
+            area,
+            band: lines::band(area),
+            room: [
+                left + air,
+                top + air,
+                (lane.head - lane.pill).max(left + air),
+                bottom - air,
+            ],
+        }
+    }
+
     /// The effects at `at` in `effects`: their shapes into `shapes`, their
     /// bursts into `sprays`, the shake they make added to the frame's.
     /// Only over everything do they letter words ([`Stage::over`]).
@@ -231,19 +255,21 @@ mod tests {
     }
 
     /// The screen passes get the lyric band (from the line sung's top to
-    /// the next's bottom, under the lane), the score's corner (top right)
-    /// and the lane's glass, and an effect drawing there carries them.
+    /// the next's bottom, under the lane), what they keep clear (the
+    /// score's corner top right, the badge, the meter) and the lane's
+    /// glass, and an effect drawing there carries them.
     #[test]
     fn the_screen_passes_get_the_lyric_band() {
         let area = (0.0, 0.0, 1600.0, 900.0);
-        let glass = Lane::new(area, 0.0).glass(area);
-        let at = screen_at(area, glass);
+        let mut stage = Stage::default();
+        let at = stage.screen_at(area, &Lane::new(area, 0.0));
         let At::Screen {
-            band, lane, score, ..
+            band, lane, clear, ..
         } = at
         else {
             panic!("{at:?}");
         };
+        let score = clear.score;
         assert_eq!(band.0, 900.0 * 0.68);
         assert!(band.1 > 900.0 * 0.78 && band.1 < 900.0, "{band:?}");
         assert!(lane.rect()[3] < band.0, "the lane over the band: {lane:?}");
@@ -263,15 +289,153 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut stage = Stage::default();
         let frame = (stage.board).frame_of([(1.0, &row)].into_iter(), &step, &Music::NEUTRAL, 3.0);
         let mut screen = Vec::new();
         stage.effects_at(&at, &frame, (&mut screen, &mut Vec::new()));
         assert!(!screen.is_empty());
         for i in &screen {
             assert_eq!((i.shape[0], i.shape[1]), band);
-            assert_eq!(i.color2, score);
+            assert_eq!((i.color2, i.color, i.uv), (score, clear.badge, clear.meter));
             assert_eq!(i.params[1], 0.8);
+        }
+    }
+
+    /// The window's sizes the HUD is held clear at: the Mac's screen (in
+    /// pixels and in points), 4K, wide, square, upright and narrow
+    /// windows (the narrowest the window may be).
+    const SIZES: [(f32, f32); 9] = [
+        (3024.0, 1964.0),
+        (1512.0, 982.0),
+        (3840.0, 2160.0),
+        (1600.0, 1000.0),
+        (2560.0, 1080.0),
+        (1200.0, 1200.0),
+        (900.0, 1400.0),
+        (500.0, 900.0),
+        (480.0, 1000.0),
+    ];
+
+    /// Whether boxes `a` and `b` (left, top, right, bottom) are apart.
+    fn apart(a: [f32; 4], b: [f32; 4]) -> bool {
+        a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1]
+    }
+
+    /// The HUD over the lane at every size: the badge round the playhead,
+    /// the meter right of it, the score's corner right of that, none over
+    /// another, all on the stage in the HUD's band, over the highest the
+    /// bulbs light (lit or not); the badge and the meter as large as
+    /// before where the band holds them (a wide window), smaller where
+    /// not, never under a readable size.
+    #[test]
+    fn the_hud_sits_over_the_bulbs_and_apart() {
+        let mut stage = Stage::default();
+        for (w, h) in SIZES {
+            let area = (0.0, 0.0, w, h);
+            let lane = Lane::new(area, 0.0);
+            let (top, bottom) = lane.hud(area);
+            let lit = crate::gui::fx::bulbs::lit_top(lane.glass(area).rect(), (w, h));
+            assert!(top >= 0.0 && bottom < lit && top < bottom, "{w}x{h}");
+            let Clear {
+                score,
+                badge,
+                meter,
+            } = stage.clear(area, &lane);
+            for (name, b) in [("badge", badge), ("meter", meter)] {
+                assert!(b[0] >= 0.0 && b[2] <= w, "{w}x{h}: the {name} {b:?}");
+                assert!(
+                    b[1] >= top - 0.5 && b[3] <= bottom + 0.5,
+                    "{w}x{h}: the {name} {b:?}"
+                );
+                assert!(b[3] - b[1] >= 14.0, "{w}x{h}: the {name} readable {b:?}");
+            }
+            assert!(
+                badge[0] < lane.head && badge[2] > lane.head,
+                "{w}x{h}: {badge:?}"
+            );
+            let all = (badge, meter, score);
+            assert!(
+                apart(badge, meter) && apart(meter, score) && apart(badge, score),
+                "{w}x{h}: {all:?}"
+            );
+        }
+    }
+
+    /// Every screen pass at full strength, flaring on a bar's first beat
+    /// with the bass loud, lights nothing at all in what the singer reads
+    /// (the badge, the meter and its verdict, the score's corner) at every
+    /// size: the bulbs by where they are, the fire by keeping them clear
+    /// (each worked out as its shader works it out: a screen pass this
+    /// does not know fails here until it is added).
+    #[test]
+    fn the_screen_passes_keep_the_hud_clear() {
+        use crate::gui::fx::{bulbs, edge_fire};
+        let music = Music {
+            stems: [1.0; 4],
+            ..Music::steady(8.0, 120.0, 4, 1.0, 0.0)
+        };
+        assert!(music.downbeat > 0.9 && music.sure > 0.9, "{music:?}");
+        let mut stage = Stage::default();
+        for (w, h) in SIZES {
+            let area = (0.0, 0.0, w, h);
+            let lane = Lane::new(area, 0.0);
+            let at = stage.screen_at(area, &lane);
+            let At::Screen { clear, .. } = at else {
+                panic!("{at:?}");
+            };
+            for fx in Fx::ALL.into_iter().filter(|f| f.spec().is_screen()) {
+                let uses: &'static [Use] = Box::leak(Box::new([Use::of(fx, 1.0)]));
+                let row = Effects {
+                    held: uses,
+                    ..Effects::NONE
+                };
+                let step = crate::gui::streak::Step {
+                    tier: Some(crate::tiers::Tier::TOP),
+                    glow: crate::gui::rainbow::Glow {
+                        level: 1.0,
+                        from: 1.0,
+                        since: -10.0,
+                    },
+                    ..Default::default()
+                };
+                stage.board = fx::Board::default();
+                let frame = (stage.board).frame_of([(1.0, &row)].into_iter(), &step, &music, 10.0);
+                let mut shapes = Vec::new();
+                stage.effects_at(&at, &frame, (&mut shapes, &mut Vec::new()));
+                assert!(!shapes.is_empty(), "{fx:?} draws");
+                let look = fx.spec().params;
+                for i in &shapes {
+                    let light = |px: (f32, f32), time: f32| -> [f32; 4] {
+                        let s = i.params[1];
+                        match i.params[0] {
+                            k if k == bulbs::BULBS => {
+                                bulbs::bulbs(px, (w, h), time, s, i.shape, look, &music)
+                            }
+                            k if k == edge_fire::EDGE_FIRE => edge_fire::edge_fire(
+                                px,
+                                (w, h),
+                                time,
+                                (s, (i.shape[0], i.shape[1])),
+                                &clear,
+                                look,
+                                &music,
+                            ),
+                            k => panic!("{fx:?}: a screen pass ({k}) this does not know"),
+                        }
+                    };
+                    for [l, t, r, b] in clear.boxes() {
+                        for y in 0..=16 {
+                            let y = t + (b - t) * y as f32 / 16.0;
+                            for x in 0..=48 {
+                                let x = l + (r - l) * x as f32 / 48.0;
+                                for time in [0.4, 2.9, 7.7] {
+                                    let c = light((x, y), time);
+                                    assert_eq!(c, [0.0; 4], "{fx:?} {w}x{h} at {x} {y}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

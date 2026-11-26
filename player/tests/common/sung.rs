@@ -16,7 +16,7 @@ use jodeldiplom::gui::backdrop::music::Levels;
 use jodeldiplom::gui::fx::{self, At, Board, By, Effects, Music, Out, Text};
 use jodeldiplom::gui::particles::Spray;
 use jodeldiplom::gui::rainbow::Glow;
-use jodeldiplom::gui::stage::{over_at, screen_at, Lane, Stage};
+use jodeldiplom::gui::stage::{Lane, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 use jodeldiplom::gui::streak::Step;
 use jodeldiplom::tiers::TIERS;
@@ -238,7 +238,7 @@ pub fn with_effects(
     let drawn = board.frame_of(rows(), &step, &music(fired), fired);
     let lane = Lane::new(area, clock);
     let glass = lane.glass(area);
-    let screen = screen_at(area, glass);
+    let screen = stage.screen_at(area, &lane);
     draw(
         &mut board,
         (&screen, &drawn),
@@ -272,7 +272,7 @@ pub fn with_effects(
     // What plays out over the frames after (the rain's bursts on the beat,
     // a word slammed down), frame by frame up to the frame's clock, to the
     // music then, drawn over everything as it is at the frame's clock.
-    let over = over_at(area, glass);
+    let over = stage.over_at(area, &lane);
     let after = At::Playhead {
         tip,
         pill: lane.pill,

@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use jodeldiplom::art::Art;
-use jodeldiplom::core::shine::Tier;
+use jodeldiplom::core::shine::{Reference, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
@@ -67,6 +67,9 @@ fn frame_at(
         &lyrics,
         &jodeldiplom::core::singing::melodic(&melody),
     );
+    // A reference to sing against: the meter shows, as in a game.
+    let phrases = vec![None; singing.notes.lines.len()];
+    singing.set_reference(Some(Arc::new(Reference { phrases })));
     let mut stage = Stage::default();
     let mut visualiser = Visualiser::default();
     let (mut faces, mut layer) = (Faces::default(), Pixmap::default());

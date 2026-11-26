@@ -14,8 +14,9 @@
 //!   its WGSL (`<ident>_shape`): the rainbow's bands, the lane's glow, the
 //!   flames.
 //! - **Screen passes,** shapes over the finished frame (in the window
-//!   pass's "fx" step), given the lyric band and the score's corner to
-//!   keep mostly clear: the edges on fire, the marquee bulbs.
+//!   pass's "fx" step), given the lyric band to keep mostly clear and the
+//!   score's corner, the multiplier's badge and the meter to keep clear
+//!   ([`Clear`]): the edges on fire, the marquee bulbs.
 //! - **Lyric treatments,** a function of a lyric's colour and coverage at
 //!   a pixel of its text (`lyric_<ident>`), each its own pipeline
 //!   ([`super::stage_gpu::Group::Lyric`]), on the shouts (the multiplier,
@@ -347,28 +348,71 @@ pub enum At {
         /// The phrase's line.
         line: u32,
     },
-    /// The stage's area, the lyric band (its top and bottom), the score's
-    /// corner and the lane.
+    /// The stage's area, the lyric band (its top and bottom), what is kept
+    /// clear and the lane.
     Screen {
         /// The area: left, top, width, height.
         area: (f32, f32, f32, f32),
         /// The lyric band's top and bottom.
         band: (f32, f32),
-        /// The score's corner: left, top, right, bottom
-        /// ([`crate::gui::karaoke::score_corner`]).
-        score: [f32; 4],
+        /// What is kept clear.
+        clear: Clear,
         /// The lane.
         lane: LaneBox,
     },
-    /// The stage's area, the lane and the lyric band (its top and bottom).
+    /// The stage's area, the lyric band (its top and bottom) and the room
+    /// big words land in.
     Over {
         /// The area: left, top, width, height.
         area: (f32, f32, f32, f32),
-        /// The lane.
-        lane: LaneBox,
         /// The lyric band's top and bottom.
         band: (f32, f32),
+        /// The room: left, top, right, bottom
+        /// ([`crate::gui::stage::Stage::over_at`]).
+        room: [f32; 4],
     },
+}
+
+/// What the effects over the stage keep clear, each a box (left, top,
+/// right, bottom; none where it is not wider than nothing): the score's
+/// corner ([`crate::gui::karaoke::score_corner`]), the multiplier's badge
+/// and the meter with its verdict, where the stage places them
+/// ([`crate::gui::stage::Stage::clear`]). A screen pass's shape carries
+/// them as [`Clear::on`] puts them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Clear {
+    /// The score's corner.
+    pub score: [f32; 4],
+    /// The multiplier's badge.
+    pub badge: [f32; 4],
+    /// The meter and its verdict.
+    pub meter: [f32; 4],
+}
+
+impl Clear {
+    /// Nothing kept clear.
+    pub const NONE: Clear = Clear {
+        score: [0.0; 4],
+        badge: [0.0; 4],
+        meter: [0.0; 4],
+    };
+
+    /// The boxes.
+    pub fn boxes(&self) -> [[f32; 4]; 3] {
+        [self.score, self.badge, self.meter]
+    }
+
+    /// `shape` carrying them, as a screen pass's shaders read them: the
+    /// score's corner in `color2`, the badge in `color`, the meter in `uv`
+    /// (each effect's WGSL reading them there).
+    pub fn on(&self, shape: Instance) -> Instance {
+        Instance {
+            color: self.badge,
+            color2: self.score,
+            uv: self.meter,
+            ..shape
+        }
+    }
 }
 
 impl At {
@@ -587,9 +631,12 @@ pub struct Reference {
 /// shapes are: light comes with no coverage), its lyric treatment (with
 /// `fn lyric_<ident>(col, a, px, quad, time, strength, look) -> vec4<f32>`
 /// in its WGSL: the text's straight colour and coverage), its look's four
-/// numbers (the shaders' `looks[FX_<IDENT>]`), its shader's reference, and
+/// numbers (the shaders' `looks[FX_<IDENT>]`), its shader's reference,
 /// whether its shapes keep still as the screen shakes (the edges on fire,
-/// which are the screen's own: its pipeline's `STILL`).
+/// which are the screen's own: its pipeline's `STILL`), and whether, fired
+/// by a phrase, it shouts the phrase's verdict itself (the word slam: the
+/// row that fires it owns the moment, and the meter's verdict for the
+/// phrase stays away).
 #[derive(Clone, Copy, Debug)]
 pub struct Spec {
     /// Its name.
@@ -612,6 +659,8 @@ pub struct Spec {
     pub reference: Option<Reference>,
     /// Whether it keeps still as the screen shakes.
     pub still: bool,
+    /// Whether it shouts a phrase's verdict.
+    pub shouts: bool,
 }
 
 fn draws_nothing(_: &At, _: &Live, _: &mut Slot, _: &mut Out) {}
@@ -629,6 +678,7 @@ impl Spec {
         params: [0.0; 4],
         reference: None,
         still: false,
+        shouts: false,
     };
 
     /// Whether it draws screen passes.
