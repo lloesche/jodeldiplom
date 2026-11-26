@@ -46,8 +46,9 @@ Work agreed on but not started, roughly in the order it was raised.
   in the queue goes by stage: one queue per model (the language model's
   questions and plans, then the image model's scenes and sprites, then
   depth and the cut), and one GPU scheduler keeping one big model at a
-  time, draining its queue for every song before it swaps, with no
-  exception for the song playing next. Singing takes the GPU first. The existing workers (stems, the speech model,
+  time, draining its queue for every song before it swaps. Each queue
+  is first in, first out, no exceptions (not even for the song playing
+  next). Singing takes the GPU first. The existing workers (stems, the speech model,
   word timing, the cover's vision) under the same scheduler; each stage
   its icon in the queue, lit only when done.
 
