@@ -68,8 +68,7 @@ fn main() {
     let mut gpu = Offscreen::new(false).expect("a GPU");
     let cue = Cue {
         art: Some(art),
-        layers: None,
-        heard: Default::default(),
+        ..Cue::default()
     };
     let ground = Visualiser::default().step(&cue, (w, h), 0.0);
     gpu.set_backdrop(Some(&ground), w, h);

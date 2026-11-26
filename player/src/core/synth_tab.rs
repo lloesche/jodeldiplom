@@ -152,12 +152,12 @@ pub enum SynthAction {
     LetGo,
 }
 
-/// The theme the effects play in: the tab's while it shows, else the
-/// settings'.
+/// The theme the effects play in: the tab's while it shows, else the one
+/// in force ([`State::theme`]).
 pub fn theme(state: &State) -> &'static Theme {
     match state.synth.theme {
         Some(t) if state.showing(Side::Synth) => t,
-        _ => state.config.karaoke_theme,
+        _ => state.theme(),
     }
 }
 

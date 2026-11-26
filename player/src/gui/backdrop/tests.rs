@@ -171,6 +171,26 @@ fn plain_karaoke_has_the_blur_alone_and_a_switch_fades() {
     assert!(s > 0.4 && s < 0.6, "{s}");
 }
 
+/// The covers are graded as the frame's cue says (the theme in force
+/// then): another grade is the next frame's, whole, the cover showing on.
+#[test]
+fn a_cover_is_graded_by_the_theme_of_its_frame() {
+    use crate::theme::{CLASSIC, SPOOKY};
+    let a = disc_layers(64, [200, 40, 40], (0.5, 0.5));
+    let graded = |grade| Cue {
+        grade,
+        ..cue(Some(&a))
+    };
+    let mut v = Visualiser::default();
+    let classic = run(&mut v, &graded(CLASSIC.grade), frames(FADE) + 1);
+    assert_eq!(classic.slots[0].look.grade, CLASSIC.grade);
+    let spooky = run(&mut v, &graded(SPOOKY.grade), 1);
+    assert_eq!(spooky.slots[0].look.grade, SPOOKY.grade);
+    assert_eq!(shares(&spooky), vec![1.0], "the same cover, showing on");
+    let back = run(&mut v, &graded(CLASSIC.grade), 1);
+    assert_eq!(back.slots[0].look.grade, CLASSIC.grade);
+}
+
 #[test]
 fn a_song_change_cross_fades_one_cover_into_the_next() {
     let a = disc_layers(64, [200, 40, 40], (0.5, 0.5));

@@ -294,7 +294,7 @@ pub fn fallback<'a>(
                     .size(big * 2.4)
                     .font(look::font::title())
                     .color(look::alpha(
-                        rgb(state.config.karaoke_theme.accent()),
+                        rgb(state.theme().accent()),
                         1.0 - (through as f32).powi(3),
                     )),
             )

@@ -34,7 +34,9 @@
 //! shows. Each frame every atom's patch as the tab has it (edited, kept,
 //! or built in: [`crate::core::synth_tab::patch`]) is told the conductor,
 //! which sends its synth only what changed: with nothing edited or kept,
-//! nothing is sent.
+//! nothing is sent. Another theme in force (the settings' changed, or the
+//! one the tab compares) is told the same way, mid-song too: the synth
+//! playing takes its patches, and what sounds rings on.
 //!
 //! A song's result revealed after it ([`reveal`]) sounds its beats at once,
 //! each on the frame that reaches it, its paper and its music alike,
@@ -94,10 +96,8 @@ struct Told {
 #[derive(Default)]
 pub struct Sfx {
     moments: Moments,
-    /// The conductor at the device's rate, its synth on the desk, and the
-    /// theme its patches are in.
+    /// The conductor at the device's rate, its synth on the desk.
     conductor: Option<Conductor>,
-    theme: &'static crate::theme::Theme,
     /// Whether it planned on a song's frames since it was last called off,
     /// and what it was told of the song.
     on_song: bool,
@@ -117,35 +117,40 @@ impl Sfx {
     /// new moments played on `desk`, then the result's reveal's (after what
     /// the moments call off, so it never calls them off).
     pub fn frame(&mut self, state: &State, desk: Desk<'_>) {
-        self.conductor_at(&desk, crate::core::synth_tab::theme(state));
+        self.conductor_at(&desk, state);
         self.patches(state, &desk);
         self.loudness(state, &desk);
         self.moments(state, &desk);
         self.reveal(state, &desk);
     }
 
-    /// The conductor at the device's rate in `theme`, its synth sent to the
-    /// desk, made again when the device opens at another or the theme
-    /// changes (none at a rate the synth takes not: silent there).
-    fn conductor_at(&mut self, desk: &Desk<'_>, theme: &'static crate::theme::Theme) {
+    /// The conductor at the device's rate, its synth sent to the desk, made
+    /// again when the device opens at another (none at a rate the synth
+    /// takes not: silent there); its patches the theme's the effects play
+    /// in. Another theme is not a new synth: its patches are told the one
+    /// playing ([`Sfx::patches`]), so what sounds rings on and nothing
+    /// planned is lost.
+    fn conductor_at(&mut self, desk: &Desk<'_>, state: &State) {
         let rate = desk.timebase.rate;
         let at = self.conductor.as_ref().map(Conductor::rate);
         let takes = (jodel_synth::dsp::Rate::MIN..=jodel_synth::dsp::Rate::MAX).contains(&rate);
-        if rate == 0 || (at == Some(rate) && self.theme == theme) || !takes {
+        if rate == 0 || at == Some(rate) || !takes {
             return;
         }
-        let (conductor, synth) = Conductor::new(rate, theme);
-        self.theme = theme;
+        let (conductor, synth) = Conductor::new(rate, crate::core::synth_tab::theme(state));
         desk.effects.live(synth);
         self.conductor = Some(conductor);
         self.on_song = false;
         self.told = None;
     }
 
-    /// Each atom's patch as the Synth tab has it (edited, kept, or built
-    /// in) told the conductor, which tells its synth what changed.
+    /// Each atom's patch in the theme the effects play in, as the Synth tab
+    /// has it (edited, kept, or built in), told the conductor, which tells
+    /// its synth what changed: the theme changed (in the settings, or the
+    /// one the tab compares), the patches of the atoms it overrides, as
+    /// commands that go before any note after them.
     fn patches(&mut self, state: &State, desk: &Desk<'_>) {
-        let theme = self.theme;
+        let theme = crate::core::synth_tab::theme(state);
         if let Some((c, mut out)) = self.conduct(desk, None) {
             for atom in conductor::Atom::ALL {
                 c.set_patch(
@@ -163,7 +168,7 @@ impl Sfx {
     /// song's key and clock are told the conductor again after it.
     pub fn bench(&mut self, state: &State, desk: Desk<'_>, ask: crate::core::synth_tab::Bench) {
         use crate::core::synth_tab::Bench;
-        self.conductor_at(&desk, crate::core::synth_tab::theme(state));
+        self.conductor_at(&desk, state);
         self.patches(state, &desk);
         let at = desk.timebase.frame;
         self.told = None;

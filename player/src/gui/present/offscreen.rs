@@ -135,11 +135,7 @@ impl Offscreen {
     /// Karaoke mode's plain backdrop (no cover: the window's ground) under
     /// the frames from now on, `width` × `height`.
     pub fn set_plain_ground(&mut self, width: u32, height: u32) {
-        let cue = crate::gui::backdrop::Cue {
-            art: None,
-            layers: None,
-            heard: Default::default(),
-        };
+        let cue = crate::gui::backdrop::Cue::default();
         let ground = crate::gui::backdrop::Visualiser::default().step(&cue, (width, height), 0.0);
         self.set_backdrop(Some(&ground), width, height);
     }

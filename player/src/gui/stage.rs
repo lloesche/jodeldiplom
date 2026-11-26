@@ -173,7 +173,7 @@ impl<'a> Song<'a> {
             late: state.karaoke.lag.late,
             demo: state.karaoke.demo.held(),
             heard,
-            theme: state.config.karaoke_theme,
+            theme: state.theme(),
         }
     }
 

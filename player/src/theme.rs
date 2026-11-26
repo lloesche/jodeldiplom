@@ -14,7 +14,10 @@
 //! ([`spooky`]) is its Halloween: green fire, pumpkins for bulbs, candy
 //! for coins, ghosts for angels, a cold backdrop and fog at the edges with
 //! eyes in it, and a ghostly choir, tolling bells and a skeleton's
-//! xylophone. The theme is a setting ([`crate::config::Config::karaoke_theme`]).
+//! xylophone. The theme is a setting ([`crate::config::Config::karaoke_theme`]);
+//! everything reads it as the theme in force now ([`crate::core::State::theme`]),
+//! so a change is the next frame's, its sounds' patches told the
+//! conductor's synth as it plays.
 
 mod spooky;
 
@@ -26,14 +29,19 @@ use crate::tiers::Tier;
 
 pub use spooky::SPOOKY;
 
-/// A theme: its name (as the settings file has it), and what it overrides:
-/// tiers' colours (by the tier's name), the count-in's accent, effects'
-/// looks, atoms' patches; the effects it holds throughout, and the
-/// backdrop's grade.
+/// A theme: its name (as the settings file has it), its title and what it
+/// is in a few words (as the settings screen and the Synth tab show it),
+/// and what it overrides: tiers' colours (by the tier's name), the
+/// count-in's accent, effects' looks, atoms' patches; the effects it holds
+/// throughout, and the backdrop's grade.
 #[derive(Debug)]
 pub struct Theme {
     /// Its name.
     pub name: &'static str,
+    /// Its title.
+    pub title: &'static str,
+    /// What it is, in a few words.
+    pub about: &'static str,
     /// The tiers' colours (sRGB), by their names.
     pub colors: &'static [(&'static str, [f32; 3])],
     /// The count-in's accent (sRGB bytes), if it has its own.
@@ -53,6 +61,8 @@ pub struct Theme {
 /// The game as it is made: nothing overridden.
 pub static CLASSIC: Theme = Theme {
     name: "classic",
+    title: "Classic",
+    about: "the game as it is made",
     colors: &[],
     accent: None,
     looks: &[],

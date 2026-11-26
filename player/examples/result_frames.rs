@@ -208,8 +208,7 @@ fn main() {
         // Over the cover's blur, as the window's ground.
         let cue = Cue {
             art: art.clone(),
-            layers: None,
-            heard: Default::default(),
+            ..Cue::default()
         };
         let ground = Visualiser::default().step(&cue, (w as u32, h as u32), 0.0);
         gpu.set_backdrop(Some(&ground), w as u32, h as u32);

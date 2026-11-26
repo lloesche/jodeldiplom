@@ -94,6 +94,7 @@ fn frame_at(
                 glow: jodeldiplom::gui::streak::level(&singing, true),
                 ..Hearing::default()
             },
+            ..Cue::default()
         };
         let backdrop = visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
         let picture = picture_at(&sung, now, &singing);

@@ -131,3 +131,110 @@ fn conducting_allocates_nothing() {
     assert!(out.iter().all(|s| s.is_finite()));
     assert_eq!(synth.dropped(), 0);
 }
+
+/// The theme switched as its sounds ring (the settings' row mid-song):
+/// its patches told the synth that plays, as commands, nothing allocated;
+/// a chord held on the choir plays on in the new theme's voice with no
+/// step in the sound bigger than its own before, and goes with its keys
+/// (no note stuck); the next word's pop is the new theme's, and so is
+/// every atom's note.
+#[test]
+fn a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing() {
+    use jodeldiplom::sfx::conductor::Atom;
+    use jodeldiplom::theme::{CLASSIC, SPOOKY};
+    const RATE: u32 = 48_000;
+    const BLOCK: usize = 480;
+    let (mut c, mut synth) = Conductor::new(RATE, &CLASSIC);
+    let word = Event::Word {
+        streak: 1,
+        pan: 0.0,
+        size: 0.3,
+    };
+    let mut out = vec![0.0f32; 2 * BLOCK];
+    // The biggest step from sample to sample over `blocks` blocks.
+    let mut steps = |synth: &mut jodel_synth::Synth, blocks: usize| {
+        let mut most = 0.0f32;
+        for _ in 0..blocks {
+            let last = out[out.len() - 2];
+            synth.render_to(&mut out);
+            most = (out.iter().step_by(2))
+                .fold((most, last), |(m, before), &s| {
+                    (m.max((s - before).abs()), s)
+                })
+                .0;
+        }
+        most
+    };
+    COUNTING.with(|on| on.set(true));
+    for note in [60.0, 64.0] {
+        c.key_down(&mut synth, 0, Atom::Choir, note);
+    }
+    c.event(&mut synth, 0, word);
+    // The chord settled, the pop gone.
+    steps(&mut synth, 40);
+    let before = steps(&mut synth, 20);
+    for atom in Atom::ALL {
+        c.set_patch(&mut synth, atom, SPOOKY.patch(atom));
+    }
+    let across = steps(&mut synth, 20);
+    let choir = |synth: &jodel_synth::Synth, held: bool| {
+        (synth.voices())
+            .filter(|v| v.held == held && c.atom_of(v.patch) == Some(Atom::Choir))
+            .all(|v| synth.patch(v.patch) == Some(&SPOOKY.patch(Atom::Choir)))
+    };
+    let held = synth.voices().filter(|v| v.held).count();
+    let rings_on = choir(&synth, true);
+    let at = synth.frame();
+    c.event(&mut synth, at, word);
+    steps(&mut synth, 2);
+    let pops = (synth.voices())
+        .filter(|v| c.atom_of(v.patch) == Some(Atom::Pop))
+        .map(|v| synth.patch(v.patch) == Some(&SPOOKY.patch(Atom::Pop)))
+        .fold((0, true), |(n, all), new| (n + 1, all && new));
+    let at = synth.frame();
+    for note in [60.0, 64.0] {
+        c.key_up(&mut synth, at, Atom::Choir, note);
+    }
+    steps(&mut synth, 300);
+    // Every atom's note on its patch in the new theme.
+    let mut amiss = None;
+    let mut block = [0.0f32; 2 * jodel_synth::BLOCK];
+    for atom in Atom::ALL {
+        let at = synth.frame();
+        c.key_down(&mut synth, at, atom, 67.0);
+        // Block by block until it sounds (past a spread's start: a choir's
+        // voices come in one by one).
+        let mut theirs = false;
+        for _ in 0..100 {
+            synth.render_to(&mut block);
+            let mut on = (synth.voices()).filter(|v| c.atom_of(v.patch) == Some(atom));
+            if let Some(v) = on.next() {
+                theirs = synth.patch(v.patch) == Some(&SPOOKY.patch(atom));
+                break;
+            }
+        }
+        if !theirs {
+            amiss = amiss.or(Some(atom));
+        }
+        let at = synth.frame();
+        c.key_up(&mut synth, at, atom, 67.0);
+        steps(&mut synth, 300);
+    }
+    COUNTING.with(|on| on.set(false));
+    assert_eq!(amiss, None, "every atom on the new theme's patch");
+    assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0);
+    assert_eq!(held, 2, "the chord plays on");
+    assert!(rings_on, "in the new theme's choir");
+    assert!(
+        across <= 1.5 * before + 1e-4,
+        "no click: {across} across the switch, {before} before"
+    );
+    assert!(pops.0 > 0 && pops.1, "the pop is the new theme's: {pops:?}");
+    assert_ne!(SPOOKY.patch(Atom::Pop), CLASSIC.patch(Atom::Pop));
+    assert_eq!(
+        synth.voices().filter(|v| v.held).count(),
+        0,
+        "no note stuck"
+    );
+    assert_eq!((c.dropped(), synth.dropped()), (0, 0));
+}

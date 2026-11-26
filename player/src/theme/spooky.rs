@@ -20,6 +20,8 @@ use crate::sfx::conductor::Atom;
 /// The Halloween theme.
 pub static SPOOKY: Theme = Theme {
     name: "spooky",
+    title: "Spooky",
+    about: "Halloween: green fire, pumpkins, candy, ghosts and fog",
     colors: &[
         ("Good", [0.55, 1.0, 0.3]),
         ("Great", [1.0, 0.55, 0.1]),

@@ -118,11 +118,7 @@ fn header<'a>(state: &State) -> Element<'a, Message> {
     };
     let theme = synth_tab::theme(state);
     let themes = widgets::segmented(THEMES.map(|t| {
-        let mut name = t.name.to_owned();
-        if let Some(first) = name.get_mut(..1) {
-            first.make_ascii_uppercase();
-        }
-        widgets::segment(name)
+        widgets::segment(t.title)
             .selected(t == theme)
             .on_press(Message::Act(Action::Synth(SynthAction::Theme(t))))
     }));

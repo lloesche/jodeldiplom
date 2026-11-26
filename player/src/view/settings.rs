@@ -14,6 +14,7 @@ use jodel_playback::Headroom;
 use crate::core::keymap::{self, Context, Op};
 use crate::core::transition::Preset;
 use crate::core::{device_window, folder_window, FolderRow, Gpu, SettingsRow, State};
+use crate::theme::THEMES;
 
 /// The rows a device list or the data folder's list shows at most.
 pub const LIST_ROWS: usize = 8;
@@ -184,6 +185,7 @@ fn section(row: SettingsRow) -> &'static str {
         SettingsRow::Tempo | SettingsRow::Voting | SettingsRow::Method(_) => "Tempo and beats",
         SettingsRow::Stems | SettingsRow::StemSwitch => "Stems",
         SettingsRow::SkipMix | SettingsRow::SkipPreset => "Next track",
+        SettingsRow::Theme => "Karaoke",
         SettingsRow::DataFolder => "Data",
     }
 }
@@ -353,6 +355,12 @@ fn set(state: &State, row: SettingsRow) -> (Option<String>, Control) {
                 Some(p) => format!("{} (its own)", p.name()),
             };
             choice(options, chosen, about)
+        }
+        SettingsRow::Theme => {
+            let theme = state.theme();
+            let options = THEMES.iter().map(|t| t.title.to_owned()).collect();
+            let chosen = THEMES.iter().position(|t| *t == theme);
+            choice(options, chosen, theme.about.to_owned())
         }
         SettingsRow::DataFolder => match (&state.data_move, &state.data_dir) {
             (Some(m), _) if m.failure.is_some() => (

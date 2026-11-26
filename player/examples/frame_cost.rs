@@ -391,8 +391,8 @@ impl Rig<'_> {
                 phrase,
                 music: steady(now),
             },
+            grade: self.theme.grade,
         };
-        self.visualiser.grade(self.theme.grade);
         let backdrop = self.visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
         let picture = KaraokePicture {
             result,

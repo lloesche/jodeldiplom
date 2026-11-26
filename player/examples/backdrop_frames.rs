@@ -563,6 +563,7 @@ fn main() {
                     phrase: landed.is_some() && config.karaoke_game,
                     music,
                 },
+                grade: config.karaoke_theme.grade,
             };
             frame = Some(visualiser.step(&cue, (w as u32, h as u32), (1.0 / FPS) as f32));
             let p = picture_at(&sung, now, &singing, config.karaoke_game);

@@ -24,6 +24,9 @@
   the next track starts at once
   [row] Its transition [choice] <the tab's> | fade | drums first | bass swap | vocals last
     the Transition tab's: fade
+[section] Karaoke
+[row] Karaoke theme [choice] <Classic> | Spooky
+  the game as it is made
 [section] Data
 [row] Data folder [open] none ▾
 [dim] Saved to /home/me/.config/jodeldiplom/config.toml

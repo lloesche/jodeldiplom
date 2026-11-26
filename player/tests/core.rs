@@ -1531,6 +1531,70 @@ fn the_next_track_mix_is_a_setting() {
     assert_eq!(state.config.skip_preset, Some(*Preset::ALL.last().unwrap()));
 }
 
+/// The karaoke game's theme is a row of the settings: Classic and Spooky
+/// by their titles, the one set chosen and said in a few words, stepped
+/// either way round and saved each time; the theme in force is the one
+/// set from then on.
+#[test]
+fn the_karaoke_theme_is_a_setting_row_and_saved() {
+    use jodeldiplom::theme::{CLASSIC, SPOOKY, THEMES};
+    use jodeldiplom::view::settings::{Control, Settings};
+    let mut state = common::playing_state(120, 36);
+    assert_eq!(state.theme(), &CLASSIC, "classic by default");
+    let row = SettingsRow::ALL
+        .iter()
+        .position(|r| *r == SettingsRow::Theme)
+        .unwrap();
+    let shown = |state: &State| {
+        let settings = Settings::of(state);
+        let r = (settings.sections.iter().flat_map(|s| &s.rows))
+            .find(|r| r.index == row)
+            .unwrap()
+            .clone();
+        (r.label, r.about, r.control)
+    };
+    let titles: Vec<String> = THEMES.iter().map(|t| t.title.to_owned()).collect();
+    assert_eq!(titles, ["Classic", "Spooky"]);
+    let (label, about, control) = shown(&state);
+    assert_eq!(label, "Karaoke theme");
+    assert_eq!(about.as_deref(), Some(CLASSIC.about));
+    assert_eq!(
+        control,
+        Control::Choice {
+            options: titles.clone(),
+            chosen: Some(0)
+        }
+    );
+    let fx = update(&mut state, Action::SettingsClick(row, 1));
+    assert_eq!(state.theme(), &SPOOKY);
+    assert_eq!(fx, vec![Effect::SaveConfig]);
+    assert!(state
+        .config
+        .to_text()
+        .contains("karaoke_theme = \"spooky\"\n"));
+    let (_, about, control) = shown(&state);
+    assert_eq!(about.as_deref(), Some(SPOOKY.about));
+    assert_eq!(
+        control,
+        Control::Choice {
+            options: titles,
+            chosen: Some(1)
+        }
+    );
+    // Round, either way; enter steps it on.
+    let fx = update(&mut state, Action::SettingsClick(row, 1));
+    assert_eq!(
+        (state.theme(), &fx[..]),
+        (&CLASSIC, &[Effect::SaveConfig][..])
+    );
+    update(&mut state, Action::SettingsClick(row, -1));
+    assert_eq!(state.theme(), &SPOOKY);
+    update(&mut state, Action::SettingsClick(row, 0));
+    assert_eq!(state.theme(), &CLASSIC);
+    let (back, _) = Config::parse(&state.config.to_text()).unwrap();
+    assert_eq!(back.karaoke_theme, &CLASSIC);
+}
+
 /// The data folder is chosen in a folder list: it opens on the folder the
 /// data folder is in, folders open and `backspace` goes up, and the folder
 /// shown is chosen by its first row: the app moves the data there. Not the

@@ -185,6 +185,12 @@ pub(crate) fn step_row(state: &mut State, step: i32, fx: &mut Vec<Effect>) {
             fx.push(Effect::SaveConfig);
             return;
         }
+        // The game's: in force from the next frame drawn.
+        SettingsRow::Theme => {
+            config.karaoke_theme = cycle(&crate::theme::THEMES, config.karaoke_theme, step);
+            fx.push(Effect::SaveConfig);
+            return;
+        }
         SettingsRow::Stems => {
             match state.gpu {
                 Gpu::Present(_) => {

@@ -187,7 +187,8 @@ window holds it, with the title, artist and album (links, as in the right
 column), the file's format and rate, the status light's word and the
 tempo over its bottom; `esc`, a click elsewhere or `f` returns. Clicking
 the device name opens its setting. `,` (or the button) opens the
-settings, in sections (output, tempo and beats, stems, next track, data):
+settings, in sections (output, tempo and beats, stems, next track,
+karaoke, data):
 each row says what it is set to, with a switch, a check or a choice of a
 few to click, and a click on a row does what `enter` does on it. The
 output device (with what it takes: the rate the system runs it at and its
@@ -1015,8 +1016,13 @@ bars, the stems' levels, the pitches). The line sung frosted is made too
 and no row lists it: the jackpot only heats up.
 Where the song's beat grid is unsure they run freely, off the beat.
 
-The game comes in a **theme** (`karaoke_theme` in the settings file:
-`"classic"`, the default, or `"spooky"`; `theme.rs`). A theme overrides
+The game comes in a **theme**: the settings' row Karaoke theme, Classic
+(the default) or Spooky (`karaoke_theme` in the settings file,
+`"classic"` or `"spooky"`; `theme.rs`). A change is in force from the
+next frame, mid-song too: the colours, the looks, the fog and the grade
+at once, and the sounds' patches told the synth as it plays (what rings
+rings on in the new sound, a note held is let go of with its key, and
+nothing planned is lost). A theme overrides
 by key what the tiers and their effects look like and what the sounds
 are made of, and may hold effects throughout and grade the backdrop:
 the tiers' colours (their badge, verdict, marks and stickers), the

@@ -896,3 +896,81 @@ fn g_and_p_set_the_game_and_are_saved() {
     op(&mut state, Op::KaraokeNotes);
     assert!(!state.config.karaoke_notes);
 }
+
+/// The theme changed mid-song (its settings' row) is the next frame's,
+/// everywhere it is read: the tiers' colours the stage reads, the
+/// effects' looks it draws by (the fire green), the fog Spooky holds
+/// throughout drawn as a screen pass, the backdrop's grade.
+#[test]
+fn a_theme_changed_mid_song_is_the_next_frame_s() {
+    use jodeldiplom::core::SettingsRow;
+    use jodeldiplom::gui::fx::Fx;
+    use jodeldiplom::gui::stage::gpu::StageFrame;
+    use jodeldiplom::gui::stage::{wanted, Song, Stage, Tint};
+    use jodeldiplom::theme::{Theme, CLASSIC, SPOOKY};
+    use jodeldiplom::tiers::Tier;
+    use std::sync::Arc;
+    let mut state = tab();
+    op(&mut state, Op::KaraokeEnter);
+    // The song in the mode: a line of four words on C4, a second each.
+    let melody = jodel_rhythm::waveform::Melody {
+        cents: vec![6000; 400],
+        sure: vec![255; 400],
+    };
+    let line = jodel_lyrics::Line {
+        words: (0..4)
+            .map(|k| jodel_lyrics::Word {
+                start: Some(f64::from(k)),
+                end: Some(f64::from(k) + 1.0),
+                ..jodel_lyrics::Word::new("la")
+            })
+            .collect(),
+        ..jodel_lyrics::Line::default()
+    };
+    let lyrics = Arc::new(jodel_lyrics::Lyrics {
+        lines: vec![line],
+        source: jodel_lyrics::Source::Unknown,
+        timing: jodel_lyrics::Timing::default(),
+    });
+    let path = state.queue.paths[karaoke::song_index(&state).unwrap()].clone();
+    state.karaoke.singing.prepare(
+        &path,
+        &lyrics,
+        &jodeldiplom::core::singing::melodic(&melody),
+    );
+    assert!(wanted(&state), "the song's lane drawn");
+    let mut stage = Stage::default();
+    let mut frame = |state: &State, heard: f64| -> (&'static Theme, StageFrame) {
+        let picture = jodeldiplom::view::karaoke::picture(state, 0.1, 0.0);
+        let song = Song::of(state, None);
+        let area = (0.0, 0.0, 1600.0, 900.0);
+        let at = (heard, 1.0 / 60.0);
+        let drawn = stage.scene((&song, true), &picture, area, at, &Tint::STAGE);
+        (song.theme, drawn.expect("a frame"))
+    };
+    let fog = |f: &StageFrame| {
+        (f.screen.iter()).any(|i| Fx::of_kind(i.params[0]).is_some_and(|(fx, _)| fx == Fx::Fog))
+    };
+    let fire = |f: &StageFrame| f.looks.0[Fx::EdgeFire.index()];
+    let (theme, classic) = frame(&state, 1.5);
+    assert_eq!(theme, &CLASSIC);
+    assert!(!fog(&classic));
+    assert_eq!(fire(&classic), CLASSIC.fx_params(Fx::EdgeFire));
+    let row = SettingsRow::ALL
+        .iter()
+        .position(|r| *r == SettingsRow::Theme)
+        .unwrap();
+    update(&mut state, Action::SettingsClick(row, 1));
+    let (theme, spooky) = frame(&state, 1.5 + 1.0 / 60.0);
+    assert_eq!(theme, &SPOOKY);
+    assert_ne!(theme.color(Tier::TOP), CLASSIC.color(Tier::TOP));
+    assert!(fog(&spooky), "the fog held from the next frame");
+    assert_eq!(fire(&spooky), SPOOKY.fx_params(Fx::EdgeFire));
+    assert_eq!(state.theme().grade, SPOOKY.grade, "the backdrop's grade");
+    // And back.
+    update(&mut state, Action::SettingsClick(row, -1));
+    let (theme, back) = frame(&state, 1.5 + 2.0 / 60.0);
+    assert_eq!(theme, &CLASSIC);
+    assert!(!fog(&back));
+    assert_eq!(fire(&back), CLASSIC.fx_params(Fx::EdgeFire));
+}

@@ -191,6 +191,9 @@ pub struct Cue {
     /// tier's 1: [`crate::tiers::TierSpec::glow`]), a section begun or a
     /// phrase landed since the last frame, the music's clock.
     pub heard: Hearing,
+    /// The theme's grade ([`crate::theme::Theme::grade`]; all 0, the
+    /// default: none), the covers graded by it this frame.
+    pub grade: [f32; 4],
 }
 
 /// A cover of a frame, for the shader: its layers, the picture they were
@@ -229,18 +232,9 @@ pub struct Visualiser {
     heard: Option<f64>,
     /// When the last phrase seen ended (none: none yet).
     phrase: Option<f64>,
-    /// The theme's grade ([`Visualiser::grade`]).
-    grade: [f32; 4],
 }
 
 impl Visualiser {
-    /// The covers graded from now on as a theme grades them
-    /// ([`crate::theme::Theme::grade`]; all 0, the default: not at all).
-    /// [`Visualiser::frame`] grades them as the settings' theme does.
-    pub fn grade(&mut self, grade: [f32; 4]) {
-        self.grade = grade;
-    }
-
     /// How many covers it holds (showing or fading).
     pub fn holds(&self) -> usize {
         self.slots.len()
@@ -309,8 +303,8 @@ impl Visualiser {
                 phrase,
                 music,
             },
+            grade: state.theme().grade,
         };
-        self.grade = state.config.karaoke_theme.grade;
         Some(self.step(&cue, window, dt))
     }
 
@@ -360,7 +354,7 @@ impl Visualiser {
                 SlotFrame {
                     layers: Arc::clone(&s.layers),
                     art: s.art.clone(),
-                    look: self.look(s, (&felt, self.grade), window, alpha),
+                    look: self.look(s, (&felt, cue.grade), window, alpha),
                 }
             })
             .collect();

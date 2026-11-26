@@ -976,6 +976,24 @@ stem keys are their mutes.
     `z_zooms_the_editor_to_fit_its_lyrics`
     (`core::lyric_edit::screen`)
   - `the_rows_go_down_the_page_and_stay_on_its_pixels` (`gui::lyrics`)
+- **K28.** The game's theme is a row of the settings (Karaoke theme:
+  Classic or Spooky, stepped either way round like the other choices,
+  saved at once as `karaoke_theme`). Everything that has a colour, a
+  look or a sound reads the theme in force now, so a change is the next
+  frame's, mid-song too: the tiers' colours and the count-in's accent,
+  the effects' looks and what the theme holds throughout (Spooky's fog),
+  the backdrop's grade. Its sounds' patches are told the synth playing,
+  as commands through the effects' queue (nothing allocated on the mixer
+  thread): no new synth, so what rings rings on in the new sound (one on
+  another engine fades out over a block) without a click, a note held is
+  let go of with its key, and what is planned plays in the new theme.
+  The Synth tab keeps the theme it compares while it shows.
+  - `the_karaoke_theme_is_a_setting_row_and_saved`
+  - `a_theme_changed_mid_song_is_the_next_frame_s`
+  - `a_cover_is_graded_by_the_theme_of_its_frame` (`gui::backdrop`)
+  - `a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing`
+    (conductor)
+  - `the_synth_tab_plays_the_theme_it_compares` (sfx)
 ## Mixer
 
 - **M1.** The file as it is is the default: every start has each strip
@@ -1096,6 +1114,7 @@ stem keys are their mutes.
   listed: words, rungs, chimes, the payout and the jackpot, the
   announcer's calls, the diploma's and its sheet's.
   - `the_synth_tab_opens_and_a_click_plays_its_sound`
+  - `the_synth_tab_plays_the_theme_it_compares` (sfx)
   - `every_sound_plays_and_is_named_apart` (`sfx::bench`)
 - **Y3.** The patch shown is edited by its sliders, choices and switches,
   each parameter's range from the patch's tables, and the next play is

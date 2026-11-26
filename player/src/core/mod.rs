@@ -477,13 +477,15 @@ pub enum SettingsRow {
     SkipMix,
     /// The preset it mixes in by: the Transition tab's, or one of its own.
     SkipPreset,
+    /// The karaoke game's theme ([`crate::theme::THEMES`]).
+    Theme,
     /// Where the player's data is kept (chosen in a folder list; moved there).
     DataFolder,
 }
 
 impl SettingsRow {
     /// Every row, top to bottom.
-    pub const ALL: [SettingsRow; 11] = [
+    pub const ALL: [SettingsRow; 12] = [
         SettingsRow::Device,
         SettingsRow::Headroom,
         SettingsRow::Tempo,
@@ -494,6 +496,7 @@ impl SettingsRow {
         SettingsRow::StemSwitch,
         SettingsRow::SkipMix,
         SettingsRow::SkipPreset,
+        SettingsRow::Theme,
         SettingsRow::DataFolder,
     ];
 
@@ -515,6 +518,7 @@ impl SettingsRow {
                 )
             }
             SettingsRow::SkipPreset => "Its transition",
+            SettingsRow::Theme => "Karaoke theme",
             SettingsRow::DataFolder => "Data folder",
         };
         label.to_owned()
@@ -900,6 +904,14 @@ impl State {
     /// else as reported.
     pub fn heard(&self) -> f64 {
         self.drawn_heard.unwrap_or(self.playing.position)
+    }
+
+    /// The karaoke game's theme in force now: what its tiers' colours, its
+    /// effects' looks, the backdrop's grade and its sounds' patches are
+    /// read from, frame by frame (the settings' theme; the Synth tab
+    /// compares one of its own: [`crate::core::synth_tab::theme`]).
+    pub fn theme(&self) -> &'static crate::theme::Theme {
+        self.config.karaoke_theme
     }
 
     /// The selected settings row.
