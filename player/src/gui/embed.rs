@@ -38,6 +38,7 @@ use super::canvas::{Canvas, Changes, LayerFrame};
 use super::embed_gpu::Frame;
 use super::pointer::{Pointer, PointerKind};
 use super::stage_gpu::StageFrame;
+use super::widgets::cover::Spot;
 use super::window::Message;
 use crate::core::keymap::Op;
 use crate::view::layout::Grid;
@@ -166,6 +167,12 @@ impl Embed {
     /// blank).
     pub fn text(&self) -> String {
         self.lock().canvas.text()
+    }
+
+    /// Where the covers go as last drawn, for the window to draw over the
+    /// canvas ([`Canvas::covers`]).
+    pub fn covers(&self) -> Vec<Spot> {
+        self.lock().canvas.covers().to_vec()
     }
 
     /// The canvas's grid of cells.

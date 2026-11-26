@@ -1208,7 +1208,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | Module | |
 |---|---|
 | `core` | state, `Action`, `update(state, action) -> effects`, keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
-| `view` | the ratatui widgets, drawing the state into cells, with the cell renderer's own layout and its collapse rules (`view::layout`, which also reports the `Fit`), mouse regions (`view::mouse`) and text measured in cells (`view::cells`); the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`, which the window paints in pixels (Karaoke mode's picture in `gui::karaoke`). The Mixer tab's rows are left empty: the window draws the desk there |
+| `view` | the ratatui widgets, drawing the state into cells, with the cell renderer's own layout and its collapse rules (`view::layout`, which also reports the `Fit`), mouse regions (`view::mouse`) and text measured in cells (`view::cells`); the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`, which the window paints in pixels (the cover as an iced image; Karaoke mode's picture in `gui::karaoke`). The Mixer tab's rows are left empty: the window draws the desk there |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
@@ -1220,7 +1220,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | `cache` | the schemas of what is kept on disk between runs, and their versions |
 | `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
 | `loudness` | each song's loudness as the karaoke plays it (ITU-R BS.1770, `jodel_rhythm::loudness`), measured once on a thread of its own and kept (`loudness/`), for the game's sounds to follow (`sfx::conductor::calibration`) |
-| `gui` | the window, an iced application (`gui::window`); the Mixer tab in iced's widgets (`gui::mixer`); every other screen the old canvas in one widget under them (`gui::embed`, on the GPU through `gui::embed_gpu` and `gui::present`): `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Transition lanes at their cell rects; Karaoke mode's stage on the GPU (`gui::stage`, `gui::stage_gpu`, a pipeline a group of shapes; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
+| `gui` | the window, an iced application (`gui::window`); the Mixer tab in iced's widgets (`gui::mixer`); every other screen the old canvas in one widget under them (`gui::embed`, on the GPU through `gui::embed_gpu` and `gui::present`): `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints the spectrum and the Transition lanes at their cell rects and says where the covers go, which the window draws over it (`gui::widgets::cover`); Karaoke mode's stage on the GPU (`gui::stage`, `gui::stage_gpu`, a pipeline a group of shapes; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
 | `tiers` | the phrase tiers, one table: a row a tier, all it takes and shows (its bars, colours, glow, sounds, sticker and the effects it lists) |
 
 The window's font is Sarasa Fixed J (Iosevka's Latin with Source Han Sans
@@ -1264,9 +1264,11 @@ iced's shader widget (`gui::embed_gpu`), with Karaoke mode's stage drawn
 over it in the same pass; on the processor, an image.
 
 The old canvas draws on the processor, so it draws only what it must.
-Only the cells that changed are rasterised, and a cover (with the caption
-over it) is painted again only when it is new, moved, or a cell under it
-was redrawn; the spectrum only when it moved. The Transition lanes stay
+Only the cells that changed are rasterised. The covers are iced's own
+images over the cells left blank for them (`gui::widgets::cover`): the
+art is scaled to the pixels it shows at once for each art and size, and
+the caption's text over a cover is made again only when a cell of it was
+redrawn. The spectrum is painted again only when it moved. The Transition lanes stay
 in the pixmap too: their columns sit on a grid of whole pixels from the
 track's start (the view's start snapped to it, within a pixel), so a view
 that scrolled is shifted by whole columns, and only the columns new to it

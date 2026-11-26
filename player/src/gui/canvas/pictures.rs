@@ -1,5 +1,6 @@
 //! The pictures as the widgets ask for them: their cells left empty while
-//! the frame is drawn, each kept for the canvas to paint after it.
+//! the frame is drawn, each kept for the canvas to paint after it, or to
+//! place for the window (a cover and the text over it).
 
 use ratatui::layout::Rect;
 use ratatui::Frame;
@@ -9,10 +10,11 @@ use crate::view::lanes::WavePlot;
 use crate::view::transition::RulerPlot;
 use crate::view::{self, Pictures, Plot};
 
-/// A picture to paint after the frame.
+/// A picture to paint after the frame, or to place for the window.
 #[derive(Clone)]
 pub(super) enum Paint {
-    /// A cover, and whether it starts under a line through its first row.
+    /// A cover (the window draws it), and whether it starts under a line
+    /// through its first row.
     Cover(Rect, bool),
     Spectrum(Plot),
     /// Text over a cover: the cover's rect and the text's.
@@ -40,7 +42,7 @@ impl Paint {
 
 /// Collects the pictures while the widgets draw; their cells stay empty.
 pub(super) struct PixelPictures {
-    /// Whether there is a cover to paint (else its placeholder's cells).
+    /// Whether there is a cover to show (else its placeholder's cells).
     pub(super) has_art: bool,
     /// The pictures, in the order asked for.
     pub(super) paints: Vec<Paint>,

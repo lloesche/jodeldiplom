@@ -1,15 +1,22 @@
 //! The window's drawing path without a window: the shared widgets
-//! rasterised into pixels, the cover and the spectrum painted at their
-//! cell rects.
+//! rasterised into pixels, the spectrum painted at its cell rect, the
+//! covers drawn where the canvas leaves their cells.
 
 mod common;
+#[path = "../examples/headless/mod.rs"]
+mod headless;
 
 use std::sync::Arc;
+use std::time::Instant;
 
+use headless::Headless;
+use iced::advanced::image::{Handle, Id as ImageId};
 use iced::keyboard::{key::Named, Key as IcedKey, Modifiers};
-use image::Rgb;
+use image::{Rgb, RgbaImage};
 use jodeldiplom::art::{sample_cover, Art};
 use jodeldiplom::core::{update, Screen, State};
+use jodeldiplom::gui::pixels::PixelRect;
+use jodeldiplom::gui::widgets::cover::{Align, Caption, Covers, Spot};
 use jodeldiplom::gui::{self, font_px, Canvas};
 use jodeldiplom::icon::Style;
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
@@ -66,15 +73,11 @@ fn pixel_rect(canvas: &Canvas, rect: Rect) -> (u32, u32, u32, u32) {
 }
 
 #[test]
-fn the_cover_and_the_spectrum_are_painted_in_their_cells() {
+fn the_spectrum_is_painted_in_its_cells() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let state = sized(&mut canvas, 1280, 800);
-    let art = Art {
-        id: 7,
-        image: Arc::new(sample_cover(256)),
-    };
     let spectrum = spectrum(176_400, 1_000.0);
-    draw(&mut canvas, &state, &spectrum, Some(&art));
+    draw(&mut canvas, &state, &spectrum, None);
     let image = canvas.image();
     let (cw, ch) = canvas.cell();
     assert_eq!(image.width() as usize, usize::from(canvas.grid().cols) * cw);
@@ -85,26 +88,6 @@ fn the_cover_and_the_spectrum_are_painted_in_their_cells() {
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("not the main screen")
     };
-
-    // The cover fills its square from under the list pane's top border
-    // line (half a cell down), at the left: its centre pixel is the
-    // cover's centre, and above it there is only background.
-    let (x, y, w, h) = pixel_rect(&canvas, m.cover.unwrap());
-    let top = y + ch as u32 / 2;
-    let side = w.min(h - ch as u32 / 2);
-    let center = image.get_pixel(x + side / 2, top + side / 2);
-    let expected = sample_cover(side).get_pixel(side / 2, side / 2).0;
-    let close = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).all(|(p, q)| p.abs_diff(q) <= 24);
-    assert!(close(center.0, expected), "{center:?} vs {expected:?}");
-    let covered = (0..side)
-        .step_by(4)
-        .filter(|&i| *image.get_pixel(x + i, top + i) != bg())
-        .count();
-    assert!(covered as u32 >= side / 4 - 2, "{covered}");
-    for py in y..top {
-        assert_eq!(*image.get_pixel(x + side / 2, py), bg(), "row {py}");
-    }
-    assert_ne!(*image.get_pixel(x + side / 2, top + 1), bg());
 
     // The spectrum is a dotted curve in the zone's colour, not a filled
     // area: near the tone it reaches the top quarter, under the curve
@@ -163,8 +146,32 @@ fn the_cover_and_the_spectrum_are_painted_in_their_cells() {
     assert!(canvas.text().contains("Morning Light"));
 }
 
+/// `rect` in pixels as the covers' places have it.
+fn place(canvas: &Canvas, rect: Rect) -> PixelRect {
+    let (x, y, w, h) = pixel_rect(canvas, rect);
+    (x as usize, y as usize, w as usize, h as usize)
+}
+
+/// `covers` drawn by iced's headless renderer in a window of `size`
+/// pixels at `scale`, with nothing under them.
+fn drawn(headless: &mut Headless, covers: &Covers, size: (u32, u32), scale: f32) -> RgbaImage {
+    let window = iced::Size::new(size.0 as f32 / scale, size.1 as f32 / scale);
+    headless.draw(covers.view(), window, Instant::now());
+    headless.screenshot(scale)
+}
+
+/// Whether two colours are within `by` of each other in every channel.
+fn near(a: &[u8], b: &[u8], by: u8) -> bool {
+    a.iter().zip(b).all(|(p, q)| p.abs_diff(*q) <= by)
+}
+
+/// The canvas leaves a cover's cells blank and says where it goes, for
+/// the window to draw it over them: on the main screen in its square from
+/// under the list pane's top line (half a cell down) at the left; on Now
+/// playing as large as the screen allows, in the middle, the caption over
+/// it. Without art, or on a screen without one, there is none.
 #[test]
-fn leaving_a_screen_removes_its_pictures() {
+fn the_covers_go_where_the_canvas_leaves_their_cells() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let mut state = sized(&mut canvas, 1280, 800);
     let art = Art {
@@ -176,35 +183,84 @@ fn leaving_a_screen_removes_its_pictures() {
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!()
     };
-    let (x, y, w, h) = pixel_rect(&canvas, m.cover.unwrap());
-    let probe = (x + w / 2, y + h / 2);
-    assert_ne!(*canvas.image().get_pixel(probe.0, probe.1), bg());
-    // Settings has no cover there: the old pixels are gone.
+    let ch = canvas.cell().1;
+    let (x, y, w, h) = place(&canvas, m.cover.unwrap());
+    let [spot] = canvas.covers() else {
+        panic!("{:?}", canvas.covers())
+    };
+    assert_eq!(spot.place, (x, y + ch / 2, w, h - ch / 2));
+    assert_eq!(spot.align, Align::TopLeft);
+    assert!(spot.caption.is_none());
+    let blank = canvas.image();
+    assert_eq!(
+        *blank.get_pixel((x + w / 2) as u32, (y + h / 2) as u32),
+        bg()
+    );
+
     state.screen = Screen::Settings;
     draw(&mut canvas, &state, &spectrum, Some(&art));
-    let after = *canvas.image().get_pixel(probe.0, probe.1);
-    assert!(
-        after == bg() || after.0.iter().all(|&c| c < 90),
-        "{after:?}"
-    );
-    // Now playing paints the cover bigger.
+    assert!(canvas.covers().is_empty());
+
     state.screen = Screen::NowPlaying;
     draw(&mut canvas, &state, &spectrum, Some(&art));
     let Layout::NowPlaying(n) = layout::compute(&state, canvas.grid()) else {
         panic!()
     };
-    let big = n.cover;
-    assert!(big.height > m.cover.unwrap().height);
-    let (x, y, w, h) = pixel_rect(&canvas, big);
-    assert_ne!(*canvas.image().get_pixel(x + w / 2, y + h / 2), bg());
+    assert!(n.cover.height > m.cover.unwrap().height);
+    let [spot] = canvas.covers() else {
+        panic!("{:?}", canvas.covers())
+    };
+    assert_eq!(spot.place, place(&canvas, n.cover));
+    assert_eq!(spot.align, Align::Center);
+    let caption = spot.caption.as_ref().expect("the caption over it");
+    assert_eq!(caption.rect, place(&canvas, n.caption));
+    assert_eq!(caption.lead, 4 * ch);
+
+    draw(&mut canvas, &state, &spectrum, None);
+    assert!(canvas.covers().is_empty());
 }
 
+/// A cover drawn where the canvas left it, at scale 1 and 2, in the first
+/// frame it shows (a large image too, which iced would otherwise send to
+/// the GPU in the background): the art fitted into its place at the
+/// pixels it shows at, its corners rounded.
+#[test]
+fn a_cover_is_drawn_fitted_with_its_corners_rounded() {
+    let mut headless = Headless::new();
+    for scale in [1.0, 2.0] {
+        let size = ((1280.0 * scale) as u32, (800.0 * scale) as u32);
+        let mut canvas = Canvas::new(80, 24, font_px(f64::from(scale)));
+        let state = sized(&mut canvas, size.0, size.1);
+        let art = Art {
+            id: 7,
+            image: Arc::new(sample_cover(256)),
+        };
+        draw(&mut canvas, &state, &spectrum(96_000, 1_000.0), Some(&art));
+        let mut covers = Covers::default();
+        covers.show(Some(&art), canvas.covers(), scale);
+        let shot = drawn(&mut headless, &covers, size, scale);
+        let (x, y, w, h) = canvas.covers()[0].place;
+        let side = w.min(h);
+        let cover = sample_cover(side as u32);
+        let at = |dx: usize, dy: usize| shot.get_pixel((x + dx) as u32, (y + dy) as u32).0;
+        let want = |dx: usize, dy: usize| cover.get_pixel(dx as u32, dy as u32).0;
+        let (mid, r) = (side / 2, (10.0 * scale) as usize);
+        assert!(near(&at(mid, mid), &want(mid, mid), 24), "scale {scale}");
+        // The corner is cut off; a radius in along the diagonal is cover.
+        assert!(!near(&at(0, 0), &want(0, 0), 40), "scale {scale}");
+        assert!(near(&at(r, r), &want(r, r), 24), "scale {scale}");
+        assert!(!near(&at(side - 1, 0), &want(side - 1, 0), 40));
+    }
+}
+
+/// Now playing: the cover in the middle of the screen (here a light one),
+/// darkened towards its bottom under the caption, and the caption's text
+/// drawn over it; the screen's text is the caption alone.
 #[test]
 fn now_playing_is_the_cover_with_the_caption_over_it() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let mut state = sized(&mut canvas, 1280, 800);
     state.screen = Screen::NowPlaying;
-    // A light cover, so the text needs the darkening behind it.
     let light = image::RgbImage::from_pixel(64, 64, Rgb([235, 225, 210]));
     let art = Art {
         id: 3,
@@ -212,18 +268,12 @@ fn now_playing_is_the_cover_with_the_caption_over_it() {
     };
     let spectrum = spectrum(176_400, 1_000.0);
     draw(&mut canvas, &state, &spectrum, Some(&art));
-    let Layout::NowPlaying(n) = layout::compute(&state, canvas.grid()) else {
-        panic!()
+    // The place fills the screen's height.
+    let [spot] = canvas.covers() else {
+        panic!("{:?}", canvas.covers())
     };
-    let image = canvas.image();
-    let (x, y, w, h) = pixel_rect(&canvas, n.cover);
-    // The cover fills the screen's height at full resolution, centred.
-    assert_eq!(
-        h as usize,
-        usize::from(canvas.grid().rows) * canvas.cell().1
-    );
-    assert_eq!(image.get_pixel(x + w / 2, y + h / 4).0, [235, 225, 210]);
-    assert_eq!(*image.get_pixel(x / 2, y + h / 2), bg());
+    let (x, y, w, h) = spot.place;
+    assert_eq!(h, usize::from(canvas.grid().rows) * canvas.cell().1);
     // The caption: title, artist and album, the status light; nothing else.
     let text = canvas.text();
     for part in ["Morning Light", "The Ramps · Synthetic Sessions", "○ PCM"] {
@@ -232,24 +282,93 @@ fn now_playing_is_the_cover_with_the_caption_over_it() {
     for gone in ["file 44.1", "settings", "20 Hz", "esc", "4:05", "FLAC"] {
         assert!(!text.contains(gone), "{gone:?} on Now playing");
     }
-    // Under the text the cover is darkened, and the text is drawn on it.
-    let (cx, cy, cw, ch) = pixel_rect(&canvas, n.caption);
-    assert!(cx > x && cy + ch <= y + h);
+
+    let mut headless = Headless::new();
+    let mut covers = Covers::default();
+    covers.show(Some(&art), canvas.covers(), 1.0);
+    let shot = drawn(&mut headless, &covers, (1280, 800), 1.0);
+    let side = w.min(h);
+    let (ix, iy) = (x + (w - side) / 2, y + (h - side) / 2);
+    let at = |px: usize, py: usize| shot.get_pixel(px as u32, py as u32).0;
+    // Its top is the cover as it is; beside it the ground.
+    assert!(near(
+        &at(ix + side / 2, iy + side / 4),
+        &[235, 225, 210, 255],
+        2
+    ));
+    assert_eq!(at(ix / 2, iy + side / 2), at(1, 1));
+    // Under the caption, at the cover's bottom, it is darkened.
+    let caption = spot.caption.clone().expect("the caption");
+    let (cx, cy, cw, chh) = caption.rect;
+    assert!(cx > ix && cy < iy + side);
     let darkest = (cx..cx + cw)
-        .map(|px| image.get_pixel(px, cy + ch - 2).0[0])
+        .map(|px| at(px, iy + side - 3)[0])
         .min()
         .unwrap();
     assert!(darkest < 120, "{darkest}");
+    // The caption's text is drawn over it: without it, its pixels differ.
+    let mut bare = spot.clone();
+    let (tw, th) = (cw as u32, chh as u32);
+    bare.caption = Some(Caption {
+        text: Handle::from_rgba(tw, th, vec![0; (tw * th * 4) as usize]),
+        ..caption
+    });
+    covers.show(Some(&art), &[bare], 1.0);
+    let without = drawn(&mut headless, &covers, (1280, 800), 1.0);
+    let ink = (cx..cx + cw)
+        .flat_map(|px| (cy..cy + chh).map(move |py| (px as u32, py as u32)))
+        .filter(|&(px, py)| shot.get_pixel(px, py) != without.get_pixel(px, py))
+        .count();
+    assert!(ink > 200, "{ink}");
+
     // Without a cover: a placeholder and the caption under it.
     draw(&mut canvas, &state, &spectrum, None);
     let text = canvas.text();
     assert!(text.contains('\u{266a}') && text.contains("Morning Light"));
 }
 
+/// A cover's art is scaled once for its art and size: the same art at
+/// the same size keeps its image (wherever it goes), another art or size
+/// is fitted anew, and no art shows nothing.
+#[test]
+fn a_covers_art_is_kept_by_art_id_and_size() {
+    let art = Art {
+        id: 5,
+        image: Arc::new(sample_cover(64)),
+    };
+    /// The image `art` shows with in a cover at `place`.
+    fn image(covers: &mut Covers, art: Option<&Art>, place: PixelRect) -> Option<ImageId> {
+        let spot = Spot {
+            place,
+            align: Align::Center,
+            caption: None,
+        };
+        covers.show(art, &[spot], 1.0);
+        covers.images().next().map(Handle::id)
+    }
+    let mut covers = Covers::default();
+    let first = image(&mut covers, Some(&art), (10, 10, 200, 200));
+    assert!(first.is_some());
+    assert_eq!(image(&mut covers, Some(&art), (10, 10, 200, 200)), first);
+    assert_eq!(image(&mut covers, Some(&art), (300, 40, 200, 200)), first);
+    let other = Art {
+        id: 6,
+        image: art.image.clone(),
+    };
+    let anew = image(&mut covers, Some(&other), (300, 40, 200, 200));
+    assert!(anew.is_some() && anew != first);
+    let bigger = image(&mut covers, Some(&other), (300, 40, 240, 240));
+    assert!(bigger.is_some() && bigger != anew);
+    assert_eq!(image(&mut covers, None, (300, 40, 240, 240)), None);
+    covers.show(Some(&art), &[], 1.0);
+    assert_eq!(covers.images().count(), 0);
+}
+
 /// Frames drawn one after another (pictures kept where nothing under them
 /// changed, cells redrawn only where they did) end in the same pixels as
-/// the last frame drawn afresh: through covers that stay, change and go,
-/// a caption over one, a moving spectrum and the Transition tab.
+/// the last frame drawn afresh: through covers that stay, change and go
+/// (their cells left blank for the window), a caption over one, a moving
+/// spectrum and the Transition tab.
 #[test]
 fn frames_in_a_row_end_as_the_last_drawn_afresh() {
     let first = Art {

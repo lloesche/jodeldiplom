@@ -1,13 +1,13 @@
 //! The window's drawing surface without the window: the shared ratatui
 //! widgets rasterised into an RGB pixmap ([`PixelBackend`]), and the
-//! pictures painted into it at their cell rects ([`pictures`]): the cover
-//! ([`cover`]), the spectrum ([`spectrum`]), the Transition lanes
-//! ([`lane`]) and their bar numbers ([`ruler`]), and Karaoke mode's
-//! picture ([`karaoke`]). Lanes that follow the playhead go into a layer
-//! of tiles the window scrolls by itself ([`strip`]). Used by the window
-//! and, headless, by the tests and the screenshots.
+//! pictures painted into it at their cell rects ([`pictures`]): the
+//! spectrum ([`spectrum`]), the Transition lanes ([`lane`]) and their bar
+//! numbers ([`ruler`]), and Karaoke mode's picture ([`karaoke`]). Lanes
+//! that follow the playhead go into a layer of tiles the window scrolls by
+//! itself ([`strip`]). The covers are the window's own widgets over the
+//! cells left for them ([`Canvas::covers`]). Used by the window and,
+//! headless, by the tests and the screenshots.
 
-mod cover;
 mod karaoke;
 mod lane;
 mod pictures;
@@ -24,12 +24,12 @@ use ratatui::Terminal;
 use super::big_text::Faces;
 use super::pixels::{pack, unpack, PixelRect, Target};
 use super::raster::{CellFont, PixelBackend};
+use super::widgets::cover::{Align, Caption, Spot};
 use crate::art::Art;
 use crate::core::State;
 use crate::view::karaoke::KaraokePicture;
 use crate::view::layout::Grid;
 use crate::view::{self, palette, Plot, Scene};
-use cover::FittedCover;
 use lane::{KeptWave, Melodies};
 use pictures::{Paint, PixelPictures};
 use ruler::KeptRuler;
@@ -49,7 +49,7 @@ pub fn font_px(scale: f64) -> f32 {
 pub struct DrawTimes {
     /// The widgets drawn and the changed cells rasterised.
     pub widgets: std::time::Duration,
-    /// The covers, spectrum and Transition lanes painted.
+    /// The spectrum and the Transition lanes painted, the covers placed.
     pub pictures: std::time::Duration,
 }
 
@@ -57,10 +57,10 @@ pub struct DrawTimes {
 pub struct Canvas {
     terminal: Terminal<PixelBackend>,
     font_px: f32,
-    cover: Option<FittedCover>,
     painted: Vec<Rect>,
-    /// The covers in the pixmap now: rect, art id, whether below a line.
-    covers: Vec<(Rect, u64, bool)>,
+    /// The covers as last drawn, for the window to draw over the cells
+    /// left for them.
+    covers: Vec<Spot>,
     /// The Transition lanes in the pixmap now.
     waves: Vec<KeptWave>,
     /// The Transition blocks' bar numbers in the pixmap now.
@@ -179,7 +179,6 @@ impl Canvas {
         Canvas {
             terminal,
             font_px,
-            cover: None,
             painted: Vec::new(),
             covers: Vec::new(),
             waves: Vec::new(),
@@ -307,10 +306,9 @@ impl Canvas {
         }
     }
 
-    /// Draws a frame: the widgets, then the cover and the spectrum. A
-    /// cover (and the caption over it) is painted again only when it is
-    /// new or moved, or a cell under it was redrawn: it stays in the
-    /// pixmap otherwise.
+    /// Draws a frame: the widgets, then the pictures, and where the covers
+    /// go ([`Canvas::covers`]). The text over a cover is made again only
+    /// when it moved or a cell of it was redrawn.
     pub fn draw(&mut self, scene: &Scene, art: Option<&Art>) {
         let started = std::time::Instant::now();
         self.terminal.backend_mut().reset_damage();
@@ -332,8 +330,7 @@ impl Canvas {
         let widgets = started.elapsed();
         let mut frame = Changes::default();
         self.cells_changed(&mut frame);
-        let mut covers = Vec::new();
-        let mut fresh: Vec<Rect> = Vec::new();
+        let before = std::mem::take(&mut self.covers);
         let mut waves = std::mem::take(&mut self.waves);
         let mut rulers = std::mem::take(&mut self.rulers);
         let spectrum = self.spectrum.take();
@@ -342,17 +339,7 @@ impl Canvas {
         for paint in &pictures.paints {
             match paint {
                 Paint::Cover(rect, below_line) => {
-                    if let Some(art) = art {
-                        let key = (*rect, art.id, *below_line);
-                        let kept = self.covers.contains(&key)
-                            && !self.terminal.backend().damage.touches(*rect);
-                        if !kept {
-                            self.paint_cover(*rect, art, *below_line);
-                            fresh.push(*rect);
-                            frame.add(self.pixel_rect(*rect));
-                        }
-                        covers.push(key);
-                    }
+                    self.covers.push(self.cover_spot(*rect, *below_line))
                 }
                 Paint::Spectrum(plot) => {
                     let kept = spectrum.as_ref() == Some(plot)
@@ -371,11 +358,10 @@ impl Canvas {
                     self.spectrum = Some(plot.clone());
                 }
                 Paint::Caption(cover, caption) => {
-                    // Over a cover painted afresh only (its pixels are
-                    // among the changed already): on one kept, the caption
-                    // is still there.
-                    if fresh.contains(cover) {
-                        self.paint_caption(*cover, *caption);
+                    let caption = self.caption(*caption, &before);
+                    let place = self.pixel_rect(*cover);
+                    if let Some(spot) = self.covers.iter_mut().find(|s| s.place == place) {
+                        spot.caption = Some(caption);
                     }
                 }
                 Paint::Wave(plot) if self.gpu && plot.follow.is_some() => {
@@ -417,7 +403,6 @@ impl Canvas {
                 }
             }
         }
-        self.covers = covers;
         following.sort_by_key(|(_, r)| r.1);
         self.take_strip(following);
         self.changed = !frame.is_empty();
@@ -436,6 +421,54 @@ impl Canvas {
             usize::from(rect.width) * cw,
             usize::from(rect.height) * ch,
         )
+    }
+
+    /// Where the covers go as last drawn, in the pixmap's pixels: the
+    /// window draws them over the cells left blank for them.
+    pub fn covers(&self) -> &[Spot] {
+        &self.covers
+    }
+
+    /// The cover in `rect`: with `below_line` from half a cell down
+    /// (under the border line through its first row) and at the left,
+    /// otherwise in the middle.
+    fn cover_spot(&self, rect: Rect, below_line: bool) -> Spot {
+        let (x, y, w, h) = self.pixel_rect(rect);
+        let inset = if below_line { self.cell().1 / 2 } else { 0 };
+        Spot {
+            place: (x, y + inset, w, h.saturating_sub(inset)),
+            align: if below_line {
+                Align::TopLeft
+            } else {
+                Align::Center
+            },
+            caption: None,
+        }
+    }
+
+    /// The text of the cells of `rect` over a cover, the cover darkened
+    /// from four rows above it; the text as it was `before` where none of
+    /// its cells was redrawn.
+    fn caption(&mut self, rect: Rect, before: &[Spot]) -> Caption {
+        let pixels = self.pixel_rect(rect);
+        let kept = before
+            .iter()
+            .filter_map(|s| s.caption.as_ref())
+            .find(|c| c.rect == pixels)
+            .filter(|_| !self.terminal.backend().damage.touches(rect));
+        let text = match kept {
+            Some(caption) => caption.text.clone(),
+            None => {
+                let text = self.terminal.backend_mut().text_on_clear(rect);
+                let (w, h) = text.dimensions();
+                iced::advanced::image::Handle::from_rgba(w, h, text.into_raw())
+            }
+        };
+        Caption {
+            rect: pixels,
+            lead: 4 * self.cell().1,
+            text,
+        }
     }
 
     /// The pixels per point of the window's scale factor.

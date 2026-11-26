@@ -28,6 +28,7 @@ use super::paint::{Pace, Paint, Place, Seen, REST};
 use super::pointer::{Pointer, PointerKind, PointerState, Wheel, WheelOn};
 use super::screens::Shown;
 use super::wake::{Wake, Wakes};
+use super::widgets::cover::Covers;
 use crate::app::{App, AppOptions};
 use crate::core::desk::{Channel, DeskAction};
 use crate::core::keymap;
@@ -106,6 +107,8 @@ pub struct Gui {
     pointer: PointerState,
     wheel: Wheel,
     caps: mixer::Caps,
+    /// The covers over the old canvas, their art fitted to them.
+    covers: Covers,
     wake: Wake,
     window: Option<window::Id>,
     /// The window's size in logical pixels, and its scale factor.
@@ -189,6 +192,7 @@ impl Gui {
             pointer: PointerState::default(),
             wheel: Wheel::default(),
             caps: mixer::Caps::default(),
+            covers: Covers::default(),
             wake,
             window: None,
             size: Size::ZERO,
@@ -510,6 +514,8 @@ impl Gui {
                     plan.draw = super::paint::Draw::Nothing;
                 }
                 self.paint.draw(plan, &self.embed, app, place, (heard, at));
+                self.covers
+                    .show(app.art(), &self.embed.covers(), self.scale);
                 // Karaoke mode is fullscreen; leaving it, the window comes
                 // back.
                 let fullscreen = crate::core::karaoke::in_mode(&app.state);
@@ -620,8 +626,12 @@ impl Gui {
             Phase::Leaving(Last::Setup(status)) => Shown::Setup(status.clone()),
             _ => Shown::Player(self.app().map(|app| &app.state)),
         };
-        self.pacer
-            .view(super::screens::view(shown, &self.embed, &self.caps))
+        self.pacer.view(super::screens::view(
+            shown,
+            &self.embed,
+            &self.caps,
+            &self.covers,
+        ))
     }
 }
 

@@ -1,18 +1,21 @@
 //! What the window shows, screen by screen. A screen drawn by iced's own
 //! widgets gets an arm here as it is ported: the setup screen
 //! ([`setup`]). Every other screen is the old canvas filling the window
-//! ([`super::embed`]) with a slot over it, the Mixer tab
-//! ([`super::mixer`]) or nothing: the same shape, so the canvas's
-//! widget keeps its place in iced's tree. The pointer over the canvas
-//! hides where the core says ([`crate::core::karaoke::pointer::hidden`]);
-//! the view is built again after every message, so it shows again as soon
-//! as it moves or the mode ends.
+//! ([`super::embed`]), the covers over it where it left their cells
+//! ([`super::widgets::cover`], not taking the pointer), and a slot over
+//! them, the Mixer tab ([`super::mixer`]) or nothing: the same shape, so
+//! the canvas's widget keeps its place in iced's tree. The pointer over
+//! the canvas hides where the core says
+//! ([`crate::core::karaoke::pointer::hidden`]); the view is built again
+//! after every message, so it shows again as soon as it moves or the mode
+//! ends.
 
 use iced::widget::{opaque, pin, space, stack};
 use iced::{Element, Widget as _};
 
 use super::embed::Embed;
 use super::mixer;
+use super::widgets::cover::Covers;
 use super::window::Message;
 use crate::core::State;
 use crate::view::layout::{self, Layout};
@@ -32,6 +35,7 @@ pub(super) fn view<'a>(
     shown: Shown<'a>,
     embed: &Embed,
     caps: &'a mixer::Caps,
+    covers: &'a Covers,
 ) -> Element<'a, Message> {
     let state = match shown {
         Shown::Setup(status) => return setup::view(&status),
@@ -41,6 +45,7 @@ pub(super) fn view<'a>(
     let desk = state.and_then(|state| desk(state, embed, caps));
     stack![
         embed.view(hide_pointer),
+        covers.view(),
         desk.unwrap_or_else(|| space().boxed())
     ]
     .boxed()
