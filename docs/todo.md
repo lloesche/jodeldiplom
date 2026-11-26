@@ -27,12 +27,14 @@ Work agreed on but not started, roughly in the order it was raised.
   wide list, palette, motifs). SDXL-Lightning (Q8 looks as fp16) draws
   one whole picture per scene (characters from the lyrics, a portrait
   each as a face reference; the cover as a style reference only when it
-  is striking, its lettering painted out first), a face detailer
-  redrawing small faces; the negative prompt forbids any text, writing
-  or lettering. Each scene moves by a slow camera push and either a depth
+  is striking, its lettering painted out first); no face redrawing
+  afterwards (tried: it changed good faces and planted features on
+  profiles); the negative prompt forbids any text, writing or
+  lettering. Each scene moves by a slow camera push and either a depth
   warp from its depth map (no edge to tear, so stronger than the
-  prototype's 1.5 %; the depth held flat under each face and its hair,
-  so a head moves as one piece and never bends into an "alien" face)
+  prototype's 1.5 %; the depth held flat over each whole head, found
+  from the face and the depth around it so a profile's nose and the
+  hair come with it, so a head moves as one piece and never bends)
   or, where its depth splits cleanly (a subject well
   in front of its background), two or three depth layers in parallax
   with their edges feathered and lit into the scene (v1 and v2 of "Into
