@@ -177,12 +177,16 @@ seek bar between the time heard and the length (press it and drag: the
 pointer moves it from anywhere, and it seeks where it is let go of); the
 transport buttons, the stems' switches (with a GPU), the message, and
 the settings and the help. The wheel over it scrolls the list.
-Clicking the cover (or `f`) opens Now playing: the cover filling the
-screen with the title, artist, album and status light over its bottom
-left; `esc`, a click or `f` returns. Clicking the device name
-opens its setting. `,` (or the button) opens the settings: device (with
-what it takes: the rate the system runs it at and its format) and
-the headroom (for what is resampled). The device's rate is not a
+Clicking the cover (or `f`) opens Now playing: the cover as large as the
+window holds it, with the title, artist and album (links, as in the right
+column), the file's format and rate, the status light's word and the
+tempo over its bottom; `esc`, a click elsewhere or `f` returns. Clicking
+the device name opens its setting. `,` (or the button) opens the
+settings, in sections (output, tempo and beats, stems, next track, data):
+each row says what it is set to, with a switch, a check or a choice of a
+few to click, and a click on a row does what `enter` does on it. The
+output device (with what it takes: the rate the system runs it at and its
+format) and the headroom (for what is resampled) come first. The device's rate is not a
 setting of the player's: the system's sound settings set it, and a file
 at another rate is resampled to it. A settings file from before, with a
 `rate."<id>"` or a `resample` line, says once that it is an unknown

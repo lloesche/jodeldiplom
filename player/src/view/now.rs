@@ -1,6 +1,9 @@
 //! What is playing: the main screen's right column (the cover, the track's
-//! info with its links and beat pulse, the summary under them) and Now
-//! playing (the cover filling the screen, the caption over it).
+//! info with its links and beat pulse, the summary under them), and Now
+//! playing's caption ([`NowPlaying`], which the window draws over the
+//! cover filling the screen: `gui::screens::now`).
+
+use std::fmt;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -11,10 +14,11 @@ use ratatui::Frame;
 
 use super::colors::*;
 use super::{keep_start, Pictures, Scene};
+use crate::core::keymap::Op;
 use crate::core::text::{self, Seg, Tone};
 use crate::core::{Rhythm, State};
 use crate::view::cells;
-use crate::view::layout::{MainLayout, NowLayout};
+use crate::view::layout::MainLayout;
 
 /// How long the pulse stays bright after a beat, in seconds.
 const PULSE_SECONDS: f64 = 0.12;
@@ -54,14 +58,23 @@ fn line(segs: &[Seg]) -> Line<'static> {
     )
 }
 
-/// The beat pulse's look now: bright for a moment on each beat of the
-/// playing track (in the accent colour on the first beat of a bar) where
+/// The beat pulse as it is now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pulse {
+    /// Dim: between beats, the beat unclear, or not playing.
+    Rest,
+    /// Bright for a moment on a beat.
+    Beat,
+    /// Bright in the accent on the first beat of a bar.
+    Bar,
+}
+
+/// The beat pulse `heard` seconds into the playing track: bright for a
+/// moment on each beat (in the accent on the first beat of a bar) where
 /// the beat is clear, dim otherwise.
-fn pulse_style(scene: &Scene) -> Style {
-    let state = scene.state;
-    let dim = tone_style(Tone::Pulse);
+pub fn pulse(state: &State, heard: f64) -> Pulse {
     if state.playing.state != jodel_playback::PlayState::Playing {
-        return dim;
+        return Pulse::Rest;
     }
     let analysis = state
         .playing
@@ -73,15 +86,26 @@ fn pulse_style(scene: &Scene) -> Style {
             _ => None,
         });
     let Some(a) = analysis else {
-        return dim;
+        return Pulse::Rest;
     };
-    let t = scene.heard;
-    match a.beat_at(t) {
-        Some(i) if t - a.beats[i] < PULSE_SECONDS && a.is_clear_at(t) => {
-            let color = if a.is_downbeat(i) { ACCENT } else { TEXT };
-            Style::new().fg(color).add_modifier(Modifier::BOLD)
+    match a.beat_at(heard) {
+        Some(i) if heard - a.beats[i] < PULSE_SECONDS && a.is_clear_at(heard) => {
+            if a.is_downbeat(i) {
+                Pulse::Bar
+            } else {
+                Pulse::Beat
+            }
         }
-        _ => dim,
+        _ => Pulse::Rest,
+    }
+}
+
+/// The beat pulse's look now ([`pulse`]).
+fn pulse_style(scene: &Scene) -> Style {
+    match pulse(scene.state, scene.heard) {
+        Pulse::Rest => tone_style(Tone::Pulse),
+        Pulse::Beat => Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        Pulse::Bar => Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
     }
 }
 
@@ -164,29 +188,100 @@ fn draw_mini(frame: &mut Frame, state: &State, area: Rect) {
     );
 }
 
-/// Now playing: the cover filling the screen and the caption at its
-/// bottom left, over the cover where the frontend can draw text there,
-/// else under it.
-pub(super) fn draw_now(
-    frame: &mut Frame,
-    scene: &Scene,
-    n: &NowLayout,
-    pictures: &mut dyn Pictures,
-) {
-    let over = pictures.text_over_cover();
-    let cover = if over { n.cover } else { n.cover_above };
-    let caption = n.caption;
-    if cover.width > 0 && cover.height > 0 {
-        pictures.cover(frame, cover, false);
+/// Now playing's caption: what the window shows over the cover's bottom
+/// (under the placeholder where there is no cover): the title, the artist
+/// and the album (links to them in the browser), the file's format and
+/// rate with the status light's word, and the tempo with its beat pulse.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NowPlaying {
+    /// The title, a link to the track ([`Tone::TitleLink`]); "Nothing
+    /// playing" when nothing is.
+    pub title: Seg,
+    /// The artist and the album (links), a dot between; none without
+    /// tags.
+    pub by: Vec<Seg>,
+    /// The file's format and rate (`FLAC 48`, in [`Tone::Source`]), and
+    /// the status light's word (`PCM`, or what a lossy file is).
+    pub chips: Vec<Seg>,
+    /// The tempo and the key, the beat pulse's `♩` first
+    /// ([`text::bpm_line`]).
+    pub tempo: Option<Vec<Seg>>,
+    /// The beat pulse now.
+    pub pulse: Pulse,
+}
+
+impl NowPlaying {
+    /// The caption for `state`, `heard` seconds into the playing track.
+    pub fn of(state: &State, heard: f64) -> NowPlaying {
+        let pulse = pulse(state, heard);
+        let Some(track) = &state.playing.track else {
+            return NowPlaying {
+                title: text::seg("Nothing playing", Tone::Title),
+                by: Vec::new(),
+                chips: Vec::new(),
+                tempo: None,
+                pulse,
+            };
+        };
+        let info = &track.info;
+        let mut by = Vec::new();
+        if let Some(artist) = &info.tags.artist {
+            by.push(text::seg(artist.clone(), Tone::ArtistLink));
+        }
+        if let Some(album) = &info.tags.album {
+            if !by.is_empty() {
+                by.push(text::seg(" · ", Tone::Dim));
+            }
+            by.push(text::seg(album.clone(), Tone::AlbumLink));
+        }
+        let (_, status, tone) = text::status_light(state);
+        let format = format!("{} {}", info.format_name(), text::khz_short(info.rate));
+        NowPlaying {
+            title: text::seg(text::track_title(info), Tone::TitleLink),
+            by,
+            chips: vec![text::seg(format, Tone::Source), text::seg(status, tone)],
+            tempo: text::bpm_line(state),
+            pulse,
+        }
     }
-    if caption.width == 0 || caption.height == 0 {
-        return;
+
+    /// Where a piece in `tone` goes when clicked: the title, the artist
+    /// and the album are links.
+    pub fn link(tone: Tone) -> Option<Op> {
+        text::LINKS
+            .iter()
+            .find(|(t, _)| *t == tone)
+            .map(|&(_, op)| op)
     }
-    if over {
-        pictures.caption(cover, caption);
+}
+
+/// An outline of the caption, one line a piece with its kind in
+/// brackets: for the snapshots.
+impl fmt::Display for NowPlaying {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let joined = |segs: &[Seg]| segs.iter().map(|s| s.text.as_str()).collect::<String>();
+        writeln!(f, "[title] {}", self.title.text)?;
+        if !self.by.is_empty() {
+            writeln!(f, "[by] {}", joined(&self.by))?;
+        }
+        for chip in &self.chips {
+            let tone = if chip.tone == Tone::Source {
+                " source"
+            } else {
+                ""
+            };
+            writeln!(f, "[chip{tone}] {}", chip.text)?;
+        }
+        if let Some(tempo) = &self.tempo {
+            writeln!(f, "[tempo {:?}] {}", self.pulse, joined(tempo))?;
+        }
+        let links: Vec<String> = std::iter::once(&self.title)
+            .chain(&self.by)
+            .filter_map(|s| NowPlaying::link(s.tone).map(|op| format!("{} → {op:?}", s.text)))
+            .collect();
+        if !links.is_empty() {
+            writeln!(f, "[links] {}", links.join(", "))?;
+        }
+        Ok(())
     }
-    let segs = cells::caption_lines(scene.state, usize::from(caption.width));
-    let lines: Vec<Line> = segs.iter().map(|l| line_at(l, scene)).collect();
-    frame.render_widget(Paragraph::new(lines), caption);
-    underline_links(frame.buffer_mut(), scene, &segs, caption);
 }

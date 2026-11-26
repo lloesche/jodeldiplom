@@ -18,7 +18,7 @@ use super::big_text::Faces;
 use super::lanes::{LaneSpot, LaneSpots, Metrics, Part, Rows};
 use super::pixels::{pack, unpack, PixelRect};
 use super::raster::PixelBackend;
-use super::widgets::cover::{Align, Caption, Spot};
+use super::widgets::cover::{Align, Spot};
 use crate::art::Art;
 use crate::core::State;
 use crate::view::karaoke::KaraokePicture;
@@ -281,20 +281,13 @@ impl Canvas {
         let widgets = started.elapsed();
         let mut frame = Changes::default();
         self.cells_changed(&mut frame);
-        let before = std::mem::take(&mut self.covers);
+        self.covers.clear();
         self.lanes.clear();
         let karaoke = self.karaoke.take();
         for paint in &pictures.paints {
             match paint {
                 Paint::Cover(rect, below_line) => {
                     self.covers.push(self.cover_spot(*rect, *below_line))
-                }
-                Paint::Caption(cover, caption) => {
-                    let caption = self.caption(*caption, &before);
-                    let place = self.pixel_rect(*cover);
-                    if let Some(spot) = self.covers.iter_mut().find(|s| s.place == place) {
-                        spot.caption = Some(caption);
-                    }
                 }
                 Paint::Wave(plot) => {
                     let rect = self.pixel_rect(plot.area);
@@ -359,32 +352,6 @@ impl Canvas {
             } else {
                 Align::Center
             },
-            caption: None,
-        }
-    }
-
-    /// The text of the cells of `rect` over a cover, the cover darkened
-    /// from four rows above it; the text as it was `before` where none of
-    /// its cells was redrawn.
-    fn caption(&mut self, rect: Rect, before: &[Spot]) -> Caption {
-        let pixels = self.pixel_rect(rect);
-        let kept = before
-            .iter()
-            .filter_map(|s| s.caption.as_ref())
-            .find(|c| c.rect == pixels)
-            .filter(|_| !self.terminal.backend().damage.touches(rect));
-        let text = match kept {
-            Some(caption) => caption.text.clone(),
-            None => {
-                let text = self.terminal.backend_mut().text_on_clear(rect);
-                let (w, h) = text.dimensions();
-                iced::advanced::image::Handle::from_rgba(w, h, text.into_raw())
-            }
-        };
-        Caption {
-            rect: pixels,
-            lead: 4 * self.cell().1,
-            text,
         }
     }
 

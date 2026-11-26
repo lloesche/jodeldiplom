@@ -1,9 +1,11 @@
 //! A cover: the art fitted into its place, its corners rounded, a soft
-//! shadow under it on the ground; with text over its bottom, the cover
-//! darkened under the text so it reads on any cover. It does not take the
-//! pointer: what is under it does.
+//! shadow under it on the ground. It does not take the pointer: what is
+//! under it does. Text over its bottom goes on a shade ([`shade`]), the
+//! cover darkened under it so it reads on any cover.
 //!
-//! The places come in pixels ([`Spot`]), as the old canvas lays them out.
+//! The places come in pixels ([`Spot`]), as the old canvas lays them
+//! out, or as a screen of the window's own makes room for its one cover
+//! (Now playing: [`Covers::art`]).
 //! The art is scaled on the processor to the pixels it shows at (finer
 //! than the GPU's scaling of a large image, which keeps no smaller copies),
 //! once for each art and size: [`Covers`] keeps it by art id.
@@ -11,12 +13,12 @@
 use std::f32::consts::PI;
 use std::sync::{Arc, OnceLock};
 
-use iced::advanced::image::{Allocation, FilterMethod, Handle, Renderer as _};
+use iced::advanced::image::{Allocation, Handle, Renderer as _};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{self, Tree, Widget};
 use iced::advanced::{mouse, renderer};
 use iced::gradient::Linear;
-use iced::widget::{container, pin, space, Image, Stack};
+use iced::widget::{container, pin, space, Container, Image, Stack};
 use iced::{
     border, Background, Border, Color, ContentFit, Element, Length, Rectangle, Renderer, Shadow,
     Size, Theme, Vector, Widget as _,
@@ -46,19 +48,6 @@ pub struct Spot {
     pub place: PixelRect,
     /// How it sits there.
     pub align: Align,
-    /// Text over it, if any.
-    pub caption: Option<Caption>,
-}
-
-/// Text over a cover's bottom, in pixels.
-#[derive(Clone, Debug)]
-pub struct Caption {
-    /// Where the text is.
-    pub rect: PixelRect,
-    /// How far above the text the cover starts to darken.
-    pub lead: usize,
-    /// The text on a clear ground, at the window's pixels.
-    pub text: Handle,
 }
 
 /// The art fitted to a place: for which art and place size, the image,
@@ -191,9 +180,16 @@ impl Covers {
         Stack::with_children(
             self.shown
                 .iter()
-                .flat_map(|(spot, fitted)| self.cover(spot, fitted)),
+                .map(|(spot, fitted)| self.cover(spot, fitted)),
         )
         .boxed()
+    }
+
+    /// The first cover shown, at the size its art was fitted to and not
+    /// pinned: for a screen that lays it out itself; `None` without art.
+    pub fn art<'a, M: 'a>(&'a self) -> Option<Element<'a, M>> {
+        let (_, fitted) = self.shown.first()?;
+        Some(picture(fitted, self.size(fitted)))
     }
 
     /// `px` pixels in points.
@@ -201,64 +197,36 @@ impl Covers {
         px as f32 / self.scale
     }
 
-    /// One cover's layers: the cover, and the darkening and the text
-    /// over it.
-    fn cover<'a, M: 'a>(&self, spot: &Spot, fitted: &'a Fitted) -> Vec<Element<'a, M>> {
+    /// The size `fitted` shows at, in points.
+    fn size(&self, fitted: &Fitted) -> Size {
+        Size::new(
+            self.points(fitted.size.0 as usize),
+            self.points(fitted.size.1 as usize),
+        )
+    }
+
+    /// One cover, pinned at its spot.
+    fn cover<'a, M: 'a>(&self, spot: &Spot, fitted: &'a Fitted) -> Element<'a, M> {
         let (px, py, _, _) = spot.place;
         let (ox, oy) = match spot.align {
             Align::TopLeft => (0, 0),
             Align::Center => (fitted.offset.0 as usize, fitted.offset.1 as usize),
         };
-        let bounds = Rectangle {
-            x: self.points(px + ox),
-            y: self.points(py + oy),
-            width: self.points(fitted.size.0 as usize),
-            height: self.points(fitted.size.1 as usize),
-        };
-        let mut layers = vec![pinned(picture(fitted, bounds), bounds)];
-        if let Some(caption) = &spot.caption {
-            let (cx, cy, cw, ch) = caption.rect;
-            let from = self
-                .points(cy.saturating_sub(caption.lead))
-                .clamp(bounds.y, bounds.y + bounds.height);
-            let shade = Rectangle {
-                y: from,
-                height: bounds.y + bounds.height - from,
-                ..bounds
-            };
-            let text = Rectangle {
-                x: self.points(cx),
-                y: self.points(cy),
-                width: self.points(cw),
-                height: self.points(ch),
-            };
-            // Text all under the cover needs no darkening on it.
-            if text.y < bounds.y + bounds.height {
-                layers.push(pinned(darkened(shade, from > bounds.y), shade));
-            }
-            let words = Image::new(caption.text.clone())
-                .width(text.width)
-                .height(text.height)
-                .content_fit(ContentFit::Fill)
-                .filter_method(FilterMethod::Nearest);
-            layers.push(pinned(words.boxed(), text));
-        }
-        layers
+        let size = self.size(fitted);
+        pin(picture(fitted, size))
+            .x(self.points(px + ox))
+            .y(self.points(py + oy))
+            .boxed()
     }
 }
 
-/// `content` at `bounds`' top left in the window.
-fn pinned<'a, M: 'a>(content: Element<'a, M>, bounds: Rectangle) -> Element<'a, M> {
-    pin(content).x(bounds.x).y(bounds.y).boxed()
-}
-
-/// The `fitted` art filling `bounds`, its corners rounded, with a soft
-/// shadow under it.
-fn picture<'a, M: 'a>(fitted: &'a Fitted, bounds: Rectangle) -> Element<'a, M> {
+/// The `fitted` art at `size`, its corners rounded, with a soft shadow
+/// under it.
+fn picture<'a, M: 'a>(fitted: &'a Fitted, size: Size) -> Element<'a, M> {
     let art = Loaded {
         image: Image::new(fitted.image.clone())
-            .width(bounds.width)
-            .height(bounds.height)
+            .width(size.width)
+            .height(size.height)
             .content_fit(ContentFit::Fill)
             .border_radius(radius::PANEL),
         handle: fitted.image.clone(),
@@ -281,14 +249,14 @@ fn picture<'a, M: 'a>(fitted: &'a Fitted, bounds: Rectangle) -> Element<'a, M> {
         .boxed()
 }
 
-/// `bounds` darkened from clear at its top to [`DARKEST`] at its bottom,
-/// easing in and out; its bottom corners rounded as the cover's are, and
-/// its top ones too where it starts at the cover's top (`below_top`
-/// false).
-fn darkened<'a, M: 'a>(bounds: Rectangle, below_top: bool) -> Element<'a, M> {
+/// `content` on a shade for a cover's bottom: the cover under it darkened
+/// from clear at its top to [`DARKEST`] at its bottom, easing in and out,
+/// its bottom corners rounded as the cover's are. Its top padding is how
+/// far above the content the darkening starts.
+pub fn shade<'a, M: 'a>(content: Element<'a, M>) -> Container<'a, Element<'a, M>> {
     // Blended in linear light: as dark as the eye sees the share of black
     // mixed into the cover's own colours.
-    let shade = |t: f32| {
+    let dark = |t: f32| {
         let eased = t * t * (3.0 - 2.0 * t);
         let keep = 1.0 - DARKEST * eased;
         look::alpha(Color::BLACK, 1.0 - keep.powf(2.2))
@@ -296,24 +264,19 @@ fn darkened<'a, M: 'a>(bounds: Rectangle, below_top: bool) -> Element<'a, M> {
     // As many stops as a gradient takes, so the curve has no kinks to see.
     let gradient = (0..8u8).fold(Linear::new(PI), |g, i| {
         let t = f32::from(i) / 7.0;
-        g.add_stop(t, shade(t))
+        g.add_stop(t, dark(t))
     });
-    let top = if below_top { 0.0 } else { radius::PANEL };
-    container(space())
-        .width(bounds.width)
-        .height(bounds.height)
-        .style(move |_| container::Style {
-            background: Some(Background::Gradient(gradient.into())),
-            border: Border {
-                radius: border::Radius {
-                    top_left: top,
-                    top_right: top,
-                    bottom_right: radius::PANEL,
-                    bottom_left: radius::PANEL,
-                },
-                ..Border::default()
+    container(content).style(move |_| container::Style {
+        background: Some(Background::Gradient(gradient.into())),
+        border: Border {
+            radius: border::Radius {
+                top_left: 0.0,
+                top_right: 0.0,
+                bottom_right: radius::PANEL,
+                bottom_left: radius::PANEL,
             },
-            ..container::Style::default()
-        })
-        .boxed()
+            ..Border::default()
+        },
+        ..container::Style::default()
+    })
 }

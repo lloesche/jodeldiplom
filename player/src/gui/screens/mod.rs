@@ -1,8 +1,10 @@
 //! What the window shows, screen by screen. A screen drawn by iced's own
 //! widgets gets an arm here as it is ported: the setup screen
-//! ([`setup`]). Every other screen is the old canvas filling the window
-//! ([`super::embed`]), the covers and the lanes over it where it left
-//! their cells ([`super::widgets::cover`], [`super::lanes`], neither
+//! ([`setup`]), Now playing ([`now`]), and the settings ([`settings`])
+//! and the keys ([`help`]) over the bottom bar ([`native`]), the command
+//! palette over them. Every other screen is the old canvas filling the
+//! window ([`super::embed`]), the covers and the lanes over it where it
+//! left their cells ([`super::widgets::cover`], [`super::lanes`], neither
 //! taking the pointer), and slots over them: the Mixer tab
 //! ([`super::mixer`]) or nothing, the bottom bar ([`bottom`]) or nothing,
 //! the list pane with its tabs ([`list`]) or nothing, and the command
@@ -14,21 +16,24 @@
 //! after every message, so it shows again as soon as it moves or the mode
 //! ends.
 
-use iced::widget::{opaque, pin, space, stack};
-use iced::{Element, Size, Widget as _};
+use iced::widget::{column, container, opaque, pin, space, stack};
+use iced::{Element, Fill, Size, Widget as _};
 
 use super::embed::Embed;
 use super::lanes::Lanes;
 use super::mixer;
 use super::widgets::cover::Covers;
 use super::window::Message;
-use crate::core::{Side, State};
+use crate::core::{Screen, Side, State};
 use crate::spectrum::SpectrumFrame;
-use crate::view::layout::{self, Layout};
+use crate::view::layout::{self, Layout, BAR_ROWS};
 
 pub mod bottom;
+pub mod help;
 pub mod list;
+pub mod now;
 pub mod palette;
+pub mod settings;
 pub mod setup;
 
 /// What the window has to show.
@@ -53,6 +58,10 @@ pub(super) fn view<'a>(
         Shown::Setup(status) => return setup::view(&status),
         Shown::Player(state) => state,
     };
+    if let Some(screen) = state.and_then(|state| native(state, embed, covers, heard)) {
+        let palette = state.and_then(palette::view);
+        return stack![screen, palette.unwrap_or_else(|| space().boxed())].boxed();
+    }
     let hide_pointer = state.is_some_and(crate::core::karaoke::pointer::hidden);
     let desk = state.and_then(|state| desk(state, embed, caps));
     let bar = state.and_then(|state| bar(state, embed, heard));
@@ -94,6 +103,28 @@ fn list<'a>(state: &State, embed: &Embed) -> Option<Element<'a, Message>> {
         .y(f32::from(m.list.y) * ch)
         .boxed(),
     )
+}
+
+/// The screen shown where it is one iced lays out whole: Now playing; the
+/// settings and the keys, each over the bottom bar where the main screen
+/// has it (its last rows of cells), the same bar.
+fn native<'a>(
+    state: &'a State,
+    embed: &Embed,
+    covers: &'a Covers,
+    heard: &SpectrumFrame,
+) -> Option<Element<'a, Message>> {
+    let page = match state.screen {
+        Screen::NowPlaying => return Some(now::view(state, covers)),
+        Screen::Settings => settings::view(state),
+        Screen::Help => help::view(state),
+        Screen::Main | Screen::Karaoke => return None,
+    };
+    let grid = embed.grid();
+    let (cw, ch) = embed.cell();
+    let top = f32::from(grid.rows.saturating_sub(BAR_ROWS)) * ch;
+    let bar = bottom::view(state, heard, f32::from(grid.cols) * cw, 0.0);
+    Some(column![container(page).width(Fill).height(top), opaque(bar)].boxed())
 }
 
 /// The bottom bar, over its place on the old canvas (to the window's

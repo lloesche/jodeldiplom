@@ -77,7 +77,7 @@ pub fn tag<'a, Message: 'a>(label: impl Into<String>, tone: Color) -> Element<'a
 
 /// A key's cap, `key` on it: what to press for a command.
 pub fn key<'a, Message: 'a>(key: impl Into<String>) -> Element<'a, Message> {
-    keycap(key, look::alpha(look::BG, 0.7), look::TEXT_DIM)
+    keycap(key, look::SELECTED, look::TEXT)
 }
 
 /// A key's cap of `fill`, `key` on it in `ink` (a button's key after its

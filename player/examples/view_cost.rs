@@ -10,9 +10,11 @@
 //! The main screen (its list pane native: the tabs and the browser's rows;
 //! its bottom bar native: the spectrum, the seek bar and the buttons), the
 //! same on a folder of 2,000 files (the cost must not grow with the
-//! folder), the queue, the Mixer tab, and the Transition and Karaoke tabs
-//! (their lanes native) on generated tracks with stems; the rest of each
-//! screen is the old canvas, one widget, until it is ported.
+//! folder), the queue, the Mixer tab, the Transition and Karaoke tabs
+//! (their lanes native) on generated tracks with stems, and the screens
+//! drawn whole in iced's widgets: Now playing, the settings (the device
+//! list open) and the help; the rest of each screen is the old canvas, one
+//! widget, until it is ported.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example view_cost -- [FRAMES] [--budget MEDIAN_MS WORST_MS]
@@ -34,7 +36,7 @@ use iced::{window, Size};
 use jodel_output::SimClock;
 use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::{Action, Side, State};
+use jodeldiplom::core::{Action, Screen, Side, State};
 use jodeldiplom::gui::window::{Gui, Message};
 
 use headless::{Headless, Took};
@@ -85,9 +87,11 @@ fn main() {
     app.dispatch(Action::SelectRow(2));
     app.dispatch(Action::Op(Op::OpenReplace));
     let playing = common::wait_for(&mut app, Duration::from_secs(10), |app| {
-        app.state.playing.track.is_some() && app.state.playing.position >= 0.05
+        app.state.playing.track.is_some()
+            && app.state.playing.position >= 0.05
+            && app.art().is_some()
     });
-    assert!(playing, "the track did not start");
+    assert!(playing, "the track did not start (with its cover)");
 
     // A folder of `n` files, the selection in the middle: the list makes
     // only the rows in view, a page whatever the folder.
@@ -132,6 +136,22 @@ fn main() {
             let mut k = common::transition_state(120, 36);
             k.side = Side::Karaoke;
             k
+        }),
+        ("nowplaying", {
+            let mut n = app.state.clone();
+            n.screen = Screen::NowPlaying;
+            n
+        }),
+        ("settings", {
+            let mut s = app.state.clone();
+            s.screen = Screen::Settings;
+            s.settings.picking = true;
+            s
+        }),
+        ("help", {
+            let mut h = app.state.clone();
+            h.screen = Screen::Help;
+            h
         }),
     ];
     let mut gui = Gui::headless(app);

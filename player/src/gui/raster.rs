@@ -478,48 +478,6 @@ impl PixelBackend {
         }
     }
 
-    /// The text of the cells in `area` on a clear ground, without their
-    /// background, as straight RGBA: text the window draws over a picture
-    /// of its own. The pixmap is left as it was.
-    pub fn text_on_clear(&mut self, area: Rect) -> image::RgbaImage {
-        let area = area.intersection(self.buffer.area);
-        let (cw, ch) = self.cell();
-        let (x0, y0) = (usize::from(area.x) * cw, usize::from(area.y) * ch);
-        let (w, h) = (usize::from(area.width) * cw, usize::from(area.height) * ch);
-        let rows = |pixmap: &[u32], stride: usize| -> Vec<u32> {
-            (y0..y0 + h)
-                .flat_map(|y| pixmap[y * stride + x0..y * stride + x0 + w].iter().copied())
-                .collect()
-        };
-        let kept = rows(&self.pixmap, self.width);
-        // On words that let everything through, the glyphs drawn over
-        // leave their colour premultiplied by their coverage, and that
-        // coverage in what no longer shows through.
-        for y in y0..y0 + h {
-            let row = y * self.width;
-            self.pixmap[row + x0..row + x0 + w].fill(super::pixels::SEE_THROUGH);
-        }
-        self.overlay(area);
-        let drawn = rows(&self.pixmap, self.width);
-        for (y, row) in kept.chunks(w.max(1)).enumerate() {
-            let at = (y0 + y) * self.width + x0;
-            self.pixmap[at..at + row.len()].copy_from_slice(row);
-        }
-        let bytes = drawn
-            .iter()
-            .flat_map(|&word| {
-                let alpha = 255 - (word >> 24) as u8;
-                let straight = |c: u8| {
-                    let c = u32::from(c) * 255 + u32::from(alpha) / 2;
-                    (c / u32::from(alpha.max(1))).min(255) as u8
-                };
-                let [r, g, b] = super::pixels::unpack(word);
-                [straight(r), straight(g), straight(b), alpha]
-            })
-            .collect();
-        image::RgbaImage::from_raw(w as u32, h as u32, bytes).expect("the area's size")
-    }
-
     fn draw_cell(&mut self, x: u16, y: u16) {
         self.paint_cell(x, y, true);
     }
@@ -726,42 +684,6 @@ mod tests {
         b.clear_region(ClearType::CurrentLine).unwrap();
         assert!((0..10).all(|col| !lit(&b, col, 1)));
         assert!(lit(&b, 0, 0) && lit(&b, 9, 2));
-    }
-
-    /// Text on a clear ground: clear where there is no ink, the text's
-    /// colour where its glyphs cover the pixel, partly clear at their
-    /// edges; the pixmap is left as it was.
-    #[test]
-    fn text_on_a_clear_ground_is_its_glyphs_alone() {
-        let mut b = backend();
-        let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 3));
-        buffer.set_string(1, 1, "Hg", Style::new().fg(Color::Rgb(250, 200, 40)));
-        b.draw(
-            buffer
-                .content()
-                .iter()
-                .enumerate()
-                .map(|(i, c)| ((i % 10) as u16, (i / 10) as u16, c)),
-        )
-        .unwrap();
-        let before = b.pixmap.clone();
-        let text = b.text_on_clear(Rect::new(0, 1, 4, 1));
-        assert_eq!(b.pixmap, before);
-        let (w, h) = b.cell();
-        assert_eq!((text.width(), text.height()), (4 * w as u32, h as u32));
-        let clear = |x: u32| (0..h as u32).all(|y| text.get_pixel(x, y).0[3] == 0);
-        // The first and the last cell have no text.
-        assert!((0..w as u32).all(clear));
-        assert!((3 * w as u32..4 * w as u32).all(clear));
-        let ink: Vec<_> = text.pixels().filter(|p| p.0[3] >= 160).collect();
-        assert!(ink.len() > w, "{}", ink.len());
-        let near = |p: &&image::Rgba<u8>| {
-            let fg = [250u8, 200, 40];
-            p.0[..3].iter().zip(fg).all(|(a, b)| a.abs_diff(b) <= 2)
-        };
-        assert!(ink.iter().all(near), "{ink:?}");
-        let edges = text.pixels().filter(|p| (1..255).contains(&p.0[3])).count();
-        assert!(edges > 0);
     }
 
     #[test]

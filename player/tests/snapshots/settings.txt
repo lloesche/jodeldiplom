@@ -1,39 +1,33 @@
-╭ Settings ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│                                                                                                                      │
-│   Output device         ‹ system default  ▾                                       ›                                  │
-│   Headroom              ‹ none (lossy files -1.5 dB, for their overs)             ›                                  │
-│   Tempo and beats       ‹ on: tempo, beat pulse and beat analysis                 ›                                  │
-│   Beat voting           ‹ on: the checked methods vote                            ›                                  │
-│     Spectral flux       ‹ [x] onsets through two trackers                         ›                                  │
-│     Beat This! network  ‹ [x] a neural network, our own inference                 ›                                  │
-│   Stems                 ‹ unavailable: no GPU, the cues listen to the mix         ›                                  │
-│   Stem switching        ‹ on the next bar: stems go on and off on the beat        ›                                  │
-│   Next track (N)        ‹ cut: the next track starts at once                      ›                                  │
-│     Its transition      ‹ the Transition tab's: fade                              ›                                  │
-│   Data folder           ‹ none  ▾                                                 ›                                  │
-│   ● System default  whatever the system's default output is                                                          │
-│   ○ Speakers (USB Audio DAC)  44.1 48 88.2 96 176.4 192 352.8 384 kHz · S32/S24in32 · 2 ch                           │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│ Saved to /home/me/.config/jodeldiplom/config.toml                                                                    │
-│ ↑↓ select   ←→ change   enter open   esc back                                                                        │
-│                                                                                                                      │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
-
-
+[title] Settings
+[section] Output
+[row] Output device [open] system default ▾
+  [entry selected] ● System default  whatever the system's default output is
+  [entry] ○ Speakers (USB Audio DAC)  44.1 48 88.2 96 176.4 192 352.8 384 kHz · S32/S24in32 · 2 ch
+[row] Headroom [choice] <none> | 0.5 dB | 1 dB | 2 dB | 3 dB
+  lossy files -1.5 dB, for their overs
+[section] Tempo and beats
+[row] Tempo and beats [switch on]
+  tempo, beat pulse and beat analysis
+[row] Beat voting [switch on]
+  the checked methods vote
+  [row] Spectral flux [x]
+    onsets through two trackers
+  [row] Beat This! network [x]
+    a neural network, our own inference
+[section] Stems
+[row] Stems [switch unusable]
+  unavailable: no GPU, the cues listen to the mix
+[row] Stem switching [choice] <on the next bar> | instantly
+  stems go on and off on the beat
+[section] Next track
+[row] Next track (N) [choice] <cut> | mix in
+  the next track starts at once
+  [row] Its transition [choice] <the tab's> | fade | drums first | bass swap | vocals last
+    the Transition tab's: fade
+[section] Data
+[row] Data folder [open] none ▾
+[dim] Saved to /home/me/.config/jodeldiplom/config.toml
+[hints] ↑↓ select   ←→ change   enter open   esc back
 [time] 1:23
 [seek] 34 %
 [time] 4:05

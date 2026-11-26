@@ -21,10 +21,13 @@ use jodeldiplom::gui::mixer::{self, said};
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
 use jodeldiplom::view::bottom::Bar;
 use jodeldiplom::view::command_palette::Palette;
+use jodeldiplom::view::help::Page as HelpPage;
 use jodeldiplom::view::lanes::WavePlot;
 use jodeldiplom::view::layout::{self, Bottom, Grid, Layout};
 use jodeldiplom::view::list::Pane;
+use jodeldiplom::view::now::NowPlaying;
 use jodeldiplom::view::plot::{LabelTone, Plot};
+use jodeldiplom::view::settings::Settings;
 use jodeldiplom::view::{self, CellPictures, Pictures, Scene};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -174,44 +177,54 @@ fn queue_side() {
     snapshot("queue", &text);
 }
 
+/// The text of a screen the window draws whole in iced's widgets: none on
+/// the cells.
+fn no_cells(state: &State) {
+    let text = draw(state, Grid::new(120, 36));
+    assert!(
+        text.trim().is_empty(),
+        "{:?} on the cells:\n{text}",
+        state.screen
+    );
+}
+
+/// The bottom bar's outline under a screen the window lays out, as wide
+/// as the window of 120 cells.
+fn bar_of(state: &State) -> String {
+    Bar::of(state, 120.0 * cell().0).to_string()
+}
+
 #[test]
 fn now_playing() {
     let mut state = common::playing_state(120, 36);
     state.screen = Screen::NowPlaying;
-    let text = draw(&state, Grid::new(120, 36));
-    // The cover (a placeholder here) and the caption under it; no path,
-    // details, spectrum, bar or buttons, and no hint how to return.
+    no_cells(&state);
+    let text = NowPlaying::of(&state, 0.0).to_string();
+    // The caption: title, artist and album (links), the file's format and
+    // rate, the status light's word, the tempo; no path, details,
+    // spectrum, bar or buttons, and no hint how to return.
     has(
         &text,
         &[
-            "♪",
             "Morning Light",
             "The Ramps · Synthetic Sessions",
-            "○ PCM",
+            "[chip source] FLAC",
+            "[chip] PCM",
             "♩ 128 BPM",
+            "Morning Light → GoTrack",
+            "The Ramps → GoArtist",
+            "Synthetic Sessions → GoAlbum",
         ],
     );
-    for gone in [
-        "file 44.1",
-        "FLAC",
-        "20 Hz",
-        "4:05",
-        "settings",
-        "esc",
-        "click",
-    ] {
+    for gone in ["file 44.1", "20 Hz", "4:05", "settings", "esc", "click"] {
         assert!(!text.contains(gone), "{gone:?} in\n{text}");
     }
-    let lines: Vec<&str> = text.lines().collect();
-    let title = lines
-        .iter()
-        .position(|l| l.contains("Morning Light"))
-        .unwrap();
-    // Title, artist and album, status, tempo: the caption ends a row
-    // above the bottom.
-    assert_eq!(title, 36 - 5, "the caption ends a row above the bottom");
-    assert!(lines[title - 2].contains('╰'), "a gap under the cover");
     snapshot("nowplaying", &text);
+    // Nothing playing: says so, no links.
+    state.playing.track = None;
+    let text = NowPlaying::of(&state, 0.0).to_string();
+    has(&text, &["[title] Nothing playing"]);
+    assert!(!text.contains("[links]"), "{text}");
 }
 
 #[test]
@@ -228,7 +241,8 @@ fn settings() {
     );
     state.settings.picking = true;
     state.config_file = Some("/home/me/.config/jodeldiplom/config.toml".into());
-    let text = draw(&state, Grid::new(120, 36));
+    no_cells(&state);
+    let text = format!("{}{}", Settings::of(&state), bar_of(&state));
     has(
         &text,
         &[
@@ -238,16 +252,77 @@ fn settings() {
             "● System default",
             "○ Speakers (USB Audio DAC)",
             "Saved to /home/me/.config/jodeldiplom/config.toml",
+            "[button] Settings",
         ],
     );
     snapshot("settings", &text);
 }
 
+/// The settings' rows as their controls show them: every row in its
+/// section, the one selected marked, switches, checks (boxes while the
+/// methods vote, radio buttons while one decides) and choices with the one
+/// set; the data folder's list open in its place.
+#[test]
+fn settings_rows_show_their_controls() {
+    let mut state = common::playing_state(120, 36);
+    state.screen = Screen::Settings;
+    state.settings.row = 7;
+    let text = Settings::of(&state).to_string();
+    has(
+        &text,
+        &[
+            "[section] Output",
+            "[section] Tempo and beats",
+            "[section] Stems",
+            "[section] Next track",
+            "[section] Data",
+            "[row] Headroom [choice] <none> | 0.5 dB | 1 dB | 2 dB | 3 dB",
+            "[row] Tempo and beats [switch on]",
+            "  [row] Spectral flux [x]",
+            "[row] Stems [switch unusable]",
+            "[row selected] Stem switching [choice] <on the next bar> | instantly",
+            "[row] Next track (N) [choice] <cut> | mix in",
+            "  [row] Its transition [choice] <the tab's> | fade | drums first",
+            "[row] Data folder [open]",
+        ],
+    );
+    state.config.beat_voting = false;
+    state.config.bpm = false;
+    let text = Settings::of(&state).to_string();
+    has(
+        &text,
+        &[
+            "[row] Tempo and beats [switch off]",
+            "no tempo, no beat pulse, nothing analysed",
+            "  [row] Spectral flux ( )",
+            "  [row] Beat This! network (●)",
+        ],
+    );
+    let dir = std::path::PathBuf::from("/home/me");
+    state.settings.folders = Some(jodeldiplom::core::FolderPick {
+        dir: Some(dir.clone()),
+        folders: Some(vec![dir.join("Music")]),
+        cursor: 2,
+    });
+    let text = Settings::of(&state).to_string();
+    has(
+        &text,
+        &[
+            "[entry] ✓ move the data folder here:",
+            "[entry] ↑ ..",
+            "[entry selected] ▸ Music",
+        ],
+    );
+    assert!(!text.contains("[row selected]"), "the list has the keys");
+}
+
+/// The help on a window of 120 × 50 cells: its first page.
 #[test]
 fn help() {
-    let mut state = common::playing_state(120, 36);
+    let mut state = common::playing_state(120, 50);
     state.screen = Screen::Help;
-    let text = draw(&state, Grid::new(120, 36));
+    no_cells(&state);
+    let text = format!("{}{}", HelpPage::of(&state), bar_of(&state));
     has(
         &text,
         &[
@@ -260,16 +335,19 @@ fn help() {
         ],
     );
     snapshot("help", &text);
+    // As many lines as the window shows.
+    let lines = HelpPage::of(&state).lines.len();
+    assert_eq!(lines, usize::from(state.fit.help_rows));
     // Scrolled to the end, the mouse section shows.
     update(&mut state, Action::HelpScroll(1_000));
     has(
-        &draw(&state, Grid::new(120, 36)),
+        &HelpPage::of(&state).to_string(),
         &["Mouse", "double click"],
     );
 }
 
-/// `/` on the help, then "volume": the search line as the browser's
-/// filter line, and only the keys it matches under their titles.
+/// `/` on the help, then "volume": the search, and only the keys it
+/// matches under their titles.
 #[test]
 fn help_searched() {
     let mut state = common::playing_state(120, 36);
@@ -278,7 +356,7 @@ fn help_searched() {
     for c in "volume".chars() {
         update(&mut state, Action::Type(c));
     }
-    let text = draw(&state, Grid::new(120, 36));
+    let text = format!("{}{}", HelpPage::of(&state), bar_of(&state));
     has(
         &text,
         &[
@@ -296,18 +374,16 @@ fn help_searched() {
         assert!(!text.contains(gone), "{gone:?} in\n{text}");
     }
     snapshot("help_search", &text);
-    // Enter keeps it (no cursor); nothing matching says so.
+    // Enter keeps it (no caret); nothing matching says so.
     update(&mut state, Action::Op(Op::Accept));
-    has(
-        &draw(&state, Grid::new(120, 36)),
-        &["/ volume", "device volume a step up"],
-    );
-    assert!(!draw(&state, Grid::new(120, 36)).contains("/ volume▏"));
+    let text = HelpPage::of(&state).to_string();
+    has(&text, &["/ volume", "device volume a step up"]);
+    assert!(!text.contains("/ volume▏"));
     update(&mut state, Action::Op(Op::Filter));
     update(&mut state, Action::Type('#'));
     update(&mut state, Action::Type('#'));
     has(
-        &draw(&state, Grid::new(120, 36)),
+        &HelpPage::of(&state).to_string(),
         &["/ volume##▏", "0 shown", "No key or text has “volume##”"],
     );
 }
@@ -472,7 +548,7 @@ fn the_right_column_keeps_its_width_between_tracks() {
 fn a_frame_of_another_size_than_the_state_is_drawn_blank() {
     // The window was resized and the state has not heard of it yet: the
     // layout (for 120 x 36) would not fit, so nothing is drawn until it has.
-    for screen in [Screen::Main, Screen::NowPlaying, Screen::Settings] {
+    for screen in [Screen::Main, Screen::Karaoke] {
         let mut state = common::playing_state(120, 36);
         state.screen = screen;
         for (cols, rows) in [(118, 35), (60, 20), (160, 50)] {

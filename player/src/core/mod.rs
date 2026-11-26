@@ -155,10 +155,10 @@ pub const SETTINGS_DELAY_MS: u64 = 400;
 pub enum Screen {
     /// The list pane, the right column and the bottom bar.
     Main,
-    /// The big cover, big spectrum and the signal path.
+    /// The cover as large as the window holds it, the track's title,
+    /// artist, album, format and tempo over its bottom.
     NowPlaying,
-    /// Device, its rate, resampling, the headroom and the player's other
-    /// settings.
+    /// The output device, the headroom and the player's other settings.
     Settings,
     /// Every key binding, from the keymap.
     Help,

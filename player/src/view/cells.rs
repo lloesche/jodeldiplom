@@ -1,7 +1,7 @@
 //! The text helpers of the cell renderer: widths in cells, wrapping and
 //! shortening to a number of cells, and where a tone lies in wrapped
-//! lines (for the mouse), and the right column's and Now playing's lines
-//! wrapped to their cells.
+//! lines (for the mouse), and the right column's lines wrapped to its
+//! cells.
 
 use unicode_width::UnicodeWidthStr;
 
@@ -221,36 +221,6 @@ pub fn wrap_path(path: &[Seg], max: usize) -> Vec<Vec<Seg>> {
         lines.last_mut().unwrap().extend(piece);
     }
     lines.retain(|l| !l.is_empty());
-    lines
-}
-
-/// The Now playing caption, wrapped to `max` cells: the title, artist ·
-/// album and the status light. The title, artist and album are links, as
-/// in [`info_lines`].
-pub fn caption_lines(state: &State, max: usize) -> Vec<Vec<Seg>> {
-    let Some(track) = &state.playing.track else {
-        return wrap(&[seg("Nothing playing", Tone::Title)], max);
-    };
-    let tags = &track.info.tags;
-    let mut lines = wrap(&[seg(track_title(&track.info), Tone::TitleLink)], max);
-    let mut by: Vec<Seg> = Vec::new();
-    if let Some(artist) = &tags.artist {
-        by.push(seg(artist.clone(), Tone::ArtistLink));
-    }
-    if let Some(album) = &tags.album {
-        if !by.is_empty() {
-            by.push(seg(" · ", Tone::Dim));
-        }
-        by.push(seg(album.clone(), Tone::AlbumLink));
-    }
-    if !by.is_empty() {
-        lines.extend(wrap(&by, max));
-    }
-    let (light, label, tone) = status_light(state);
-    lines.extend(wrap(&[seg(format!("{light} {label}"), tone)], max));
-    if let Some(bpm) = bpm_line(state) {
-        lines.extend(wrap(&bpm, max));
-    }
     lines
 }
 

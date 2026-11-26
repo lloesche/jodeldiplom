@@ -3,13 +3,16 @@
 //! wheel do.
 
 mod common;
+#[path = "../examples/headless/mod.rs"]
+mod headless;
 #[path = "common/setup.rs"]
 mod setup_web;
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use headless::Headless;
 use iced::keyboard::key::Named;
 use iced::keyboard::Key;
 use iced::mouse::{self, ScrollDelta};
@@ -20,7 +23,7 @@ use iced_test::simulator::{press_key, Simulator};
 use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::{update, Action, Effect, Gpu, Side, State};
+use jodeldiplom::core::{update, Action, Effect, Gpu, Screen, Side, State};
 use jodeldiplom::gui::pointer::Grab;
 use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::view::setup::Choice;
@@ -29,6 +32,14 @@ use setup_web::{start, when, Made, Web};
 /// The window's size in the tests.
 const SIZE: Size = Size::new(1280.0, 800.0);
 
+/// The headless renderers (iced's simulator, the shots' renderer), one
+/// test at a time: each makes a GPU device of its own, and several made
+/// and dropped at once on other threads can take the whole test process
+/// down (on Windows, with no panic to say so).
+fn gpu() -> MutexGuard<'static, ()> {
+    static GPU: Mutex<()> = Mutex::new(());
+    GPU.lock().unwrap_or_else(|e| e.into_inner())
+}
 /// The messages a click on what `selector` finds in `gui`'s view sends
 /// (an error where it is not shown).
 fn click<S>(gui: &Gui, selector: S) -> Result<Vec<Message>, iced_test::Error>
@@ -46,17 +57,32 @@ fn hear(gui: &mut Gui, event: iced::Event) {
     let _ = gui.update(Message::Event(event, window::Id::unique()));
 }
 
-/// A window of [`SIZE`] at scale 1 round a player with no output, showing
-/// `state`, a frame drawn (the bottom bar where the cell layout leaves it).
-fn window(state: State) -> Gui {
+/// A player with no output, no devices and no microphone.
+fn player() -> App {
     let dir = common::temp_dir("screens-window");
     let mut options = AppOptions::new(dir);
     options.output = Output::Null(SimClock::Realtime);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Err("no microphone".into()));
     options.mics = Arc::new(|| Ok(Vec::new()));
-    let mut gui = Gui::headless(App::new(options));
-    hear(&mut gui, iced::Event::Window(window::Event::Resized(SIZE)));
+    App::new(options)
+}
+
+/// A window of [`SIZE`] at scale 1 round a player with no output, showing
+/// `state`, a frame drawn (the bottom bar where the cell layout leaves it).
+fn window(state: State) -> Gui {
+    window_of(player(), state)
+}
+
+/// [`window`] round `app`.
+fn window_of(app: App, state: State) -> Gui {
+    window_sized(app, state, SIZE)
+}
+
+/// [`window_of`] of `size`.
+fn window_sized(app: App, state: State, size: Size) -> Gui {
+    let mut gui = Gui::headless(app);
+    hear(&mut gui, iced::Event::Window(window::Event::Resized(size)));
     hear(&mut gui, iced::Event::Window(window::Event::Rescaled(1.0)));
     gui.show(state);
     let _ = gui.update(Message::Frame(Instant::now()));
@@ -78,6 +104,7 @@ fn acts(messages: &[Message]) -> Vec<Action> {
 /// too (with a GPU); a click is the whole of it, press and release.
 #[test]
 fn the_bars_buttons_are_hit() {
+    let _gpu = gpu();
     let mut state = common::playing_state(160, 42);
     state.gpu = Gpu::Present("a GPU".into());
     let gui = window(state);
@@ -104,6 +131,7 @@ fn the_bars_buttons_are_hit() {
 /// starts nothing.
 #[test]
 fn dragging_the_bar_seeks_on_release() {
+    let _gpu = gpu();
     let state = common::playing_state(160, 42);
     let length = state.playing.duration().unwrap();
     let mut gui = window(state);
@@ -170,6 +198,7 @@ fn dragging_the_bar_seeks_on_release() {
 /// The wheel over the bar scrolls the list, as over the list.
 #[test]
 fn the_wheel_over_the_bar_scrolls_the_list() {
+    let _gpu = gpu();
     let state = common::playing_state(160, 42);
     let cursor = state.browser.cursor;
     let mut gui = window(state);
@@ -216,6 +245,7 @@ fn downloads_come_to(made: &Made, n: usize) -> bool {
 /// nothing more is tried.
 #[test]
 fn the_setup_screen_offers_try_again_and_quit_by_click_and_key() {
+    let _gpu = gpu();
     let dir = std::env::temp_dir().join(format!("jodeldiplom-screens-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
 
@@ -288,6 +318,7 @@ fn row_of(state: &State, title: &str) -> usize {
 /// its length.
 #[test]
 fn the_tabs_show_each_side() {
+    let _gpu = gpu();
     let gui = window(common::playing_state(160, 42));
     for (name, side) in [
         ("Browser", Side::Browser),
@@ -311,6 +342,7 @@ fn the_tabs_show_each_side() {
 /// right press queues the row.
 #[test]
 fn a_double_click_on_a_row_is_enter_and_the_wheel_scrolls() {
+    let _gpu = gpu();
     let state = common::playing_state(160, 42);
     let row = row_of(&state, "Undertow");
     let gui = window(state);
@@ -385,6 +417,7 @@ fn a_double_click_on_a_row_is_enter_and_the_wheel_scrolls() {
 /// the row (as a drag would): the core's double click, which plays it.
 #[test]
 fn a_double_click_on_a_queue_row_is_two_clicks_on_it() {
+    let _gpu = gpu();
     let mut state = common::playing_state(160, 42);
     update(&mut state, Action::ShowSide(Side::Queue));
     let mut gui = window(state);
@@ -426,6 +459,7 @@ fn a_double_click_on_a_queue_row_is_two_clicks_on_it() {
 /// its track moves there (the selection with it); let go of, it stays.
 #[test]
 fn dragging_a_queue_row_moves_its_track() {
+    let _gpu = gpu();
     let mut state = common::playing_state(160, 42);
     update(&mut state, Action::ShowSide(Side::Queue));
     let first = state.queue.paths[0].clone();
@@ -464,6 +498,7 @@ fn dragging_a_queue_row_moves_its_track() {
 /// selects it (the preview follows); without Ctrl it does not.
 #[test]
 fn ctrl_over_a_row_selects_it() {
+    let _gpu = gpu();
     let state = common::playing_state(160, 42);
     let row = row_of(&state, "Coda");
     let mut gui = window(state);
@@ -502,6 +537,7 @@ fn ctrl_over_a_row_selects_it() {
 /// page ends on the last row.
 #[test]
 fn the_list_shows_the_page_the_keys_turn() {
+    let _gpu = gpu();
     let mut state = common::playing_state(160, 42);
     let parent = state.browser.entries[0].clone();
     state.browser.entries = std::iter::once(parent)
@@ -535,6 +571,7 @@ fn the_list_shows_the_page_the_keys_turn() {
 /// the press.
 #[test]
 fn the_palette_runs_a_click_and_closes_beside_it() {
+    let _gpu = gpu();
     let mut state = common::playing_state(160, 42);
     update(&mut state, Action::Op(Op::Palette));
     for c in "ne".chars() {
@@ -549,4 +586,292 @@ fn the_palette_runs_a_click_and_closes_beside_it() {
     sim.simulate(iced_test::simulator::click());
     let closed = acts(&sim.into_messages().collect::<Vec<_>>());
     assert!(matches!(closed[..], [Action::Op(Op::Back)]), "{closed:?}");
+}
+
+/// The messages `events` send with the pointer moved to `at` first (as a
+/// pointer does: a link knows it is under the pointer once it has moved
+/// there).
+fn at_point(gui: &Gui, at: Point, events: &[iced::Event]) -> Vec<Message> {
+    let mut sim = Simulator::with_size(jodeldiplom::gui::iced_settings(), SIZE, gui.view());
+    sim.point_at(at);
+    sim.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
+        position: at,
+    })]);
+    sim.simulate(events.iter().cloned());
+    sim.into_messages().collect()
+}
+
+/// A press and release of the main button.
+fn a_click() -> [iced::Event; 2] {
+    [
+        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+        iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+    ]
+}
+
+/// Where `text` shows in `gui`'s view.
+fn bounds_of(gui: &Gui, text: &str) -> iced::Rectangle {
+    let mut sim = Simulator::with_size(jodeldiplom::gui::iced_settings(), SIZE, gui.view());
+    sim.find(text)
+        .unwrap_or_else(|e| panic!("{text:?}: {e}"))
+        .bounds()
+}
+
+/// Whether `text` shows in `gui`'s view.
+fn shows(gui: &Gui, text: &str) -> bool {
+    let mut sim = Simulator::with_size(jodeldiplom::gui::iced_settings(), SIZE, gui.view());
+    sim.find(text).is_ok()
+}
+
+/// On Now playing a click returns, as the key does; the caption's title,
+/// artist and album are links, each going where its key goes.
+#[test]
+fn a_click_on_now_playing_returns_and_its_links_jump() {
+    let _gpu = gpu();
+    let mut state = common::playing_state(160, 42);
+    state.screen = Screen::NowPlaying;
+    let mut app = player();
+    app.set_art(image::RgbImage::from_pixel(
+        64,
+        64,
+        image::Rgb([40, 60, 90]),
+    ));
+    let gui = window_of(app, state);
+    let op = |messages: &[Message]| match acts(messages)[..] {
+        [Action::Op(op)] => op,
+        ref other => panic!("{other:?}"),
+    };
+    // The cover's middle, and the ground beside it.
+    let middle = Point::new(SIZE.width / 2.0, SIZE.height / 3.0);
+    assert_eq!(op(&at_point(&gui, middle, &a_click())), Op::NowPlaying);
+    assert_eq!(
+        op(&at_point(&gui, Point::new(8.0, 8.0), &a_click())),
+        Op::NowPlaying
+    );
+    let title = bounds_of(&gui, "Morning Light");
+    assert_eq!(op(&at_point(&gui, title.center(), &a_click())), Op::GoTrack);
+    let by = bounds_of(&gui, "The Ramps · Synthetic Sessions");
+    let artist = Point::new(by.x + 6.0, by.center_y());
+    assert_eq!(op(&at_point(&gui, artist, &a_click())), Op::GoArtist);
+    let album = Point::new(by.x + by.width - 6.0, by.center_y());
+    assert_eq!(op(&at_point(&gui, album, &a_click())), Op::GoAlbum);
+}
+
+/// Now playing: the cover in the middle of the window (here a light one),
+/// as tall as the window but for its margin, darkened towards its bottom
+/// under the caption, and the caption's text drawn over it; without a
+/// cover, the caption under a placeholder.
+#[test]
+fn now_playing_is_the_cover_with_the_caption_over_it() {
+    let _gpu = gpu();
+    let light = image::RgbImage::from_pixel(64, 64, image::Rgb([235, 225, 210]));
+    let shot = |title: &str| {
+        let mut state = common::playing_state(160, 42);
+        state.screen = Screen::NowPlaying;
+        let track = state.playing.track.as_mut().unwrap();
+        let mut info = (*track.info).clone();
+        info.tags.title = Some(title.into());
+        track.info = Arc::new(info);
+        let mut app = player();
+        app.set_art(light.clone());
+        let gui = window_of(app, state);
+        let mut headless = Headless::new();
+        headless.frame(&gui, SIZE);
+        headless.screenshot(1.0)
+    };
+    let first = shot("Morning Light");
+    let at = |px: f32, py: f32| first.get_pixel(px as u32, py as u32).0;
+    // Square, as tall as the window but for the margin, in the middle.
+    let side = SIZE.height - 2.0 * 24.0;
+    let left = (SIZE.width - side) / 2.0;
+    let near =
+        |a: [u8; 4], b: [u8; 3], by: u8| a[..3].iter().zip(b).all(|(p, q)| p.abs_diff(q) <= by);
+    assert!(near(
+        at(SIZE.width / 2.0, 24.0 + side / 4.0),
+        [235, 225, 210],
+        2
+    ));
+    assert_eq!(at(left / 2.0, SIZE.height / 2.0), at(1.0, 1.0));
+    // At its bottom, under the caption, it is darkened.
+    let bottom = 24.0 + side - 3.0;
+    let darkest = (0..side as u32 / 2)
+        .map(|dx| at(left + 8.0 + dx as f32, bottom)[0])
+        .min()
+        .unwrap();
+    assert!(darkest < 120, "{darkest}");
+    // The caption's text is drawn there: another title, other pixels.
+    let second = shot("Wavelength Arrives");
+    let differ = (0..side as u32)
+        .flat_map(|dx| (0..(side / 3.0) as u32).map(move |dy| (dx, dy)))
+        .filter(|&(dx, dy)| {
+            let (x, y) = ((left as u32) + dx, (24.0 + side * 2.0 / 3.0) as u32 + dy);
+            first.get_pixel(x, y) != second.get_pixel(x, y)
+        })
+        .count();
+    assert!(differ > 500, "{differ}");
+
+    // Without a cover: the caption all the same.
+    let mut state = common::playing_state(160, 42);
+    state.screen = Screen::NowPlaying;
+    let gui = window(state);
+    assert!(shows(&gui, "Morning Light"));
+    assert!(shows(&gui, "♪"));
+}
+
+/// The settings' rows and controls take clicks: a row does what enter
+/// does on it (the old screen's value), a segment of a choice steps its
+/// row there (and the one set takes none), a device in the open list is
+/// chosen.
+#[test]
+fn settings_rows_step_values() {
+    let _gpu = gpu();
+    use jodel_playback::Headroom;
+    let mut state = common::playing_state(160, 42);
+    state.screen = Screen::Settings;
+    let mut gui = window(state.clone());
+    // The headroom's third choice, 1 dB: two steps on.
+    let messages = click(&gui, Id::new("setting-1-2")).unwrap();
+    assert!(
+        matches!(acts(&messages)[..], [Action::SettingsClick(1, 2)]),
+        "{messages:?}"
+    );
+    for message in messages {
+        let _ = gui.update(message);
+    }
+    assert_eq!(gui.state().unwrap().config.headroom, Headroom(10));
+    // Back to none: two steps back. The one set takes no click.
+    let messages = click(&gui, Id::new("setting-1-0")).unwrap();
+    assert!(matches!(
+        acts(&messages)[..],
+        [Action::SettingsClick(1, -2)]
+    ));
+    assert!(click(&gui, Id::new("setting-1-2")).unwrap().is_empty());
+    // The tempo's row: a click turns it off, as enter does.
+    let bpm = gui.state().unwrap().config.bpm;
+    let messages = click(&gui, Id::new("setting-2")).unwrap();
+    assert!(matches!(acts(&messages)[..], [Action::SettingsClick(2, 0)]));
+    for message in messages {
+        let _ = gui.update(message);
+    }
+    assert_eq!(gui.state().unwrap().config.bpm, !bpm);
+    // The device's row opens the list; a device in it is chosen.
+    state.settings.picking = true;
+    state.settings.devices = Some(vec![
+        jodeldiplom::core::DeviceChoice {
+            id: None,
+            name: "System default".into(),
+            summary: String::new(),
+        },
+        jodeldiplom::core::DeviceChoice {
+            id: Some("usb".into()),
+            name: "Speakers (USB Audio DAC)".into(),
+            summary: "44.1 48 kHz · 2 ch".into(),
+        },
+    ]);
+    let gui = window(state);
+    let messages = click(&gui, "Speakers (USB Audio DAC)").unwrap();
+    assert!(
+        matches!(acts(&messages)[..], [Action::ChooseDevice(1)]),
+        "{messages:?}"
+    );
+}
+
+/// The window's keys on the help: `?`, `/`, then "volume" typed (a
+/// capital too), as iced reports them. The window shows only the device
+/// volume's keys under the search; esc clears the search, a second
+/// leaves.
+#[test]
+fn the_window_searches_the_help() {
+    let _gpu = gpu();
+    let mut gui = window(common::playing_state(160, 42));
+    let ch = |c: &str| Key::Character(c.into());
+    press(&mut gui, ch("?"));
+    press(&mut gui, ch("/"));
+    for c in ["V", "o", "l", "u", "m", "e"] {
+        press(&mut gui, ch(c));
+    }
+    let _ = gui.update(Message::Frame(Instant::now()));
+    let state = gui.state().unwrap();
+    assert_eq!(state.screen, Screen::Help);
+    assert!(!state.quit);
+    for part in ["Volume", "alt+↑", "alt+↓", "device volume a step down"] {
+        assert!(shows(&gui, part), "missing {part:?}");
+    }
+    for gone in ["play / pause", "Browser and queue"] {
+        assert!(!shows(&gui, gone), "{gone:?} shows");
+    }
+    press(&mut gui, Key::Named(Named::Escape));
+    assert!(shows(&gui, "play / pause"));
+    assert_eq!(gui.state().unwrap().screen, Screen::Help);
+    press(&mut gui, Key::Named(Named::Escape));
+    assert_eq!(gui.state().unwrap().screen, Screen::Main);
+}
+
+/// The wheel over the help scrolls it three lines a step, as over the
+/// old screen; the help shows as many lines as the window reports to
+/// the core.
+#[test]
+fn the_wheel_scrolls_the_help() {
+    let _gpu = gpu();
+    let mut state = common::playing_state(160, 42);
+    state.screen = Screen::Help;
+    let mut gui = window(state);
+    let rows = gui.state().unwrap().fit.help_rows;
+    // 800 points: the page over the bar, in lines of 26.
+    assert!((20..=30).contains(&rows), "{rows}");
+    let mut sim = Simulator::with_size(jodeldiplom::gui::iced_settings(), SIZE, gui.view());
+    sim.point_at(Point::new(SIZE.width / 2.0, SIZE.height / 2.0));
+    sim.scroll(ScrollDelta::Lines { x: 0.0, y: -1.0 });
+    let messages: Vec<Message> = sim.into_messages().collect();
+    assert!(matches!(messages[..], [Message::Wheel(_)]), "{messages:?}");
+    for message in messages {
+        let _ = gui.update(message);
+    }
+    assert_eq!(gui.state().unwrap().help_scroll, 3);
+}
+
+/// The settings follow the keys: in a window too short for every row,
+/// down to the last row, the cards scroll so it shows whole (as the
+/// window does after each key: the operation run on the view, its second
+/// pass where it asks for one); back to the first, they scroll back.
+#[test]
+fn the_settings_keep_the_row_the_keys_are_on_in_view() {
+    use iced::advanced::widget::operation::Outcome;
+    use iced::advanced::widget::Operation;
+    use jodeldiplom::gui::widgets::Reveal;
+    let _gpu = gpu();
+    let small = Size::new(1000.0, 420.0);
+    let mut state = common::playing_state(160, 42);
+    state.screen = Screen::Settings;
+    let mut gui = window_sized(player(), state, small);
+    let last = jodeldiplom::core::SettingsRow::ALL.len() - 1;
+    for _ in 0..last {
+        press(&mut gui, Key::Named(Named::ArrowDown));
+    }
+    assert_eq!(gui.state().unwrap().settings.row, last);
+    let mut sim = Simulator::with_size(jodeldiplom::gui::iced_settings(), small, gui.view());
+    // Whether the row `i` shows whole.
+    let whole = |sim: &mut Simulator<'_, Message>, i: usize| {
+        let row = sim.find(Id::from(format!("setting-{i}"))).unwrap();
+        row.visible_bounds()
+            .is_some_and(|v| (v.height - row.bounds().height).abs() < 0.5)
+    };
+    let run = |sim: &mut Simulator<'_, Message>, mut reveal: Reveal| {
+        sim.operate(&mut reveal);
+        if let Outcome::Chain(mut next) = Operation::<()>::finish(&reveal) {
+            sim.operate(next.as_mut());
+        }
+        // The scroll takes effect at the next redraw, as in the window.
+        let redraw = window::Event::RedrawRequested(Instant::now());
+        sim.simulate([iced::Event::Window(redraw)]);
+    };
+    assert!(!whole(&mut sim, last), "the window is too short already");
+    run(
+        &mut sim,
+        gui.in_view().expect("the settings follow the keys"),
+    );
+    assert!(whole(&mut sim, last), "the last row is out of view");
+    assert!(!whole(&mut sim, 0), "scrolled: the first row went up");
+    run(&mut sim, Reveal::new("settings", "setting-0"));
+    assert!(whole(&mut sim, 0), "the first row is out of view");
 }

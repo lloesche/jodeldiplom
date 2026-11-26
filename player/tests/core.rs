@@ -1106,12 +1106,10 @@ fn the_help_searched_scrolls_within_the_matches() {
     press(&mut state, Key::ch('?'));
     press(&mut state, Key::ch('/'));
     press(&mut state, Key::ch('d'));
-    let Layout::Help(h) = layout::compute(&state, LISTED) else {
-        panic!("not the help")
-    };
-    let visible = usize::from(h.text.height);
+    // The window's lines but the search's.
+    let visible = usize::from(state.fit.help_rows) - 1;
     let lines = jodeldiplom::core::help_line_count(&state);
-    assert!(h.search.is_some());
+    assert!(state.help_search.is_some());
     assert!(lines > visible, "{lines} lines, {visible} shown");
     press(&mut state, key(KeyCode::PageDown));
     assert!(state.help_scroll > 0);
@@ -1134,10 +1132,6 @@ fn the_help_searched_scrolls_within_the_matches() {
     press(&mut state, Key::ch('?'));
     assert_eq!(state.screen, Screen::Help);
     assert_eq!(state.help_search, None);
-    let Layout::Help(h) = layout::compute(&state, LISTED) else {
-        panic!("not the help")
-    };
-    assert!(h.search.is_none());
 }
 
 fn line_text(line: &[Seg]) -> String {
@@ -1400,31 +1394,6 @@ fn clicking_the_title_artist_or_album_jumps() {
     let action = mouse::action(&state, PLAYING_AT, click).unwrap();
     let fx = update(&mut state, action);
     jumped(&state, &fx, "/music/Artist", "/music/Artist/Album");
-
-    // On Now playing: the caption's links, the rest of the screen returns.
-    let state = playing_at(track);
-    let Layout::NowPlaying(n) = layout::compute(&state, PLAYING_AT) else {
-        panic!()
-    };
-    let c = n.caption;
-    assert_eq!(
-        mouse::hit(&state, PLAYING_AT, c.x, c.y),
-        Some(Target::Link(Op::GoTrack))
-    );
-    assert_eq!(
-        mouse::hit(&state, PLAYING_AT, c.x, c.y + 1),
-        Some(Target::Link(Op::GoArtist))
-    );
-    let album_x = c.x + "The Ramps · ".chars().count() as u16;
-    assert_eq!(
-        mouse::hit(&state, PLAYING_AT, album_x, c.y + 1),
-        Some(Target::Link(Op::GoAlbum))
-    );
-    assert_eq!(
-        mouse::hit(&state, PLAYING_AT, c.x, c.y + 2),
-        Some(Target::Cover)
-    );
-    assert_eq!(mouse::hit(&state, PLAYING_AT, 0, 0), Some(Target::Cover));
 }
 
 /// Steps through settings reach the engine once, 400 ms after the last

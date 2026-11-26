@@ -11,7 +11,7 @@ use crate::core::karaoke;
 use crate::core::keymap::Op;
 use crate::core::sliders::Slider;
 use crate::core::text::{self, Tone};
-use crate::core::{device_window, folder_window, Action, Screen, SettingsRow, State};
+use crate::core::{Action, Screen, SettingsRow, State};
 use crate::view::cells;
 use crate::view::layout::{self, Grid, Layout};
 
@@ -61,7 +61,7 @@ pub struct MouseInput {
 pub enum Target {
     /// The cover.
     Cover,
-    /// The track text (on Now playing, a click returns).
+    /// The track text.
     Info,
     /// The device name in the signal path.
     Device,
@@ -69,18 +69,6 @@ pub enum Target {
     Bar,
     /// A button.
     Button(Op),
-    /// A settings row's `‹`.
-    SettingsLess(usize),
-    /// A settings row's value.
-    SettingsValue(usize),
-    /// A settings row's `›`.
-    SettingsMore(usize),
-    /// A device in the open list.
-    DeviceRow(usize),
-    /// A row of the data folder's list.
-    FolderRow(usize),
-    /// The help text.
-    HelpText,
     /// The title, artist or album of the playing track: where it goes.
     Link(Op),
     /// A Transition block's lanes (or its ruler).
@@ -179,44 +167,8 @@ pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
                 }
             }
         }
-        Layout::NowPlaying(n) => {
-            let lines = cells::caption_lines(state, usize::from(n.caption.width));
-            for (rect, op) in link_rects(&lines, n.caption) {
-                out.push((rect, Target::Link(op)));
-            }
-            out.push((n.screen, Target::Cover));
-        }
-        Layout::Settings(s) => {
-            if let (Some(list), Some(pick)) = (s.devices, &state.settings.folders) {
-                let start = folder_window(state, usize::from(list.height));
-                let n = pick.rows().len();
-                for i in 0..usize::from(list.height) {
-                    if start + i >= n {
-                        break;
-                    }
-                    let rect = Rect::new(list.x, list.y + i as u16, list.width, 1);
-                    out.push((rect, Target::FolderRow(start + i)));
-                }
-            } else if let Some(devices) = s.devices {
-                let start = device_window(state, usize::from(devices.height));
-                let n = state.settings.devices.as_ref().map_or(0, Vec::len);
-                for i in 0..usize::from(devices.height) {
-                    if start + i >= n {
-                        break;
-                    }
-                    let rect = Rect::new(devices.x, devices.y + i as u16, devices.width, 1);
-                    out.push((rect, Target::DeviceRow(start + i)));
-                }
-            }
-            for (i, line) in s.lines.iter().enumerate() {
-                out.push((line.less, Target::SettingsLess(i)));
-                out.push((line.more, Target::SettingsMore(i)));
-                out.push((line.rect, Target::SettingsValue(i)));
-            }
-        }
-        Layout::Help(h) => {
-            out.push((h.text, Target::HelpText));
-        }
+        // The window's own widgets take the pointer there.
+        Layout::Native => {}
         Layout::Karaoke(k) => {
             if let Some(c) = &k.controls {
                 for s in &c.sliders {
@@ -454,11 +406,6 @@ pub fn action_at(
         (Down(Left), Target::Device) => Some(Action::OpenSettings(SettingsRow::Device)),
         (Down(Left), Target::Cover) => Some(Action::Op(Op::NowPlaying)),
         (Down(Left), Target::Button(op) | Target::Link(op)) => Some(Action::Op(op)),
-        (Down(Left), Target::SettingsLess(i)) => Some(Action::SettingsClick(i, -1)),
-        (Down(Left), Target::SettingsMore(i)) => Some(Action::SettingsClick(i, 1)),
-        (Down(Left), Target::SettingsValue(i)) => Some(Action::SettingsClick(i, 0)),
-        (Down(Left), Target::DeviceRow(i)) => Some(Action::ChooseDevice(i)),
-        (Down(Left), Target::FolderRow(i)) => Some(Action::FolderRow(i)),
         _ => None,
     }
 }
@@ -489,7 +436,6 @@ mod tests {
     use super::*;
     use crate::browser::{Entry, EntryKind};
     use crate::config::Config;
-    use crate::core::update;
 
     /// The window the tests have.
     const GRID: Grid = Grid::new(120, 40);
@@ -537,20 +483,5 @@ mod tests {
             ),
             Some(Action::Op(Op::NowPlaying))
         ));
-    }
-
-    #[test]
-    fn settings_rows_step_values() {
-        let mut s = state();
-        s.screen = Screen::Settings;
-        let Layout::Settings(l) = layout::compute(&s, GRID) else {
-            panic!()
-        };
-        // The second row: the headroom.
-        let more = l.lines[1].more;
-        let a = action(&s, GRID, down(more.x, more.y)).unwrap();
-        let fx = update(&mut s, a);
-        assert_ne!(s.config.headroom, jodel_playback::Headroom::NONE);
-        assert!(fx.contains(&crate::core::Effect::SaveConfig));
     }
 }

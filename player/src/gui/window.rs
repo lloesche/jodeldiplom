@@ -234,6 +234,14 @@ impl Gui {
         self.app().map(|app| &app.state)
     }
 
+    /// What keeps the row or the entry the keys are on in view, on a
+    /// screen that scrolls them (the settings): run after each key.
+    pub fn in_view(&self) -> Option<super::widgets::Reveal> {
+        self.state()
+            .filter(|state| state.screen == crate::core::Screen::Settings)
+            .map(super::screens::settings::reveal)
+    }
+
     /// The text of the old canvas's cells as last drawn (the pictures'
     /// cells blank).
     pub fn text(&self) -> String {
@@ -453,6 +461,10 @@ impl Gui {
                         app.dispatch(action);
                         self.paint.dirty = true;
                     }
+                    // What the keys are on stays in view.
+                    if let Some(reveal) = self.in_view() {
+                        return iced::advanced::widget::operate(reveal);
+                    }
                 }
                 Phase::Leaving(_) => {}
             },
@@ -558,8 +570,11 @@ impl Gui {
                 }
                 let canvas = (&self.embed, &mut self.lanes);
                 self.paint.draw(plan, canvas, app, place, (heard, at));
-                self.covers
-                    .show(app.art(), &self.embed.covers(), self.scale);
+                // Now playing makes room for its cover itself; elsewhere
+                // the covers go where the canvas left them.
+                let spots = super::screens::now::spot(&app.state, self.size, self.scale)
+                    .map_or_else(|| self.embed.covers(), |spot| vec![spot]);
+                self.covers.show(app.art(), &spots, self.scale);
                 // Karaoke mode is fullscreen; leaving it, the window comes
                 // back.
                 let fullscreen = crate::core::karaoke::in_mode(&app.state);

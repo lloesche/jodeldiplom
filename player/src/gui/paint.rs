@@ -288,12 +288,13 @@ impl Paint {
             canvas.fit(place.size.0, place.size.1);
             canvas.hold(&app.state);
             let grid = canvas.grid();
-            // The list's page and the desk as wide as the window draws
-            // them, at its cells' size.
+            // The list's page, the help's and the desk as the window
+            // draws them, at its cells' size.
             let (cw, ch) = canvas.cell();
             let cell = (cw as f32 / place.scale, ch as f32 / place.scale);
             let fit = Fit {
                 desk_width: crate::view::layout::desk_width(grid, cell.0),
+                help_rows: crate::view::layout::help_rows(&app.state, grid, cell.1),
                 ..super::screens::list::fit(&app.state, grid, cell)
             };
             if fit != app.state.fit {

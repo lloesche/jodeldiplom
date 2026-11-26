@@ -1,39 +1,36 @@
-╭ Keys ────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Anywhere                                                                                                             │
-│   space                 play / pause                                                                                 │
-│   ←                     seek back 5 s                                                                                │
-│   →                     seek forward 5 s                                                                             │
-│   N / shift+→           next track                                                                                   │
-│   P / shift+←           previous track                                                                               │
-│   X                     what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings) │
-│   S                     stop                                                                                         │
-│   tab                   browser / queue / transition / karaoke / mixer                                               │
-│   F                     now playing, full screen                                                                     │
-│   T                     go to the playing track                                                                      │
-│   B                     go to its album folder                                                                       │
-│   R                     go to its artist folder                                                                      │
-│   M                     tempo and beat pulse on / off                                                                │
-│   alt+1                 stems: drums on / off (any off: the stems are heard, not the file)                           │
-│   alt+2                 stems: bass on / off                                                                         │
-│   alt+3                 stems: vocals on / off                                                                       │
-│   alt+4                 stems: other on / off                                                                        │
-│   alt+0                 stems: all on, the file as it is                                                             │
-│   alt+↑                 device volume a step up (macOS: the system's keys do not reach it while played)              │
-│   alt+↓                 device volume a step down                                                                    │
-│   ,                     settings                                                                                     │
-│   /                     filter this folder                                                                           │
-│   :                     command palette                                                                              │
-│   ?                     this help                                                                                    │
-│   Q / ctrl+c            quit                                                                                         │
-│   ctrl+s                save the queue as a playlist (among the saved queues)                                        │
-│   ctrl+l                the saved queues, in the browser (enter queues one, alt+enter plays it instead)              │
-│                                                                                                                      │
-│ Browser and queue                                                                                                    │
-│   ↑                     up                                                                                           │
-╰ ↑↓ scroll   / search   esc back ─────────────────────────────────────────────────────────────────────────────────────╯
-
-
-
+[title] Keys
+[hints] ↑↓ scroll   / search   esc back
+[section] Anywhere
+[keys] space  play / pause
+[keys] ←  seek back 5 s
+[keys] →  seek forward 5 s
+[keys] N / shift+→  next track
+[keys] P / shift+←  previous track
+[keys] X  what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings)
+[keys] S  stop
+[keys] tab  browser / queue / transition / karaoke / mixer
+[keys] F  now playing, full screen
+[keys] T  go to the playing track
+[keys] B  go to its album folder
+[keys] R  go to its artist folder
+[keys] M  tempo and beat pulse on / off
+[keys] alt+1  stems: drums on / off (any off: the stems are heard, not the file)
+[keys] alt+2  stems: bass on / off
+[keys] alt+3  stems: vocals on / off
+[keys] alt+4  stems: other on / off
+[keys] alt+0  stems: all on, the file as it is
+[keys] alt+↑  device volume a step up (macOS: the system's keys do not reach it while played)
+[keys] alt+↓  device volume a step down
+[keys] ,  settings
+[keys] /  filter this folder
+[keys] :  command palette
+[keys] ?  this help
+[keys] Q / ctrl+c  quit
+[keys] ctrl+s  save the queue as a playlist (among the saved queues)
+[keys] ctrl+l  the saved queues, in the browser (enter queues one, alt+enter plays it instead)
+[gap]
+[section] Browser and queue
+[keys] ↑  up
 [time] 1:23
 [seek] 34 %
 [time] 4:05

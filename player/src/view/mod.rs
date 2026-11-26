@@ -6,36 +6,37 @@
 //! empty and paints pixels there after the frame is drawn.
 //!
 //! Each part of the screen has its widgets: the box of a tab of its own
-//! (Transition, Karaoke, the Mixer's place), what is playing ([`now`]:
-//! the right column and Now playing), the settings ([`settings`]) and the
-//! keys ([`help`]). They are laid out on a grid of cells ([`layout`]),
-//! with text measured in cells ([`cells`]), and take the mouse there
-//! ([`mouse`]). The window draws the rest from their models, over the
-//! cells left to it: the list pane with its tabs ([`list`]), the command
-//! palette over everything ([`command_palette`]) and the bottom bar
-//! ([`bottom`], the spectrum's [`plot`]).
+//! (Transition, Karaoke, the Mixer's place) and the right column
+//! ([`now`]). They are laid out on a grid of cells ([`layout`]), with text
+//! measured in cells ([`cells`]), and take the mouse there ([`mouse`]).
+//! The window draws the rest from their models, over the cells left to
+//! it: the list pane with its tabs ([`list`]), the command palette over
+//! everything ([`command_palette`]) and the bottom bar ([`bottom`], the
+//! spectrum's [`plot`]); and whole screens: Now playing
+//! ([`now::NowPlaying`]), the settings ([`settings`]) and the keys
+//! ([`help`]).
 
 pub mod bottom;
 pub mod bubbles;
 pub mod cells;
 pub mod command_palette;
-mod help;
+pub mod help;
 pub mod karaoke;
 pub mod lanes;
 pub mod layout;
 pub mod list;
 pub mod mouse;
-mod now;
+pub mod now;
 pub mod palette;
 pub mod plot;
-mod settings;
+pub mod settings;
 pub mod setup;
 pub mod sync;
 pub mod transition;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
 use ratatui::Frame;
@@ -60,13 +61,10 @@ mod colors {
     pub const DIM: Color = cell(palette::DIM);
     pub const TEXT: Color = cell(palette::TEXT);
     pub const BORDER: Color = cell(palette::BORDER);
-    pub const SELECTED: Color = cell(palette::SELECTED);
     pub const BUTTON: Color = cell(palette::BUTTON);
-    pub const GREEN: Color = cell(palette::GREEN);
     pub const WARN: Color = cell(palette::WARN);
     pub const FAIL: Color = cell(palette::FAIL);
     pub const SOURCE: Color = cell(palette::SOURCE);
-    pub const FOLDER: Color = cell(palette::FOLDER);
     pub const TRACK: Color = cell(palette::TRACK);
 }
 
@@ -80,14 +78,6 @@ pub trait Pictures {
     /// pane's top): the cover starts under that line, half a cell down,
     /// at the left; otherwise it is centred.
     fn cover(&mut self, frame: &mut Frame, area: Rect, below_line: bool);
-    /// Whether text can go over the cover just drawn (over a cover, not
-    /// over the placeholder).
-    fn text_over_cover(&self) -> bool {
-        false
-    }
-    /// The cells of `caption` are text over the cover in `cover`: the
-    /// window darkens the cover behind them so they read on any cover.
-    fn caption(&mut self, _cover: Rect, _caption: Rect) {}
     /// A lane's waveform ([`lanes::WavePlot`]), on the Transition tab or the
     /// Karaoke tab's voice lane.
     fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot);
@@ -144,9 +134,8 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
             draw_tab(frame, scene, m, pictures);
             now::draw_column(frame, scene, m, pictures);
         }
-        Layout::NowPlaying(n) => now::draw_now(frame, scene, n, pictures),
-        Layout::Settings(s) => settings::draw(frame, scene.state, s),
-        Layout::Help(h) => help::draw(frame, scene.state, h),
+        // Drawn by the window in iced's widgets.
+        Layout::Native => {}
         Layout::Karaoke(k) => karaoke::draw_mode(frame, scene, k, pictures),
     }
 }
@@ -235,52 +224,6 @@ fn keep_start(text: &str, max: usize) -> String {
     }
     out.push('…');
     out
-}
-
-/// `left` shortened to fit `w` cells with `right` right-aligned after it.
-fn row_line(left: Vec<Span<'static>>, right: Vec<Span<'static>>, w: usize) -> Line<'static> {
-    let right_w: usize = right.iter().map(|s| width(&s.content)).sum();
-    let room = w.saturating_sub(right_w + 1);
-    let mut used = 0;
-    let mut spans = Vec::new();
-    for span in left {
-        let sw = width(&span.content);
-        if used + sw > room {
-            let cut = keep_start(&span.content, room.saturating_sub(used));
-            used += width(&cut);
-            spans.push(Span::styled(cut, span.style));
-            break;
-        }
-        used += sw;
-        spans.push(span);
-    }
-    if right_w > 0 && w > right_w {
-        spans.push(Span::raw(" ".repeat(w - right_w - used)));
-        spans.extend(right);
-    }
-    Line::from(spans)
-}
-
-/// A search line in `rect`: `/`, what is typed (with the caret while it
-/// is edited), and how many it leaves `shown` at the right where there is
-/// room (the help's search).
-fn search_line(frame: &mut Frame, rect: Rect, typed: &str, editing: bool, shown: usize) {
-    let mut spans = vec![
-        Span::styled("/ ", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
-        Span::styled(typed.to_owned(), Style::new().fg(TEXT)),
-    ];
-    if editing {
-        spans.push(Span::styled("▏", Style::new().fg(ACCENT)));
-    }
-    frame.render_widget(Paragraph::new(Line::from(spans)), rect);
-    let count = format!("{shown} shown");
-    let w = width(&count) as u16;
-    if rect.width > w + 10 {
-        frame.render_widget(
-            Paragraph::new(Span::styled(count, Style::new().fg(DIM))),
-            Rect::new(rect.right() - w, rect.y, w, 1),
-        );
-    }
 }
 
 /// A level as `n` blocks, `share` of them lit (▮) in `on`, the rest

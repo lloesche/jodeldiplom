@@ -11,14 +11,13 @@ use std::time::Instant;
 
 use headless::Headless;
 use iced::advanced::image::{Handle, Id as ImageId};
-use iced::keyboard::{key::Named, Key as IcedKey, Modifiers};
 use image::{Rgb, RgbaImage};
 use jodeldiplom::art::{sample_cover, Art};
-use jodeldiplom::core::{update, Screen, State};
+use jodeldiplom::core::{Screen, State};
 use jodeldiplom::gui::lanes::{Lanes, Offscreen as LaneOffscreen};
 use jodeldiplom::gui::pixels::PixelRect;
-use jodeldiplom::gui::widgets::cover::{Align, Caption, Covers, Spot};
-use jodeldiplom::gui::{self, font_px, Canvas};
+use jodeldiplom::gui::widgets::cover::{Align, Covers, Spot};
+use jodeldiplom::gui::{font_px, Canvas};
 use jodeldiplom::icon::Style;
 use jodeldiplom::view::layout::{self, Grid, Layout};
 use jodeldiplom::view::{palette, Scene};
@@ -121,9 +120,9 @@ fn near(a: &[u8], b: &[u8], by: u8) -> bool {
 
 /// The canvas leaves a cover's cells blank and says where it goes, for
 /// the window to draw it over them: on the main screen in its square from
-/// under the list pane's top line (half a cell down) at the left; on Now
-/// playing as large as the screen allows, in the middle, the caption over
-/// it. Without art, or on a screen without one, there is none.
+/// under the list pane's top line (half a cell down) at the left. Without
+/// art, or on a screen without one, there is none; Now playing is the
+/// window's own screen, nothing on the cells.
 #[test]
 fn the_covers_go_where_the_canvas_leaves_their_cells() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
@@ -143,7 +142,6 @@ fn the_covers_go_where_the_canvas_leaves_their_cells() {
     };
     assert_eq!(spot.place, (x, y + ch / 2, w, h - ch / 2));
     assert_eq!(spot.align, Align::TopLeft);
-    assert!(spot.caption.is_none());
     let blank = canvas.image();
     assert_eq!(
         *blank.get_pixel((x + w / 2) as u32, (y + h / 2) as u32),
@@ -156,19 +154,10 @@ fn the_covers_go_where_the_canvas_leaves_their_cells() {
 
     state.screen = Screen::NowPlaying;
     draw(&mut canvas, &state, Some(&art));
-    let Layout::NowPlaying(n) = layout::compute(&state, canvas.grid()) else {
-        panic!()
-    };
-    assert!(n.cover.height > m.cover.unwrap().height);
-    let [spot] = canvas.covers() else {
-        panic!("{:?}", canvas.covers())
-    };
-    assert_eq!(spot.place, place(&canvas, n.cover));
-    assert_eq!(spot.align, Align::Center);
-    let caption = spot.caption.as_ref().expect("the caption over it");
-    assert_eq!(caption.rect, place(&canvas, n.caption));
-    assert_eq!(caption.lead, 4 * ch);
+    assert!(canvas.covers().is_empty());
+    assert!(canvas.text().trim().is_empty(), "{}", canvas.text());
 
+    state.screen = Screen::Main;
     draw(&mut canvas, &state, None);
     assert!(canvas.covers().is_empty());
 }
@@ -206,79 +195,6 @@ fn a_cover_is_drawn_fitted_with_its_corners_rounded() {
     }
 }
 
-/// Now playing: the cover in the middle of the screen (here a light one),
-/// darkened towards its bottom under the caption, and the caption's text
-/// drawn over it; the screen's text is the caption alone.
-#[test]
-fn now_playing_is_the_cover_with_the_caption_over_it() {
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let mut state = sized(&mut canvas, 1280, 800);
-    state.screen = Screen::NowPlaying;
-    let light = image::RgbImage::from_pixel(64, 64, Rgb([235, 225, 210]));
-    let art = Art {
-        id: 3,
-        image: Arc::new(light),
-    };
-    draw(&mut canvas, &state, Some(&art));
-    // The place fills the screen's height.
-    let [spot] = canvas.covers() else {
-        panic!("{:?}", canvas.covers())
-    };
-    let (x, y, w, h) = spot.place;
-    assert_eq!(h, usize::from(canvas.grid().rows) * canvas.cell().1);
-    // The caption: title, artist and album, the status light; nothing else.
-    let text = canvas.text();
-    for part in ["Morning Light", "The Ramps · Synthetic Sessions", "○ PCM"] {
-        assert!(text.contains(part), "missing {part:?} in\n{text}");
-    }
-    for gone in ["file 44.1", "settings", "20 Hz", "esc", "4:05", "FLAC"] {
-        assert!(!text.contains(gone), "{gone:?} on Now playing");
-    }
-
-    let mut headless = Headless::new();
-    let mut covers = Covers::default();
-    covers.show(Some(&art), canvas.covers(), 1.0);
-    let shot = drawn(&mut headless, &covers, (1280, 800), 1.0);
-    let side = w.min(h);
-    let (ix, iy) = (x + (w - side) / 2, y + (h - side) / 2);
-    let at = |px: usize, py: usize| shot.get_pixel(px as u32, py as u32).0;
-    // Its top is the cover as it is; beside it the ground.
-    assert!(near(
-        &at(ix + side / 2, iy + side / 4),
-        &[235, 225, 210, 255],
-        2
-    ));
-    assert_eq!(at(ix / 2, iy + side / 2), at(1, 1));
-    // Under the caption, at the cover's bottom, it is darkened.
-    let caption = spot.caption.clone().expect("the caption");
-    let (cx, cy, cw, chh) = caption.rect;
-    assert!(cx > ix && cy < iy + side);
-    let darkest = (cx..cx + cw)
-        .map(|px| at(px, iy + side - 3)[0])
-        .min()
-        .unwrap();
-    assert!(darkest < 120, "{darkest}");
-    // The caption's text is drawn over it: without it, its pixels differ.
-    let mut bare = spot.clone();
-    let (tw, th) = (cw as u32, chh as u32);
-    bare.caption = Some(Caption {
-        text: Handle::from_rgba(tw, th, vec![0; (tw * th * 4) as usize]),
-        ..caption
-    });
-    covers.show(Some(&art), &[bare], 1.0);
-    let without = drawn(&mut headless, &covers, (1280, 800), 1.0);
-    let ink = (cx..cx + cw)
-        .flat_map(|px| (cy..cy + chh).map(move |py| (px as u32, py as u32)))
-        .filter(|&(px, py)| shot.get_pixel(px, py) != without.get_pixel(px, py))
-        .count();
-    assert!(ink > 200, "{ink}");
-
-    // Without a cover: a placeholder and the caption under it.
-    draw(&mut canvas, &state, None);
-    let text = canvas.text();
-    assert!(text.contains('\u{266a}') && text.contains("Morning Light"));
-}
-
 /// A cover's art is scaled once for its art and size: the same art at
 /// the same size keeps its image (wherever it goes), another art or size
 /// is fitted anew, and no art shows nothing.
@@ -293,7 +209,6 @@ fn a_covers_art_is_kept_by_art_id_and_size() {
         let spot = Spot {
             place,
             align: Align::Center,
-            caption: None,
         };
         covers.show(art, &[spot], 1.0);
         covers.images().next().map(Handle::id)
@@ -319,7 +234,7 @@ fn a_covers_art_is_kept_by_art_id_and_size() {
 /// Frames drawn one after another (pictures kept where nothing under them
 /// changed, cells redrawn only where they did) end in the same pixels as
 /// the last frame drawn afresh: through covers that stay, change and go
-/// (their cells left blank for the window), a caption over one and the
+/// (their cells left blank for the window), Now playing and the
 /// Transition tab.
 #[test]
 fn frames_in_a_row_end_as_the_last_drawn_afresh() {
@@ -1023,49 +938,6 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
             .count();
         assert_eq!(lit, 0, "the next block's lanes show nothing yet");
     }
-}
-
-/// The window's keys on the help: `?`, `/`, then "volume" typed (a capital
-/// too), as iced reports them. The window shows only the device volume's
-/// keys under the search line; esc clears the search, a second leaves.
-#[test]
-fn the_window_searches_the_help() {
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let mut state = sized(&mut canvas, 1280, 800);
-    let press = |state: &mut State, key: IcedKey| {
-        let key = gui::key(&key, Modifiers::empty()).unwrap();
-        if let Some(action) = jodeldiplom::core::keymap::action(state, key) {
-            update(state, action);
-        }
-    };
-    let ch = |c: &str| IcedKey::Character(c.into());
-    press(&mut state, ch("?"));
-    press(&mut state, ch("/"));
-    for c in ["V", "o", "l", "u", "m", "e"] {
-        press(&mut state, ch(c));
-    }
-    assert_eq!(state.screen, Screen::Help);
-    assert!(!state.quit);
-    draw(&mut canvas, &state, None);
-    let text = canvas.text();
-    for part in [
-        "/ Volume",
-        "alt+↑",
-        "device volume a step up",
-        "alt+↓",
-        "device volume a step down",
-    ] {
-        assert!(text.contains(part), "missing {part:?} in\n{text}");
-    }
-    for gone in ["play / pause", "Browser and queue"] {
-        assert!(!text.contains(gone), "{gone:?} in\n{text}");
-    }
-    press(&mut state, IcedKey::Named(Named::Escape));
-    draw(&mut canvas, &state, None);
-    assert!(canvas.text().contains("play / pause"));
-    assert_eq!(state.screen, Screen::Help);
-    press(&mut state, IcedKey::Named(Named::Escape));
-    assert_eq!(state.screen, Screen::Main);
 }
 
 /// Karaoke mode's stage on the GPU: a word ahead of the playhead shows as

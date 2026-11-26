@@ -1,6 +1,6 @@
 //! The pictures as the widgets ask for them: their cells left empty while
 //! the frame is drawn, each kept for the canvas to paint after it, or to
-//! place for the window (a cover and the text over it).
+//! place for the window (a cover).
 
 use ratatui::layout::Rect;
 use ratatui::Frame;
@@ -16,8 +16,6 @@ pub(super) enum Paint {
     /// A cover (the window draws it), and whether it starts under a line
     /// through its first row.
     Cover(Rect, bool),
-    /// Text over a cover: the cover's rect and the text's.
-    Caption(Rect, Rect),
     /// A lane of the Transition tab.
     Wave(Box<WavePlot>),
     /// A Transition block's bar numbers.
@@ -30,7 +28,7 @@ impl Paint {
     /// The cells it goes in.
     pub(super) fn rect(&self) -> Rect {
         match self {
-            Paint::Cover(r, _) | Paint::Caption(_, r) => *r,
+            Paint::Cover(r, _) => *r,
             Paint::Wave(plot) => plot.area,
             Paint::Ruler(plot) => plot.area,
             Paint::Karaoke(area, _) => *area,
@@ -70,13 +68,5 @@ impl Pictures for PixelPictures {
         view::blank(frame, area);
         self.paints
             .push(Paint::Karaoke(area, Box::new(picture.clone())));
-    }
-
-    fn text_over_cover(&self) -> bool {
-        self.has_art
-    }
-
-    fn caption(&mut self, cover: Rect, caption: Rect) {
-        self.paints.push(Paint::Caption(cover, caption));
     }
 }

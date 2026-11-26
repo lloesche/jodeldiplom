@@ -1,36 +1,6 @@
-                              ╭──────────────────────────────────────────────────────────╮
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                             ♪                            │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              │                                                          │
-                              ╰──────────────────────────────────────────────────────────╯
-
-                              Morning Light
-                              The Ramps · Synthetic Sessions
-                              ○ PCM
-                              ♩ 128 BPM
-
+[title] Morning Light
+[by] The Ramps · Synthetic Sessions
+[chip source] FLAC 44.1
+[chip] PCM
+[tempo Rest] ♩ 128 BPM
+[links] Morning Light → GoTrack, The Ramps → GoArtist, Synthetic Sessions → GoAlbum

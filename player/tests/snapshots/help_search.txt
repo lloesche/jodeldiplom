@@ -1,39 +1,13 @@
-╭ Keys ────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Anywhere                                                                                                             │
-│   alt+↑                 device volume a step up (macOS: the system's keys do not reach it while played)              │
-│   alt+↓                 device volume a step down                                                                    │
-│                                                                                                                      │
-│ Mixer tab                                                                                                            │
-│   ↑                     the fader 1 dB up (the master: the player's volume, up to 0 dB)                              │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│ / volume▏                                                                                                    3 shown │
-╰ ↑↓ scroll   / search   esc back ─────────────────────────────────────────────────────────────────────────────────────╯
-
-
-
+[title] Keys
+[search] / volume▏  3 shown
+[hints] ↑↓ scroll   / search   esc back
+[section] Anywhere
+[keys] alt+↑  device volume a step up (macOS: the system's keys do not reach it while played)
+[keys] alt+↓  device volume a step down
+[gap]
+[section] Mixer tab
+[keys] ↑  the fader 1 dB up (the master: the player's volume, up to 0 dB)
+[gap]
 [time] 1:23
 [seek] 34 %
 [time] 4:05

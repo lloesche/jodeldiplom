@@ -3,7 +3,9 @@
 //! as the window draws them ([`Gui::view`], with iced's headless renderer:
 //! the old canvas, the widgets iced draws over it, and what the GPU draws
 //! itself, Karaoke mode's stage among it), and for each a `gui-*.txt` with
-//! the text of its cells (the pictures' cells blank). Each screen at
+//! the text of its cells (the pictures' cells blank), or the outline of
+//! its model where the window draws it whole in iced's widgets (Now
+//! playing, the settings, the help). Each screen at
 //! 1280 × 800 at scale 1, and as `gui-*-hidpi` at 1512 × 982 at scale 2.
 //! The setup screen comes first, on a made-up web: under way
 //! (`gui-setup`) and stopped by a failure (`gui-setup-failed`), each with
@@ -90,7 +92,7 @@ impl Shots {
         write_png(&path, &self.headless.screenshot(scale));
         durable::write_atomic(
             &self.out.join(format!("gui-{name}.txt")),
-            self.gui.text().as_bytes(),
+            self.text().as_bytes(),
         )
         .expect("write the text");
         println!(
@@ -99,6 +101,20 @@ impl Shots {
             size.width,
             size.height
         );
+    }
+
+    /// The text of what shows: a screen's outline where the window lays
+    /// it out in iced's widgets, the old canvas's cells otherwise.
+    fn text(&self) -> String {
+        use jodeldiplom::view::{help, now, settings};
+        match self.gui.state() {
+            Some(s) if s.screen == Screen::NowPlaying => {
+                now::NowPlaying::of(s, s.heard()).to_string()
+            }
+            Some(s) if s.screen == Screen::Settings => settings::Settings::of(s).to_string(),
+            Some(s) if s.screen == Screen::Help => help::Page::of(s).to_string(),
+            _ => self.gui.text(),
+        }
     }
 
     /// `state` in a window of exactly `cells`, at a scale of 1.
@@ -251,8 +267,38 @@ fn main() {
         let mut settings = state.clone();
         settings.screen = Screen::Settings;
         settings.settings.picking = true;
+        // The rows alone, the stems' row selected, stems on a GPU.
+        let mut settings_rows = state.clone();
+        settings_rows.screen = Screen::Settings;
+        settings_rows.settings.row = 6;
+        settings_rows.gpu = jodeldiplom::core::Gpu::Present("a GPU".into());
+        settings_rows.config.stems = true;
+        // The data folder's list open on a folder of four.
+        let mut settings_folders = state.clone();
+        settings_folders.screen = Screen::Settings;
+        settings_folders.settings.row = 10;
+        let home = PathBuf::from(if cfg!(windows) {
+            r"D:\Music"
+        } else {
+            "/home/me"
+        });
+        settings_folders.settings.folders = Some(jodeldiplom::core::FolderPick {
+            dir: Some(home.clone()),
+            folders: Some(
+                ["Albums", "Downloads", "Karaoke", "Players"]
+                    .iter()
+                    .map(|n| home.join(n))
+                    .collect(),
+            ),
+            cursor: 3,
+        });
         let mut help = state.clone();
         help.screen = Screen::Help;
+        let mut help_search = help.clone();
+        jodeldiplom::core::update(&mut help_search, Action::Op(Op::Filter));
+        for c in "volume".chars() {
+            jodeldiplom::core::update(&mut help_search, Action::Type(c));
+        }
         let mut filter = state.clone();
         jodeldiplom::core::update(&mut filter, Action::Op(Op::Filter));
         for c in "carr".chars() {
@@ -268,7 +314,10 @@ fn main() {
             ("queue", queue),
             ("nowplaying", now),
             ("settings", settings),
+            ("settings-rows", settings_rows),
+            ("settings-folders", settings_folders),
             ("help", help),
+            ("help-search", help_search),
             ("filter", filter),
             ("palette", palette),
             // The Transition tab, on generated tracks with stems and waveforms,

@@ -44,7 +44,7 @@ pub use transition::{
 use ratatui::layout::Rect;
 
 use crate::core::{Fit, Screen, Side, State};
-use crate::view::cells::{self, width};
+use crate::view::cells;
 
 /// The smallest size anything but a note is drawn at.
 pub const MIN_SIZE: (u16, u16) = (40, 12);
@@ -136,67 +136,6 @@ pub struct MainLayout {
     pub bottom: Bottom,
 }
 
-/// The Now playing screen: the cover filling the screen and a caption
-/// (title, artist · album, status light) at its bottom left. With a cover
-/// the window draws it in `cover` and the caption over it; the placeholder
-/// (no cover) goes in `cover_above`, which leaves the caption's rows free.
-/// The caption is in the same place either way.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NowLayout {
-    /// The whole screen (a click anywhere returns).
-    pub screen: Rect,
-    /// The cover, as large as the screen allows (square, in cells of
-    /// twice the height of their width).
-    pub cover: Rect,
-    /// The cover with the caption's rows free under it.
-    pub cover_above: Rect,
-    /// The caption: under `cover_above` at its left edge, a row above the
-    /// bottom (so over `cover`'s bottom left).
-    pub caption: Rect,
-}
-
-/// One settings row.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SettingsLine {
-    /// The whole row.
-    pub rect: Rect,
-    /// The `‹` that steps back.
-    pub less: Rect,
-    /// The value.
-    pub value: Rect,
-    /// The `›` that steps on.
-    pub more: Rect,
-}
-
-/// The settings screen.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SettingsLayout {
-    /// The bordered pane.
-    pub pane: Rect,
-    /// One line per [`crate::core::SettingsRow`].
-    pub lines: Vec<SettingsLine>,
-    /// The device list, or the data folder's list, when open.
-    pub devices: Option<Rect>,
-    /// Notes under the rows (the config file).
-    pub notes: Rect,
-    /// The bottom bar (no spectrum).
-    pub bottom: Bottom,
-}
-
-/// The help screen.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HelpLayout {
-    /// The bordered pane.
-    pub pane: Rect,
-    /// The text inside it.
-    pub text: Rect,
-    /// The search line under the text, while the help is searched (as the
-    /// browser's filter line).
-    pub search: Option<Rect>,
-    /// The bottom bar (no spectrum).
-    pub bottom: Bottom,
-}
-
 /// The layout of the screen shown.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Layout {
@@ -204,26 +143,20 @@ pub enum Layout {
     TooSmall(Rect),
     /// The main screen.
     Main(Box<MainLayout>),
-    /// Now playing.
-    NowPlaying(NowLayout),
-    /// Settings.
-    Settings(SettingsLayout),
-    /// Help.
-    Help(HelpLayout),
+    /// A screen the window lays out in iced's widgets (Now playing, the
+    /// settings, the keys): nothing on the cells.
+    Native,
     /// Karaoke mode.
     Karaoke(KaraokeLayout),
 }
 
 impl Layout {
-    /// The bottom bar, on every screen but the note and Now playing.
+    /// The bottom bar, on the main screen (the screens the window lays
+    /// out have theirs in their own place).
     pub fn bottom(&self) -> Option<&Bottom> {
         match self {
-            Layout::TooSmall(_) => None,
             Layout::Main(m) => Some(&m.bottom),
-            Layout::NowPlaying(_) => None,
-            Layout::Settings(s) => Some(&s.bottom),
-            Layout::Help(h) => Some(&h.bottom),
-            Layout::Karaoke(_) => None,
+            Layout::TooSmall(_) | Layout::Native | Layout::Karaoke(_) => None,
         }
     }
 }
@@ -231,14 +164,10 @@ impl Layout {
 /// The layout for `state` on `grid`.
 pub fn compute(state: &State, grid: Grid) -> Layout {
     let area = grid.area();
-    if grid.too_small() {
-        return Layout::TooSmall(area);
-    }
     match state.screen {
+        Screen::NowPlaying | Screen::Settings | Screen::Help => Layout::Native,
+        _ if grid.too_small() => Layout::TooSmall(area),
         Screen::Main => Layout::Main(Box::new(main(state, grid))),
-        Screen::NowPlaying => Layout::NowPlaying(now_playing(state, area)),
-        Screen::Settings => Layout::Settings(settings(state, area)),
-        Screen::Help => Layout::Help(help(state, area)),
         Screen::Karaoke => Layout::Karaoke(karaoke::mode(state, area)),
     }
 }
@@ -258,12 +187,11 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
     }
     let area = grid.area();
     let list = main_list(state, grid);
-    let help = help(state, area);
     // The wide tabs' pane, inside its border.
     let wide = in_border(area);
     Fit {
         list_rows: list.rows.height,
-        help_rows: help.text.height + u16::from(help.search.is_some()),
+        help_rows: help_rows(state, grid, CELL_HEIGHT),
         desk_width: desk_width(grid, CELL_WIDTH),
         lane_letters: transition::lane_width(wide),
         controls_reach: f32::from(CONTROLS_ROWS + 2) / f32::from(grid.rows),
@@ -277,6 +205,17 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
 /// at [`crate::gui::font_px`]'s size there (Cascadia Mono's, without it,
 /// is 9; the window gives the desk's width at its own cells).
 pub const CELL_WIDTH: f32 = 8.0;
+
+/// A cell's height in points at a scale of 1, as [`CELL_WIDTH`].
+pub const CELL_HEIGHT: f32 = 19.0;
+
+/// The help's lines on `grid`, a cell `cell` points high: the page over
+/// the bottom bar, measured in points ([`crate::view::help::rows`]; the
+/// window gives them at its own cells).
+pub fn help_rows(state: &State, grid: Grid, cell: f32) -> u16 {
+    let page = f32::from(grid.rows.saturating_sub(BAR_ROWS)) * cell;
+    crate::view::help::rows(page, state)
+}
 
 /// The Mixer tab's desk's width in points on `grid`, a cell `cell` points
 /// wide: the list pane's inside, the whole width (the window draws the
@@ -487,150 +426,6 @@ fn square_in(area: Rect) -> Rect {
         height,
     )
 }
-
-/// The widest a caption wraps to.
-fn caption_wrap(cover_above: Rect, x: u16, area: Rect) -> usize {
-    let room = area.right().saturating_sub(x + 2);
-    usize::from(cover_above.width.max(24).min(room).max(1))
-}
-
-fn now_playing(state: &State, area: Rect) -> NowLayout {
-    let cover = square_in(area);
-    // The caption's rows and a free row each side of it come off the
-    // cover above it; wrapping to that cover's width may take more rows.
-    let mut rows = cells::caption_lines(state, usize::from(area.width.saturating_sub(4))).len();
-    let (mut cover_above, mut lines);
-    loop {
-        let above = Rect {
-            height: area.height.saturating_sub(rows as u16 + 2),
-            ..area
-        };
-        cover_above = square_in(above);
-        let x = cover_above.x.max(area.x + 2);
-        lines = cells::caption_lines(state, caption_wrap(cover_above, x, area));
-        if lines.len() <= rows || cover_above.height == 0 {
-            break;
-        }
-        rows = lines.len();
-    }
-    let x = cover_above.x.max(area.x + 2);
-    let height = (lines.len() as u16).min(area.height.saturating_sub(1));
-    let width = lines
-        .iter()
-        .map(|l| l.iter().map(|s| width(&s.text)).sum::<usize>())
-        .max()
-        .unwrap_or(0) as u16;
-    let caption = Rect::new(
-        x,
-        area.bottom().saturating_sub(1 + height),
-        width.min(area.right().saturating_sub(x)),
-        height,
-    );
-    NowLayout {
-        screen: area,
-        cover,
-        cover_above,
-        caption,
-    }
-}
-
-/// The width of a settings label column.
-pub const SETTINGS_LABEL: u16 = 24;
-/// The widest a settings value is shown.
-pub const SETTINGS_VALUE: u16 = 56;
-
-fn settings(state: &State, area: Rect) -> SettingsLayout {
-    let (top, bottom) = bottom(area, 0);
-    let pane = top;
-    let inner = Rect::new(
-        pane.x + 2,
-        pane.y + 2,
-        pane.width.saturating_sub(4),
-        pane.height.saturating_sub(3),
-    );
-    let rows = crate::core::SettingsRow::ALL.len() as u16;
-    let notes_h = 3u16;
-    // A blank line between rows when they fit (with the device list's
-    // room when it is open), else none.
-    let listing = state.settings.picking || state.settings.folders.is_some();
-    let list_h = if listing { 8 } else { 0 };
-    let step = if inner.height >= rows * 2 + notes_h + list_h {
-        2
-    } else {
-        1
-    };
-    let mut lines = Vec::new();
-    for (i, _) in crate::core::SettingsRow::ALL.iter().enumerate() {
-        let y = inner.y + i as u16 * step;
-        let rect = Rect::new(inner.x, y, inner.width, 1);
-        let value_x = inner.x + SETTINGS_LABEL;
-        let value_w = inner
-            .width
-            .saturating_sub(SETTINGS_LABEL + 4)
-            .min(SETTINGS_VALUE);
-        lines.push(SettingsLine {
-            rect,
-            less: Rect::new(value_x, y, 2, 1),
-            value: Rect::new(value_x + 2, y, value_w, 1),
-            more: Rect::new(value_x + 2 + value_w, y, 2, 1),
-        });
-    }
-    let rows_end = inner.y + rows * step;
-    let devices = listing.then(|| {
-        Rect::new(
-            inner.x + 2,
-            rows_end,
-            inner.width.saturating_sub(2),
-            inner.bottom().saturating_sub(rows_end + notes_h),
-        )
-    });
-    let notes = Rect::new(
-        inner.x,
-        inner.bottom().saturating_sub(notes_h),
-        inner.width,
-        notes_h.min(inner.height),
-    );
-    SettingsLayout {
-        pane,
-        lines,
-        devices,
-        notes,
-        bottom,
-    }
-}
-
-fn help(state: &State, area: Rect) -> HelpLayout {
-    let (top, bottom) = bottom(area, 0);
-    let inner = Rect::new(
-        top.x + 2,
-        top.y + 1,
-        top.width.saturating_sub(4),
-        top.height.saturating_sub(2),
-    );
-    let (text, search) = if state.help_search.is_some() {
-        (
-            Rect {
-                height: inner.height.saturating_sub(1),
-                ..inner
-            },
-            Some(Rect::new(
-                inner.x,
-                inner.bottom().saturating_sub(1),
-                inner.width,
-                1,
-            )),
-        )
-    } else {
-        (inner, None)
-    };
-    HelpLayout {
-        pane: top,
-        text,
-        search,
-        bottom,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -715,62 +510,5 @@ mod tests {
         // then a free row and 7 of text.
         assert_eq!(m.cover.unwrap().height, 4);
         assert_eq!(m.info.unwrap().y, m.cover.unwrap().bottom() + 1);
-    }
-
-    #[test]
-    fn now_playing_is_the_cover_with_a_caption() {
-        let (mut s, grid) = state(160, 48);
-        s.screen = Screen::NowPlaying;
-        let Layout::NowPlaying(n) = compute(&s, grid) else {
-            panic!()
-        };
-        let screen = Rect::new(0, 0, 160, 48);
-        assert_eq!(n.screen, screen);
-        // The cover is as tall as the screen, square and centred.
-        assert_eq!(n.cover, Rect::new(32, 0, 96, 48));
-        // The caption: under the smaller cover at its left edge, a row
-        // above the bottom, and so over the big cover's bottom left.
-        assert!(n.cover_above.bottom() < n.caption.y);
-        assert_eq!(n.caption.bottom(), 47);
-        assert_eq!(n.caption.x, n.cover_above.x);
-        assert!(n.caption.height >= 1 && inside(n.caption, n.cover));
-        // No bottom bar.
-        assert!(compute(&s, grid).bottom().is_none());
-        // Tall and narrow: the cover takes the width.
-        let grid = Grid::new(70, 40);
-        let Layout::NowPlaying(n) = compute(&s, grid) else {
-            panic!()
-        };
-        assert_eq!(n.cover.width, 70);
-        assert!(inside(n.cover, Rect::new(0, 0, 70, 40)));
-        assert!(inside(n.caption, Rect::new(0, 0, 70, 40)));
-        assert!(n.cover_above.bottom() < n.caption.y);
-    }
-
-    #[test]
-    fn settings_rows_and_device_list() {
-        let (mut s, grid) = state(100, 30);
-        s.screen = Screen::Settings;
-        s.settings.picking = true;
-        let Layout::Settings(l) = compute(&s, grid) else {
-            panic!()
-        };
-        let rows = crate::core::SettingsRow::ALL.len();
-        assert_eq!(l.lines.len(), rows);
-        let devices = l.devices.unwrap();
-        assert!(devices.y > l.lines[rows - 1].rect.y && devices.height > 4);
-        for line in &l.lines {
-            assert!(line.less.right() <= line.value.x && line.value.right() <= line.more.x);
-        }
-        // Tall enough: a blank line between rows; short: none, all inside.
-        for (height, step) in [(40, 2), (24, 1)] {
-            let (mut s, grid) = state(100, height);
-            s.screen = Screen::Settings;
-            let Layout::Settings(l) = compute(&s, grid) else {
-                panic!()
-            };
-            assert_eq!(l.lines[1].rect.y - l.lines[0].rect.y, step, "{height} rows");
-            assert!(l.lines[rows - 1].rect.y < l.notes.y, "{height} rows");
-        }
     }
 }
