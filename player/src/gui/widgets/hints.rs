@@ -7,9 +7,9 @@ use iced::{Alignment, Element, Widget as _};
 use super::key;
 use crate::gui::look::{self, size, space};
 
-/// The keys `hints` (each its name and what it does): a cap and its
-/// words, side by side (no name: the words alone, what to do).
-pub fn hints<'a, Message: 'a>(hints: &[(&str, &str)]) -> Row<Element<'a, Message>> {
+/// The keys `hints` (each its name, from the keymap, and what it does): a
+/// cap and its words, side by side (no name: the words alone, what to do).
+pub fn hints<'a, Message: 'a>(hints: &[(String, &str)]) -> Row<Element<'a, Message>> {
     hints
         .iter()
         .fold(Row::new().spacing(space::L), |all, (name, what)| {
@@ -21,7 +21,7 @@ pub fn hints<'a, Message: 'a>(hints: &[(&str, &str)]) -> Row<Element<'a, Message
             all.push(if name.is_empty() {
                 words.boxed()
             } else {
-                row![key(*name), words]
+                row![key(name.clone()), words]
                     .spacing(space::S)
                     .align_y(Alignment::Center)
                     .boxed()

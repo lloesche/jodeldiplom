@@ -54,7 +54,7 @@ pub(super) fn skipped(state: &mut State) -> bool {
 
 /// A track starts to be heard (START's, or one a mix ran into): the result
 /// of the song before is gone.
-pub(crate) fn track_started(state: &mut State) {
+pub(super) fn track_started(state: &mut State) {
     state.karaoke.result = None;
 }
 

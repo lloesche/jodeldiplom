@@ -5,7 +5,18 @@
 
 use std::fmt;
 
+use crate::core::keymap::{self, Context, Op};
 use crate::core::{palette_window, State};
+
+/// The keys that work the palette, and what they do (from the keymap).
+pub fn hints() -> [(String, &'static str); 3] {
+    let key = |op| keymap::hint(Context::Palette, op);
+    [
+        (format!("{} {}", key(Op::Up), key(Op::Down)), "move"),
+        (key(Op::Accept), "run"),
+        (key(Op::Back), "close"),
+    ]
+}
 
 /// The palette as it is now.
 #[derive(Clone, Debug, PartialEq, Eq)]

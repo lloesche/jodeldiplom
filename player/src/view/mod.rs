@@ -136,8 +136,22 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
     }
 }
 
-/// The Mixer tab's bottom border: its keys.
-const DESK_FOOTER: &str = "← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo";
+/// The Mixer tab's bottom border: its keys (from the keymap).
+fn desk_footer() -> String {
+    use crate::core::keymap::{hint, Context, Op};
+    let key = |op| hint(Context::Desk, op);
+    format!(
+        "{} {} strip · {} {} fader · {} 0 dB · {} mute · {} solo · {} echo",
+        key(Op::DeskPrevStrip),
+        key(Op::DeskNextStrip),
+        key(Op::Up),
+        key(Op::Down),
+        key(Op::Top),
+        key(Op::DeskMute),
+        key(Op::DeskSolo),
+        key(Op::DeskEcho),
+    )
+}
 
 /// The Mixer tab's box (the window draws the tabs over its top border,
 /// and its desk inside it), its keys in its bottom border; the Karaoke
@@ -148,7 +162,7 @@ fn draw_tab(frame: &mut Frame, scene: &Scene, m: &layout::MainLayout, pictures: 
     use crate::core::Side;
     let state = scene.state;
     let footer: String = match state.side {
-        Side::Mixer => DESK_FOOTER.into(),
+        Side::Mixer => desk_footer(),
         // The window draws the Karaoke tab in its own widgets, beside its
         // pictures.
         Side::Karaoke => {

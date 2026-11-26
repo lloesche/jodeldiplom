@@ -13,13 +13,22 @@ use std::fmt;
 
 use jodel_playback::PlayState;
 
+use crate::core::keymap::{self, Context, Op};
 use crate::core::text::{self, Tone};
 use crate::core::{Rhythm, State};
 
 /// What the column says with nothing playing.
 pub const NOTHING: &str = "Nothing playing";
-/// And how to play something.
-pub const NOTHING_HINT: &str = "enter plays the selected file; A queues it";
+
+/// And how to play something: the list's keys, from the keymap.
+pub fn nothing_hint() -> String {
+    let key = |op| keymap::hint(Context::List, op);
+    format!(
+        "{} queues the selected file; {} plays it too",
+        key(Op::Open),
+        key(Op::QueuePlay)
+    )
+}
 
 /// How long the beat pulse stays lit after a beat, in seconds.
 pub const PULSE_SECONDS: f64 = 0.12;
@@ -179,7 +188,7 @@ impl fmt::Display for Info {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let Some(track) = &self.track else {
             writeln!(f, "[title] {NOTHING}")?;
-            return writeln!(f, "[dim] {NOTHING_HINT}");
+            return writeln!(f, "[dim] {}", nothing_hint());
         };
         writeln!(f, "[title link] {}", track.title)?;
         if let Some(artist) = &track.artist {

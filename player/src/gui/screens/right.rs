@@ -25,7 +25,7 @@ use crate::gui::look::{self, size, space};
 use crate::gui::style::mix;
 use crate::gui::widgets::{self, Icon};
 use crate::gui::window::Message;
-use crate::view::info::{self, Info, Tag, TagKind, NOTHING, NOTHING_HINT};
+use crate::view::info::{self, Info, Tag, TagKind, NOTHING};
 
 /// The metronome before the tempo.
 const PULSE: f32 = 14.0;
@@ -49,7 +49,7 @@ fn text_of<'a>(state: &State) -> Element<'a, Message> {
                 .size(size::TITLE)
                 .font(look::font::title())
                 .color(look::TEXT_DIM),
-            text(NOTHING_HINT)
+            text(info::nothing_hint())
                 .size(size::CAPTION)
                 .font(look::font::body())
                 .color(look::TEXT_FAINT),

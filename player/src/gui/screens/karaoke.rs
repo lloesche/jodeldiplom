@@ -29,7 +29,7 @@ use iced::{
 };
 
 use crate::core::karaoke::HEARD_WARNING;
-use crate::core::keymap::Op;
+use crate::core::keymap::{self, Context, Op};
 use crate::core::Action;
 use crate::gui::look::{self, radius, size, space};
 use crate::gui::pointer::{Grab, WheelOn};
@@ -184,7 +184,7 @@ fn head<'a>(tab: &Tab) -> Element<'a, Message> {
         Some(_) => widgets::secondary(ENTER),
     }
     .leading(Icon::Play)
-    .key("enter")
+    .key(keymap::hint(Context::Karaoke, tab.enter.op))
     .on_press(press);
     let mut button = Row::<Element<'a, Message>>::new()
         .spacing(space::M)
@@ -298,7 +298,7 @@ fn sync_row<'a>(from: &str) -> Element<'a, Message> {
         Element::from(
             widgets::secondary(MEASURE)
                 .small()
-                .key("s")
+                .key(keymap::hint(Context::Karaoke, Op::KaraokeSync))
                 .on_press(Message::Act(Action::Op(Op::KaraokeSync)))
         ),
         text(from.to_owned())
@@ -324,8 +324,8 @@ fn switches<'a>(switches: &[Switch]) -> Element<'a, Message> {
             .struck(!s.on)
             .width(SWITCH)
             .on_press(Message::Act(Action::Op(s.op)));
-        if let Some(key) = s.key {
-            chip = chip.key(key);
+        if let Some(key) = &s.key {
+            chip = chip.key(key.clone());
         }
         row![
             Element::from(chip),
@@ -457,7 +457,7 @@ fn lyrics_row<'a>(l: &LyricsRow, turn: f32) -> Element<'a, Message> {
 
 /// `keys` as key caps and what each does, in a line.
 fn hints<'a>(keys: &[Hint]) -> Element<'a, Message> {
-    let pairs: Vec<(&str, &str)> = keys.iter().map(|h| (h.keys, h.what)).collect();
+    let pairs: Vec<(String, &str)> = keys.iter().map(|h| (h.keys.clone(), h.what)).collect();
     widgets::hints(&pairs).height(KEYS).boxed()
 }
 
@@ -624,7 +624,7 @@ pub fn sync<'a>(panel: &Panel) -> Element<'a, Message> {
             widgets::secondary(b.label)
         };
         button
-            .key(b.key)
+            .key(b.key.clone())
             .id(b.id())
             .on_press(Message::Act(Action::Op(b.op)))
             .into()

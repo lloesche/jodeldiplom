@@ -15,6 +15,7 @@ use jodel_playback::Stem;
 
 use super::lanes::{lane_color, WavePlot, OFF};
 use super::palette;
+use crate::core::keymap::{self, Context, Op};
 use crate::core::lanes::{self, Block, Lane, WordLines};
 use crate::core::transition::{self, draft, tab, viewport, Pairing};
 use crate::core::{text, Rhythm, State};
@@ -584,8 +585,9 @@ pub fn plots(state: &State, which: Block, heard: f64, follow: bool) -> Option<Pl
     })
 }
 
-/// What a key does, for the footer: its key, then what.
-pub type Hint = (&'static str, &'static str);
+/// What a key does, for the footer: its key (as the keymap writes it),
+/// then what.
+pub type Hint = (String, &'static str);
 
 /// The Transition tab's footer: the focused track's zoom and the main
 /// keys, or, while a fade is edited, which and the keys that edit it; and
@@ -598,32 +600,55 @@ pub struct Footer {
     /// A fade is being edited.
     pub editing: bool,
     /// The keys, in order.
-    pub keys: &'static [Hint],
+    pub keys: Vec<Hint>,
 }
 
-/// The keys the footer names.
-const KEYS: &[Hint] = &[
-    ("← →", "bars"),
-    ("1-9", "jump"),
-    ("enter", "cue"),
-    ("p", "preset"),
-    ("r", "pairing"),
-    ("g", "go"),
-    ("e", "edit"),
-    ("?", "keys"),
-];
+/// The keys the footer names (from the keymap).
+fn keys() -> Vec<Hint> {
+    let key = |ops: &[Op], what| (keymap::keys(Context::Transition, ops), what);
+    let jumps = format!(
+        "{}-{}",
+        keymap::hint(Context::Transition, Op::JumpBarAtEnd(-4)),
+        keymap::hint(Context::Transition, Op::JumpBarAtEnd(4))
+    );
+    vec![
+        key(&[Op::TransitionBarBack, Op::TransitionBarForward], "bars"),
+        (jumps, "jump"),
+        key(&[Op::Accept], "cue"),
+        key(&[Op::TransitionPreset], "preset"),
+        key(&[Op::TransitionPairing], "pairing"),
+        key(&[Op::TransitionGo], "go"),
+        key(&[Op::TransitionEdit], "edit"),
+        key(&[Op::Help], "keys"),
+    ]
+}
 
-/// The keys while a fade is edited.
-const EDIT_KEYS: &[Hint] = &[
-    ("↑ ↓", "lane"),
-    ("← →", "bar"),
-    ("+/- 0 1", "gain"),
-    ("c", "cut"),
-    ("esc", "done"),
-];
+/// The keys while a fade is edited (from the keymap).
+fn edit_keys() -> Vec<Hint> {
+    let key = |ops: &[Op], what| (keymap::keys(Context::Fades, ops), what);
+    let gain = format!(
+        "{}/{} {}",
+        keymap::hint(Context::Fades, Op::EditRaise),
+        keymap::hint(Context::Fades, Op::EditLower),
+        keymap::keys(Context::Fades, &[Op::EditOff, Op::EditFull])
+    );
+    vec![
+        key(&[Op::Up, Op::Down], "lane"),
+        key(&[Op::EditBack, Op::EditForward], "bar"),
+        (gain, "gain"),
+        key(&[Op::EditCut], "cut"),
+        key(&[Op::Back], "done"),
+    ]
+}
 
-/// What the button that zooms to fit the lyrics says, and its key.
-pub const FIT_LYRICS: Hint = ("z", "fit lyrics");
+/// What the button that zooms to fit the lyrics says, and its key (from
+/// the keymap).
+pub fn fit_lyrics() -> Hint {
+    (
+        keymap::hint(Context::Transition, Op::TransitionFitLyrics),
+        "fit lyrics",
+    )
+}
 
 impl Footer {
     /// The footer for `state`.
@@ -636,7 +661,7 @@ impl Footer {
                     e.bar
                 ),
                 editing: true,
-                keys: EDIT_KEYS,
+                keys: edit_keys(),
             };
         }
         // The focused track's zoom (its own, set by the wheel or `z`, else
@@ -649,7 +674,7 @@ impl Footer {
         Footer {
             zoom,
             editing: false,
-            keys: KEYS,
+            keys: keys(),
         }
     }
 }
@@ -660,7 +685,7 @@ impl fmt::Display for Footer {
             write!(f, "editing ")?;
         }
         write!(f, "{}", self.zoom)?;
-        for (key, what) in self.keys {
+        for (key, what) in &self.keys {
             write!(f, " · {key} {what}")?;
         }
         Ok(())
@@ -710,6 +735,7 @@ impl fmt::Display for Tab {
             writeln!(f, "[lanes] {}", names.join(" "))?;
         }
         writeln!(f, "[footer] {}", self.footer)?;
-        writeln!(f, "[button] {} {}", FIT_LYRICS.0, FIT_LYRICS.1)
+        let (key, what) = fit_lyrics();
+        writeln!(f, "[button] {key} {what}")
     }
 }

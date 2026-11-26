@@ -12,7 +12,7 @@
 use std::fmt;
 
 use crate::core::karaoke::{self, ModelState, SongLyrics};
-use crate::core::keymap::Op;
+use crate::core::keymap::{self, Context, Op};
 use crate::core::lanes::{rhythmed, Block};
 use crate::core::sliders::Slider;
 use crate::core::text;
@@ -33,18 +33,27 @@ const SILENT_HINT: &str = if cfg!(target_os = "macos") {
 
 /// A key and what it does, for a pane's foot: `enter` "Karaoke mode"
 /// (no key: a word of what to do).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hint {
-    /// The key (or keys, as `↑ ↓`).
-    pub keys: &'static str,
+    /// The key (or keys, as `↑ ↓`), as the keymap writes it.
+    pub keys: String,
     /// What it does.
     pub what: &'static str,
 }
 
 impl Hint {
     /// `keys` doing `what`.
-    pub const fn new(keys: &'static str, what: &'static str) -> Hint {
-        Hint { keys, what }
+    pub fn new(keys: impl Into<String>, what: &'static str) -> Hint {
+        Hint {
+            keys: keys.into(),
+            what,
+        }
+    }
+
+    /// The first keys of `ops` on the Karaoke tab ([`keymap::keys`])
+    /// doing `what`.
+    pub fn of(ops: &[Op], what: &'static str) -> Hint {
+        Hint::new(keymap::keys(Context::Karaoke, ops), what)
     }
 }
 
@@ -58,13 +67,15 @@ impl fmt::Display for Hint {
     }
 }
 
-/// The tab's keys, while no sync shows.
-const KEYS: [Hint; 4] = [
-    Hint::new("enter", "Karaoke mode"),
-    Hint::new("↑ ↓", "row"),
-    Hint::new("← →", "its value"),
-    Hint::new("s", "sync"),
-];
+/// The tab's keys, while no sync shows (from the keymap).
+fn keys() -> Vec<Hint> {
+    vec![
+        Hint::of(&[Op::KaraokeEnter], "Karaoke mode"),
+        Hint::of(&[Op::Up, Op::Down], "row"),
+        Hint::of(&[Op::SliderDown, Op::SliderUp], "its value"),
+        Hint::of(&[Op::KaraokeSync], "sync"),
+    ]
+}
 
 /// The button into the mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,8 +122,8 @@ pub struct Switch {
     pub op: Op,
     /// Its name.
     pub label: &'static str,
-    /// Its key on the tab, if it has one.
-    pub key: Option<&'static str>,
+    /// Its key on the tab, if it has one (from the keymap).
+    pub key: Option<String>,
     /// On.
     pub on: bool,
     /// What it means as it is.
@@ -164,8 +175,8 @@ impl Mic {
     /// Its key, while it has one: `i` takes the next input.
     pub fn key(&self) -> Option<Hint> {
         match self {
-            Mic::Open { .. } => Some(Hint::new("i", "the next one")),
-            Mic::Failed(_) => Some(Hint::new("i", "another one")),
+            Mic::Open { .. } => Some(Hint::of(&[Op::MicNext], "the next one")),
+            Mic::Failed(_) => Some(Hint::of(&[Op::MicNext], "another one")),
             Mic::Opening | Mic::Silent { .. } => None,
         }
     }
@@ -249,7 +260,7 @@ impl Tab {
             keys: if sync.is_some() {
                 sync::keys(state)
             } else {
-                KEYS.to_vec()
+                keys()
             },
             sync,
         }
@@ -285,6 +296,11 @@ fn controls(state: &State) -> Vec<Control> {
     out
 }
 
+/// A switch's key on the tab, where its operation has one.
+fn switch_key(op: Op) -> Option<String> {
+    Some(keymap::hint(Context::Karaoke, op)).filter(|k| !k.is_empty())
+}
+
 /// The game on or off, the notes shown or hidden, the singing kept; each
 /// a press (or its key: g, p).
 fn switches(state: &State) -> Vec<Switch> {
@@ -293,7 +309,7 @@ fn switches(state: &State) -> Vec<Switch> {
         Switch {
             op: Op::KaraokeGame,
             label: "Game",
-            key: Some("g"),
+            key: switch_key(Op::KaraokeGame),
             on: c.karaoke_game,
             what: if c.karaoke_game {
                 "your singing scored line by line against the original"
@@ -304,7 +320,7 @@ fn switches(state: &State) -> Vec<Switch> {
         Switch {
             op: Op::KaraokeNotes,
             label: "Notes",
-            key: Some("p"),
+            key: switch_key(Op::KaraokeNotes),
             on: c.karaoke_notes,
             what: if c.karaoke_notes {
                 "the song's notes run by in the mode, for you to sing on"
@@ -315,7 +331,7 @@ fn switches(state: &State) -> Vec<Switch> {
         Switch {
             op: Op::KaraokeKeep,
             label: "Keep",
-            key: None,
+            key: switch_key(Op::KaraokeKeep),
             on: c.karaoke_keep,
             what: if c.karaoke_keep {
                 "your singing of each song saved (recordings, beside the settings), to tune the game"
@@ -413,9 +429,10 @@ impl fmt::Display for Tab {
         if !self.artist.is_empty() {
             writeln!(f, "[dim] {}", self.artist)?;
         }
+        let key = keymap::hint(Context::Karaoke, self.enter.op);
         match self.enter.why {
-            None => writeln!(f, "[primary] {ENTER} (enter)")?,
-            Some(why) => writeln!(f, "[greyed] {ENTER} (enter)  [dim] {why}")?,
+            None => writeln!(f, "[primary] {ENTER} ({key})")?,
+            Some(why) => writeln!(f, "[greyed] {ENTER} ({key})  [dim] {why}")?,
         }
         for control in &self.controls {
             match control {
@@ -442,7 +459,11 @@ impl fmt::Display for Tab {
         }
         for s in &self.switches {
             let on = if s.on { "on" } else { "off" };
-            let key = s.key.map(|k| format!(" ({k})")).unwrap_or_default();
+            let key = s
+                .key
+                .as_ref()
+                .map(|k| format!(" ({k})"))
+                .unwrap_or_default();
             writeln!(f, "[switch {on}] {}{key}: {}", s.label, s.what)?;
         }
         for l in &self.lyrics {

@@ -227,7 +227,14 @@ fn message(state: &State) -> (String, Tone) {
             }
             .to_owned();
             if state.screen == Screen::Main {
-                text.push_str("  ·  : commands  / filter  ? keys");
+                use crate::core::keymap::{hint, Context};
+                let key = |op| hint(Context::Global, op);
+                text.push_str(&format!(
+                    "  ·  {} commands  {} filter  {} keys",
+                    key(Op::Palette),
+                    key(Op::Filter),
+                    key(Op::Help)
+                ));
             }
             (text, Tone::Dim)
         }

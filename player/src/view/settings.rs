@@ -11,6 +11,7 @@ use std::fmt;
 
 use jodel_playback::Headroom;
 
+use crate::core::keymap::{self, Context, Op};
 use crate::core::transition::Preset;
 use crate::core::{device_window, folder_window, FolderRow, Gpu, SettingsRow, State};
 
@@ -20,13 +21,17 @@ pub const LIST_ROWS: usize = 8;
 /// The screen's title.
 pub const TITLE: &str = "Settings";
 
-/// The keys that move about the settings, and what they do.
-pub const HINTS: [(&str, &str); 4] = [
-    ("↑↓", "select"),
-    ("←→", "change"),
-    ("enter", "open"),
-    ("esc", "back"),
-];
+/// The keys that move about the settings, and what they do (from the
+/// keymap).
+pub fn hints() -> [(String, &'static str); 4] {
+    let key = |op| keymap::hint(Context::Settings, op);
+    [
+        (key(Op::Up) + &key(Op::Down), "select"),
+        (key(Op::ValueDown) + &key(Op::ValueUp), "change"),
+        (key(Op::Open), "open"),
+        (key(Op::Back), "back"),
+    ]
+}
 
 /// How a row is set.
 #[derive(Clone, Debug, PartialEq)]
@@ -549,7 +554,7 @@ impl fmt::Display for Settings {
             };
             writeln!(f, "[{tone}] {note}")?;
         }
-        let hints: Vec<String> = HINTS.iter().map(|(k, w)| format!("{k} {w}")).collect();
+        let hints: Vec<String> = hints().iter().map(|(k, w)| format!("{k} {w}")).collect();
         writeln!(f, "[hints] {}", hints.join("   "))
     }
 }

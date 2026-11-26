@@ -12,6 +12,7 @@
 //! [`look::motion::HOVER`]), pressed, focused (a ring in the accent round
 //! it) and disabled (no message to send).
 
+use std::borrow::Cow;
 use std::time::Instant;
 
 use iced::advanced::layout::{self, Layout};
@@ -97,7 +98,7 @@ pub struct Button<'a, Message> {
     kind: Kind,
     label: Option<String>,
     icon: Option<Icon>,
-    key: Option<&'a str>,
+    key: Option<Cow<'a, str>>,
     on_press: Option<Message>,
     focused: bool,
     struck: bool,
@@ -159,8 +160,8 @@ impl<'a, Message> Button<'a, Message> {
     }
 
     /// The key that does the same, after the label ("Enter", "Q").
-    pub fn key(mut self, key: &'a str) -> Self {
-        self.key = Some(key);
+    pub fn key(mut self, key: impl Into<Cow<'a, str>>) -> Self {
+        self.key = Some(key.into());
         self
     }
 
@@ -192,7 +193,7 @@ impl<'a, Message> Button<'a, Message> {
 
 /// The key's cap after a label: small, in the button's own tone (on the
 /// accent's fill, or lit in a tone, in its ink).
-fn keycap<'a, Message: 'a>(key: &'a str, kind: Kind, lit: bool) -> Element<'a, Message> {
+fn keycap<'a, Message: 'a>(key: Cow<'a, str>, kind: Kind, lit: bool) -> Element<'a, Message> {
     let (fill, ink) = if lit || kind == Kind::Primary {
         (
             look::alpha(look::ACCENT_INK, 0.12),

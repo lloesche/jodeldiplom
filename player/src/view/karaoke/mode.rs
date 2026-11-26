@@ -17,6 +17,7 @@ use super::super::colors::*;
 use super::super::{keep_start, palette, Pictures, Scene};
 use super::{plain_lines, result_now, slider, ResultShown};
 use crate::core::karaoke;
+use crate::core::keymap::{self, Context, Op};
 use crate::core::singing::{notes_of, LineNotes, Note, Singing};
 use crate::core::text;
 use crate::core::State;
@@ -109,12 +110,23 @@ pub fn draw_mode(
     for s in &c.sliders {
         slider(buf, state, s);
     }
-    let hint = "esc leaves  ·  ↑ ↓ slider  ·  ← → level  ·  enter / space START  ·  N next song  ·  hold p demo";
+    // The mode's keys, from the keymap (↑ ↓ do nothing there).
+    let key = |op| keymap::hint(Context::KaraokeMode, op);
+    let hint = format!(
+        "{} leaves  ·  {} {} level  ·  {} / {} START  ·  {} next song  ·  hold {} demo",
+        key(Op::Back),
+        key(Op::SliderDown),
+        key(Op::SliderUp),
+        key(Op::KaraokeStart),
+        key(Op::PlayPause),
+        key(Op::Next),
+        key(Op::KaraokeDemo),
+    );
     let max = usize::from(c.hint.width);
     buf.set_string(
         c.hint.x,
         c.hint.y,
-        keep_start(hint, max),
+        keep_start(&hint, max),
         Style::new().fg(DIM),
     );
 }

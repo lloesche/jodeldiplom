@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use crate::core::keymap::Op;
+use crate::core::keymap::{self, Context, Op};
 use crate::core::sync::{Outcome, CLICKS};
 use crate::core::text::signed_ms;
 use crate::core::State;
@@ -42,17 +42,18 @@ pub fn source_text(state: &State) -> String {
 /// The keys while a sync shows, for the pane's foot: keep only once there
 /// is a delay to keep, again once it has ended.
 pub fn keys(state: &State) -> Vec<Hint> {
+    let key = |op, what| Hint::new(keymap::hint(Context::Sync, op), what);
     match state.karaoke.sync.as_ref().and_then(|s| s.outcome.as_ref()) {
         None => vec![
             Hint::new("", "say “ta” with each click"),
-            Hint::new("esc", "cancel"),
+            key(Op::Back, "cancel"),
         ],
         Some(Outcome::Measured(_)) => vec![
-            Hint::new("enter", "keep"),
-            Hint::new("r", "again"),
-            Hint::new("esc", "cancel"),
+            key(Op::SyncKeep, "keep"),
+            key(Op::SyncAgain, "again"),
+            key(Op::Back, "cancel"),
         ],
-        Some(_) => vec![Hint::new("r", "again"), Hint::new("esc", "cancel")],
+        Some(_) => vec![key(Op::SyncAgain, "again"), key(Op::Back, "cancel")],
     }
 }
 
@@ -79,12 +80,12 @@ pub enum Said {
 }
 
 /// A button of the panel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PanelButton {
     /// What it says.
     pub label: &'static str,
-    /// Its key.
-    pub key: &'static str,
+    /// Its key, from the keymap.
+    pub key: String,
     /// What it does.
     pub op: Op,
     /// The one to take (keep).
@@ -140,9 +141,9 @@ impl Panel {
         let buttons = session
             .buttons()
             .into_iter()
-            .map(|(label, key, op)| PanelButton {
+            .map(|(label, op)| PanelButton {
                 label,
-                key,
+                key: keymap::hint(Context::Sync, op),
                 op,
                 primary: op == Op::SyncKeep,
             })

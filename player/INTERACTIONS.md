@@ -218,9 +218,15 @@ stem keys are their mutes.
   never moves playback and comes back to the tab, the voice still at its
   level. Going in with shift (`shift+enter`, shift+click on the button)
   leaves the song where it is: nothing stops or rewinds, no count-in (for
-  trying things out).
+  trying things out). The song the tab and the mode are about is one: the
+  one held for START, else the one heard, else the queue's current one,
+  else the one selected in the queue. Going back in after a song's end
+  held the next one holds that one (the one the tab shows, its lyrics the
+  ones checked), until another song plays.
   - `the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab`
   - `shift_enter_goes_into_the_mode_where_the_song_is`
+  - `held_then_esc_then_enter_keeps_the_song_held`
+  - `a_song_played_after_the_mode_is_the_one_held_next`
 - **K3.** In the mode, a song's end holds the next song at its start: only
   START (`enter`, `space`, a click on START's pill) plays it, after its
   count-in. `N` holds the next song for START. The mode arms no
@@ -241,6 +247,7 @@ stem keys are their mutes.
   - `a_skip_plays_nothing_again` (sounds)
   - `the_mode_arms_no_transitions_and_makes_no_jumps`
   - `next_in_the_mode_holds_the_next_song_for_start`
+  - `next_twice_goes_on_from_the_song_held`
   - `start_during_the_reveal_completes_it_and_the_next_starts_the_song`
   - `a_song_sought_on_and_played_out_shows_its_result`
   - `a_song_played_out_with_nothing_scored_shows_its_result`

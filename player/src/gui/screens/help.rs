@@ -13,7 +13,7 @@ use crate::core::State;
 use crate::gui::look::{self, radius, size, space};
 use crate::gui::widgets::{hints, key};
 use crate::gui::window::Message;
-use crate::view::help::{measure, Line, Page, Search, HINTS, TITLE};
+use crate::view::help::{self, measure, Line, Page, Search, TITLE};
 
 /// The widest the cards go, in points.
 const WIDEST: f32 = 880.0;
@@ -61,7 +61,7 @@ fn lines<'a>(page: &Page) -> Column<Element<'a, Message>> {
     }
     header = header
         .push(Space::new().width(Fill).boxed())
-        .push(hints(&HINTS).boxed());
+        .push(hints(&help::hints()).boxed());
     let mut all = Column::new()
         .push(header.boxed())
         .push(Space::new().height(measure::UNDER_HEADER).boxed());

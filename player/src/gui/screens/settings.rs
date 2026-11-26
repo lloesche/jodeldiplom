@@ -21,7 +21,7 @@ use crate::gui::widgets::{
 };
 use crate::gui::window::Message;
 use crate::view::settings::{
-    Control, Entry, List, Mark, Row, Section, Settings, Tone, HINTS, TITLE,
+    self, Control, Entry, List, Mark, Row, Section, Settings, Tone, TITLE,
 };
 
 /// The narrowest window whose cards go in two columns, in points.
@@ -77,7 +77,7 @@ fn page<'a>(settings: &Settings, size: Size) -> Element<'a, Message> {
             .font(look::font::title())
             .color(look::TEXT),
         Space::new().width(Fill),
-        hints(&HINTS),
+        hints(&settings::hints()),
     ]
     .align_y(Alignment::Center)
     .height(HEADER);

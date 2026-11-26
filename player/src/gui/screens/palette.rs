@@ -24,7 +24,7 @@ use crate::core::{Action, State};
 use crate::gui::look::{self, height, radius, size, space};
 use crate::gui::widgets::{self, list_row, Icon};
 use crate::gui::window::Message;
-use crate::view::command_palette::Palette;
+use crate::view::command_palette::{self, Palette};
 
 /// The card's widest, in points.
 const WIDTH: f32 = 600.0;
@@ -177,16 +177,17 @@ fn card<'a>(palette: &Palette, width: f32, shown: f32) -> Element<'a, Message> {
             .font(look::font::body())
             .color(look::TEXT_FAINT)
     };
+    let [(moves, move_what), (run, run_what), (close, close_what)] = command_palette::hints();
     let keys = container(
         row![
-            widgets::key("↑ ↓"),
-            hint("move".into()),
+            widgets::key(moves),
+            hint(move_what.into()),
             Space::new().width(space::S),
-            widgets::key("enter"),
-            hint("run".into()),
+            widgets::key(run),
+            hint(run_what.into()),
             Space::new().width(space::S),
-            widgets::key("esc"),
-            hint("close".into()),
+            widgets::key(close),
+            hint(close_what.into()),
             Space::new().width(Fill),
             hint(match palette.total {
                 1 => "1 command".into(),

@@ -12,7 +12,7 @@ use crate::core::{Action, State};
 use crate::gui::look::{self, radius, size, space};
 use crate::gui::widgets;
 use crate::gui::window::Message;
-use crate::view::transition::{Fact, Footer, Header, Tone, FIT_LYRICS};
+use crate::view::transition::{fit_lyrics, Fact, Footer, Header, Tone};
 
 /// An average letter of a caption's, in points: to tell what fits (iced
 /// lays the row out after it is made).
@@ -153,7 +153,7 @@ pub(super) fn header<'a>(h: &Header, width: f32) -> Element<'a, Message> {
 
 /// About how wide a key's hint is ([`widgets::hints`]: its cap, a gap,
 /// its words).
-fn hint_width((key, what): &(&str, &str)) -> f32 {
+fn hint_width((key, what): &(String, &str)) -> f32 {
     wide(key) + 12.0 + space::S + wide(what)
 }
 
@@ -177,7 +177,7 @@ pub(super) fn footer<'a>(state: &State, width: f32) -> Element<'a, Message> {
     } else {
         widgets::tag(f.zoom.clone(), look::TEXT_DIM)
     };
-    let (key, what) = FIT_LYRICS;
+    let (key, what) = fit_lyrics();
     let fit = widgets::secondary(what)
         .key(key)
         .small()
@@ -185,9 +185,9 @@ pub(super) fn footer<'a>(state: &State, width: f32) -> Element<'a, Message> {
     let lead_w = wide(&f.zoom) + if f.editing { 70.0 } else { TAG_PAD };
     let room = width - lead_w - 130.0 - space::L;
     // The keys in order, the last going first.
-    let shown: Vec<(&str, &str)> = fitting(f.keys, room, space::L, |_| 0, hint_width)
+    let shown: Vec<(String, &str)> = fitting(&f.keys, room, space::L, |_| 0, hint_width)
         .into_iter()
-        .copied()
+        .cloned()
         .collect();
     let keys = widgets::hints(&shown);
     row![lead, keys, Space::new().width(Fill), Element::from(fit)]

@@ -308,7 +308,7 @@ Stems are on by default where there is a GPU; if the GPU fails on a
 track, that track's cues listen to the mix and a message says so.
 
 Keys: `?` shows them all, `:` runs any command by name; both are generated
-from the one keymap table (`src/core/keymap.rs`). On the help, `/` searches
+from the one keymap table (`src/core/keymap/table.rs`). On the help, `/` searches
 it: only the keys whose name or text contain what you type stay, under
 their section's title (`volume` leaves `alt+↑` and `alt+↓`); `enter` keeps
 the search, `esc` clears it, and a second `esc` leaves. `space` play/pause, `←→`

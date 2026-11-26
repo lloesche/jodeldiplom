@@ -13,6 +13,7 @@
 
 use std::fmt;
 
+use crate::core::keymap::{self, Context, Op};
 use crate::core::{help_shown, State};
 
 /// The page's measures, in points, as the window draws it.
@@ -43,8 +44,15 @@ pub fn rows(height: f32, state: &State) -> u16 {
 /// The screen's title.
 pub const TITLE: &str = "Keys";
 
-/// The keys that move about the help, and what they do.
-pub const HINTS: [(&str, &str); 3] = [("↑↓", "scroll"), ("/", "search"), ("esc", "back")];
+/// The keys that move about the help, and what they do (from the keymap).
+pub fn hints() -> [(String, &'static str); 3] {
+    let key = |op| keymap::hint(Context::Help, op);
+    [
+        (key(Op::Up) + &key(Op::Down), "scroll"),
+        (key(Op::Filter), "search"),
+        (key(Op::Back), "back"),
+    ]
+}
 
 /// A line of the help.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,7 +138,7 @@ impl fmt::Display for Page {
             let caret = if s.editing { "▏" } else { "" };
             writeln!(f, "[search] / {}{caret}  {} shown", s.typed, s.shown)?;
         }
-        let hints: Vec<String> = HINTS.iter().map(|(k, w)| format!("{k} {w}")).collect();
+        let hints: Vec<String> = hints().iter().map(|(k, w)| format!("{k} {w}")).collect();
         writeln!(f, "[hints] {}", hints.join("   "))?;
         if let Some(empty) = &self.empty {
             writeln!(f, "[empty] {empty}")?;
