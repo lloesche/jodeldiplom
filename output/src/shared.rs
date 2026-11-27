@@ -8,8 +8,8 @@
 //! cannot change it.
 //!
 //! On the device thread's way nothing locks, allocates or waits, but for
-//! two things: a failure (kept behind a lock, its message made as the
-//! device fails) and waking a writer that waits for room (a condition
+//! two things: a failure (its message made as the device fails, kept with
+//! no lock) and waking a writer that waits for room (a condition
 //! variable's notify, a system call with no lock). The consumer is inside
 //! the ring only while the handle does not keep it out
 //! ([`Shared::keep_out`], which takes a lock of its own against other
@@ -30,7 +30,7 @@ use crate::tap::{Tap, TapSlot};
 use crate::timeline::{Published, Timeline};
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 /// The longest [`Shared::set_tap`] waits for the consumer to take a tap
@@ -134,10 +134,11 @@ pub(crate) struct Shared {
     written: AtomicU64,
     /// The handle closed the output.
     closed: AtomicBool,
-    failed: AtomicBool,
-    failure: Mutex<Option<Error>>,
+    /// Why the device failed: the first failure, kept with no lock.
+    failure: OnceLock<Error>,
     writer_waiting: AtomicBool,
     space_lock: Mutex<()>,
+    /// Woken by the consumer, which never takes [`Self::space_lock`].
     space: Condvar,
     tap: TapSlot,
     /// Stream frames copied out of the ring so far (as the position counts
@@ -170,7 +171,7 @@ impl Shared {
     }
 
     fn with(format: StreamFormat, ring_frames: usize, played: Played) -> Shared {
-        Shared {
+        let shared = Shared {
             format,
             ring: Ring::new(ring_frames, format.frame_bytes()),
             played,
@@ -191,14 +192,18 @@ impl Shared {
             dropped: AtomicU64::new(0),
             written: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            failed: AtomicBool::new(false),
-            failure: Mutex::new(None),
+            failure: OnceLock::new(),
             writer_waiting: AtomicBool::new(false),
             space_lock: Mutex::new(()),
             space: Condvar::new(),
             tap: TapSlot::new(),
             rendered: AtomicU64::new(0),
-        }
+        };
+        // Some systems make a condition variable's own object at its first
+        // use (macOS: a pthread one, boxed). Made here, by the opener, so
+        // the consumer's notifies (room freed, a failure) allocate nothing.
+        shared.space.notify_all();
+        shared
     }
 
     // ---- consumer side (device thread) ----
@@ -390,12 +395,7 @@ impl Shared {
 
     /// The device failed; every later call on the handle returns `error`.
     pub(crate) fn fail(&self, error: Error) {
-        let mut f = lock(&self.failure);
-        if f.is_none() {
-            *f = Some(error);
-        }
-        self.failed.store(true, Ordering::SeqCst);
-        drop(f);
+        let _ = self.failure.set(error);
         self.space.notify_all();
     }
 
@@ -491,7 +491,7 @@ impl Shared {
     pub(crate) fn wait_for_space(&self, timeout: Duration) {
         let guard = lock(&self.space_lock);
         self.writer_waiting.store(true, Ordering::SeqCst);
-        if self.ring.free() == 0 && !self.failed.load(Ordering::SeqCst) {
+        if self.ring.free() == 0 && self.failure.get().is_none() {
             // Bounded, so a wake-up that raced the flag costs at most this.
             let _ = self
                 .space
@@ -578,11 +578,7 @@ impl Shared {
     // ---- any thread ----
 
     pub(crate) fn failure(&self) -> Option<Error> {
-        if self.failed.load(Ordering::SeqCst) {
-            lock(&self.failure).clone()
-        } else {
-            None
-        }
+        self.failure.get().cloned()
     }
 
     /// The device's failure, if it failed.

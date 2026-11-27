@@ -45,6 +45,9 @@ const COPIES: usize = 6;
 const HOT: [u8; 3] = [255, 248, 225];
 /// The figures, whose ink the slots are made round.
 const FIGURES: &str = "0123456789";
+/// How far a slot reaches past its figure's advance on either side, a
+/// share of the figures' size.
+const SIDE: f32 = 0.06;
 
 /// How many of its figures' sizes wide the score's corner is: room for a
 /// score of nine figures and for its rung's name under it.
@@ -341,7 +344,7 @@ fn figures_of(
     let mut pen = right - width;
     for k in (0..n).rev() {
         let x = pen + (pen - right) * (pop - 1.0);
-        let side = 0.06 * size;
+        let side = SIDE * size;
         let slot: PixelRect = (
             (x - side).max(0.0).floor() as usize,
             slot_top.max(0.0).floor() as usize,
@@ -710,8 +713,15 @@ mod tests {
         // starts to where it ends, each at its size, unturned and whole.
         assert_eq!(rest.len(), 5, "{rest:?}");
         let pad = crate::gui::big_text::COVER_PAD as f32;
-        let left = (640.0 - margin - tw).floor() - pad;
-        assert!((rest[0].quad[0] - left).abs() <= 1.0, "{:?}", rest[0].quad);
+        // The first figure's run starts its pad left of where the text
+        // starts, unless the figure's slot cuts into that pad: whichever
+        // is further right.
+        // Which one wins depends on where the start falls within a pixel,
+        // and that moves with the thin space's width (from whichever font
+        // has one: a different one on each system).
+        let start = 640.0 - margin - tw;
+        let left = (start.floor() - pad).max((start - SIDE * px).floor());
+        assert_eq!(rest[0].quad[0], left, "{:?}", rest[0].quad);
         for i in &rest {
             assert!(i.is(Shape::Text));
             assert_eq!(i.quad[0], i.quad[0].round(), "on whole pixels");
