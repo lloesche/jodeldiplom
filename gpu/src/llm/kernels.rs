@@ -67,9 +67,6 @@ macro_rules! kernels {
             const PARAM_BYTES: u64 = 64;
             /// After the parameters: the weights (read), the ints.
             const EXTRA: &'static [Access] = &[Access::Read, Access::Write];
-            /// Every kernel writes its workgroup memory before reading it
-            /// (gpu/README.md, "Rules for kernels").
-            const ZERO_WORKGROUP_MEMORY: bool = false;
 
             /// Its entry point (a matrix multiply's is in the source only
             /// for the kinds of its path: [`Kernels::ALL`]'s).

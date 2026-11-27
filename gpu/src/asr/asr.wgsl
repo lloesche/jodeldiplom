@@ -387,14 +387,20 @@ fn qa_enc_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
     let k_from = (first / window) * window;
     let k_to = min((last / window) * window + window, len);
     for (var k0 = k_from; k0 < k_to; k0 += 32u) {
+        // The places past the sequence's end as 0: all 32 keys' scores are
+        // computed, those outside the window then left out.
         for (var r = 0u; r < 8u; r++) {
             let slot = lid.x * 8u + r;
             let kp = k0 + slot / 16u;
+            var key = vec4<f32>(0.0);
+            var value = vec4<f32>(0.0);
             if (kp < len) {
                 let at = (o + kp) * 2688u + 896u + h * 64u + 4u * (slot % 16u);
-                keys[slot] = src4(at);
-                vals[slot] = src4(at + 896u);
+                key = src4(at);
+                value = src4(at + 896u);
             }
+            keys[slot] = key;
+            vals[slot] = value;
         }
         workgroupBarrier();
         if (valid) {

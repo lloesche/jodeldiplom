@@ -86,16 +86,18 @@ the 5080.
    what an Apple user runs. An optimisation made only to the fast
    (tensor-core, int8) paths does nothing for them, and one that breaks
    the plain paths breaks the Mac while the 5080's tests stay green.
-6. **Workgroup memory is not zeroed for Gemma and klein: write it before
-   reading it.** WGSL zeroes a kernel's workgroup memory at each dispatch's
-   start by default, and on Metal that cost a fixed ~0.3 ms a dispatch
-   for a kernel holding a large array (Gemma's 16 KB `staged`: its
-   residual, quant and join took three quarters of the GPU's time, and
-   the Mac decoded at 10 tokens a second; without the zeroing, 48). A
-   program says so with `Kernels::ZERO_WORKGROUP_MEMORY`; Gemma's and
-   klein's say `false`, so every kernel of theirs writes every place of
-   its workgroup memory that it reads (a tile's places past the edge as
-   0, not left alone). The profile (`JODEL_GEMMA_PROFILE=1` with
+6. **Workgroup memory is not zeroed: write it before reading it.** WGSL
+   zeroes a kernel's workgroup memory at each dispatch's start by
+   default, and on Metal that cost a fixed ~0.3 ms a dispatch for a
+   kernel holding a large array (Gemma's 16 KB `staged`: its residual,
+   quant and join took three quarters of the GPU's time, and the Mac
+   decoded at 10 tokens a second; without the zeroing, 48). No program's
+   pipelines zero it (`engine::Program`), so every kernel writes every
+   place of its workgroup memory that it reads before reading it (a
+   tile's places past the edge written as 0, or never read: its loop
+   bounded to the places written; a reduction reads only the places its
+   invocations wrote), in every case: edges, partial tiles, idle
+   invocations. A new kernel is checked against this before it lands. The profile (`JODEL_GEMMA_PROFILE=1` with
    `--example gemma`) shows a kernel that is slow out of proportion to
    its work: compare its time a call on the Mac with the 5080's.
 

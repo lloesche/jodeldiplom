@@ -73,12 +73,6 @@ pub(crate) trait Kernels: Copy + Eq + Hash + 'static {
     const ALL: &'static [Self];
     const PARAM_BYTES: u64;
     const EXTRA: &'static [Access];
-    /// Whether workgroup memory is zeroed at each dispatch's start, as
-    /// WGSL says by default. A program whose kernels all write their
-    /// workgroup memory before reading it turns it off: on Metal the
-    /// zeroing of a large array cost a fixed ~0.3 ms a dispatch (Gemma's
-    /// 16 KB `staged`), more than the kernel's own work.
-    const ZERO_WORKGROUP_MEMORY: bool = true;
     fn entry(self) -> &'static str;
 
     /// Whether the kernel is in the program on a device with `features`

@@ -373,7 +373,8 @@ fn qa_rows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
             var at = 0u;
             for (var sl = 0u; sl < 8u; sl++) {
                 let col = (wid.y * rounds + round) * 8u + sl;
-                if (round < rounds && col < p.f1) {
+                // (st_out holds the block's rows only.)
+                if (round < rounds && col < p.f1 && r < rows) {
                     let v = st_out[round * 32u + sl * 4u + r];
                     if (v > best) {
                         best = v;

@@ -200,8 +200,12 @@ impl<K: Kernels> Program<K> {
                     layout: Some(&pipeline_layout),
                     module: &module,
                     entry_point: Some(k.entry()),
+                    // Workgroup memory is not zeroed at each dispatch's
+                    // start (on Metal that costs ~1.9 ms a dispatch): every
+                    // kernel writes what it reads first (gpu/README.md,
+                    // "Rules for kernels", rule 6).
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        zero_initialize_workgroup_memory: K::ZERO_WORKGROUP_MEMORY,
+                        zero_initialize_workgroup_memory: false,
                         ..Default::default()
                     },
                     cache: None,

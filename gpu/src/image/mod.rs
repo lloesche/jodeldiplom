@@ -103,9 +103,6 @@ impl Kernels for Kernel {
     const PARAM_BYTES: u64 = 128;
     /// After the parameters: the f32 tensors, a second input.
     const EXTRA: &'static [Access] = &[Access::Read, Access::Read];
-    /// Every kernel writes its workgroup memory before reading it
-    /// (gpu/README.md, "Rules for kernels").
-    const ZERO_WORKGROUP_MEMORY: bool = false;
 
     fn entry(self) -> &'static str {
         match self {
