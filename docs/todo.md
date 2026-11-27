@@ -29,13 +29,19 @@ Work agreed on but not started, roughly in the order it was raised.
   range, which music signal drives what, mood tags), its output held to
   the catalogue's schema as it is written. One answer: the look's fields
   come last in the plan's JSON, so every scene is already written when
-  the model chooses it. SDXL-Lightning (Q8 looks as fp16) draws
-  one whole picture per scene (characters from the lyrics, a portrait
-  each as a face reference; the cover as a style reference only when it
-  is striking, its lettering painted out first); no face redrawing
-  afterwards (tried: it changed good faces and planted features on
-  profiles); the negative prompt forbids any text, writing or
-  lettering. Each scene moves by a slow camera push and either a depth
+  the model chooses it. FLUX.2 klein 4B (Apache-2.0, BFL's FP8
+  weights, 4 steps; about 3 s a picture, 7.3 GB at its peak, so it fits
+  8 GB) draws one whole picture per scene; it won a bake-off against
+  SDXL-Lightning and Z-Image Turbo hands down (faces, following the
+  scene). Its text encoder is Qwen3-4B (Qwen's FP8), run for all of a
+  song's prompts and unloaded before the image model loads. Characters
+  from the lyrics get a portrait each, given to the scenes as klein's
+  own reference images (no IP-Adapter); the cover as a style reference
+  only when it is striking, its lettering painted out first. No face
+  redrawing afterwards (tried: it changed good faces and planted
+  features on profiles). Distilled, it takes no negative prompt: the
+  prompt itself asks for no text, writing or lettering, and a text
+  check redraws a picture that has some anyway. Each scene moves by a slow camera push and either a depth
   warp from its depth map (no edge to tear, so stronger than the
   prototype's 1.5 %; the depth held flat over each whole head, found
   from the face and the depth around it so a profile's nose and the
