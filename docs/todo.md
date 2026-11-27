@@ -79,7 +79,19 @@ Work agreed on but not started, roughly in the order it was raised.
   depth and the cut), and one GPU scheduler keeping one big model at a
   time, draining its queue for every song before it swaps. Each queue
   is first in, first out, no exceptions (not even for the song playing
-  next). Singing takes the GPU first. The existing workers (stems, the speech model,
+  next). Singing takes the GPU first. How many models stay loaded
+  follows the card's memory, read per backend through wgpu's escape
+  hatch (wgpu itself does not say): DXGI's budget and usage on DirectX
+  12, `VK_EXT_memory_budget` on Vulkan, the device's recommended working
+  set on Metal. A model stays resident while what is loaded fits the
+  budget less a margin for the window and other programs, and is let go
+  only when the next one would not fit (the oldest unused first): on
+  16 GB the language model, the encoder and the image model stay loaded
+  together, on 8 GB they take turns, slower but the same results.
+  Going over must never be found out by failing: Windows pages video
+  memory out to system memory silently and everything crawls. Each
+  model says what it holds and its peak while it works, so the plan is
+  made before loading. The existing workers (stems, the speech model,
   word timing, the cover's vision) under the same scheduler; each stage
   its icon in the queue, lit only when done.
 
