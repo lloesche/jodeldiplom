@@ -24,8 +24,27 @@ fn embed(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups)
 @compute @workgroup_size(256)
 fn quant(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let i = linear_id(gid, groups);
-    let blocks = quant_width() / Q8_BLOCK;
-    if (i >= quant_rows() * blocks) {
+    let width = quant_width();
+    let blocks = width / Q8_BLOCK;
+    let n = quant_rows() * blocks;
+    if (i >= n) {
+        return;
+    }
+    if (quant_mode() != Q8) {
+        // The f32 path: the rows' values as they are (`put_block`'s
+        // layout, a row after another), invocation i taking values i,
+        // i + n, i + 2n, …, so neighbours write neighbouring words
+        // (`put_row_f32` says why).
+        for (var j = 0u; j < Q8_BLOCK; j++) {
+            let v = i + j * n;
+            let row = v / width;
+            let col = v % width;
+            var x = src[row * quant_stride() + col];
+            if (quant_times() != NONE) {
+                x *= src[quant_times() + row * quant_times_stride() + col];
+            }
+            ints[quant_qa() + v] = bitcast<u32>(x);
+        }
         return;
     }
     let row = i / blocks;
@@ -35,7 +54,7 @@ fn quant(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups)
     if (quant_times() != NONE) {
         times = quant_times() + row * quant_times_stride() + block * Q8_BLOCK;
     }
-    put_block(true, at, times, row, block, blocks, quant_qa(), quant_qs(), quant_mode());
+    put_block(true, at, times, row, block, blocks, quant_qa(), quant_qs());
 }
 
 // The residual stream's step between matrices, a workgroup a row of
@@ -88,9 +107,13 @@ fn residual(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wi
         }
     }
     workgroupBarrier();
+    if (residual_mode() != Q8) {
+        put_row_f32(lid, r, k, residual_qa());
+        return;
+    }
     let blocks = k / Q8_BLOCK;
     for (var b = lid; b < blocks; b += 256u) {
-        put_block(false, b * Q8_BLOCK, NONE, r, b, blocks, residual_qa(), residual_qs(), residual_mode());
+        put_block(false, b * Q8_BLOCK, NONE, r, b, blocks, residual_qa(), residual_qs());
     }
 }
 

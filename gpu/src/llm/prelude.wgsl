@@ -97,18 +97,25 @@ fn round8(x: f32, d: f32) -> i32 {
     return 0;
 }
 
-// 32 values (`block_value`'s) of row `row` written for a matrix multiply as
-// block `block` of `blocks` a row: on the q8 path rounded to 8 bits by the
-// block's largest (its scale and the scaled sum of its values kept, at
-// `qs`), four to a word in order, at `qa`; else as f32 bits.
-fn put_block(from_src: bool, at: u32, times: u32, row: u32, block: u32, blocks: u32, qa: u32, qs: u32, mode: u32) {
-    let b = row * blocks + block;
-    if (mode != Q8) {
-        for (var i = 0u; i < Q8_BLOCK; i++) {
-            ints[qa + b * Q8_BLOCK + i] = bitcast<u32>(block_value(from_src, at, times, i));
-        }
-        return;
+// `staged`'s `k` values written as row `row` for a matrix multiply on the
+// f32 path, as `put_block` would write them block by block, but a value an
+// invocation in turn (coalesced): with each invocation writing its block's
+// 32 values one after another, every store of a SIMD group touched 32
+// lines a word each, and on Apple's GPUs that made these kernels 17 to 30
+// times slower than on an NVIDIA card. A workgroup of 256.
+fn put_row_f32(lid: u32, row: u32, k: u32, qa: u32) {
+    for (var i = lid; i < k; i += 256u) {
+        ints[qa + row * k + i] = bitcast<u32>(staged[i]);
     }
+}
+
+// 32 values (`block_value`'s) of row `row` written for a matrix multiply on
+// the q8 path as block `block` of `blocks` a row: rounded to 8 bits by the
+// block's largest (its scale and the scaled sum of its values kept, at
+// `qs`), four to a word in order, at `qa`. (The f32 path writes its rows
+// a value an invocation: `put_row_f32`, and `quant`'s own.)
+fn put_block(from_src: bool, at: u32, times: u32, row: u32, block: u32, blocks: u32, qa: u32, qs: u32) {
+    let b = row * blocks + block;
     var most = 0.0;
     for (var i = 0u; i < Q8_BLOCK; i++) {
         most = max(most, abs(block_value(from_src, at, times, i)));

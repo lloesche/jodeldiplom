@@ -260,9 +260,13 @@ fn join(@builtin(local_invocation_index) lid: u32) {
         staged[i] = o / join_total[h];
     }
     workgroupBarrier();
+    if (join_mode() != Q8) {
+        put_row_f32(lid, 0u, heads * d, join_qa());
+        return;
+    }
     let blocks = heads * d / Q8_BLOCK;
     for (var b = lid; b < blocks; b += 256u) {
-        put_block(false, b * Q8_BLOCK, NONE, 0u, b, blocks, join_qa(), join_qs(), join_mode());
+        put_block(false, b * Q8_BLOCK, NONE, 0u, b, blocks, join_qa(), join_qs());
     }
 }
 
