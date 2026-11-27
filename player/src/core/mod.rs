@@ -522,7 +522,7 @@ impl SettingsRow {
             SettingsRow::SkipMix => {
                 return format!(
                     "Next track ({})",
-                    keymap::hint(keymap::Context::Global, keymap::Op::Next)
+                    keymap::hint(keymap::Context::Global, keymap::Op::Skip)
                 )
             }
             SettingsRow::SkipPreset => "Its transition",

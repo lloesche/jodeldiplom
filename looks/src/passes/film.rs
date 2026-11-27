@@ -1,4 +1,5 @@
-//! Film: its grain, its glow, its weave, its leaks, its age. What moves
+//! Film: its grain, its glow, its weave, its leaks, its age, the cinema's
+//! letterbox and the lens's bokeh. What moves
 //! with time moves at film's 24 frames a second on the song's own time
 //! (the same frame at the same moment, however often it is drawn), and
 //! keeps the screen's light even (grain is as bright as dark).
@@ -6,6 +7,7 @@
 use crate::drive::Driver;
 use crate::math::*;
 use crate::pass::{knob, natural, Ctx, Family, Pass, Src};
+use crate::passes::atmos::fall;
 
 const F: Family = Family::Film;
 
@@ -480,7 +482,7 @@ fn film_damage(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
     let f = film_frame(u.time[0]);
-    let px = uv * v2(u.size[0], u.size[1]) / u.scale();
+    let px = u.px1080(uv);
     let cellv = (px / 36.0).floor();
     let h = hash2(cell(cellv.x), cell(cellv.y), f);
     let at = (cellv
@@ -531,7 +533,7 @@ pub const FILM_DAMAGE: Pass = Pass {
 fn look_film_damage(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let f = u32(floor(max(u.time.x * 24.0, 0.0)));
-    let px = uv * u.size.xy / lk_scale();
+    let px = lk_px1080(uv);
     let cv = floor(px / 36.0);
     let cx = i32(cv.x);
     let cy = i32(cv.y);
@@ -553,3 +555,93 @@ fn look_film_damage(uv: vec2<f32>) -> vec3<f32> {
 
 /// The film family's WGSL the other passes share.
 pub const SHARED: &str = RING_LIGHT;
+
+fn letterbox(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
+    let k = &u.k;
+    let c = s.src(uv);
+    let ar = u.size[0] / u.size[1];
+    let shown = (ar / k[0]).min(1.0);
+    let top = (1.0 - shown) * 0.5;
+    let px = u.size[3];
+    let inside = smoothstep(top - px, top + px, uv.y)
+        * (1.0 - smoothstep(1.0 - top - px, 1.0 - top + px, uv.y));
+    c * mix(1.0 - k[1], 1.0, inside)
+}
+
+/// A cinema's letterbox.
+pub const LETTERBOX: Pass = Pass {
+    name: "letterbox",
+    family: F,
+    about: "a cinema's black bars, the picture as wide as a film (ballads, epics, soundtracks, road movies)",
+    knobs: &[
+        knob("ratio", "the picture's width to its height (1.85 flat, 2.39 scope)", (1.85, 2.76, 2.39), "ratio", (0.0, 0.2)),
+        knob("amount", "how black the bars", (0.0, 1.0, 1.0), "share", (0.0, 0.3)),
+    ],
+    pairs: &["split_tone", "grain", "halation"],
+    wgsl: r"
+fn look_letterbox(uv: vec2<f32>) -> vec3<f32> {
+    let c = lk_src(uv);
+    let ar = u.size.x / u.size.y;
+    let shown = min(ar / u.k0.x, 1.0);
+    let top = (1.0 - shown) * 0.5;
+    let px = u.size.w;
+    let inside = smoothstep(top - px, top + px, uv.y) * (1.0 - smoothstep(1.0 - top - px, 1.0 - top + px, uv.y));
+    return c * mix(1.0 - u.k0.y, 1.0, inside);
+}
+",
+    cpu: letterbox,
+    ..Pass::BASE
+};
+
+fn bokeh(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
+    let k = &u.k;
+    let c = s.src(uv);
+    let mut acc = s3(0.0);
+    for l in 0..2u32 {
+        let (local, h, on, near) = fall(u, uv, (160.0, 0.03, 0.05), l, k[0] * 0.5);
+        let r = (14.0 + 18.0 * h) * k[1] * near;
+        let d = local.length();
+        let disc = smoothstep(r, r * 0.85, d) * (0.6 + 0.4 * smoothstep(r * 0.6, r * 0.95, d));
+        let col = mix3(hsv(k[2] + 0.1 * h, 0.5, 1.0), u.pal(0), k[3]);
+        acc = acc + col * (disc * on * 0.25);
+    }
+    let dark = 1.0 - smoothstep(0.25, 0.7, luma(c));
+    screen(c, acc * dark)
+}
+
+/// Bokeh: soft balls of light out of focus.
+pub const BOKEH: Pass = Pass {
+    name: "bokeh",
+    family: F,
+    about: "bokeh: soft balls of out-of-focus light drifting in the dark parts (Christmas, love songs, city nights, soul and R&B)",
+    knobs: &[
+        knob("amount", "how many lights", (0.0, 1.0, 0.5), "share", (0.4, 0.05)),
+        knob("size", "how big", (0.5, 3.0, 1.0), "share", (0.8, 0.05)),
+        knob("hue", "their colour", (0.0, 1.0, 0.1), "turns", (0.2, 0.0)),
+        knob("cover", "the hue (0) or the cover's colour (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.01)),
+    ],
+    cost: 1.3,
+    relief: 0.5,
+    cells: true,
+    natural: &[natural("size", Driver::Vocals, 0.7), natural("amount", Driver::Chorus, 0.6)],
+    pairs: &["glow", "diffusion", "white_balance"],
+    wgsl: r"
+fn look_bokeh(uv: vec2<f32>) -> vec3<f32> {
+    let c = lk_src(uv);
+    var acc = vec3<f32>(0.0);
+    for (var l = 0u; l < 2u; l = l + 1u) {
+        let f = lk_fall(uv, 160.0, 0.03, 0.05, l, u.k0.x * 0.5);
+        let near = 1.0 / (1.0 + 0.6 * f32(l));
+        let r = (14.0 + 18.0 * f.z) * u.k0.y * near;
+        let d = length(f.xy);
+        let disc = smoothstep(r, r * 0.85, d) * (0.6 + 0.4 * smoothstep(r * 0.6, r * 0.95, d));
+        let col = mix(lk_hsv(u.k0.z + 0.1 * f.z, 0.5, 1.0), u.pal0.xyz, u.k0.w);
+        acc = acc + col * (disc * f.w * 0.25);
+    }
+    let dark = 1.0 - smoothstep(0.25, 0.7, lk_luma(c));
+    return lk_screen(c, acc * dark);
+}
+",
+    cpu: bokeh,
+    ..Pass::BASE
+};

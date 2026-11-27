@@ -225,7 +225,6 @@ impl Look {
             layers,
             dropped,
             notes,
-            strength: 1.0,
         }
     }
 }
@@ -271,10 +270,6 @@ pub struct Checked {
     pub dropped: Vec<&'static str>,
     /// What was changed, for people.
     pub notes: Vec<String>,
-    /// How strongly it draws (its passes' mixes times it, 0 to 1): 1 as
-    /// it is made, less where its frames over a picture would be washed
-    /// out or blacked out ([`guard::strength`]).
-    pub strength: f32,
 }
 
 /// A pass as it draws in a checked look: the pass, its knobs (in its
@@ -312,8 +307,10 @@ pub struct CheckedDrive {
 /// What every pass of a frame shares: the target's size in pixels, the
 /// song's time as heard, the look's seed, the frame's step (seconds),
 /// whether the frame before is to be forgotten, the lyric band (top and
-/// bottom, shares of the height; none: nothing kept readable) and the
-/// cover's three colours.
+/// bottom, shares of the height; none: nothing kept readable), the
+/// cover's three colours and how strongly the look draws (its passes'
+/// mixes times it, 0 to 1: 1 as it is made, less where its frames over the
+/// song's picture would be washed out or blacked out: [`guard::strength`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Moment {
     /// Width and height.
@@ -330,11 +327,37 @@ pub struct Moment {
     pub band: Option<(f32, f32)>,
     /// The cover's colours.
     pub palette: [[f32; 3]; 3],
+    /// The strength.
+    pub strength: f32,
 }
 
 /// A palette to measure a look with where no cover gives one: warm,
 /// cool and near black.
 pub const MEASURING_PALETTE: [[f32; 3]; 3] = [[0.9, 0.5, 0.2], [0.2, 0.4, 0.8], [0.1, 0.1, 0.12]];
+
+impl Moment {
+    /// A moment a look is measured at ([`guard::strength`],
+    /// [`guard::over_song`]): a picture of `size`, the song's time `t`,
+    /// `dt` after the frame before (forgotten: `forget`), the seed `seed`,
+    /// at `strength`; no lyric band, [`MEASURING_PALETTE`].
+    pub fn measuring(
+        size: (u32, u32),
+        (t, dt): (f64, f32),
+        forget: bool,
+        (seed, strength): (u32, f32),
+    ) -> Moment {
+        Moment {
+            size,
+            t,
+            seed,
+            dt,
+            forget,
+            band: None,
+            palette: MEASURING_PALETTE,
+            strength,
+        }
+    }
+}
 
 impl Checked {
     /// What it costs the GPU ([`Pass::cost`] added up).
@@ -392,7 +415,7 @@ impl Checked {
                     band: [top, bottom, l.pass.relief, guard::CEILING],
                     pal,
                     mix: [
-                        mix.clamp(0.0, 1.0) * self.strength.clamp(0.0, 1.0),
+                        mix.clamp(0.0, 1.0) * moment.strength.clamp(0.0, 1.0),
                         0.0,
                         0.0,
                         0.0,

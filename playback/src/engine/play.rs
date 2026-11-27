@@ -66,6 +66,7 @@ impl Engine {
             output,
             info,
             clock,
+            last_report: None,
         });
         Ok(())
     }

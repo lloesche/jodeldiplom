@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use super::mode::line;
+use super::mode::{line, nothing_queued, PRESS_NEXT};
 use super::{points_text, LineKind, LyricLine};
 use crate::core::karaoke;
 use crate::core::karaoke::result::{verdict_words, Shown, SongResult};
@@ -30,7 +30,7 @@ impl ResultShown {
     /// again, or none queued.
     pub fn next_words(&self) -> String {
         match (self.next.is_empty(), self.again) {
-            (true, _) => "Queue some songs, then press Next".to_owned(),
+            (true, _) => nothing_queued(),
             (false, true) => format!("Again: {}", self.next),
             (false, false) => format!("Next: {}", self.next),
         }
@@ -150,7 +150,7 @@ pub fn plain_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
         (format!("{name} {verdict}"), LineKind::Current),
         (counts, LineKind::Next),
         (best_words(r), LineKind::Info),
-        (format!("{next} · press Next"), LineKind::Info),
+        (format!("{next} · {PRESS_NEXT}"), LineKind::Info),
     ]
     .into_iter()
     .filter(|(text, _)| !text.is_empty())
@@ -188,7 +188,7 @@ mod tests {
         assert!(text[1].starts_with("SILVER"), "{text:?}");
         assert!(text.iter().any(|t| t.contains("40 of 45 words")));
         let last = text.last().unwrap();
-        assert!(last.contains("Next Song") && last.ends_with("press Next"));
+        assert!(last.contains("Next Song") && last.ends_with(PRESS_NEXT));
     }
 
     /// The song Next plays: the next, the one just sung again after the
@@ -203,10 +203,8 @@ mod tests {
         };
         assert_eq!(shown("B", false).next_words(), "Next: B");
         assert_eq!(shown("A", true).next_words(), "Again: A");
-        assert_eq!(
-            shown("", true).next_words(),
-            "Queue some songs, then press Next"
-        );
+        let none = shown("", true).next_words();
+        assert_eq!(none, "Queue some songs, then press Next");
     }
 
     #[test]

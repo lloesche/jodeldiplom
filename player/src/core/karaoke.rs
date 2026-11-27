@@ -12,12 +12,12 @@
 //! window) is where karaoke happens:
 //!
 //! - no song is sung until it can be ([`not_singable`]): karaoke needs a
-//!   GPU, and a song every job the queue gets it ready by done (START on a
+//!   GPU, and a song every job the queue gets it ready by done (Next on a
 //!   song held while it is still being prepared waits for it:
 //!   [`KaraokeState::start_when_ready`]) and lyrics to sing;
 //! - entering it stops the song and holds it at its start (entering it
 //!   with shift, [`Op::KaraokeEnterHere`], leaves the song where it is),
-//!   and a song's end holds the next one there: only [`Op::KaraokeStart`]
+//!   and a song's end holds the next one there: only [`Op::KaraokeNext`]
 //!   (Next's button on the stage, `enter`, `space`) plays a song, with a
 //!   count-in of three seconds ([`Countdown`]) that ends as its first word
 //!   is sung, drawn from what is heard: the song plays at once and the
@@ -25,7 +25,7 @@
 //!   seconds in, it starts that much later; a song paused in the mode goes
 //!   on after a count-in of its own;
 //! - a song heard to its end, the game on, shows how it went while the
-//!   next is held, or after the last ([`result_shown`]): the first START
+//!   next is held, or after the last ([`result_shown`]): the first Next
 //!   during its reveal completes it, the next starts the song;
 //! - `p` held, the demo sings ([`super::singing::Demo`]): for showing the
 //!   game off, never a best;
@@ -68,10 +68,10 @@ pub use ready::{no_karaoke, not_singable, NotSingable};
 pub(crate) use result::ended;
 pub use result::{clock_ms, result_motion, result_now, result_shown};
 
-/// The queue index of the song the mode is about: the one held for START,
+/// The queue index of the song the mode is about: the one held for Next,
 /// else the one heard, else the queue's current one, else the one
 /// selected in the queue. The one the tab and the mode show, entering the
-/// mode holds, START plays, and `N` and `P` go on from.
+/// mode holds, Next plays, and `N` and `P` go on from.
 pub fn song_index(state: &State) -> Option<usize> {
     state
         .karaoke
@@ -128,11 +128,11 @@ pub struct KaraokeState {
     pub focus: Slider,
     /// The slider being dragged with the mouse.
     pub dragging: Option<Slider>,
-    /// The track START plays, when known (the one the engine holds).
+    /// The track Next plays, when known (the one the engine holds).
     pub held: Option<usize>,
     /// The count-in under way.
     pub countdown: Option<Countdown>,
-    /// START pressed in the mode on this song (the queue's index) while it
+    /// Next pressed in the mode on this song (the queue's index) while it
     /// was still being prepared: it starts, with its count-in, as soon as
     /// it is ([`start_when_ready`]).
     pub start_when_ready: Option<usize>,
@@ -205,7 +205,7 @@ pub fn singing(state: &State) -> bool {
     in_mode(state) && !waiting(state)
 }
 
-/// Whether nothing plays in the mode, so START shows.
+/// Whether nothing plays in the mode, so Next shows.
 pub fn waiting(state: &State) -> bool {
     let k = &state.karaoke;
     let counting = k.countdown.is_some() || k.resume_at.is_some();
@@ -214,7 +214,7 @@ pub fn waiting(state: &State) -> bool {
 }
 
 /// Whether the seek bar does nothing now: in the mode, while a song is held
-/// for START or counting in (its silence before it, or a paused song's
+/// for Next or counting in (its silence before it, or a paused song's
 /// count before it goes on).
 pub fn seek_refused(state: &State) -> bool {
     in_mode(state)
@@ -289,15 +289,15 @@ fn game_setting(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
     state.info(said);
 }
 
-/// Carries out `op` in the mode: START, play and pause, the sliders, the
+/// Carries out `op` in the mode: Next, play and pause, the sliders, the
 /// next or previous song (held at its start), and `esc`; quitting and the
 /// device volume as anywhere (`false`); nothing else (no tabs, screens or
 /// seeking).
 pub(crate) fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     match op {
         Op::Back => leave(state, fx),
-        Op::KaraokeStart | Op::Accept | Op::Open => start(state, fx),
-        // Space pauses a song playing; anything else is START (never a
+        Op::KaraokeNext | Op::Accept | Op::Open => start(state, fx),
+        // Space pauses a song playing; anything else is Next (never a
         // song going on without its count-in).
         Op::PlayPause => {
             if pausable(state) {
@@ -309,11 +309,11 @@ pub(crate) fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> boo
                 start(state, fx);
             }
         }
-        Op::Next | Op::Previous => {
+        Op::Skip | Op::Previous => {
             let Some(current) = song_index(state) else {
                 return true;
             };
-            let index = if op == Op::Next {
+            let index = if op == Op::Skip {
                 current + 1
             } else {
                 current.saturating_sub(1)
@@ -341,7 +341,7 @@ pub(crate) fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> boo
 }
 
 /// Whether a song is heard in the mode that `space` pauses: playing, not
-/// held for START, not counting in (the silence before a song is no song
+/// held for Next, not counting in (the silence before a song is no song
 /// to pause; its intro, with the count-in to come, is).
 pub fn pausable(state: &State) -> bool {
     let k = &state.karaoke;
@@ -369,7 +369,7 @@ fn refused(state: &mut State, index: Option<usize>) -> bool {
     };
     let title = super::shown_title(state, &state.queue.paths[index]);
     let next = if in_mode(state) {
-        let key = keymap::hint(Context::KaraokeMode, Op::Next);
+        let key = keymap::hint(Context::KaraokeMode, Op::Skip);
         format!("; {key} for the next song")
     } else {
         String::new()
@@ -380,7 +380,7 @@ fn refused(state: &mut State, index: Option<usize>) -> bool {
 
 /// Into the mode: fullscreen (the window), every stem with the voice at
 /// its level, songs held at their ends. The song playing (or paused)
-/// stops and is held at its start for START, with its count-in; `here`:
+/// stops and is held at its start for Next, with its count-in; `here`:
 /// it goes on where it is instead (nothing stopped, no count-in). A
 /// transition armed is called off (one already mixing plays out: the
 /// engine cuts no mix it is heard in). A result from before is gone. Not
@@ -443,7 +443,7 @@ pub(crate) fn leave(state: &mut State, fx: &mut Vec<Effect>) {
     fx.push(Effect::Engine(Command::HoldAtEnd(false)));
 }
 
-/// START: the song the mode is about ([`song_index`]: the one held, else
+/// Next: the song the mode is about ([`song_index`]: the one held, else
 /// the queue's current one) plays from its start after its count-in; a
 /// paused song goes on after the same count-in. A song still being
 /// prepared waits: it starts as soon as it is ([`start_when_ready`]).
@@ -451,7 +451,7 @@ fn start(state: &mut State, fx: &mut Vec<Effect>) {
     if state.karaoke.countdown.is_some() || state.karaoke.resume_at.is_some() {
         return;
     }
-    // The first START during the result's reveal completes it, no more.
+    // The first Next during the result's reveal completes it, no more.
     if result::skipped(state) {
         return;
     }
@@ -502,7 +502,7 @@ pub(crate) fn held(state: &mut State, index: usize) {
     state.karaoke.countdown = None;
 }
 
-/// A track starts to be heard (START's, one a mix ran into, one played on
+/// A track starts to be heard (Next's, one a mix ran into, one played on
 /// the tab after the mode): the engine holds none now, and the result of
 /// the song before is gone.
 pub(crate) fn track_started(state: &mut State) {

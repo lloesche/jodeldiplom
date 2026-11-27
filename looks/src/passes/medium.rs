@@ -1,6 +1,7 @@
 //! The picture turned into another medium: glass and lead, tiles, thread
 //! on cloth, a blueprint, a heat camera, night vision, an X-ray, chrome,
-//! neon tubes, teletext's blocks (shapes only: never readable text).
+//! neon tubes, teletext's blocks (shapes only: never readable text), cut
+//! paper, a relief embossed in metal or stone.
 
 use crate::drive::Driver;
 use crate::math::*;
@@ -248,7 +249,7 @@ pub const CYANOTYPE: Pass = Pass {
 fn look_cyanotype(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let l = lk_luma(c);
-    let p = uv * u.size.xy / lk_scale();
+    let p = lk_px1080(uv);
     let print = mix(vec3<f32>(0.04, 0.17, 0.4), vec3<f32>(0.86, 0.91, 0.96), pow(max(l, 0.0), 1.2)) * (0.95 + 0.05 * lk_fbm(p / 7.0, 151u));
     let e = smoothstep(0.05, 0.18, lk_edges(uv, 1.2 * lk_scale()));
     let gx = abs(fract(p.x / 40.0) - 0.5);
@@ -305,7 +306,7 @@ fn lk_iron(h: f32) -> vec3<f32> {
 }
 fn look_thermal(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let p = uv * u.size.xy / lk_scale();
+    let p = lk_px1080(uv);
     let f = u32(floor(max(u.time.x * 15.0, 0.0)));
     let h = lk_sat(lk_luma(c) * 1.1 - 0.05 + (lk_vnoise(p / 2.0, f) - 0.5) * 0.1 * u.k0.z);
     let o = mix(lk_iron(h), lk_hsv(0.7 - 0.75 * h, 0.9, 0.35 + 0.65 * h), u.k0.y);
@@ -345,7 +346,7 @@ pub const NIGHT_VISION: Pass = Pass {
     wgsl: r"
 fn look_night_vision(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let p = uv * u.size.xy / lk_scale();
+    let p = lk_px1080(uv);
     let f = u32(floor(max(u.time.x * 24.0, 0.0)));
     let l = pow(max(lk_sat(lk_luma(c) * 1.6), 0.0), 0.8);
     let n = (lk_vnoise(p / 1.5, f + 7u) - 0.5) * 0.35 * u.k0.y;
@@ -583,5 +584,109 @@ fn look_teletext(uv: vec2<f32>) -> vec3<f32> {
 }
 ",
     cpu: teletext,
+    ..Pass::BASE
+};
+
+/// The paper layer a tone of `l` is cut into, of `n`, its edge ragged at
+/// `p`.
+fn layer_of(l: f32, n: f32, p: V2) -> f32 {
+    ((l + (vnoise(p / 3.0, 321) - 0.5) * 0.04) * n)
+        .floor()
+        .clamp(0.0, n - 1.0)
+}
+
+fn cutout(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
+    let k = &u.k;
+    let n = k[0];
+    let c = s.src(uv);
+    let p = u.px1080(uv);
+    let q = layer_of(luma(c), n, p);
+    let off = v2(-4.0, -4.0) * u.scale() * v2(u.size[2], u.size[3]);
+    let above = layer_of(luma(s.src(uv + off)), n, p + v2(-4.0, -4.0));
+    let shade = 1.0 - k[1] * 0.45 * step(q + 0.5, above);
+    let tone = (q + 0.5) / n;
+    let col = (saturate(c, 1.3) * (tone / luma(c).max(0.05))).clamp(0.0, 1.0);
+    let fibre = 0.94 + 0.06 * fbm(v2(p.x / 2.0, p.y / 9.0), 322) * k[2] + 0.03 * (1.0 - k[2]);
+    mix3(c, col * shade * fibre, k[3])
+}
+
+/// A collage of cut paper.
+pub const CUTOUT: Pass = Pass {
+    name: "cutout",
+    family: M,
+    about: "cut paper: the tones as a few layers of coloured paper, each casting a little shadow on the one under it (indie pop, children's songs, whimsy, animation)",
+    knobs: &[
+        knob("layers", "how many layers of paper", (2.0, 6.0, 4.0), "steps", (0.0, 0.08)),
+        knob("shadow", "how deep the layers' shadows", (0.0, 1.0, 0.6), "share", (0.4, 0.06)),
+        knob("paper", "how much the paper's fibre shows", (0.0, 1.0, 0.5), "share", (0.2, 0.02)),
+        knob("amount", "how much of the collage over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.1)),
+    ],
+    cost: 1.3,
+    relief: 0.4,
+    cells: true,
+    natural: &[natural("shadow", Driver::Kick, 0.7)],
+    pairs: &["canvas", "saturation", "posterize_ink"],
+    wgsl: r"
+fn lk_layer_of(l: f32, n: f32, p: vec2<f32>) -> f32 {
+    return clamp(floor((l + (lk_vnoise(p / 3.0, 321u) - 0.5) * 0.04) * n), 0.0, n - 1.0);
+}
+fn look_cutout(uv: vec2<f32>) -> vec3<f32> {
+    let n = u.k0.x;
+    let c = lk_src(uv);
+    let p = lk_px1080(uv);
+    let q = lk_layer_of(lk_luma(c), n, p);
+    let off = vec2<f32>(-4.0, -4.0) * lk_scale() * u.size.zw;
+    let above = lk_layer_of(lk_luma(lk_src(uv + off)), n, p + vec2<f32>(-4.0, -4.0));
+    let shade = 1.0 - u.k0.y * 0.45 * step(q + 0.5, above);
+    let tone = (q + 0.5) / n;
+    let col = clamp(lk_saturate(c, 1.3) * (tone / max(lk_luma(c), 0.05)), vec3<f32>(0.0), vec3<f32>(1.0));
+    let fibre = 0.94 + 0.06 * lk_fbm(vec2<f32>(p.x / 2.0, p.y / 9.0), 322u) * u.k0.z + 0.03 * (1.0 - u.k0.z);
+    return mix(c, col * shade * fibre, u.k0.w);
+}
+",
+    cpu: cutout,
+    ..Pass::BASE
+};
+
+fn emboss(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
+    let k = &u.k;
+    let c = s.src(uv);
+    let a = k[1] * TAU;
+    let d = v2(a.cos(), a.sin()) * (1.5 * u.scale()) * v2(u.size[2], u.size[3]);
+    let r = (luma(s.src(uv + d)) - luma(s.src(uv - d))) * k[3] * 4.0;
+    let metal = mix3(s3(0.62), v3(0.85, 0.68, 0.35), k[2]);
+    let lit = sat(r);
+    let o = metal * (0.6 + (0.5 + r) * 0.8) + s3(lit * lit * lit * 0.5);
+    mix3(c, o.max(0.0), k[0])
+}
+
+/// A relief embossed in metal or stone.
+pub const EMBOSS: Pass = Pass {
+    name: "emboss",
+    family: M,
+    about: "the picture embossed as a relief in stone, silver or gold, lit from one side (metal, power metal, anthems, epic and classical)",
+    knobs: &[
+        knob("amount", "how much of the relief over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
+        knob("light", "where the light comes from", (0.0, 1.0, 0.125), "turns", (0.2, 0.01)),
+        knob("metal", "grey stone or silver (0) to gold (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.13)),
+        knob("depth", "how deep the relief", (0.0, 1.0, 0.5), "share", (0.5, 0.05)),
+    ],
+    cost: 1.3,
+    relief: 0.4,
+    natural: &[natural("depth", Driver::Bass, 0.8), natural("light", Driver::BarPhase, 0.5)],
+    pairs: &["glow", "vignette", "bleach_bypass"],
+    wgsl: r"
+fn look_emboss(uv: vec2<f32>) -> vec3<f32> {
+    let c = lk_src(uv);
+    let a = u.k0.y * LK_TAU;
+    let d = vec2<f32>(cos(a), sin(a)) * (1.5 * lk_scale()) * u.size.zw;
+    let r = (lk_luma(lk_src(uv + d)) - lk_luma(lk_src(uv - d))) * u.k0.w * 4.0;
+    let metal = mix(vec3<f32>(0.62), vec3<f32>(0.85, 0.68, 0.35), u.k0.z);
+    let lit = lk_sat(r);
+    let o = metal * (0.6 + (0.5 + r) * 0.8) + vec3<f32>(lit * lit * lit * 0.5);
+    return mix(c, max(o, vec3<f32>(0.0)), u.k0.x);
+}
+",
+    cpu: emboss,
     ..Pass::BASE
 };

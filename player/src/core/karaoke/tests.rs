@@ -17,7 +17,7 @@ fn a_count_in_is_a_number_a_second_then_the_song_from_its_start() {
     assert!(c.over(0.0) && !c.over(-0.01));
 }
 
-/// After START the title shows and fades, then the count runs, then
+/// After Next the title shows and fades, then the count runs, then
 /// the singing: the music waits for all that where the singing starts
 /// sooner, and plays at once (counted in over its intro) where not.
 #[test]

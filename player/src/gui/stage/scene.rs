@@ -31,7 +31,6 @@ impl Stage {
     ) -> Option<StageFrame> {
         self.targets.clear();
         self.theme = song.theme;
-        self.outlined = song.outlined;
         // What lies under the lane (as the pixmap did): the lines set in
         // the middle, the count-in, the score; over it, the bubbles of
         // the lines set in the middle.
@@ -45,26 +44,30 @@ impl Stage {
             let (x, y, w, h) = area;
             clip(&mut under, 0, [x, y, x + w, y + h * (1.0 - picture.bar)]);
         }
-        if let Some(frame) = self.result(picture, tint, area) {
-            return Some(frame);
-        }
-        let mut frame = if lane {
-            self.frame(song, picture, area, heard, dt)
-        } else {
-            self.rim_shine((&mut over, &mut sprays), (song, heard), rim);
-            StageFrame::bare(crate::core::lag::sung_clock(heard, song.late) as f32)
+        let place = Place::of(self, area, picture.reach);
+        let (mut frame, button, always) = match self.result(picture, tint, area, &place) {
+            Some((frame, button)) => (frame, button, true),
+            None => {
+                let mut frame = if lane {
+                    self.frame(song, picture, area, heard, dt)
+                } else {
+                    self.rim_shine((&mut over, &mut sprays), (song, heard), rim);
+                    StageFrame::bare(crate::core::lag::sung_clock(heard, song.late) as f32)
+                };
+                under.append(&mut frame.instances);
+                under.append(&mut over);
+                frame.instances = under;
+                frame.sprays.append(&mut sprays);
+                let button = picture.next.map(|n| Look::still(n.ready));
+                (frame, button, lane)
+            }
         };
-        under.append(&mut frame.instances);
-        under.append(&mut over);
-        frame.instances = under;
-        frame.sprays.append(&mut sprays);
-        if let Some(start) = picture.start {
-            let place = Place::of(area);
-            self.next_button(&mut frame.top, &place, Look::still(start.ready));
+        if let Some(look) = button {
+            self.next_button(&mut frame.top, &place, look);
         }
         frame.uploads.append(&mut self.atlas.uploads);
         let empty = frame.instances.is_empty() && frame.top.is_empty() && frame.sprays.is_empty();
-        (lane || !empty).then_some(frame)
+        (always || !empty).then_some(frame)
     }
 
     /// What takes clicks on the stage as drawn last, where (left, top,
@@ -84,18 +87,21 @@ mod tests {
     use crate::core::State;
     use crate::gui::screens::karaoke::mode;
     use crate::gui::stage::gpu::Instance;
-    use crate::view::karaoke::Start;
+    use crate::view::karaoke::Next;
 
-    /// The mode waiting for Next in a window `height` pixels high, its
-    /// controls' bar as the window lays it out.
+    /// The mode waiting for Next in a window `height` points high, its
+    /// controls' bar and their reach as the window lays them out.
     fn waiting(height: f32, ready: bool) -> KaraokePicture {
+        let mut state = State::new("/m".into(), Config::default());
+        state.fit.controls_reach = mode::reach(height);
         KaraokePicture {
             bar: mode::bar_share(height),
+            reach: controls::reach(&state),
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: None,
-            start: Some(Start { ready }),
+            next: Some(Next { ready }),
             before: Vec::new(),
             moved: 1.0,
             score: None,
@@ -103,17 +109,17 @@ mod tests {
         }
     }
 
-    /// Waiting with no result and no lane: Next alone, at the right a
-    /// little above the middle, the pointer over it never bringing the
-    /// controls up (in windows wide, narrow and upright), its target where
-    /// it is drawn, its word and arrow on it; greyed it is still Next.
-    /// Nothing waits: no frame, no target.
+    /// Waiting with no result and no lane: Next alone at the right, its
+    /// bottom above the controls' reach (where the pointer brings them
+    /// up: points from the window's bottom), in windows wide, narrow,
+    /// upright and short; a little above the middle where the window is
+    /// tall enough; its target where it is drawn, its word and arrow on
+    /// it; greyed it is still Next. Nothing waits: no frame, no target.
     #[test]
     fn next_shows_alone_at_the_right_out_of_the_controls_reach() {
         let mut stage = Stage::default();
         let singing = Singing::default();
         let song = Song::new(&singing, Vec::new(), None);
-        let mut state = State::new("/m".into(), Config::default());
         let sizes = [
             (1600.0, 900.0),
             (1280.0, 800.0),
@@ -122,6 +128,7 @@ mod tests {
             (640.0, 800.0),
             (500.0, 900.0),
             (600.0, 1000.0),
+            (1280.0, 200.0),
         ];
         for ((w, h), ready) in sizes.into_iter().flat_map(|s| [(s, true), (s, false)]) {
             let area = (0.0, 0.0, w, h);
@@ -131,14 +138,13 @@ mod tests {
             let &[(at, op)] = stage.targets() else {
                 panic!("{:?}", stage.targets())
             };
-            assert_eq!(op, Op::KaraokeStart);
+            assert_eq!(op, Op::KaraokeNext);
             let [x0, y0, x1, y1] = at;
             let size = format!("{w} x {h}: {at:?}");
             assert!(x1 < w && x1 > w * 0.95 && x0 > w * 0.6, "{size}");
-            assert!(y0 > h * 0.3 && y1 < h * 0.5, "{size}");
-            state.fit.controls_reach = mode::reach(h);
-            for y in [y0, (y0 + y1) / 2.0, y1] {
-                assert!(!controls::in_reach(&state, (h - y) / h), "{size}");
+            assert!(y1 <= h * (1.0 - picture.reach), "{size}: {}", picture.reach);
+            if h >= 480.0 {
+                assert!(y0 > h * 0.3 && y1 < h * 0.5, "{size}");
             }
             let inside = |i: &Instance| {
                 let [a, b, c, d] = i.quad;
@@ -154,7 +160,7 @@ mod tests {
             assert!(gold.is_some(), "the pill drawn round its target");
         }
         let mut idle = waiting(900.0, true);
-        idle.start = None;
+        idle.next = None;
         let area = (0.0, 0.0, 1600.0, 900.0);
         let frame = stage.scene((&song, false), &idle, area, (0.0, 0.0), &Tint::STAGE);
         assert!(frame.is_none() && stage.targets().is_empty());

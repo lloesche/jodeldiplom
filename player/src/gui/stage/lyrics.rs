@@ -318,9 +318,7 @@ impl Stage {
     /// `filled`, right of it in `rest`, into `out`: in runs of words no
     /// wider than [`RUN`] (one where it is narrower), on whole pixels where
     /// it is drawn at the size it is made at, so it is as crisp as its
-    /// glyphs; outlined dark where a look draws ([`Song::outlined`]).
-    ///
-    /// [`Song::outlined`]: super::Song::outlined
+    /// glyphs; outlined dark ([`Stage::outlined_text`]).
     pub(super) fn set_text(
         &mut self,
         out: &mut Vec<Instance>,
@@ -348,12 +346,8 @@ impl Stage {
         runs.push((run, from));
         for (run, from) in runs {
             let at = (snap(at.0 + from * scale), snap(at.1));
-            if self.outlined {
-                let rim = (super::Shade::OUTLINE, rest[3].max(filled[3]));
-                self.shade(out, (face, &run), (base, scale), (at, f32::INFINITY), rim);
-            }
             let colors = (rest, filled);
-            self.text(out, face, &run, (base, scale), at, split, colors);
+            self.outlined_text(out, face, &run, (base, scale), at, split, colors);
         }
     }
 
@@ -575,6 +569,7 @@ impl Stage {
 mod tests {
     use super::*;
     use crate::gui::big_text::COVER_PAD;
+    use crate::gui::stage::{runs, Shade};
 
     fn lyric(text: &str, fill: f64, kind: LineKind, id: Option<usize>) -> LyricLine {
         LyricLine {
@@ -594,11 +589,12 @@ mod tests {
     fn picture(lines: Vec<LyricLine>) -> KaraokePicture {
         KaraokePicture {
             bar: 5.0 / 24.0,
+            reach: 0.0,
             lines,
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: None,
@@ -632,6 +628,11 @@ mod tests {
         let (mut out, mut over, mut sprays) = (Vec::new(), Vec::new(), Vec::new());
         let into = (&mut out, &mut over, &mut sprays);
         assert_eq!(stage.lyrics(into, &p, (area, Which::All)), None);
+        assert_eq!(out.len(), 3 * 10, "each run over its nine dark copies");
+        assert!(out[..9]
+            .iter()
+            .all(|i| Shade::is_copy(i) && i.color2[0] < 0.1));
+        let out = runs(&out);
         assert_eq!(out.len(), 3, "{out:?}");
         for i in &out {
             assert!(i.is(Shape::Text));
@@ -643,39 +644,7 @@ mod tests {
         let mut info = Vec::new();
         let only = (&mut info, &mut Vec::new(), &mut Vec::new());
         stage.lyrics(only, &p, (area, Which::Info));
-        assert_eq!(info.len(), 1);
-    }
-
-    /// Where a look draws over the backdrop, the text set over it (a line
-    /// set in the middle, the count-in) gets the lyrics' dark outline:
-    /// its dark copies under it, none without a look.
-    #[test]
-    fn text_over_a_look_is_outlined() {
-        let white = [1.0; 4];
-        let drawn = |outlined: bool| {
-            let mut stage = Stage {
-                outlined,
-                ..Stage::default()
-            };
-            let mut out = Vec::new();
-            let text = (Face::LINE, "Kettcar");
-            stage.set_text(
-                &mut out,
-                text,
-                (80.0, 80.0),
-                (10.0, 20.0),
-                0.0,
-                (white, white),
-            );
-            out
-        };
-        let (plain, outlined) = (drawn(false), drawn(true));
-        assert_eq!(
-            outlined.len(),
-            plain.len() * 10,
-            "nine dark copies under each run"
-        );
-        assert!(outlined[..9].iter().all(|i| i.color[0] < 0.1));
+        assert_eq!(runs(&info).len(), 1);
     }
 
     /// A line wider than the atlas holds at once goes in word by word,
@@ -695,6 +664,7 @@ mod tests {
             0.0,
             (white, white),
         );
+        let out = runs(&out);
         assert!(out.len() > 1, "{}", out.len());
         let whole = stage.faces.get(Face::LINE).measure(line, 160.0);
         let pad = COVER_PAD as f32;

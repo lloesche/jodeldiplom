@@ -52,6 +52,7 @@ fn drawn(look: &Look, img: &Image, t: f64) -> Image {
         forget: true,
         band: Some((0.68, 0.86)),
         palette: [[0.95, 0.6, 0.25], [0.25, 0.45, 0.8], [0.1, 0.1, 0.12]],
+        strength: 1.0,
     };
     let signals = curves.at(t);
     let mut prev = None;

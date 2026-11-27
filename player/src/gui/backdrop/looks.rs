@@ -15,15 +15,14 @@ use std::sync::Arc;
 
 use jodel_looks::{Ctx, Driver, Pass, Signals};
 
-/// A look's passes for a frame, each with its numbers
-/// ([`jodel_looks::Checked::frame`]), and the strength it draws at
-/// ([`jodel_looks::guard::strength`]).
-#[derive(Clone, Debug, Default)]
+/// A look's frame: the cue it is drawn from, and its passes, each with
+/// its numbers ([`jodel_looks::Checked::frame`]).
+#[derive(Clone, Debug)]
 pub struct LookFrame {
+    /// The cue.
+    pub cue: LookCue,
     /// The passes, in order.
     pub passes: Vec<(&'static Pass, Ctx)>,
-    /// Its strength.
-    pub strength: f32,
 }
 
 /// The textures' format.
@@ -297,8 +296,9 @@ impl LookPass {
     }
 }
 
-/// The Shader tab's picture's size on the processor, for its guards'
-/// measures.
+/// The size of the song's picture made small ([`Looks::picture`]): what
+/// a look's strength is found over and the Shader tab's guards measure
+/// on (what washes out or blacks out does so at any size).
 const MEASURED: (usize, usize) = (48, 27);
 /// How long the flashes are counted over, seconds.
 const COUNTED: f64 = 3.0;
@@ -307,37 +307,31 @@ const COUNTED: f64 = 3.0;
 /// the look drawn on the processor over the cover made small
 /// ([`jodel_looks::render`]), with the frame's own numbers; the light of
 /// each frame of the last few seconds (the flashes counted in it), the
-/// lyric band's contrast, the stack's cost.
+/// lyric band's contrast, the stack's cost, the strength it draws at.
 #[derive(Default)]
 pub struct Readout {
-    small: Option<(u64, jodel_looks::render::Image)>,
     lights: std::collections::VecDeque<(std::time::Instant, f32)>,
     shown: Option<crate::core::shader_tab::Readout>,
 }
 
 impl Readout {
-    /// The measures after the frame `frame` of `app` drawn at `now`: new
+    /// The measures after the frame `frame` of `app` drawn at `now` over
+    /// the song's picture made small (`small`: [`Looks::picture`]): new
     /// ones where they changed.
     pub fn step(
         &mut self,
         app: &crate::app::App,
-        frame: Option<&super::BackdropFrame>,
+        (frame, small): (Option<&super::BackdropFrame>, &jodel_looks::render::Image),
         now: std::time::Instant,
     ) -> Option<crate::core::shader_tab::Readout> {
         use jodel_looks::guard;
         let checked = crate::core::shader_tab::look(&app.state).check();
-        let art = app.art();
-        let id = art.map_or(0, |a| a.id);
-        if self.small.as_ref().is_none_or(|(i, _)| *i != id) {
-            self.small = Some((id, small_picture(art, MEASURED)));
-        }
-        let small = &self.small.as_ref()?.1;
-        let (w, h) = (MEASURED.0 as f32, MEASURED.1 as f32);
+        let (w, h) = (small.w as f32, small.h as f32);
         let mut contrast = guard::band_contrast(&small.px, small.w, (0.68, 0.86));
         let mut exposure = guard::exposure(&small.px);
         let mut strength = 1.0;
         if let Some(look) = frame.and_then(|f| f.look.as_ref()) {
-            strength = look.strength;
+            strength = look.cue.strength;
             let passes: Vec<(&'static Pass, Ctx)> = (look.passes.iter())
                 .map(|&(p, c)| {
                     let mut c = c;
@@ -410,14 +404,17 @@ pub fn palette_of(swatches: &[crate::work::picture::Swatch]) -> [[f32; 3]; 3] {
 }
 
 /// What the look is given for a frame: the look made safe to draw, the
-/// song's time as heard, the drivers then (the song's curves read there,
-/// the singing's set live over them), the curves themselves (for the
-/// passes that draw the music), the seed (the look's and the song's) and
-/// the lyric band (top and bottom, shares of the height).
+/// strength it draws at ([`jodel_looks::guard::strength`]), the song's
+/// time as heard, the drivers then (the song's curves read there, the
+/// singing's set live over them), the curves themselves (for the passes
+/// that draw the music), the seed (the look's and the song's) and the
+/// lyric band (top and bottom, shares of the height).
 #[derive(Clone, Debug)]
 pub struct LookCue {
     /// The look.
     pub look: Arc<jodel_looks::Checked>,
+    /// The strength.
+    pub strength: f32,
     /// The time.
     pub t: f64,
     /// The drivers.
@@ -430,35 +427,145 @@ pub struct LookCue {
     pub band: Option<(f32, f32)>,
 }
 
-/// What the look keeps between frames: the look last made safe (and what
-/// from), the song's curves (and what from: the song heard and its sung
-/// lines), and the look and time of the last frame (a frame far from it,
-/// or another look, forgets the frame before).
+/// What the look keeps between frames: what the look in force is made
+/// into for the song and its picture ([`Made`], for its [`Key`]), how
+/// many have been made (each one's stamp), the strength drawn (eased
+/// toward the made look's: [`RISE`], [`FALL`]), the finding under way,
+/// the song's picture made small (and its id), and the look and time of
+/// the last frame (a frame far from it, or another look, forgets the
+/// frame before).
 #[derive(Default)]
 pub struct Looks {
-    checked: Option<(jodel_looks::Look, Arc<jodel_looks::Checked>)>,
-    curves: Option<(CurvesOf, Arc<jodel_looks::Curves>)>,
-    /// The look at the strength its frames over the song's picture keep
-    /// within the exposure guard, and what that was found for (the look,
-    /// the song's curves, the picture's id).
-    strong: Option<(StrongOf, Arc<jodel_looks::Checked>)>,
+    made: Option<Made>,
+    makes: u64,
+    drawn: f32,
+    finding: Finding,
+    picture: Option<(u64, Arc<jodel_looks::render::Image>)>,
     last: Option<(String, f64)>,
 }
 
-/// What a look's strength is found for: the look made safe, the song's
-/// curves, the picture's id (0: none).
-type StrongOf = (usize, usize, u64);
+/// How long the strength drawn takes to rise from none to full, seconds
+/// (a look found comes in softly).
+const RISE: f32 = 0.5;
+/// How long it takes to fall from full to none, seconds (a look not yet
+/// measured, or found weaker, goes at once: never a frame too bright for
+/// long).
+const FALL: f32 = 0.1;
 
-/// The size of the picture a look's strength is found over (its frames
-/// made small: what washes out or blacks out does so at any size).
-const STRONG_OVER: (usize, usize) = (40, 24);
+/// The strength drawn `drawn`, `dt` seconds on toward `target`: up in
+/// [`RISE`] from none to full, down in [`FALL`], never past it.
+fn eased(drawn: f32, target: f32, dt: f32) -> f32 {
+    let dt = dt.clamp(0.0, 0.1);
+    if target > drawn {
+        (drawn + dt / RISE).min(target)
+    } else {
+        (drawn - dt / FALL).max(target)
+    }
+}
 
-/// The song's picture made small, encoded colours (none: a mid grey).
-pub fn small_picture(
-    art: Option<&crate::work::art::Art>,
-    (w, h): (usize, usize),
-) -> jodel_looks::render::Image {
+/// What a look made for a song is made from: the look, the song heard
+/// ([`super::music::Song::id`]; none: none analysed), its sung lines, and
+/// its picture's id (0: none). Values all: the same key, the same look,
+/// curves and strength.
+#[derive(Debug, PartialEq)]
+struct Key {
+    look: jodel_looks::Look,
+    song: Option<u64>,
+    lines: Vec<(f64, f64)>,
+    art: u64,
+}
+
+impl Key {
+    /// Whether it is the key of `look` over the song `song` (its id), its
+    /// sung `lines` and the picture `art` (its id), without making one.
+    fn is(
+        &self,
+        look: &jodel_looks::Look,
+        (song, art): (Option<u64>, u64),
+        lines: impl Iterator<Item = (f64, f64)>,
+    ) -> bool {
+        self.look == *look
+            && self.song == song
+            && self.art == art
+            && self.lines.iter().copied().eq(lines)
+    }
+}
+
+/// The singing's sung lines in `state`: each one's first note's start and
+/// last note's end.
+fn sung_lines(state: &crate::core::State) -> impl Iterator<Item = (f64, f64)> + '_ {
+    (state.karaoke.singing.notes.lines.iter())
+        .filter_map(|l| Some((l.notes.first()?.start, l.notes.last()?.end)))
+}
+
+/// A look made for a song: what for, its stamp (which finding is its),
+/// the look made safe, the song's curves, its strength once it is found,
+/// and what it aims at until then: the strength last found for the same
+/// look (by its id: an edit of it on the Shader tab too) over the same
+/// picture (its curves new: its waveform come, its grid fixed by hand,
+/// another song without a cover), else none (the picture as it is).
+struct Made {
+    key: Key,
+    stamp: u64,
+    look: Arc<jodel_looks::Checked>,
+    curves: Option<Arc<jodel_looks::Curves>>,
+    strength: Option<f32>,
+    interim: Option<f32>,
+}
+
+impl Made {
+    /// The strength it aims at: its own, else its interim, else none.
+    fn aim(&self) -> f32 {
+        self.strength.or(self.interim).unwrap_or(0.0)
+    }
+}
+
+/// A look's strength being found on a thread of its own (the drawing
+/// goes on meanwhile), and the next to find once it is (only the newest
+/// kept: a look edited on the Shader tab asks for one each frame), each
+/// with the stamp of the look it is for.
+#[derive(Default)]
+struct Finding {
+    running: Option<(u64, std::thread::JoinHandle<f32>)>,
+    next: Option<(u64, Job)>,
+}
+
+/// What a strength is found from: the look, the picture, the curves.
+type Job = (
+    Arc<jodel_looks::Checked>,
+    Arc<jodel_looks::render::Image>,
+    Option<Arc<jodel_looks::Curves>>,
+);
+
+impl Finding {
+    /// `job` to do for the look stamped `stamp` once what runs is done (it
+    /// in place of any other waiting).
+    fn ask(&mut self, stamp: u64, job: Job) {
+        self.next = Some((stamp, job));
+    }
+
+    /// The strength found since the last call and the stamp of the look it
+    /// is for; the next started where nothing runs.
+    fn poll(&mut self) -> Option<(u64, f32)> {
+        let done = self.running.take_if(|(_, h)| h.is_finished());
+        if self.running.is_none() {
+            self.running = self.next.take().map(|(stamp, (look, picture, curves))| {
+                let h = std::thread::spawn(move || {
+                    jodel_looks::guard::strength(&look, &picture, curves.as_deref())
+                });
+                (stamp, h)
+            });
+        }
+        // A finding that failed draws the look not at all.
+        done.map(|(stamp, h)| (stamp, h.join().unwrap_or(0.0)))
+    }
+}
+
+/// The song's picture made small ([`MEASURED`]), encoded colours (none: a
+/// mid grey).
+fn small_picture(art: Option<&crate::work::art::Art>) -> jodel_looks::render::Image {
     use jodel_looks::render::Image;
+    let (w, h) = MEASURED;
     art.map_or_else(
         || Image::flat(w, h, jodel_looks::math::s3(0.3)),
         |a| {
@@ -467,10 +574,6 @@ pub fn small_picture(
         },
     )
 }
-
-/// What a song's curves are made from: the song heard (by its place) and
-/// its sung lines.
-type CurvesOf = (usize, Vec<(f64, f64)>);
 
 /// How far a frame's time may be from the last one's and its step and
 /// still be the next (further: a seek, a jump).
@@ -510,43 +613,44 @@ pub fn live(state: &crate::core::State, heard: f64, signals: &mut Signals) {
 impl Looks {
     /// The look in force for `state` ([`crate::core::State::look`]) at
     /// `heard` seconds into the song `song` heard (none: none analysed),
-    /// for a window of `size`: its cue (none: no look).
+    /// over its picture `art`, for a window of `size`, `dt` seconds after
+    /// the last frame: its cue (none: no look). Its strength is found away
+    /// from here, once for the look, the song and the picture; until it
+    /// is, the look aims at none (the picture as it is) or, where the same
+    /// look (or an edit of it) is over the same picture, at the one found
+    /// for it there ([`Made::aim`]), and the strength drawn eases toward
+    /// it.
     pub fn cue(
         &mut self,
         state: &crate::core::State,
         (song, art): (Option<&super::music::Song>, Option<&crate::work::art::Art>),
-        heard: f64,
+        (heard, dt): (f64, f32),
         size: (u32, u32),
     ) -> Option<LookCue> {
-        let look = state.look()?;
-        if self.checked.as_ref().is_none_or(|(l, _)| l != look) {
-            self.checked = Some((look.clone(), Arc::new(look.check())));
-        }
-        let made = Arc::clone(&self.checked.as_ref()?.1);
+        self.found();
+        let Some(look) = state.look() else {
+            self.made = None;
+            self.finding.next = None;
+            self.drawn = 0.0;
+            return None;
+        };
+        let ids = (song.map(super::music::Song::id), art.map_or(0, |a| a.id));
+        let made = match self.made.take() {
+            Some(m) if m.key.is(look, ids, sung_lines(state)) => m,
+            was => {
+                let key = Key {
+                    look: look.clone(),
+                    song: ids.0,
+                    lines: sung_lines(state).collect(),
+                    art: ids.1,
+                };
+                self.make(was, key, song, art)
+            }
+        };
+        self.drawn = eased(self.drawn, made.aim(), dt);
+        let made = self.made.insert(made);
         let singing = &state.karaoke.singing;
-        let lines: Vec<(f64, f64)> = (singing.notes.lines.iter())
-            .filter_map(|l| Some((l.notes.first()?.start, l.notes.last()?.end)))
-            .collect();
-        let curves = song.map(|s| self.curves_of(s, lines));
-        // The strength its frames keep within the exposure guard at, over
-        // this song's picture: found once for the look, the song and the
-        // picture.
-        let of: StrongOf = (
-            Arc::as_ptr(&made) as usize,
-            curves.as_ref().map_or(0, |c| Arc::as_ptr(c) as usize),
-            art.map_or(0, |a| a.id),
-        );
-        if self.strong.as_ref().is_none_or(|(was, _)| *was != of) {
-            let picture = small_picture(art, STRONG_OVER);
-            let strength = jodel_looks::guard::strength(&made, &picture, curves.as_deref());
-            let strong = jodel_looks::Checked {
-                strength,
-                ..(*made).clone()
-            };
-            self.strong = Some((of, Arc::new(strong)));
-        }
-        let checked = Arc::clone(&self.strong.as_ref()?.1);
-        let mut signals = curves.as_ref().map_or(Signals::QUIET, |c| c.at(heard));
+        let mut signals = (made.curves.as_ref()).map_or(Signals::QUIET, |c| c.at(heard));
         live(state, heard, &mut signals);
         let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
         let band = crate::gui::stage::lines::band((0.0, 0.0, w, h));
@@ -554,35 +658,109 @@ impl Looks {
             .song()
             .map_or(String::new(), |p| p.to_string_lossy().into_owned());
         Some(LookCue {
-            seed: jodel_looks::seed(&checked.id, &song_id),
-            look: checked,
+            seed: jodel_looks::seed(&made.look.id, &song_id),
+            look: Arc::clone(&made.look),
+            strength: self.drawn,
             t: heard,
             signals,
-            curves,
+            curves: made.curves.clone(),
             band: Some((band.0 / h, band.1 / h)),
         })
     }
 
-    /// The curves of `song` with its sung `lines`, made once for them.
-    fn curves_of(
-        &mut self,
-        song: &super::music::Song,
-        lines: Vec<(f64, f64)>,
-    ) -> Arc<jodel_looks::Curves> {
-        let of: CurvesOf = (std::ptr::from_ref(song) as usize, lines);
-        if let Some((was, c)) = &self.curves {
-            if *was == of {
-                return Arc::clone(c);
+    /// The mode and the tab left: a look whose strength is found is kept at
+    /// it (coming back finds nothing again), one not measured yet let go,
+    /// so nothing changes by itself while away; the frame before
+    /// forgotten.
+    pub fn left(&mut self) {
+        match self.made.as_ref().and_then(|m| m.strength) {
+            Some(s) => self.drawn = s,
+            None => {
+                self.made = None;
+                self.drawn = 0.0;
             }
         }
-        let c = Arc::new(jodel_looks::Curves::new(
-            song.analysis(),
-            song.waveform(),
-            &song.sections,
-            &of.1,
-        ));
-        self.curves = Some((of, Arc::clone(&c)));
-        c
+        self.finding.next = None;
+        self.last = None;
+    }
+
+    /// The strength found since the last frame, kept only for the look it
+    /// was found for (one found for a look since gone is let go).
+    fn found(&mut self) {
+        if let Some((stamp, found)) = self.finding.poll() {
+            if let Some(m) = self.made.as_mut().filter(|m| m.stamp == stamp) {
+                m.strength = Some(found);
+            }
+        }
+    }
+
+    /// Whether the strength drawn is still to change by itself: the look
+    /// in force not measured yet, or the strength drawn still easing to
+    /// its own.
+    pub fn settling(&self) -> bool {
+        self.made
+            .as_ref()
+            .is_some_and(|m| m.strength != Some(self.drawn))
+    }
+
+    /// The look of `key` made for `song` over `art` in place of `was`
+    /// (none: none): made safe and the song's curves made (each kept from
+    /// `was` where what it is made from is the same), its strength asked
+    /// for; `was`'s aimed at meanwhile where it is the same look (by its
+    /// id) over the same picture.
+    fn make(
+        &mut self,
+        was: Option<Made>,
+        key: Key,
+        song: Option<&super::music::Song>,
+        art: Option<&crate::work::art::Art>,
+    ) -> Made {
+        let look = match &was {
+            Some(m) if m.key.look == key.look => Arc::clone(&m.look),
+            _ => Arc::new(key.look.check()),
+        };
+        let curves = match &was {
+            Some(m) if (&m.key.song, &m.key.lines) == (&key.song, &key.lines) => m.curves.clone(),
+            _ => song.map(|s| {
+                Arc::new(jodel_looks::Curves::new(
+                    s.analysis(),
+                    s.waveform(),
+                    &s.sections,
+                    &key.lines,
+                ))
+            }),
+        };
+        let interim = (was.as_ref())
+            .filter(|m| (&m.key.look.id, m.key.art) == (&key.look.id, key.art))
+            .and_then(|m| m.strength.or(m.interim));
+        self.makes += 1;
+        let job = (Arc::clone(&look), self.picture(art), curves.clone());
+        self.finding.ask(self.makes, job);
+        Made {
+            key,
+            stamp: self.makes,
+            look,
+            curves,
+            strength: None,
+            interim,
+        }
+    }
+
+    /// The song's picture `art` made small ([`MEASURED`]), made once for
+    /// it.
+    pub fn picture(
+        &mut self,
+        art: Option<&crate::work::art::Art>,
+    ) -> Arc<jodel_looks::render::Image> {
+        let id = art.map_or(0, |a| a.id);
+        match &self.picture {
+            Some((was, p)) if *was == id => Arc::clone(p),
+            _ => {
+                let p = Arc::new(small_picture(art));
+                self.picture = Some((id, Arc::clone(&p)));
+                p
+            }
+        }
     }
 
     /// The look's passes for a frame of `cue` in a window of `size`, `dt`
@@ -606,10 +784,172 @@ impl Looks {
             forget,
             band: cue.band,
             palette,
+            strength: cue.strength,
         };
         LookFrame {
             passes: cue.look.frame(&moment, &cue.signals, cue.curves.as_deref()),
-            strength: cue.look.strength,
+            cue: cue.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A look made for no song, stamped `stamp`, its strength not found.
+    fn made(stamp: u64) -> Made {
+        let look = jodel_looks::presets::all()[0].clone();
+        Made {
+            look: Arc::new(look.check()),
+            key: Key {
+                look,
+                song: None,
+                lines: Vec::new(),
+                art: 0,
+            },
+            stamp,
+            curves: None,
+            strength: None,
+            interim: None,
+        }
+    }
+
+    /// `looks`' strength drawn `dt` seconds on, as a frame eases it.
+    fn ease(looks: &mut Looks, dt: f32) {
+        let aim = looks.made.as_ref().map_or(0.0, Made::aim);
+        looks.drawn = eased(looks.drawn, aim, dt);
+    }
+
+    /// The same look (by its id) over the same picture, its curves new or
+    /// one of its layers edited: the strength found for it is kept while
+    /// its own is found, the drawn strength not dipping; another picture or
+    /// another look aims at none again.
+    #[test]
+    fn new_curves_for_the_same_look_and_picture_keep_its_strength_meanwhile() {
+        let mut looks = Looks {
+            drawn: 0.6,
+            ..Looks::default()
+        };
+        let found = Made {
+            strength: Some(0.6),
+            ..made(1)
+        };
+        let key = |song: Option<u64>, art: u64| Key {
+            song,
+            art,
+            ..made(0).key
+        };
+        let remade = looks.make(Some(found), key(Some(7), 0), None, None);
+        assert_eq!((remade.strength, remade.interim), (None, Some(0.6)));
+        looks.made = Some(remade);
+        for _ in 0..10 {
+            ease(&mut looks, 0.05);
+        }
+        assert_eq!(looks.drawn, 0.6, "no dip while it is found again");
+        assert!(looks.settling(), "its own still to come");
+        // A layer's mix edited, the id kept (the Shader tab's knobs).
+        let mut edited = key(Some(7), 0);
+        edited.look.layers[0].mix = 0.5;
+        let was = looks.made.take();
+        let edit = looks.make(was, edited, None, None);
+        assert_eq!(edit.interim, Some(0.6), "an edit of the same look");
+        let mut other_look = key(Some(7), 0);
+        other_look.look.id = "another".into();
+        assert_eq!(looks.make(Some(edit), other_look, None, None).interim, None);
+        let found = Made {
+            strength: Some(0.6),
+            ..made(2)
+        };
+        let other = looks.make(Some(found), key(Some(7), 3), None, None);
+        assert_eq!(other.interim, None, "another picture");
+        looks.made = Some(other);
+        ease(&mut looks, FALL);
+        assert_eq!(looks.drawn, 0.0);
+    }
+
+    /// Waits for what runs to be done (a minute at most).
+    fn done(looks: &Looks) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while (looks.finding.running.as_ref()).is_some_and(|(_, h)| !h.is_finished()) {
+            assert!(std::time::Instant::now() < until, "the strength found");
+            std::thread::yield_now();
+        }
+    }
+
+    /// A strength found for a look since gone is let go, never drawn for
+    /// the look now in force; that look's own is kept once it comes.
+    #[test]
+    fn a_strength_is_kept_only_for_the_look_it_was_found_for() {
+        let mut looks = Looks::default();
+        let job = |m: &Made| (Arc::clone(&m.look), Arc::new(small_picture(None)), None);
+        let gone = made(1);
+        looks.finding.ask(1, job(&gone));
+        looks.found();
+        let now = made(2);
+        looks.finding.ask(2, job(&now));
+        looks.made = Some(now);
+        done(&looks);
+        looks.found();
+        assert_eq!(
+            looks.made.as_ref().unwrap().strength,
+            None,
+            "the gone look's"
+        );
+        assert!(looks.settling());
+        done(&looks);
+        looks.found();
+        assert!(looks.made.as_ref().unwrap().strength.is_some(), "its own");
+    }
+
+    /// The strength drawn: none while the look is not measured, rising to
+    /// the one found over [`RISE`], falling over [`FALL`]; still once it is
+    /// there.
+    #[test]
+    fn the_strength_drawn_eases_to_the_one_found() {
+        let mut looks = Looks {
+            made: Some(made(1)),
+            drawn: 1.0,
+            ..Looks::default()
+        };
+        ease(&mut looks, FALL / 2.0);
+        assert!((looks.drawn - 0.5).abs() < 1e-4, "{}", looks.drawn);
+        ease(&mut looks, FALL);
+        assert_eq!(looks.drawn, 0.0, "none while not measured");
+        assert!(looks.settling());
+        looks.made.as_mut().unwrap().strength = Some(0.8);
+        ease(&mut looks, 0.05);
+        assert!((looks.drawn - 0.05 / RISE).abs() < 1e-4, "{}", looks.drawn);
+        for _ in 0..20 {
+            ease(&mut looks, 0.05);
+        }
+        assert_eq!(looks.drawn, 0.8);
+        assert!(!looks.settling());
+    }
+
+    /// Leaving the mode or the tab keeps a look whose strength is found
+    /// (back again, it is not found again), at that strength and still
+    /// (nothing drawn meanwhile); one not measured yet is let go.
+    #[test]
+    fn a_look_measured_is_kept_across_leaving_and_coming_back() {
+        let mut looks = Looks {
+            made: Some(Made {
+                strength: Some(0.7),
+                ..made(1)
+            }),
+            drawn: 0.3,
+            ..Looks::default()
+        };
+        looks.left();
+        let kept = looks.made.as_ref().expect("kept");
+        assert_eq!((kept.stamp, kept.strength), (1, Some(0.7)));
+        assert_eq!(looks.drawn, 0.7);
+        assert!(!looks.settling(), "still while away");
+        looks.made = Some(made(2));
+        looks.left();
+        assert!(
+            looks.made.is_none() && !looks.settling(),
+            "not measured: let go"
+        );
     }
 }

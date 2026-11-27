@@ -526,11 +526,12 @@ mod tests {
     fn stage_frame(song: &Song, (w, h): (f32, f32), fade: Option<f64>) -> StageFrame {
         let picture = KaraokePicture {
             bar: 5.0 / 24.0,
+            reach: 0.0,
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: fade,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: None,

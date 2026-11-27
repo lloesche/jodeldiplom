@@ -121,7 +121,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::SeekTo(fraction) => {
             state.seek_drag = None;
             if karaoke::seek_refused(state) {
-                // Held for START or counting in: nothing to seek yet.
+                // Held for Next or counting in: nothing to seek yet.
             } else if let Some(duration) = state.playing.duration() {
                 let seconds = fraction.clamp(0.0, 1.0) * duration;
                 state.playing.position = seconds;
@@ -399,7 +399,7 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
                 fx.push(Effect::Engine(Command::Seek(target)));
             }
         }
-        Op::Next => draft::skip(state, fx),
+        Op::Skip => draft::skip(state, fx),
         Op::SkipMix => settings::cycle_skip_mix(state, fx),
         Op::Previous => fx.push(Effect::Engine(Command::Previous)),
         Op::Stop => fx.push(Effect::Engine(Command::Stop)),

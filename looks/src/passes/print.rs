@@ -303,7 +303,7 @@ fn risograph(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let d = v2(1.0, 0.4) * (k[2] * 6.0 * u.scale()) * v2(u.size[2], u.size[3]);
     let a = s.src(uv + d);
     let b = s.src(uv - d);
-    let px = uv * v2(u.size[0], u.size[1]) / u.scale();
+    let px = u.px1080(uv);
     let da = sat(1.0 - (a.y * 0.6 + a.z * 0.4) + (vnoise(px / 1.5, 41) - 0.5) * k[3] * 0.5);
     let db = sat(1.0 - (b.x * 0.7 + b.y * 0.3) + (vnoise(px / 1.5, 43) - 0.5) * k[3] * 0.5);
     let o = v3(0.97, 0.95, 0.9)
@@ -334,7 +334,7 @@ fn look_risograph(uv: vec2<f32>) -> vec3<f32> {
     let d = vec2<f32>(1.0, 0.4) * (u.k0.z * 6.0 * lk_scale()) * u.size.zw;
     let a = lk_src(uv + d);
     let b = lk_src(uv - d);
-    let px = uv * u.size.xy / lk_scale();
+    let px = lk_px1080(uv);
     let da = lk_sat(1.0 - (a.y * 0.6 + a.z * 0.4) + (lk_vnoise(px / 1.5, 41u) - 0.5) * u.k0.w * 0.5);
     let db = lk_sat(1.0 - (b.x * 0.7 + b.y * 0.3) + (lk_vnoise(px / 1.5, 43u) - 0.5) * u.k0.w * 0.5);
     let o = vec3<f32>(0.97, 0.95, 0.9) * mix(vec3<f32>(1.0), lk_hsv(u.k0.x, 0.85, 1.0), da * 0.9) * mix(vec3<f32>(1.0), lk_hsv(u.k0.y, 0.8, 0.85), db * 0.9);
@@ -348,7 +348,7 @@ fn look_risograph(uv: vec2<f32>) -> vec3<f32> {
 fn xerox(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
-    let px = uv * v2(u.size[0], u.size[1]) / u.scale();
+    let px = u.px1080(uv);
     let l = luma(c);
     let col = (px.x / 3.0).floor();
     let streak = (hash2(cell(col), 3, 61) - 0.85).max(0.0) * 1.2 * k[1];
@@ -376,7 +376,7 @@ pub const XEROX: Pass = Pass {
     wgsl: r"
 fn look_xerox(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let px = uv * u.size.xy / lk_scale();
+    let px = lk_px1080(uv);
     let l = lk_luma(c);
     let col = floor(px.x / 3.0);
     let streak = max(lk_hash2(i32(col), 3, 61u) - 0.85, 0.0) * 1.2 * u.k0.y;

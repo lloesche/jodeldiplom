@@ -13,7 +13,7 @@
 //! scoring follow the key heard ([`heard`]), so singing in the new key
 //! scores. The key stays for the songs the queue runs into, and goes back
 //! to 0 when another song is picked (the song it is on picked again, as
-//! Karaoke's START does, keeps it).
+//! Karaoke's Next does, keeps it).
 //!
 //! [`Playing::key`]: super::Playing::key
 

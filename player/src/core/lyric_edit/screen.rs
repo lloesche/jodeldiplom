@@ -497,7 +497,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         | Op::VolumeUp
         | Op::VolumeDown
         | Op::PlayPause
-        | Op::Next
+        | Op::Skip
         | Op::Previous
         | Op::Stop
         | Op::ToggleDrums

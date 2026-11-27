@@ -149,7 +149,7 @@ fn transport<'a>(press: &Press) -> Element<'a, Message> {
         (Op::PlayPause, "pause") => (Icon::Pause, true),
         (Op::PlayPause, _) => (Icon::Play, true),
         (Op::Previous, _) => (Icon::Previous, false),
-        (Op::Next, _) => (Icon::Next, false),
+        (Op::Skip, _) => (Icon::Next, false),
         _ => (Icon::Stop, false),
     };
     let button = if round {

@@ -188,7 +188,7 @@ fn the_keys_of_the_mixer_tab_leave_the_global_capitals_alone() {
         (Key::ch('S'), Op::Stop),
         (Key::ch(' '), Op::PlayPause),
         (Key::plain(KeyCode::Tab), Op::ToggleSide),
-        (Key::shift(KeyCode::Right), Op::Next),
+        (Key::shift(KeyCode::Right), Op::Skip),
     ] {
         assert_eq!(op(key), Some(want), "{key:?}");
     }

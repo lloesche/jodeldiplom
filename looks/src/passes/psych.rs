@@ -1,5 +1,6 @@
 //! Psychedelia: colour turning round the wheel, symmetry, the picture
-//! flowing like liquid. The colour moves; the light stays as it was.
+//! flowing like liquid, a zoom's blur rushing out. The colour moves; the
+//! light stays as it was.
 
 use crate::drive::Driver;
 use crate::math::*;
@@ -157,5 +158,43 @@ fn look_liquid(uv: vec2<f32>) -> vec3<f32> {
 }
 ",
     cpu: liquid,
+    ..Pass::BASE
+};
+
+fn zoom_blur(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
+    let k = &u.k;
+    let dir = uv - v2(k[1], k[2]);
+    let mut acc = s3(0.0);
+    for i in 0..10u32 {
+        acc = acc + s.src(uv - dir * (k[0] * 0.15 * i as f32 / 10.0));
+    }
+    acc / 10.0
+}
+
+/// A zoom's blur.
+pub const ZOOM_BLUR: Pass = Pass {
+    name: "zoom_blur",
+    family: Y,
+    about: "a zoom's blur rushing out from a point, as if the camera lunged (drops, drum and bass, rock's big hits)",
+    knobs: &[
+        knob("amount", "how far it rushes", (0.0, 1.0, 0.3), "share", (0.6, 0.02)),
+        knob("x", "the point's place across", (0.0, 1.0, 0.5), "share", (0.0, 0.0)),
+        knob("y", "the point's place down", (0.0, 1.0, 0.45), "share", (0.0, 0.0)),
+    ],
+    cost: 3.0,
+    relief: 0.6,
+    natural: &[natural("amount", Driver::Kick, 0.9)],
+    pairs: &["chromatic", "glitch", "feedback"],
+    wgsl: r"
+fn look_zoom_blur(uv: vec2<f32>) -> vec3<f32> {
+    let dir = uv - vec2<f32>(u.k0.y, u.k0.z);
+    var acc = vec3<f32>(0.0);
+    for (var i = 0u; i < 10u; i = i + 1u) {
+        acc = acc + lk_src(uv - dir * (u.k0.x * 0.15 * f32(i) / 10.0));
+    }
+    return acc / 10.0;
+}
+",
+    cpu: zoom_blur,
     ..Pass::BASE
 };

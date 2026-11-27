@@ -7,7 +7,7 @@
 //! ([`band`]), which the screen passes keep mostly clear.
 
 use super::gpu::Instance;
-use super::{rgba, Face, Shade, Stage, GOLD, WHITE};
+use super::{rgba, Face, Stage, GOLD, WHITE};
 use crate::gui::fx::{self, Frame, Text};
 use crate::view::karaoke::{KaraokePicture, LineKind, LyricLine};
 
@@ -116,10 +116,7 @@ impl Stage {
                 f32::NEG_INFINITY
             };
             // A dark outline, so it reads over any cover as it scrolls.
-            let rim = (Shade::OUTLINE, alpha);
-            let whole = ((lx, ty), f32::INFINITY);
-            self.shade(out, (Face::LINE, &line.text), (big, scale), whole, rim);
-            let run = self.text(
+            let run = self.outlined_text(
                 out,
                 Face::LINE,
                 &line.text,

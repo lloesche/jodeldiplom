@@ -224,6 +224,11 @@ impl Ctx {
         self.size[1] / 1080.0
     }
 
+    /// The point `uv` in pixels at 1080 lines.
+    pub fn px1080(&self, uv: V2) -> V2 {
+        uv * crate::math::v2(self.size[0], self.size[1]) / self.scale()
+    }
+
     /// The cover's colour `i`.
     pub fn pal(&self, i: usize) -> V3 {
         let p = self.pal[i];
@@ -247,6 +252,7 @@ struct LookU {
 };
 fn lk_d(i: u32) -> f32 { return u.data[min(i / 4u, 15u)][i % 4u]; }
 fn lk_scale() -> f32 { return u.size.y / 1080.0; }
+fn lk_px1080(uv: vec2<f32>) -> vec2<f32> { return uv * u.size.xy / lk_scale(); }
 fn lk_aspect(uv: vec2<f32>) -> vec2<f32> { return (uv - 0.5) * vec2<f32>(u.size.x / u.size.y, 1.0); }
 fn lk_px() -> vec2<f32> { return u.size.zw; }
 ";

@@ -229,7 +229,7 @@ fn the_stage_draws_the_same_frames() {
             "{name}: {counts:?}"
         );
     }
-    assert_eq!(digest, 1_429_602_034_178_520_279, "{counts:?}");
+    assert_eq!(digest, 18_157_932_858_766_989_851, "{counts:?}");
 }
 
 /// The same singing without the lane (the notes off): the lyrics set in
@@ -239,5 +239,5 @@ fn the_stage_draws_the_same_frames() {
 fn the_lyrics_set_in_the_middle_draw_the_same_frames() {
     let (digest, counts) = digest(false);
     assert!(counts.get("text").is_some_and(|&n| n > 0), "{counts:?}");
-    assert_eq!(digest, 5_741_503_954_211_909_980, "{counts:?}");
+    assert_eq!(digest, 11_625_198_638_988_985_958, "{counts:?}");
 }

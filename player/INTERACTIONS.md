@@ -351,7 +351,7 @@ really found, as its workers tell it: never a progress they did not tell.
   - `a_song_played_after_the_mode_is_the_one_held_next`
 - **K3.** In the mode, a song's end holds the next song at its start: only
   Next (`enter`, `space`, a click on Next's button) plays it, after its
-  count-in. `N` holds the next song for Next. The mode arms no
+  count-in. `N` skips to the song after, held for Next. The mode arms no
   transitions (one armed is called off going in), and `g`, bar jumps and
   the seek keys do nothing there; the controls' seek bar seeks, except
   while a song is held for Next or counting in. Nothing plays in the mode
@@ -399,9 +399,10 @@ really found, as its workers tell it: never a progress they did not tell.
   - `the_progress_gives_way_to_the_controls_bar` (unit)
   - `space_never_plays_a_song_without_its_count_in`
 - **K3c.** Next has one place to click: the stage's gold button ("Next"
-  and an arrow pointing right), at the right edge a little above the
-  middle, far above where the pointer brings the controls up (at any
-  window size, so going to it never does; it never moves), whenever the
+  and an arrow pointing right, as wide as they are), at the right edge a
+  little above the middle, its bottom always above where the pointer
+  brings the controls up (in a window too short for both, raised to stay
+  so: going to it never brings them up), whenever the
   mode waits for Next: entering the mode, a song held, beside a song's
   result (never on the diploma; the song it plays named under it). A
   press on it is Next, as `enter` is (during a result's reveal it
@@ -440,8 +441,8 @@ really found, as its workers tell it: never a progress they did not tell.
   - `a_count_in_is_silence_then_the_track_heard_from_its_end` (engine)
   - `esc_during_a_count_in_calls_the_start_off`
 - **K5b.** The count-in comes again, whatever started the song (the mode
-  entered with shift, `N`, a seek): before its first sung line, as large as
-  Next's, and before the singing comes back after a break of 8 s or more,
+  entered with shift, `N`, a seek): before its first sung line, at its
+  full size, and before the singing comes back after a break of 8 s or more,
   half as large in the same place at the top: apart from the lines, never
   moving with them. Whole or not at all: where
   the song has been heard from without a jump (the mode entered there, a
@@ -1324,16 +1325,27 @@ really found, as its workers tell it: never a progress they did not tell.
   picture (flashes a second, the lyrics' contrast, the cost, the
   exposure and the strength). A look never washes the frame out or
   blacks it out: over the song's picture it is drawn at the strongest
-  strength that keeps its frames within the exposure guard, found once
-  for the look, the song and the picture; the feedback's echoes pass a
+  strength that keeps its frames within the exposure guard (each
+  measured as the window draws it, the feedback's echoes built up), found
+  once for the look, the song and the picture on a thread of its own
+  (until it is, the picture as it is, or for the same look or an edit of
+  it, its id the same, over the same picture the strength found for it
+  there; the strength drawn rises to the one found over half a second
+  and falls in a tenth; kept across leaving the mode or the tab); the
+  feedback's
+  echoes pass a
   soft knee, never piling up to white. Every preset and every pass keeps
   every guard through a whole song, frame by frame; every preset over
-  real songs' curves too, where the machine keeps them. Where a look
-  draws, the stage's text over it (the count-in, the title and artist)
-  is outlined dark as the lyrics are.
+  real songs' curves too, where the machine keeps them. The stage's text
+  (the lines set in the middle, the count-in, the score's) is outlined
+  dark as the lyrics are, so it reads over any look.
   - `every_look_keeps_the_guards_over_a_whole_song` (looks)
   - `every_preset_keeps_the_guards_over_real_songs`
-  - `text_over_a_look_is_outlined` (`gui::stage::lyrics`)
+  - `a_strength_is_kept_only_for_the_look_it_was_found_for` (`gui::backdrop::looks`)
+  - `the_strength_drawn_eases_to_the_one_found` (`gui::backdrop::looks`)
+  - `new_curves_for_the_same_look_and_picture_keep_its_strength_meanwhile` (`gui::backdrop::looks`)
+  - `a_look_measured_is_kept_across_leaving_and_coming_back` (`gui::backdrop::looks`)
+  - `the_lines_are_set_in_the_middle_crisp_and_filled` (`gui::stage::lyrics`)
   - `every_number_is_held_to_its_range` (looks)
   - `over_the_budget_the_dearest_optional_pass_goes` (looks)
   - `the_music_moves_the_light_only_so_far` (looks)

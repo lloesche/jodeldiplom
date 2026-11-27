@@ -107,11 +107,12 @@ mod tests {
     fn picture(lines: Vec<LyricLine>, before: Vec<LyricLine>, moved: f64) -> KaraokePicture {
         KaraokePicture {
             bar: 5.0 / 24.0,
+            reach: 0.0,
             lines,
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before,
             moved,
             score: None,
@@ -134,6 +135,7 @@ mod tests {
         let mut digit_at = |p: KaraokePicture| {
             let mut out = Vec::new();
             stage.count(&mut out, &p, area);
+            let out = crate::gui::stage::runs(&out);
             assert_eq!(out.len(), 1, "{out:?}");
             let at = (out[0].quad[0], out[0].quad[1]);
             let lane = Lane::new(area, 0.0);

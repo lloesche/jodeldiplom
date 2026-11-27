@@ -104,9 +104,10 @@ Held whatever a look asks (`Look::check`, `jodel_looks::guard`):
   are counted as WCAG counts them (`guard::flashes`); the Shader tab shows
   the count live, and the tests hold the looks to at most three a second.
 - **The lyric band.** In the band the lyrics are set in, each pass takes
-  out its share of itself (the busy ones half) and the light is held
-  under 0.55 (encoded), or what the picture had there if brighter: white
-  words keep at least 3 to 1 before their dark outline.
+  out its share of itself (the busy ones half) and the light (relative
+  luminance, sRGB decoded, as the flashes are measured) is held under
+  0.24, or what the picture had there if brighter: white words keep at
+  least 3.5 to 1 before their dark outline.
 - **The budget.** Each pass declares its cost (a whole-screen pass reading
   the picture once is 1); a stack may cost 8 in at most 6 passes. Over it,
   the dearest pass not marked `keep` goes (the later of equals), always
@@ -115,16 +116,26 @@ Held whatever a look asks (`Look::check`, `jodel_looks::guard`):
   pixels may be clipped (nearly white or nearly black) beyond what the
   picture itself has, and its mean light stays between 0.08 and 0.75 (or
   within a tenth of the picture's own). A look whose frames over the
-  song's picture would not, at 32 moments through the song, is drawn less
-  strongly (its passes' mixes scaled down in steps to the strongest that
-  keeps within), once for the look, the song and the picture: the same
-  strength the whole song. The feedback cannot run away: what it carries
+  song's picture would not, at 64 moments through the song (each drawn as
+  the window draws it: a look that feeds back drawn for two seconds
+  before it, its echoes built up), is drawn less strongly (its passes'
+  mixes scaled down in steps to the strongest that keeps within), once
+  for the look, the song and the picture, on a thread of its own: the
+  same strength the whole song. Until it is found the look is not drawn
+  (the picture as it is), or, where it is the same look or an edit of it
+  (its id the same) over the same picture (the song's curves new: its
+  waveform come, its grid fixed by hand, another song without a cover; a
+  knob moved on the Shader tab), drawn at the strength found for it over
+  that picture; then it eases to the one found over half a second (down
+  in a tenth). Leaving the mode or the tab keeps a look whose strength
+  is found, so coming back finds it again only for a new look, song or
+  picture. The feedback cannot run away: what it carries
   over loses light every second and passes a soft knee (rising ever more
   slowly toward 0.7, never to white), and the drawn shapes (scope, rings,
   bars, sparks) add their light as a screen does, never past white.
-- **All the stage's text.** Where a look draws, the stage's text over it
-  (the count-in, the song's title and artist, the lines set in the
-  middle) gets the lyrics' dark outline too.
+- **All the stage's text.** The stage's text (the count-in, the song's
+  title and artist, the lines set in the middle, the score's) has the
+  lyrics' dark outline too, look or none.
 - **Determinism.** Nothing is random but by a seed made of the look's id
   and the song; the same look, song and time give the same frame.
 
@@ -198,7 +209,10 @@ theme (love, heartbreak, longing, party, protest, the road, nostalgia,
 family, grief, faith, nature, the sea, mountains, night and the city,
 space, dreams, psychedelia, money, war, home, summer, winter, horror,
 humour, empowerment, the seasons) alone and on film; moods, media and
-visualizers. One JSON file a family in `looks/presets/`. The matrix itself,
+visualizers. One JSON file a family in `looks/presets/`, each saying its
+kind (`genre`, `era`, `theme`, `mood`, `media`, `visualizer`): the
+matrix is made from the kinds, an era's or a theme's key being its
+one-tag look's tag. The matrix itself,
 genre by genre with each cell's preset, is in the catalogue (its last
 section), as worked examples for the model. A test draws every preset
 and every pass through a whole song, frame by frame, over a dark and a

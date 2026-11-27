@@ -74,7 +74,7 @@ pub const KEYMAP: &[Binding] = &[
     b(Global, &[ch(' ')], Op::PlayPause, "play / pause"),
     b(Global, &[LEFT], Op::SeekBack, "seek back 5 s"),
     b(Global, &[RIGHT], Op::SeekForward, "seek forward 5 s"),
-    b(Global, &[ch('N'), SHIFT_RIGHT], Op::Next, "next track"),
+    b(Global, &[ch('N'), SHIFT_RIGHT], Op::Skip, "skip to the next track"),
     b(Global, &[ch('P'), SHIFT_LEFT], Op::Previous, "previous track"),
     b(Global, &[ch('X')], Op::SkipMix, "what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings)"),
     b(Global, &[ch('S')], Op::Stop, "stop"),
@@ -214,7 +214,7 @@ pub const KEYMAP: &[Binding] = &[
     b(Sync, &[ch('r')], Op::SyncAgain, "again"),
     b(Sync, &[ESC], Op::Back, "cancel"),
     // Karaoke mode.
-    b(KaraokeMode, &[ENTER], Op::KaraokeStart, "Next: the song after a count-in, a second a number (space too)"),
+    b(KaraokeMode, &[ENTER], Op::KaraokeNext, "Next: the song after a count-in, a second a number (space too)"),
     b(KaraokeMode, &[ESC], Op::Back, "leave Karaoke mode, back to the tab (the stems as before)"),
     b(KaraokeMode, &[ch('i')], Op::MicNext, "the next microphone"),
     b(KaraokeMode, &[ch('r')], Op::KaraokeRecordEcho, "record 30 s for tuning the echo canceller"),

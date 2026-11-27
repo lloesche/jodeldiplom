@@ -36,7 +36,7 @@ use crate::core::karaoke::result::{Beat, Shown};
 use crate::core::shine::Tier;
 use crate::gui::wgsl_math::clamp01;
 use crate::view::karaoke::{
-    best_words, date_words, points_text, KaraokePicture, ResultShown, Start,
+    best_words, date_words, points_text, KaraokePicture, Next, ResultShown,
 };
 
 mod entries;
@@ -67,15 +67,18 @@ impl Line {
     /// The line for `picture` in the window's `area` (pixels): low, but
     /// clear above its controls' bar (shown now or not).
     fn of(picture: &KaraokePicture, area: (f32, f32, f32, f32)) -> Line {
-        Line::above(area, area.1 + (area.3 - area.3 * picture.bar))
+        let (_, y, _, h) = area;
+        Line::above(area, y + (h - h * picture.bar))
     }
 
-    /// The line in the window's area (pixels), clear above `bottom`.
-    fn above((_, y, _, h): (f32, f32, f32, f32), bottom: f32) -> Line {
+    /// The line in the window's `area` (pixels), low, but clear above
+    /// `bottom` (pixels down).
+    fn above(area: (f32, f32, f32, f32), bottom: f32) -> Line {
+        let (_, y, _, h) = area;
         let u = h / 100.0;
         Line {
             y: (y + h * LINE).min(bottom - 3.2 * u),
-            px: (2.9 * u).round().max(10.0),
+            px: next::text_px(area),
         }
     }
 }
@@ -145,8 +148,8 @@ impl Written {
 /// and its unit (a hundredth of its height, or of its width a little
 /// grown where it stands upright); the shake now (the seal stamped down);
 /// the line under it naming the song Next plays (above the controls' bar);
-/// Next's button beside it; how much it twinkles (1, calming to 0 as it
-/// goes still); its inks; and how its verdict looks.
+/// how much it twinkles (1, calming to 0 as it goes still); its inks; and
+/// how its verdict looks.
 #[derive(Clone, Copy, Debug)]
 struct Room {
     x: f32,
@@ -158,7 +161,6 @@ struct Room {
     s: f32,
     shake: (f32, f32),
     line: Line,
-    button: Place,
     calm: f32,
     inks: Inks,
     look: Look,
@@ -166,15 +168,19 @@ struct Room {
 
 impl Room {
     /// The room in the window's area `(x, y, w, h)`, the line naming the
-    /// song Next plays at `line`, for a verdict that looks `look`: the
-    /// sheet as large as fits over that line and left of Next's button
-    /// (centred where it can be), landscape where the window is wide,
-    /// upright where it is tall.
-    fn new((x, y, w, h): (f32, f32, f32, f32), line: Line, tint: &Tint, look: Look) -> Room {
+    /// song Next plays at `line` and Next's button at `button`, for a
+    /// verdict that looks `look`: the sheet as large as fits over that
+    /// line and left of the button (centred where it can be), landscape
+    /// where the window is wide, upright where it is tall.
+    fn new(
+        (x, y, w, h): (f32, f32, f32, f32),
+        (line, button): (Line, &Place),
+        tint: &Tint,
+        look: Look,
+    ) -> Room {
         let u = h / 100.0;
         let top = y + 3.0 * u;
         let high = (line.y - 4.4 * u - top).max(10.0);
-        let button = Place::of((x, y, w, h));
         let keep = button.clear_left();
         let sw = (w * 0.94).min(high * 1.5).min(keep - x - w * 0.03);
         let sh = high.min(sw * 1.7);
@@ -190,7 +196,6 @@ impl Room {
             s: (sw / 0.85).min(sh) / 100.0,
             shake: (0.0, 0.0),
             line,
-            button,
             calm: 1.0,
             inks: Inks::of(tint),
             look,
@@ -337,13 +342,16 @@ impl Stage {
     }
 
     /// The result screen of `picture` (none without a result) in the
-    /// window's `area` (pixels), above its controls' bar, in `tint`.
-    pub fn result(
+    /// window's `area` (pixels), above its controls' bar, in `tint`, left
+    /// of Next's `button`; and how the button shows over it while the mode
+    /// waits for Next (the scene draws it: [`Stage::scene`]).
+    pub(super) fn result(
         &mut self,
         picture: &KaraokePicture,
         tint: &Tint,
         (x, y, w, h): (f32, f32, f32, f32),
-    ) -> Option<StageFrame> {
+        button: &Place,
+    ) -> Option<(StageFrame, Option<next::Look>)> {
         let shown = picture.result.as_ref()?;
         let t = shown.t;
         let reveal = &shown.shown.reveal;
@@ -355,7 +363,7 @@ impl Stage {
             .map(|(at, _)| (t - at) as f32);
         let look = seal::look(r.verdict(), tint);
         let line = Line::of(picture, (x, y, w, h));
-        let mut room = Room::new((x, y, w, h), line, tint, look);
+        let mut room = Room::new((x, y, w, h), (line, button), tint, look);
         room.shake = seal::shake(&look, verdict, room.s);
         room.calm = clamp01((reveal.still() - t) as f32 / 2.0);
         let words = self.words_of(&shown.shown);
@@ -392,10 +400,9 @@ impl Stage {
         self.verdict(&mut d, &room, shown, tint, (verdict, &words));
         self.best(&mut d, &room, shown, &words);
         self.signed(&mut d, &room, shown, &words);
-        self.next(&mut d, &room, (shown, picture.start), tint);
+        let button = self.next(&mut d, &room, (shown, picture.next), tint);
         self.kept.written = Some(words);
-        d.uploads = std::mem::take(&mut self.atlas.uploads);
-        Some(d)
+        Some((d, button))
     }
 
     /// `text` in `face` at `px` fitted to `width`: as it is where it fits,
@@ -441,21 +448,18 @@ impl Stage {
         (out.into(), px)
     }
 
-    /// The song Next plays, named under the sheet, and Next's button
-    /// ([`super::next`]) beside it, while the mode waits for Next
-    /// (`start`): there throughout (fading in as the sheet unrolls; greyed
-    /// unless the song can be sung), the button pulsing once the reveal is
-    /// over.
+    /// The song Next plays, named under the sheet, while the mode waits for
+    /// Next (`next`); and how Next's button ([`super::next`]) shows beside
+    /// it: there throughout (fading in as the sheet unrolls; greyed unless
+    /// the song can be sung), pulsing once the reveal is over.
     fn next(
         &mut self,
         d: &mut StageFrame,
         room: &Room,
-        (shown, start): (&ResultShown, Option<Start>),
+        (shown, next): (&ResultShown, Option<Next>),
         tint: &Tint,
-    ) {
-        let Some(start) = start else {
-            return;
-        };
+    ) -> Option<next::Look> {
+        let next = next?;
         let (t, reveal) = (shown.t, &shown.shown.reveal);
         let shows = fade(Some(t - 0.3), 0.5);
         let over = reveal.age(Beat::End, t);
@@ -463,7 +467,7 @@ impl Stage {
             shows,
             pulse: over.map_or(0.0, |a| 0.5 - 0.5 * (a as f32 * 4.0).cos()) * room.calm,
             lit: 0.55 + 0.45 * fade(over, 0.3),
-            ready: start.ready,
+            ready: next.ready,
         };
         let (sx, _, sw, _) = room.sheet;
         let words = shown.next_words();
@@ -472,7 +476,7 @@ impl Stage {
         let at = ((sx + sw / 2.0, room.line.y), 0.5);
         let named = (Face::NUMBER, &*text);
         self.written(&mut d.instances, named, (px, 1.0), at, soft, Pen::SHADED);
-        self.next_button(&mut d.instances, &room.button, look);
+        Some(look)
     }
 }
 
@@ -548,11 +552,12 @@ mod tests {
     fn picture(r: &SongResult, id: u64, t: f64) -> KaraokePicture {
         KaraokePicture {
             bar: 5.0 / 30.0,
+            reach: 0.15,
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: None,
-            start: Some(Start { ready: true }),
+            next: Some(Next { ready: true }),
             before: Vec::new(),
             moved: 1.0,
             score: None,
@@ -565,11 +570,28 @@ mod tests {
         }
     }
 
+    /// The room in the window's `area` (pixels) for a verdict that looks
+    /// `look`, its line clear above nine tenths of the height, Next's
+    /// button at its place for `stage`.
+    pub(super) fn room_in(stage: &mut Stage, area: (f32, f32, f32, f32), look: Look) -> Room {
+        let button = Place::of(stage, area, 0.15);
+        let line = Line::above(area, area.3 * 0.9);
+        Room::new(area, (line, &button), &Tint::STAGE, look)
+    }
+
+    /// `picture`'s scene on `stage` in a window `size`: the result screen
+    /// and Next's button.
+    fn scene_of(stage: &mut Stage, picture: &KaraokePicture, size: (f32, f32)) -> StageFrame {
+        let singing = crate::core::singing::Singing::default();
+        let song = super::super::Song::new(&singing, Vec::new(), None);
+        let area = (0.0, 0.0, size.0, size.1);
+        let frame = stage.scene((&song, false), picture, area, (0.0, 0.0), &Tint::STAGE);
+        frame.expect("a result screen")
+    }
+
     /// The scene at `t` of a result, in a window `size`.
     pub(super) fn frame_in(r: &SongResult, t: f64, size: (f32, f32)) -> StageFrame {
-        let area = (0.0, 0.0, size.0, size.1);
-        let frame = stage().result(&picture(r, 1, t), &Tint::STAGE, area);
-        frame.expect("a result screen")
+        scene_of(&mut stage(), &picture(r, 1, t), size)
     }
 
     /// The scene at `t` in a window of 1600 × 900.
@@ -659,11 +681,13 @@ mod tests {
             let [cx, cy, hx, hy] = paper.shape;
             // The room the frame was drawn in, and the heading's size there.
             let area = (0.0, 0.0, size.0, size.1);
-            let line = Line::of(&picture(&r, 1, 3.0), area);
-            let look = seal::look(r.verdict(), &Tint::STAGE);
-            let room = Room::new(area, line, &Tint::STAGE, look);
-            assert_eq!(room.sheet.2, 2.0 * hx, "{size:?}: the same sheet");
             let mut stage = stage();
+            let shown = picture(&r, 1, 3.0);
+            let line = Line::of(&shown, area);
+            let button = Place::of(&mut stage, area, shown.reach);
+            let look = seal::look(r.verdict(), &Tint::STAGE);
+            let room = Room::new(area, (line, &button), &Tint::STAGE, look);
+            assert_eq!(room.sheet.2, 2.0 * hx, "{size:?}: the same sheet");
             let heading = crate::view::karaoke::DIPLOMA.heading;
             assert_eq!(heading, "Jodeldiplom");
             let hp = sheet::heading_px(&mut stage, &room);
@@ -734,14 +758,14 @@ mod tests {
     fn the_date_is_read_once_a_result() {
         let mut stage = stage();
         let r = result(Some(Medal::Gold), true, None);
-        let area = (0.0, 0.0, 1600.0, 900.0);
+        let size = (1600.0, 900.0);
         let date = |stage: &Stage| stage.kept.written.as_ref().and_then(|w| w.date.clone());
-        stage.result(&picture(&r, 1, 1.0), &Tint::STAGE, area);
+        scene_of(&mut stage, &picture(&r, 1, 1.0), size);
         assert_eq!(date(&stage).as_deref(), Some("24 November 2026"));
         stage.kept.today = || Some((2026, 11, 25));
-        stage.result(&picture(&r, 1, 9.0), &Tint::STAGE, area);
+        scene_of(&mut stage, &picture(&r, 1, 9.0), size);
         assert_eq!(date(&stage).as_deref(), Some("24 November 2026"));
-        stage.result(&picture(&r, 2, 1.0), &Tint::STAGE, area);
+        scene_of(&mut stage, &picture(&r, 2, 1.0), size);
         assert_eq!(date(&stage).as_deref(), Some("25 November 2026"));
     }
 
@@ -772,14 +796,12 @@ mod tests {
         ] {
             for t in [1.0, 3.0, reveal.end() + 2.0] {
                 let mut stage = stage();
-                let area = (0.0, 0.0, size.0, size.1);
-                let f = stage.result(&picture(&r, 1, t), &Tint::STAGE, area);
-                let f = f.expect("a result screen");
+                let f = scene_of(&mut stage, &picture(&r, 1, t), size);
                 let what = format!("{size:?} at {t}");
                 let &[([x0, y0, x1, y1], op)] = stage.targets() else {
                     panic!("{what}: {:?}", stage.targets())
                 };
-                assert_eq!(op, crate::core::keymap::Op::KaraokeStart);
+                assert_eq!(op, crate::core::keymap::Op::KaraokeNext);
                 assert!(x1 < size.0 && y0 > 0.0 && y1 < size.1 * 0.5, "{what}");
                 for i in f
                     .instances

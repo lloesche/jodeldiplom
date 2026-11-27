@@ -495,17 +495,19 @@ mod tests {
     }
 
     /// The score and its rung (a long score, the top rung's name) lie in
-    /// the score's corner, which the effects over the frame keep clear.
+    /// the score's corner, which the effects over the frame keep clear
+    /// (their outline's dark copies a pixel or two round them).
     #[test]
     fn the_score_lies_in_its_corner() {
         let area = (0.0, 0.0, 1600.0, 900.0);
         let picture = KaraokePicture {
             bar: 0.1,
+            reach: 0.0,
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: Some(Score {
@@ -522,6 +524,7 @@ mod tests {
             stage.score(&mut out, &picture, area, 0.05);
         }
         let corner = corner(area);
+        let out = crate::gui::stage::runs(&out);
         assert!(out.len() > 9, "{}", out.len());
         for i in &out {
             let [x0, y0, x1, y1] = i.quad;
@@ -672,11 +675,12 @@ mod tests {
     fn scored(points: u32) -> KaraokePicture {
         KaraokePicture {
             bar: 3.0 / 24.0,
+            reach: 0.0,
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: Some(Score { points, streak: 0 }),
@@ -695,7 +699,7 @@ mod tests {
         let frame = |stage: &mut Stage, points: u32| {
             let mut out = Vec::new();
             stage.score(&mut out, &scored(points), area, FRAME);
-            out
+            crate::gui::stage::runs(&out)
         };
         let rest = frame(&mut stage, 12_400);
         let (px, margin, _) = sizes(area);

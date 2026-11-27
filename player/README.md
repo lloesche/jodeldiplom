@@ -1208,7 +1208,7 @@ The voice plays at its level (as on the tab). Going in stops the song and
 holds it at its start (with shift, it goes on where it is). Each song
 waits for Next (`enter`, `space`, or a click on the gold Next button, an
 arrow pointing right on it, at the right edge a little above the middle,
-far from where the pointer brings the controls up; there whenever a song
+always above where the pointer brings the controls up; there whenever a song
 waits, from the moment the mode opens, and beside a song's result with
 the song it plays named under the diploma; the only Next there is to
 click): "3", "2", "1" are counted a second each, numbers over the
@@ -1258,7 +1258,7 @@ playback where it is (a count-in under way is called off).
 | Key | Karaoke mode |
 |---|---|
 | `enter` / `space` / a click on Next | Next (`space` pauses a song playing) |
-| `N` `P` | the next or previous song, held for Next |
+| `N` `P` | skip to the song after or before, held for Next |
 | `←` `→` | the voice 1 dB down, up (`shift`: 1 % of its travel) |
 | `i` / `r` | the next microphone / record 30 s for the echo canceller |
 | hold `p` | the demo sings: a perfect singer in place of the microphone, to show the game off ("AUTO" in the corner); that song's score is no best and its singing is not kept |

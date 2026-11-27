@@ -889,7 +889,7 @@ fn keys_mean_different_things_in_each_context() {
     assert_eq!(look(&state, Key::ch('j')), Some(Meaning::Type('j')));
     assert_eq!(look(&state, Key::ch('0')), Some(Meaning::Type('0')));
     assert_eq!(look(&state, Key::ch('Q')), Some(Meaning::Op(Op::Quit)));
-    assert_eq!(look(&state, Key::ch('N')), Some(Meaning::Op(Op::Next)));
+    assert_eq!(look(&state, Key::ch('N')), Some(Meaning::Op(Op::Skip)));
     // A no longer queues: enter does (shift+enter plays it too).
     assert_eq!(look(&state, Key::ch('A')), None);
     assert_eq!(
@@ -918,7 +918,7 @@ fn keys_mean_different_things_in_each_context() {
     op(&mut state, Op::ToggleSide);
     assert_eq!(look(&state, Key::ch('j')), Some(Meaning::Type('j')));
     assert_eq!(look(&state, Key::ch('n')), Some(Meaning::Type('n')));
-    assert_eq!(look(&state, Key::ch('N')), Some(Meaning::Op(Op::Next)));
+    assert_eq!(look(&state, Key::ch('N')), Some(Meaning::Op(Op::Skip)));
     assert_eq!(
         look(&state, key(KeyCode::Down)),
         Some(Meaning::Op(Op::Down))
@@ -926,7 +926,7 @@ fn keys_mean_different_things_in_each_context() {
     // Arrows seek; with shift they skip tracks.
     assert_eq!(
         look(&state, Key::shift(KeyCode::Right)),
-        Some(Meaning::Op(Op::Next))
+        Some(Meaning::Op(Op::Skip))
     );
     assert_eq!(
         look(&state, Key::shift(KeyCode::Left)),
@@ -2714,7 +2714,7 @@ fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
         Some(Meaning::Op(Op::SkipMix))
     );
     // By default the next track key cuts, as ever.
-    let next = engine(&op(&mut state, Op::Next));
+    let next = engine(&op(&mut state, Op::Skip));
     // (Away from the Transition tab now: no stems made.)
     assert_eq!(
         next,
@@ -2729,18 +2729,18 @@ fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
     // Its own preset, set and unset again in the settings: the Transition
     // tab's.
     state.config.skip_preset = Some(Preset::BassSwap);
-    let fx = op(&mut state, Op::Next);
+    let fx = op(&mut state, Op::Skip);
     let [Effect::Engine(Command::Transition(plan))] = &fx[..] else {
         panic!("{fx:?}");
     };
     assert_eq!(plan.lanes, Preset::BassSwap.lanes(8));
-    op(&mut state, Op::Next); // cut at once
+    op(&mut state, Op::Skip); // cut at once
     let mut state = common::transition_state(120, 40);
     state.side = Side::Transition;
     op(&mut state, Op::TransitionPreset);
     state.side = Side::Queue;
     state.config.skip_mix = true;
-    let fx = op(&mut state, Op::Next);
+    let fx = op(&mut state, Op::Skip);
     // (With the engine told that no stems are wanted off the tabs.)
     let [Effect::Engine(Command::Transition(plan)), ..] = &fx[..] else {
         panic!("{fx:?}");
@@ -2757,7 +2757,7 @@ fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
         Preset::DrumsFirst
     );
     // Again while it waits: cut at once.
-    assert_eq!(engine(&op(&mut state, Op::Next)), vec![Command::Next]);
+    assert_eq!(engine(&op(&mut state, Op::Skip)), vec![Command::Next]);
     // While it mixes, the key cuts into the next track (the engine plays
     // it on alone from where it is heard).
     update(
@@ -2768,7 +2768,7 @@ fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
             origin: 0,
         })),
     );
-    assert_eq!(engine(&op(&mut state, Op::Next)), vec![Command::Next]);
+    assert_eq!(engine(&op(&mut state, Op::Skip)), vec![Command::Next]);
     assert!(state
         .message
         .as_ref()

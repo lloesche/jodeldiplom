@@ -126,7 +126,7 @@ fn the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab() {
     assert_eq!(state.screen, Screen::Karaoke);
     assert!(engine(&fx).contains(&&Command::HoldAtEnd(true)));
     assert_eq!(voice_sent(&fx), Some(voice_gain(20)));
-    // The song playing stops and is held at its start for START: nothing
+    // The song playing stops and is held at its start for Next: nothing
     // plays without a count-in.
     let playing = state.playing.track.as_ref().map(|t| t.index);
     assert!(engine(&fx).contains(&&Command::Stop), "{fx:?}");
@@ -135,7 +135,7 @@ fn the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab() {
         Command::Play(_) | Command::PlayIn { .. } | Command::Seek(_)
     )));
     assert_eq!(state.karaoke.held, playing);
-    assert!(karaoke::waiting(&state), "START shows at once");
+    assert!(karaoke::waiting(&state), "Next shows at once");
     // The voice's level is heard at once in the mode.
     let fx = op(&mut state, Op::SliderUp);
     assert_eq!(voice_sent(&fx), Some(voice_gain(21)));
@@ -173,7 +173,7 @@ fn start_counts_in_three_seconds_whatever_the_song() {
         assert!(karaoke::waiting(&state));
         // Its beats play no part: a number a second, then its start.
         beats_for(&mut state, 2, first, beat);
-        let fx = op(&mut state, Op::KaraokeStart);
+        let fx = op(&mut state, Op::KaraokeNext);
         assert!(
             engine(&fx).iter().any(|c| matches!(
                 c,
@@ -184,18 +184,18 @@ fn start_counts_in_three_seconds_whatever_the_song() {
         let countdown = state.karaoke.countdown.expect("a count-in");
         assert_eq!(countdown.at(-3.0).map(|(n, _)| n), Some(3));
         assert_eq!(countdown.at(-0.5).map(|(n, _)| n), Some(1));
-        assert!(!karaoke::waiting(&state), "START goes while it counts");
+        assert!(!karaoke::waiting(&state), "Next goes while it counts");
     }
 }
 
 /// Space in the mode never lets a song play without its count-in: entering
-/// holds the song, space is START from there; a song paused there goes on
+/// holds the song, space is Next from there; a song paused there goes on
 /// only after the same count-in.
 #[test]
 fn space_never_plays_a_song_without_its_count_in() {
     let mut state = tab();
     op(&mut state, Op::KaraokeEnter);
-    // Entered while the song played: space is START, not pause or play on.
+    // Entered while the song played: space is Next, not pause or play on.
     let fx = op(&mut state, Op::PlayPause);
     assert!(
         engine(&fx)
@@ -211,7 +211,7 @@ fn space_never_plays_a_song_without_its_count_in() {
     assert_eq!(engine(&fx), [&Command::Pause]);
     update(&mut state, Action::Engine(Event::State(PlayState::Paused)));
     assert!(karaoke::waiting(&state));
-    // START (or space) on a paused song: its count-in first, no resume yet.
+    // Next (or space) on a paused song: its count-in first, no resume yet.
     let fx = op(&mut state, Op::PlayPause);
     assert!(engine(&fx).is_empty(), "{fx:?}");
     let resume = state.karaoke.resume_at.expect("a count-in");
@@ -278,7 +278,7 @@ fn the_count_in_ends_as_the_first_word_is_sung() {
     stopped(&mut state);
     timed(&mut state, 2, &[30.0, 34.0]);
     assert_eq!(karaoke::first_sung(&state, 2), Some(30.0));
-    let fx = op(&mut state, Op::KaraokeStart);
+    let fx = op(&mut state, Op::KaraokeNext);
     assert!(
         engine(&fx).iter().any(|c| matches!(
             c,
@@ -309,7 +309,7 @@ fn the_count_in_ends_as_the_first_word_is_sung() {
     stopped(&mut state);
     timed(&mut state, 2, &[1.2, 5.0]);
     let title = karaoke::TITLE_HOLD + karaoke::TITLE_FADE;
-    let fx = op(&mut state, Op::KaraokeStart);
+    let fx = op(&mut state, Op::KaraokeNext);
     assert!(
         engine(&fx).iter().any(|c| matches!(
             c,
@@ -322,8 +322,8 @@ fn the_count_in_ends_as_the_first_word_is_sung() {
     assert_eq!(countdown.at(1.0).map(|(n, _)| n), Some(1));
 }
 
-/// A song waiting for START shows its title and artist (asked for, as the
-/// queue's rows are), the same as START opens it: nothing changes or moves
+/// A song waiting for Next shows its title and artist (asked for, as the
+/// queue's rows are), the same as Next opens it: nothing changes or moves
 /// until they fade.
 #[test]
 fn the_title_and_artist_show_while_the_song_waits_and_stay_as_it_starts() {
@@ -362,9 +362,9 @@ fn the_title_and_artist_show_while_the_song_waits_and_stay_as_it_starts() {
         waiting,
         [("A Song".to_owned(), 1.0), ("Someone".to_owned(), 1.0)]
     );
-    // START: the track opens (its own tags whatever they are), heard from
+    // Next: the track opens (its own tags whatever they are), heard from
     // its lead's start; the same two lines, whole.
-    op(&mut state, Op::KaraokeStart);
+    op(&mut state, Op::KaraokeNext);
     let lead = state.karaoke.countdown.unwrap().lead();
     assert!(lead > 3.0);
     state.playing.track = Some(common::now_track(44_100, state.config.settings(), 2));
@@ -407,7 +407,7 @@ fn the_title_shows_once_and_not_again_after_the_count_in() {
     op(&mut state, Op::KaraokeEnter);
     update(&mut state, Action::Engine(Event::Held { index: 2 }));
     stopped(&mut state);
-    op(&mut state, Op::KaraokeStart);
+    op(&mut state, Op::KaraokeNext);
     let lead = state.karaoke.countdown.unwrap().lead();
     state.playing.track = Some(common::now_track(44_100, state.config.settings(), 2));
     state.playing.state = PlayState::Playing;
@@ -460,7 +460,7 @@ fn shift_enter_goes_into_the_mode_where_the_song_is() {
     )));
     assert_eq!(state.karaoke.held, None);
     assert_eq!(state.karaoke.countdown, None);
-    assert!(!karaoke::waiting(&state), "the song plays on: no START");
+    assert!(!karaoke::waiting(&state), "the song plays on: no Next");
     assert_eq!(voice_sent(&fx), Some(voice_gain(20)));
     // Space pauses it as any song playing in the mode.
     let fx = op(&mut state, Op::PlayPause);
@@ -499,7 +499,7 @@ fn esc_during_a_count_in_calls_the_start_off() {
     op(&mut state, Op::KaraokeEnter);
     update(&mut state, Action::Engine(Event::Held { index: 2 }));
     stopped(&mut state);
-    op(&mut state, Op::KaraokeStart);
+    op(&mut state, Op::KaraokeNext);
     // The count-in is heard: the track started, a second before its start.
     let start = common::now_track(44_100, state.config.settings(), 2);
     state.playing.track = Some(start);
@@ -546,7 +546,7 @@ fn stories_are_wanted_in_the_mode_once_the_words_are_timed() {
 fn next_in_the_mode_holds_the_next_song_for_start() {
     let mut state = tab();
     op(&mut state, Op::KaraokeEnter);
-    let fx = op(&mut state, Op::Next);
+    let fx = op(&mut state, Op::Skip);
     assert_eq!(engine(&fx), [&Command::Stop]);
     assert_eq!(state.karaoke.held, Some(2));
 }
@@ -786,8 +786,8 @@ fn next_is_the_stages_button_and_the_game_is_set_on_the_tab() {
     assert!(!karaoke::controls::shown(&state));
     let shown = jodeldiplom::view::karaoke::picture(&state, 0.1, 0.0);
     assert_eq!(
-        shown.start,
-        Some(jodeldiplom::view::karaoke::Start { ready: true })
+        shown.next,
+        Some(jodeldiplom::view::karaoke::Next { ready: true })
     );
     // The game is set on the tab, not here: it stays as it is from a
     // song's start to its end. No keys for it, and the ops do nothing.
@@ -806,8 +806,8 @@ fn next_is_the_stages_button_and_the_game_is_set_on_the_tab() {
 
 /// A song cannot be sung until its lyrics are ready: while they are looked
 /// for, while their words are timed, or when there are none (none found,
-/// an instrumental) the mode does not open for it, START does not play it,
-/// and the status line (and the greyed button, the greyed START) says why.
+/// an instrumental) the mode does not open for it, Next does not play it,
+/// and the status line (and the greyed button, the greyed Next) says why.
 #[test]
 fn no_karaoke_for_a_song_until_its_lyrics_are_ready() {
     use jodeldiplom::work::lyrics::Answer;
@@ -868,11 +868,11 @@ fn no_karaoke_for_a_song_until_its_lyrics_are_ready() {
     assert_eq!(karaoke::not_singable(&state, playing), None);
     op(&mut state, Op::KaraokeEnter);
     assert_eq!(state.screen, Screen::Karaoke);
-    // In the mode, the song held is an instrumental: START says why.
+    // In the mode, the song held is an instrumental: Next says why.
     update(&mut state, Action::Engine(Event::Held { index: 2 }));
     stopped(&mut state);
     none(&mut state, 2, Answer::Instrumental);
-    let fx = op(&mut state, Op::KaraokeStart);
+    let fx = op(&mut state, Op::KaraokeNext);
     assert!(
         !engine(&fx)
             .iter()

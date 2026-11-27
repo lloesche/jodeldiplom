@@ -134,7 +134,7 @@ impl Bar {
         let transport = vec![
             Press::new(Op::Previous, "previous"),
             Press::new(Op::PlayPause, play),
-            Press::new(Op::Next, "next"),
+            Press::new(Op::Skip, "next"),
             Press::new(Op::Stop, "stop"),
         ];
         let named_ends = width >= measure::NAMED;

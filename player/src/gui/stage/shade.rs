@@ -15,7 +15,17 @@ pub(super) struct Shade {
     dark: f32,
 }
 
+/// The colour a copy's text is in where it is not filled: none (a copy
+/// is its dark colour alone).
+const UNFILLED: [f32; 4] = [0.0; 4];
+
 impl Shade {
+    /// Whether `i` is one of a shade's dark copies, not text itself.
+    #[cfg(test)]
+    pub(super) fn is_copy(i: &Instance) -> bool {
+        i.color == UNFILLED
+    }
+
     /// A soft shadow dropped under it.
     pub(super) const DROP: Shade = Shade {
         at: &[(0.0, 0.05)],
@@ -70,7 +80,7 @@ impl Stage {
         };
         for &(dx, dy) in shade.at {
             let at = (at.0 + off(dx), at.1 + off(dy));
-            self.text(out, face, text, (px, scale), at, split, ([0.0; 4], dark));
+            self.text(out, face, text, (px, scale), at, split, (UNFILLED, dark));
         }
         from
     }

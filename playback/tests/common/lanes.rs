@@ -302,6 +302,22 @@ pub fn output_frames(from: u32, to: u32, n: u64) -> u64 {
     jodel_playback::resample::output_frames(from, to, n)
 }
 
+/// Every event `events` gives within the next `tick`, waiting out the
+/// whole tick however many come (the engine reports by the frames it
+/// plays, so a pace that waited only for the next event would run as fast
+/// as it lets frames through).
+fn events_for(events: &Receiver<Event>, tick: Duration) -> Vec<Event> {
+    let until = Instant::now() + tick;
+    let mut out = Vec::new();
+    while let Some(left) = until.checked_duration_since(Instant::now()) {
+        match events.recv_timeout(left) {
+            Ok(event) => out.push(event),
+            Err(_) => break,
+        }
+    }
+    out
+}
+
 /// Lets frames through `step` at a time every couple of milliseconds until
 /// the queue has ended, as a device would, many times faster.
 pub fn pace(gate: &Gate, events: &Receiver<Event>, step: u64) -> Vec<Event> {
@@ -310,12 +326,11 @@ pub fn pace(gate: &Gate, events: &Receiver<Event>, step: u64) -> Vec<Event> {
     loop {
         assert!(Instant::now() < deadline, "no end; seen: {seen:#?}");
         gate.allow(gate.written() + step);
-        if let Ok(event) = events.recv_timeout(Duration::from_millis(2)) {
-            let end = matches!(event, Event::QueueEnded);
-            seen.push(event);
-            if end {
-                return seen;
-            }
+        let batch = events_for(events, Duration::from_millis(2));
+        let end = batch.iter().any(|e| matches!(e, Event::QueueEnded));
+        seen.extend(batch);
+        if end {
+            return seen;
         }
     }
 }
@@ -352,7 +367,7 @@ pub fn pace_once_present(
         }
         let real = (start.elapsed().as_secs_f64() * f64::from(RATE)) as u64;
         gate.allow(step + real);
-        if let Ok(event) = events.recv_timeout(Duration::from_millis(5)) {
+        for event in events_for(events, Duration::from_millis(5)) {
             let end = matches!(event, Event::QueueEnded);
             seen.push(event);
             assert!(!end, "the queue ended without the parts; seen: {seen:#?}");
@@ -367,9 +382,7 @@ pub fn pace_to(gate: &Gate, events: &Receiver<Event>, step: u64, frames: u64) ->
     while gate.written() < frames {
         assert!(Instant::now() < deadline, "only {} frames", gate.written());
         gate.allow(gate.written() + step);
-        if let Ok(event) = events.recv_timeout(Duration::from_millis(2)) {
-            seen.push(event);
-        }
+        seen.extend(events_for(events, Duration::from_millis(2)));
     }
     gate.allow(gate.written());
     seen

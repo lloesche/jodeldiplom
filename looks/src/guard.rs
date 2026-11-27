@@ -18,12 +18,14 @@
 //! - **Washing out and blacking out:** over a whole frame at most
 //!   [`CLIPPED`] of the pixels may be clipped (nearly white or nearly
 //!   black) beyond what the picture itself has, and its mean light stays
-//!   within [`MEAN`] (or within a tenth of the picture's own); a look whose frames
-//!   over the song's picture would not is drawn less strongly, the same
-//!   strength for the whole song, found once ([`strength`]).
+//!   within [`MEAN`] (or within [`MEAN_SLACK`] of the picture's own); a
+//!   look whose frames over the song's picture would not is drawn less
+//!   strongly, the same strength for the whole song, found once
+//!   ([`strength`]).
 //! - **The lyric band:** in the band the lyrics are set in, each pass
 //!   takes out its share of itself ([`crate::Pass::relief`]: the busy
-//!   ones half), and the light is held under [`CEILING`] (or what the
+//!   ones half), and the light ([`crate::math::lum`], as the flashes are
+//!   measured) is held under [`CEILING`] (or what the
 //!   picture had there, if brighter): white words keep at least 3 to 1
 //!   against what is under them, before their dark outline
 //!   ([`band_contrast`]).
@@ -56,17 +58,33 @@ pub const MIX_LIGHT: f32 = 0.6;
 
 /// The most of a frame's pixels clipped (beyond the picture's own).
 pub const CLIPPED: f32 = 0.15;
+/// How many more of its pixels than the picture's own a frame may clip,
+/// where that is more than [`CLIPPED`] (a picture that clips much by
+/// itself).
+pub const CLIPPED_SLACK: f32 = 0.05;
 /// The frame's mean light (encoded luma) is kept between these.
 pub const MEAN: (f32, f32) = (0.08, 0.75);
+/// How far from the picture's own mean light a frame's may be, where
+/// that reaches past [`MEAN`] (a picture dark or light by itself).
+pub const MEAN_SLACK: f32 = 0.1;
 /// How light a pixel is before it counts as white, and dark as black.
 const CLIP: (f32, f32) = (0.02, 0.95);
-/// The strengths a look is tried at, strongest first.
-const STRENGTHS: [f32; 7] = [1.0, 0.8, 0.6, 0.45, 0.3, 0.15, 0.0];
+/// The strengths a look is tried at, strongest first (none of them
+/// within the limits: 0, the picture as it is).
+const STRENGTHS: [f32; 6] = [1.0, 0.8, 0.6, 0.45, 0.3, 0.15];
 /// The moments of a song a look's strength is found from.
-const MOMENTS: usize = 32;
+const MOMENTS: usize = 64;
 /// How far inside the limits the moments a strength is found from must
 /// be (the frames between them are let come that much nearer).
 const MARGIN: f32 = 0.03;
+/// The frames a second a look's strength is measured at.
+const MEASURED_FPS: f32 = 12.0;
+/// How long a look that reads the frame before ([`crate::Checked::history`])
+/// is drawn, fed back, before each moment it is measured at: its echoes
+/// built up as in the window, seconds.
+const RUN_IN: f32 = 2.0;
+/// The song a look's measured frames are seeded with ([`crate::seed`]).
+const MEASURED_SONG: &str = "a song measured";
 
 /// A frame's exposure: the share of its pixels clipped, its mean light
 /// (encoded luma).
@@ -102,17 +120,20 @@ impl Exposure {
 
     /// As [`Exposure::within`], `margin` inside the limits.
     fn within_by(&self, picture: &Exposure, margin: f32) -> bool {
-        self.clipped <= CLIPPED.max(picture.clipped + 0.05) - margin
-            && self.mean >= MEAN.0.min(picture.mean - 0.1) + margin
-            && self.mean <= MEAN.1.max(picture.mean + 0.1) - margin
+        self.clipped <= CLIPPED.max(picture.clipped + CLIPPED_SLACK) - margin
+            && self.mean >= MEAN.0.min(picture.mean - MEAN_SLACK) + margin
+            && self.mean <= MEAN.1.max(picture.mean + MEAN_SLACK) - margin
     }
 }
 
 /// The strength `look` is drawn at over `picture` (encoded colours, small
 /// is enough): the strongest of [`STRENGTHS`] at which its frames at
 /// [`MOMENTS`] moments through the song (its `curves`; none: still music)
-/// are all within the limits. The same look, song and picture, the same
-/// strength.
+/// are all within the limits, each drawn as the window draws it: a look
+/// that reads the frame before drawn [`RUN_IN`] before it, fed back, at
+/// [`MEASURED_FPS`]. The same look, song and picture, the same strength.
+/// It draws a few thousand small frames: made once a look, song and
+/// picture, away from the window's thread.
 pub fn strength(
     look: &crate::Checked,
     picture: &crate::render::Image,
@@ -120,36 +141,42 @@ pub fn strength(
 ) -> f32 {
     let base = exposure(&picture.px);
     let length = curves.map_or(0.0, crate::Curves::length);
+    let size = (picture.w as u32, picture.h as u32);
+    let dt = 1.0 / MEASURED_FPS;
+    let run_in = if look.history() {
+        (RUN_IN * MEASURED_FPS) as usize
+    } else {
+        0
+    };
+    let seed = crate::seed(&look.id, MEASURED_SONG);
+    let within = |strength: f32, t: f64| {
+        let mut prev: Option<crate::render::Image> = None;
+        for back in (0..=run_in).rev() {
+            let at = (t - back as f64 * f64::from(dt)).max(0.0);
+            let signals = curves.map_or(crate::Signals::QUIET, |c| c.at(at));
+            let moment = crate::Moment::measuring(size, (at, dt), prev.is_none(), (seed, strength));
+            prev = Some(crate::render::draw(
+                &look.frame(&moment, &signals, curves),
+                picture,
+                prev.as_ref(),
+            ));
+        }
+        prev.is_some_and(|out| exposure(&out.px).within_by(&base, MARGIN))
+    };
     STRENGTHS
         .into_iter()
-        .find(|&s| {
-            let mut tried = look.clone();
-            tried.strength = s;
-            (0..MOMENTS).all(|i| {
-                let t = (i as f64 + 0.5) / MOMENTS as f64 * length;
-                let signals = curves.map_or(crate::Signals::QUIET, |c| c.at(t));
-                let moment = crate::Moment {
-                    size: (picture.w as u32, picture.h as u32),
-                    t,
-                    seed: 1,
-                    dt: 1.0 / 30.0,
-                    forget: true,
-                    band: None,
-                    palette: crate::MEASURING_PALETTE,
-                };
-                let out =
-                    crate::render::draw(&tried.frame(&moment, &signals, curves), picture, None);
-                exposure(&out.px).within_by(&base, MARGIN)
-            })
-        })
+        .find(|&s| (0..MOMENTS).all(|i| within(s, (i as f64 + 0.5) / MOMENTS as f64 * length)))
         .unwrap_or(0.0)
 }
 
-/// What a look did over a whole song: the most flashes in any second, the
-/// worst exposure (the most clipped, the darkest and the lightest mean),
-/// the lyric band's least contrast, and whether any number was none.
+/// What a look did over a whole song: the strength it was drawn at, the
+/// most flashes in any second, the worst exposure (the most clipped, the
+/// darkest and the lightest mean), the lyric band's least contrast, and
+/// whether any number was none.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OverSong {
+    /// The strength.
+    pub strength: f32,
     /// The most flashes in a second.
     pub flashes: usize,
     /// The most clipped.
@@ -164,19 +191,21 @@ pub struct OverSong {
 
 /// `look` drawn over `picture` through the whole song (its `curves`),
 /// frame after frame at `fps`, the frame before fed back as in the window,
-/// at the strength [`strength`] finds: what it did. The lyric band at
-/// `band`.
+/// at the strength [`strength`] finds, seeded as it measures: what it
+/// did. The lyric band at `band`.
 pub fn over_song(
     look: &crate::Checked,
     picture: &crate::render::Image,
     curves: &crate::Curves,
     (fps, band): (f32, (f32, f32)),
 ) -> OverSong {
-    let mut look = look.clone();
-    look.strength = strength(&look, picture, Some(curves));
+    let strength = strength(look, picture, Some(curves));
+    let size = (picture.w as u32, picture.h as u32);
+    let seed = crate::seed(&look.id, MEASURED_SONG);
     let mut prev: Option<crate::render::Image> = None;
     let mut lights = Vec::new();
     let mut out = OverSong {
+        strength,
         flashes: 0,
         clipped: 0.0,
         mean: (1.0, 0.0),
@@ -187,13 +216,8 @@ pub fn over_song(
     for f in 0..frames {
         let t = f as f64 / f64::from(fps);
         let moment = crate::Moment {
-            size: (picture.w as u32, picture.h as u32),
-            t,
-            seed: crate::seed(&look.id, "over a song"),
-            dt: 1.0 / fps,
-            forget: f == 0,
             band: Some(band),
-            palette: crate::MEASURING_PALETTE,
+            ..crate::Moment::measuring(size, (t, 1.0 / fps), f == 0, (seed, strength))
         };
         let frame = crate::render::draw(
             &look.frame(&moment, &curves.at(t), Some(curves)),
@@ -242,22 +266,15 @@ pub fn cap_light(layers: &mut [CheckedLayer]) {
 }
 
 /// The light a frame gives off, 0 to 1: its pixels' mean relative
-/// luminance (linear light from the encoded values).
+/// luminance ([`crate::math::lum`] of each as the screen shows it, held
+/// to 0 to 1).
 pub fn light(pixels: &[V3]) -> f32 {
     if pixels.is_empty() {
         return 0.0;
     }
-    let lin = |c: f32| {
-        let c = c.clamp(0.0, 1.0);
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    };
     pixels
         .iter()
-        .map(|p| 0.2126 * lin(p.x) + 0.7152 * lin(p.y) + 0.0722 * lin(p.z))
+        .map(|p| crate::math::lum(p.clamp(0.0, 1.0)))
         .sum::<f32>()
         / pixels.len() as f32
 }

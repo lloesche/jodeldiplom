@@ -149,7 +149,7 @@ fn lk_rgb(c: vec3<f32>) -> vec3<f32> {
 }
 fn look_vhs(uv: vec2<f32>) -> vec3<f32> {
     let t = u.time.x;
-    let p = uv * u.size.xy / lk_scale();
+    let p = lk_px1080(uv);
     let f = u32(floor(max(t * 30.0, 0.0)));
     let band = fract(t * 0.07);
     let track = (1.0 - smoothstep(0.0, 0.05, abs(uv.y - band))) * u.k0.w;
@@ -382,7 +382,7 @@ pub const GLITCH: Pass = Pass {
     pairs: &["vhs", "chromatic", "xerox"],
     wgsl: r"
 fn look_glitch(uv: vec2<f32>) -> vec3<f32> {
-    let p = uv * u.size.xy / lk_scale();
+    let p = lk_px1080(uv);
     let g = u32(floor(max(u.time.x * 12.0, 0.0)));
     let bs = vec2<f32>(u.k0.y, u.k0.y * 0.4);
     let cv = floor(p / bs);

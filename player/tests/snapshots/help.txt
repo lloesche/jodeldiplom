@@ -4,7 +4,7 @@
 [keys] space  play / pause
 [keys] ←  seek back 5 s
 [keys] →  seek forward 5 s
-[keys] N / shift+→  next track
+[keys] N / shift+→  skip to the next track
 [keys] P / shift+←  previous track
 [keys] X  what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings)
 [keys] S  stop

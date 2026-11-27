@@ -284,17 +284,26 @@ impl Visualiser {
     }
 
     /// Whether its frames change by themselves (music or not): a cover
-    /// fading, or what the music lit still settling. While paused, the
-    /// frames go on until it is still.
+    /// fading, what the music lit still settling, or the look's strength
+    /// being found or eased to. While paused, the frames go on until it is
+    /// still.
     pub fn moving(&self) -> bool {
         let fading = |s: &Slot| s.shown < 1.0 || !s.wanted;
-        !self.slots.is_empty() && (self.slots.iter().any(fading) || !self.feel.settled())
+        self.looks.settling()
+            || !self.slots.is_empty() && (self.slots.iter().any(fading) || !self.feel.settled())
+    }
+
+    /// The song's picture `art` made small, as the look's strength is
+    /// found over it ([`looks::Looks::picture`]).
+    pub fn picture(&mut self, art: Option<&Art>) -> Arc<jodel_looks::render::Image> {
+        self.looks.picture(art)
     }
 
     /// The frame for `app` at `heard` seconds into the `song` heard (none:
     /// not analysed yet), `dt` seconds after the last, in a `window` of
-    /// pixels. None (and nothing held) outside Karaoke mode and the Shader
-    /// tab, or without the GPU (`gpu`).
+    /// pixels. None (and nothing held but the look as it was made:
+    /// [`looks::Looks::left`]) outside Karaoke mode and the Shader tab, or
+    /// without the GPU (`gpu`).
     pub fn frame(
         &mut self,
         (app, song): (&App, Option<&Song>),
@@ -306,12 +315,21 @@ impl Visualiser {
         let state = &app.state;
         let shown = crate::core::karaoke::in_mode(state) || crate::core::shader_tab::shows(state);
         if !gpu || !shown {
-            *self = Visualiser::default();
+            // All let go but the look as it was made (coming back finds
+            // its strength again only where it was not found yet).
+            let mut looks = std::mem::take(&mut self.looks);
+            looks.left();
+            *self = Visualiser {
+                looks,
+                ..Visualiser::default()
+            };
             return None;
         }
         let playing = state.playing.state == PlayState::Playing;
         // The look reads the song where it is, playing or not.
-        let look = self.looks.cue(state, (song, app.art()), heard, window);
+        let look = self
+            .looks
+            .cue(state, (song, app.art()), (heard, dt), window);
         // The story too, cut on its bars again where it or the analysis is
         // new.
         self.showing = app.story().map(|story| match self.showing.take() {

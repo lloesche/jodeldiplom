@@ -521,10 +521,14 @@ impl Track {
     }
 }
 
+/// An output open for a head: it, what it runs at, its clock, and the
+/// frame of that clock the position was last reported at (none: not yet
+/// for what is heard now; a frame of this clock only, so it goes with it).
 pub(super) struct OpenOutput {
     pub(super) output: Box<dyn Output>,
     pub(super) info: StreamInfo,
     pub(super) clock: Clock,
+    pub(super) last_report: Option<u64>,
 }
 
 /// What one unit of work on the current track did.

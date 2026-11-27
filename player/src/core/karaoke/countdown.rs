@@ -1,10 +1,10 @@
-//! The count-in and the title before it: a song START plays shows its
+//! The count-in and the title before it: a song Next plays shows its
 //! title and artist, then counts "3", "2", "1" a second each, ending as its
 //! first word is sung ([`Countdown`]); a paused song goes on after a
 //! count-in of its own ([`resume_count`]). Where the song has been heard
 //! from without a jump decides whether one shows whole ([`counts_from`]).
 //!
-//! The clocks: the count-in of a song START plays goes by what is heard
+//! The clocks: the count-in of a song Next plays goes by what is heard
 //! ([`State::heard`], the frame's), a paused song's by the clock
 //! ([`State::now_ms`]; the picture's by its frame's); whether a count-in is
 //! over ([`super::tick`]) by the position the engine reports.
@@ -116,9 +116,9 @@ pub fn countdown_for(state: &State, index: usize) -> Countdown {
 }
 
 /// How much of track `index`'s title and artist shows at `t` (seconds into
-/// it, as drawn), 0 to 1: all of it until it plays (held for START, or
+/// it, as drawn), 0 to 1: all of it until it plays (held for Next, or
 /// waiting for its lead), then [`TITLE_HOLD`] from when it is first heard
-/// (its lead's start, after START), fading out over [`TITLE_FADE`]; once,
+/// (its lead's start, after Next), fading out over [`TITLE_FADE`]; once,
 /// whatever comes after (the count-in over, its record gone). None for a
 /// song heard from further in (the mode entered with shift, a seek, a pause
 /// ended).
@@ -133,7 +133,7 @@ pub fn title_shown(state: &State, index: usize, t: f64) -> f64 {
         Some(c) if c.index == index && !playing => return 1.0,
         Some(c) if c.index == index => -c.lead(),
         _ if !playing && t < TITLE_HOLD => return 1.0,
-        // Heard without a jump from there: its lead's start after START
+        // Heard without a jump from there: its lead's start after Next
         // (also once the count-in is over), else where it was joined.
         _ => counts_from(state, index),
     };

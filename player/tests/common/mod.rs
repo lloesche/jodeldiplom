@@ -706,11 +706,12 @@ pub fn bubble_picture(
     }
     KaraokePicture {
         bar: 5.0 / 24.0,
+        reach: 0.0,
         lines,
         count: None,
         cue: None,
         controls: None,
-        start: None,
+        next: None,
         before: Vec::new(),
         moved: 1.0,
         score: None,

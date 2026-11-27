@@ -228,7 +228,7 @@ Events (`Event`), track events in the order they are heard:
 | `QueueChanged { queue, current }` | after `Load` and `Enqueue` |
 | `State(Playing \| Paused \| Stopped)` | play state changes |
 | `TrackStarted(TrackStart)` | a track starts to be heard: `info` (format, tags, cover), `route`, `output` (`StreamInfo`), `device`, `bit_perfect`, and `head`, the head it plays on (0 the first, 1 a desk's second: a transition's next track) |
-| `Position { index, head, seconds, frame, output_frame, key }` | every `position_interval` while the output clock moves; `output_frame` counts that head's frames; `key` is the key heard there, in semitones |
+| `Position { index, head, seconds, frame, output_frame, key }` | each time the output has played `position_interval` more (by frames played, not the wall clock); `output_frame` counts that head's frames; `key` is the key heard there, in semitones |
 | `Seeked { index, seconds }` | a seek took effect |
 | `Clipped { index, samples, output_frame }` | the resampler or the source's requantization clipped (the count since the track or the seek started; at most four a second of output) |
 | `TrackEnded { index, finished }` | played to its end, or left |

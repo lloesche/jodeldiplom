@@ -54,7 +54,7 @@ fn the_song_s_look_follows_its_story() {
     let mut app = App::new(options);
     assert!(until(&mut app, |a| a.state.karaoke.look.is_some()), "held");
     assert_eq!(app.state.karaoke.look.as_deref(), Some(&look()));
-    app.dispatch(Action::Op(Op::Next));
+    app.dispatch(Action::Op(Op::Skip));
     let heard = |a: &App| {
         a.state
             .playing

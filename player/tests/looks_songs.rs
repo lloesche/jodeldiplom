@@ -121,9 +121,10 @@ fn every_preset_keeps_the_guards_over_real_songs() {
                     let c = look.check();
                     for (name, curves) in songs {
                         let r = guard::over_song(&c, pic, curves, (8.0, band));
-                        let within = r.clipped <= guard::CLIPPED.max(was.clipped + 0.05) + 0.05
-                            && r.mean.0 >= guard::MEAN.0.min(was.mean - 0.1) - 0.03
-                            && r.mean.1 <= guard::MEAN.1.max(was.mean + 0.1) + 0.03;
+                        let within = r.clipped
+                            <= guard::CLIPPED.max(was.clipped + guard::CLIPPED_SLACK) + 0.05
+                            && r.mean.0 >= guard::MEAN.0.min(was.mean - guard::MEAN_SLACK) - 0.03
+                            && r.mean.1 <= guard::MEAN.1.max(was.mean + guard::MEAN_SLACK) + 0.03;
                         if !(r.finite
                             && r.flashes <= 3
                             && within

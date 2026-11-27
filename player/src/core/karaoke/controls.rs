@@ -4,10 +4,10 @@
 //! bottom ([`in_reach`]) and stay while it is there, go [`LINGER_MS`] after
 //! it leaves (off the window too), and fade in and out over [`FADE_MS`];
 //! while a slider or the seek bar is held they show whatever the pointer
-//! does. Nothing else brings them up (no key): START is the stage's own
-//! pill, never in the bar. One clock for all of it, the frame's
-//! ([`clock_ms`]): they are laid out (and take clicks) exactly while they
-//! show at all.
+//! does. Nothing else brings them up (no key): Next is the stage's own
+//! button, never in the bar nor in their [`reach`]. One clock for all of
+//! it, the frame's ([`clock_ms`]): they are laid out (and take clicks)
+//! exactly while they show at all.
 
 use super::{clock_ms, in_mode};
 use crate::core::State;
@@ -41,11 +41,18 @@ pub enum Controls {
     },
 }
 
+/// The share of the window's height, from its bottom, where the pointer
+/// brings the controls up: the last [`REACH`] of it, never less than the
+/// bar and two lines.
+pub fn reach(state: &State) -> f32 {
+    REACH.max(state.fit.controls_reach)
+}
+
 /// Whether the pointer, `from_bottom` of the window's height above its
-/// bottom, is near enough the bottom to bring the controls up: within the
-/// last [`REACH`] of the height, never less than the bar and two lines.
-pub(crate) fn in_reach(state: &State, from_bottom: f32) -> bool {
-    from_bottom < REACH.max(state.fit.controls_reach)
+/// bottom, is near enough the bottom to bring the controls up: within
+/// [`reach`].
+fn in_reach(state: &State, from_bottom: f32) -> bool {
+    from_bottom < reach(state)
 }
 
 /// Whether a slider or the seek bar is held: the controls then show.

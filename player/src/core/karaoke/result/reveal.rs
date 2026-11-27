@@ -6,7 +6,7 @@
 //! streak; each phrase's gem in song order; the verdict (the medal stamped
 //! down, or a cheer where there is none, or a word that medals need the
 //! whole song); then a new best, or the best before; and the end, after
-//! which START goes on (the examiner signing and dating it then). It is a
+//! which Next goes on (the examiner signing and dating it then). It is a
 //! pure function of the result: the stage draws it and the sounds play it
 //! from the same beats, at the time since it was shown ([`Shown::time`]),
 //! as the singing's moments are one stream. Each beat's time is when it

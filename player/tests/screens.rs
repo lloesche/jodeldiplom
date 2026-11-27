@@ -119,7 +119,7 @@ fn the_bars_buttons_are_hit() {
     for (id, wanted) in [
         ("previous", Op::Previous),
         ("pause", Op::PlayPause),
-        ("next", Op::Next),
+        ("next", Op::Skip),
         ("stop", Op::Stop),
         ("settings", Op::Settings),
         ("help", Op::Help),
@@ -1886,7 +1886,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     use jodeldiplom::core::karaoke::controls::{self, FADE_MS, LINGER_MS};
     let mut state = common::karaoke_tab();
     update(&mut state, Action::Op(Op::KaraokeEnter));
-    // A song playing (nothing waits for START), the controls gone.
+    // A song playing (nothing waits for Next), the controls gone.
     state.karaoke.held = None;
     state.karaoke.countdown = None;
     state.playing.track = Some(common::now_track(44_100, state.config.settings(), 2));
@@ -1941,7 +1941,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     update(&mut state, Action::Tick(at));
     let shown_now = picture(&state, 0.12, 30.0);
     assert_eq!(shown_now.controls, Some(0.5));
-    assert_eq!(shown_now.start, None);
+    assert_eq!(shown_now.next, None);
     assert_eq!(hidden.lines, shown_now.lines);
     let faded_in = state.now_ms + FADE_MS / 2;
     update(&mut state, Action::Tick(faded_in));
@@ -1963,7 +1963,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     for (id, op) in [
         ("previous", Op::Previous),
         ("pause", Op::PlayPause),
-        ("next", Op::Next),
+        ("next", Op::Skip),
         ("karaoke-leave", Op::Back),
     ] {
         let mut sim = simulator(&gui);
@@ -1974,7 +1974,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
             "{id}: {messages:?}"
         );
     }
-    // No START among them (the hint names its keys, no button).
+    // No Next among them (the hint names its keys, no button).
     assert!(mode_bounds(&gui, "start").is_none() && mode_bounds(&gui, "play").is_none());
     // The voice: a press grabs its track, the wheel steps it.
     let press = vec![iced::Event::Mouse(mouse::Event::ButtonPressed(
@@ -2010,7 +2010,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     let after = gui.state().unwrap();
     assert_eq!(after.seek_drag, None);
     assert!((after.playing.position - length / 2.0).abs() < length / 50.0);
-    // Held for START: the bar takes no press.
+    // Held for Next: the bar takes no press.
     let mut waiting = state.clone();
     waiting.karaoke.held = Some(2);
     mode_shown((&mut gui, &clock), waiting);

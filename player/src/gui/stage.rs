@@ -124,8 +124,6 @@ pub struct Stage {
     ups: Vec<super::particles::Spray>,
     /// The theme it was last drawn in ([`Stage::scene`]: the song's).
     theme: &'static crate::theme::Theme,
-    /// Whether a look draws over the backdrop ([`Song::outlined`]).
-    outlined: bool,
 }
 
 /// What the stage is made from, besides the picture.
@@ -146,11 +144,6 @@ pub struct Song<'a> {
     pub heard: Option<&'a super::backdrop::music::Song>,
     /// The game's theme ([`crate::theme`]).
     pub theme: &'static crate::theme::Theme,
-    /// Whether a look draws over the backdrop ([`crate::core::State::look`]):
-    /// the text set over it (the count-in, the lines set in the middle: the
-    /// song's title and artist, a note in a pause) then gets the lyrics'
-    /// dark outline too, so it reads over whatever the look does.
-    pub outlined: bool,
 }
 
 impl<'a> Song<'a> {
@@ -181,7 +174,6 @@ impl<'a> Song<'a> {
             demo: state.karaoke.demo.held(),
             heard,
             theme: state.theme(),
-            outlined: state.look().is_some(),
         }
     }
 
@@ -202,7 +194,6 @@ impl<'a> Song<'a> {
             demo: false,
             heard: None,
             theme: &crate::theme::CLASSIC,
-            outlined: false,
         }
     }
 }
@@ -474,6 +465,25 @@ impl Stage {
         out.last_mut()
     }
 
+    /// [`Stage::text`] over the lyrics' dark outline ([`Shade::OUTLINE`],
+    /// as opaque as its more opaque colour), so it reads over any cover
+    /// and any look.
+    #[allow(clippy::too_many_arguments)]
+    fn outlined_text<'o>(
+        &mut self,
+        out: &'o mut Vec<Instance>,
+        face: Face,
+        text: &str,
+        (px, scale): (f32, f32),
+        at: (f32, f32),
+        split: f32,
+        (rest, filled): ([f32; 4], [f32; 4]),
+    ) -> Option<&'o mut Instance> {
+        let rim = (Shade::OUTLINE, rest[3].max(filled[3]));
+        self.shade(out, (face, text), (px, scale), (at, f32::INFINITY), rim);
+        self.text(out, face, text, (px, scale), at, split, (rest, filled))
+    }
+
     /// How far down from the top of text in `face` made at `px` for the
     /// atlas ([`super::big_text::BigText::coverage`]) the middle of its capitals is, between
     /// their top and the baseline: kept by face and size.
@@ -721,6 +731,13 @@ impl Stage {
             ..frame
         }
     }
+}
+
+/// The runs of text in `out`, not their outline's dark copies
+/// ([`Stage::outlined_text`]).
+#[cfg(test)]
+fn runs(out: &[Instance]) -> Vec<Instance> {
+    out.iter().filter(|i| !Shade::is_copy(i)).copied().collect()
 }
 
 #[cfg(test)]

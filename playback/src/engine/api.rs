@@ -353,7 +353,8 @@ pub enum Event {
 pub struct PlayerOptions {
     /// The rate policy settings.
     pub settings: Settings,
-    /// How often position events are sent while playing.
+    /// How often position events are sent while playing: each time the
+    /// output has played this much more (its frames, not the wall clock).
     pub position_interval: Duration,
     /// Where the stems get their separator ([`crate::stems`]): the parts
     /// of an output of lanes ([`Command::MakeStems`]), a head read along a

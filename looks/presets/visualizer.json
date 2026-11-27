@@ -1,5 +1,6 @@
 {
  "family": "visualizer",
+ "kind": "visualizer",
  "about": "Visualizers: the music drawn, the frame fed back, alone or over the picture.",
  "looks": [
   {

@@ -13,6 +13,7 @@ use serde::Serialize;
 use crate::drive::{Driver, Speed};
 use crate::pass::{Family, Knob, Natural};
 use crate::passes::PASSES;
+use crate::presets::Kind;
 use crate::{guard, presets};
 
 #[derive(Serialize)]
@@ -300,38 +301,35 @@ pub fn markdown() -> String {
     out
 }
 
-/// The eras, as the presets tag them.
-const ERAS: [&str; 8] = ["1920s", "1950s", "60s", "70s", "80s", "90s", "y2k", "today"];
+/// The keys of `family` (a genre, an era, a theme): the tag of each of
+/// its own looks, tagged with its key alone.
+fn keys(family: &presets::Family) -> impl Iterator<Item = &str> {
+    family.looks.iter().filter_map(|l| match l.tags.as_slice() {
+        [key] => Some(key.as_str()),
+        _ => None,
+    })
+}
+
+/// The keys of every family of `kind`.
+fn keys_of(kind: Kind) -> Vec<&'static str> {
+    (presets::families().iter())
+        .filter(|f| f.kind == kind)
+        .flat_map(keys)
+        .collect()
+}
 
 /// The genre × theme × era matrix, worked examples for the model: for
 /// each genre the presets made for it (tagged with its key first), by
-/// what was added to its own look: the era its music comes from, the
-/// themes its songs often sing of, and the two together.
+/// what was added to its own look (the tags after its key: an era's key,
+/// a theme's, or both): the era its music comes from, the themes its
+/// songs often sing of, and the two together.
 fn matrix() -> String {
     let mut out = String::from(
         "## The matrix: genre × theme × era\n\nEach genre's own look, and the same look in its era and for the themes its songs often sing of (the presets' ids; each a starting point to move the knobs from). Any genre takes any era's or theme's layers the same way: `eras` and `themes` above have them alone.\n\n| genre | its look | its era | its themes | era and theme |\n|---|---|---|---|---|\n",
     );
-    let genres = [
-        "rock",
-        "pop",
-        "electronic",
-        "urban",
-        "roots",
-        "classical",
-        "world",
-        "occasions",
-    ];
-    for f in presets::families()
-        .iter()
-        .filter(|f| genres.contains(&f.family.as_str()))
-    {
-        let mut keys: Vec<&str> = Vec::new();
-        for l in &f.looks {
-            if let Some(k) = l.tags.first().filter(|k| l.id == **k) {
-                keys.push(k);
-            }
-        }
-        for key in keys {
+    let (eras, themes) = (keys_of(Kind::Era), keys_of(Kind::Theme));
+    for f in (presets::families().iter()).filter(|f| f.kind == Kind::Genre) {
+        for key in keys(f) {
             let of: Vec<&crate::Look> = f
                 .looks
                 .iter()
@@ -345,12 +343,15 @@ fn matrix() -> String {
                     .collect();
                 ids.join(", ")
             };
-            let is_era = |t: &String| ERAS.contains(&t.as_str());
+            // Whether what was added to its own look has one of `of`.
+            let adds = |l: &crate::Look, of: &[&str]| {
+                (l.tags[1..].iter()).any(|t| of.contains(&t.as_str()))
+            };
             out.push_str(&format!(
                 "| {key} | `{key}` | {} | {} | {} |\n",
-                ids(&|l| l.tags.len() == 2 && is_era(&l.tags[1])),
-                ids(&|l| l.tags.len() == 2 && !is_era(&l.tags[1])),
-                ids(&|l| l.tags.len() == 3),
+                ids(&|l| adds(l, &eras) && !adds(l, &themes)),
+                ids(&|l| adds(l, &themes) && !adds(l, &eras)),
+                ids(&|l| adds(l, &eras) && adds(l, &themes)),
             ));
         }
     }

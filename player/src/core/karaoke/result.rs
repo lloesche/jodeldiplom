@@ -1,8 +1,8 @@
 //! A song heard to its end in Karaoke mode, the game on: how it went, kept
 //! and shown ([`Shown`]: its reveal under way, then settled) while the mode
-//! waits for START (the next song held, or the queue played out), and its
+//! waits for Next (the next song held, or the queue played out), and its
 //! best score raised where it was beaten. Every song played out has one,
-//! however little of it was sung. The first START during the reveal
+//! however little of it was sung. The first Next during the reveal
 //! completes it at once; the next goes on, as ever. How a song's scoring
 //! comes to a result is [`SongResult`]'s: its medal and verdict and their
 //! words (`verdict`); its reveal on the diploma, a timeline the stage
@@ -35,7 +35,7 @@ pub fn clock_ms(state: &State) -> u64 {
 }
 
 /// The result shown in Karaoke mode now: the song before's, from its end
-/// until START, the next track heard, or the mode entered again.
+/// until Next, the next track heard, or the mode entered again.
 pub fn result_shown(state: &State) -> Option<&Arc<Shown>> {
     state.karaoke.result.as_ref().filter(|_| in_mode(state))
 }
@@ -50,8 +50,8 @@ pub fn result_motion(state: &State) -> Option<Motion> {
     result_shown(state).map(|s| s.motion(clock_ms(state)))
 }
 
-/// START while the result's reveal is under way: it is completed at once
-/// (everything shown, nothing played again), and that is all this START
+/// Next while the result's reveal is under way: it is completed at once
+/// (everything shown, nothing played again), and that is all this Next
 /// does. False where there is no reveal under way.
 pub(super) fn skipped(state: &mut State) -> bool {
     let now = clock_ms(state);
@@ -64,7 +64,7 @@ pub(super) fn skipped(state: &mut State) -> bool {
     true
 }
 
-/// A track starts to be heard (START's, or one a mix ran into): the result
+/// A track starts to be heard (Next's, or one a mix ran into): the result
 /// of the song before is gone.
 pub(super) fn track_started(state: &mut State) {
     state.karaoke.result = None;

@@ -15,8 +15,8 @@ pub enum Op {
     SeekBack,
     /// Seek forward [`crate::core::SEEK_STEP`] seconds.
     SeekForward,
-    /// The next track.
-    Next,
+    /// Skip to the next track.
+    Skip,
     /// The previous track.
     Previous,
     /// Stop playback.
@@ -178,8 +178,8 @@ pub enum Op {
     /// Karaoke: into Karaoke mode where the song is: no rewind, no
     /// count-in (shift+enter, shift+click; for trying things out).
     KaraokeEnterHere,
-    /// Karaoke mode: START, the song held after a count-in.
-    KaraokeStart,
+    /// Karaoke mode: Next, the song held after a count-in.
+    KaraokeNext,
     /// Karaoke mode: the demo sings while the key is held
     /// ([`crate::core::singing::Demo`]).
     KaraokeDemo,
@@ -298,7 +298,7 @@ impl Op {
             Op::PlayPause => "Play / pause",
             Op::SeekBack => "Seek back",
             Op::SeekForward => "Seek forward",
-            Op::Next => "Next track",
+            Op::Skip => "Next track",
             Op::Previous => "Previous track",
             Op::Stop => "Stop",
             Op::ToggleSide => "Browser / queue / transition / karaoke / mixer / synth / shader",
@@ -376,7 +376,7 @@ impl Op {
             Op::JumpBarAtEnd(_) => "Transition: jump to a bar at the bar's end",
             Op::KaraokeEnter => "Karaoke mode",
             Op::KaraokeEnterHere => "Karaoke mode where the song is",
-            Op::KaraokeStart => "Karaoke: start the song",
+            Op::KaraokeNext => "Karaoke: Next, the song held after a count-in",
             Op::KaraokeDemo => "Karaoke: the demo sings (held)",
             Op::SliderDown => "Slider down",
             Op::SliderUp => "Slider up",
@@ -469,7 +469,7 @@ impl Op {
             Op::PlayPause
             | Op::SeekBack
             | Op::SeekForward
-            | Op::Next
+            | Op::Skip
             | Op::Previous
             | Op::Stop
             | Op::SkipMix
@@ -541,7 +541,7 @@ impl Op {
             Op::KaraokeRecordEcho | Op::KaraokeGame | Op::KaraokeNotes | Op::KaraokeKeep => {
                 (Karaoke, Command)
             }
-            Op::KaraokeStart => (KaraokeMode, Command),
+            Op::KaraokeNext => (KaraokeMode, Command),
             Op::KaraokeDemo => (KaraokeMode, Key),
             Op::SyncKeep | Op::SyncAgain => (Sync, Key),
             Op::DeskPrevStrip | Op::DeskNextStrip => (Desk, Move),

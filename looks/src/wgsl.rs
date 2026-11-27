@@ -100,7 +100,7 @@ fn fs(o: LkOut) -> @location(0) vec4<f32> {{
 }}
 ",
         if linear { "1.0" } else { "0.0" },
-        crate::math::WGSL,
+        crate::math::wgsl(),
         crate::pass::CTX_WGSL,
         shared(),
         pass.wgsl,
@@ -170,7 +170,7 @@ fn lk_check(p: u32, uv: vec2<f32>) -> vec3<f32> {{
     return lk_finish(c, uv);
 }}
 ",
-        crate::math::WGSL,
+        crate::math::wgsl(),
         crate::pass::CTX_WGSL,
         shared(),
     )

@@ -35,7 +35,7 @@ fn held_after_the_song(state: &mut State) {
 
 /// Held, then esc, then enter: the song held stays the one after the song
 /// just sung, the one the tab showed; it is the one checked for its lyrics
-/// (the song just sung has none any more here), and START plays it.
+/// (the song just sung has none any more here), and Next plays it.
 #[test]
 fn held_then_esc_then_enter_keeps_the_song_held() {
     let mut state = common::karaoke_tab();
@@ -49,7 +49,7 @@ fn held_then_esc_then_enter_keeps_the_song_held() {
     assert_eq!(state.screen, Screen::Karaoke, "{:?}", state.message);
     assert_eq!(state.karaoke.held, Some(2));
     assert!(!engine(&fx).contains(&&Command::Stop), "{fx:?}");
-    let fx = op(&mut state, Op::KaraokeStart);
+    let fx = op(&mut state, Op::KaraokeNext);
     assert!(
         engine(&fx)
             .iter()
@@ -99,8 +99,8 @@ fn next_twice_goes_on_from_the_song_held() {
     state.playing.track = Some(heard);
     state.playing.state = PlayState::Playing;
     state.karaoke.held = None;
-    op(&mut state, Op::Next);
+    op(&mut state, Op::Skip);
     assert_eq!(state.karaoke.held, Some(1));
-    op(&mut state, Op::Next);
+    op(&mut state, Op::Skip);
     assert_eq!(state.karaoke.held, Some(2));
 }

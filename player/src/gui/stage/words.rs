@@ -455,11 +455,12 @@ mod tests {
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
         let picture = KaraokePicture {
             bar: 5.0 / 24.0,
+            reach: 0.0,
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: None,
@@ -523,11 +524,12 @@ mod tests {
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(10.0));
         let picture = KaraokePicture {
             bar: 5.0 / 24.0,
+            reach: 0.0,
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: None,

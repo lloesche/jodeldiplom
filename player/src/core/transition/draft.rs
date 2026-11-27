@@ -421,7 +421,7 @@ pub(crate) fn skip(state: &mut State, fx: &mut Vec<Effect>) {
                     Ok(sent) => {
                         let at = sent.plan.start - state.heard();
                         let name = crate::core::settings::skip_preset_name(state);
-                        let next = keymap::hint(Context::Global, Op::Next);
+                        let next = keymap::hint(Context::Global, Op::Skip);
                         state.info(format!(
                             "Mixing into the next track in {at:.0} s ({name}); {next} again cuts"
                         ));

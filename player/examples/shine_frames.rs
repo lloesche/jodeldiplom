@@ -190,11 +190,12 @@ fn main() {
 fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> KaraokePicture {
     KaraokePicture {
         bar: 5.0 / 24.0,
+        reach: 0.0,
         lines: timed_lines(sung, now).unwrap_or_default(),
         count: None,
         cue: None,
         controls: None,
-        start: None,
+        next: None,
         before: Vec::new(),
         moved: 1.0,
         score: Some(jodeldiplom::view::karaoke::Score {

@@ -443,6 +443,7 @@ impl Rig<'_> {
             grade: self.theme.grade,
             look: self.look.as_ref().map(|(look, curves)| LookCue {
                 look: Arc::clone(look),
+                strength: 1.0,
                 t: now,
                 signals: curves.at(now),
                 curves: Some(Arc::clone(curves)),

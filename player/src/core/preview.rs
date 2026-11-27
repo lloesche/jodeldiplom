@@ -458,7 +458,7 @@ mod tests {
         let mut s = state();
         s.browser.cursor = 0;
         previewing(&mut s);
-        let fx = update(&mut s, Action::Op(Op::Next));
+        let fx = update(&mut s, Action::Op(Op::Skip));
         let first = fx
             .iter()
             .position(|e| matches!(e, Effect::Preview(Preview::End)));

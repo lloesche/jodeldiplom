@@ -1,7 +1,7 @@
 //! A song's result in Karaoke mode (K3): shown when a song is played to
 //! its end (the next held, or the queue played out; sought on or not,
 //! nothing scored or not), its medal and best kept, its reveal completed
-//! by the first START and the next song started by the one after, its
+//! by the first Next and the next song started by the one after, its
 //! sounds on the frames' clock.
 
 mod common;
@@ -116,9 +116,9 @@ fn a_song_sung_to_its_end_shows_its_medal_and_keeps_its_best() {
 }
 
 /// In the mode, a song sung to its end: its result shows while the next
-/// waits; START during the reveal completes it (and starts nothing), the
-/// next START starts the song, the result gone. Once the reveal is over,
-/// START starts the song at once.
+/// waits; Next during the reveal completes it (and starts nothing), the
+/// next Next starts the song, the result gone. Once the reveal is over,
+/// Next starts the song at once.
 #[test]
 fn start_during_the_reveal_completes_it_and_the_next_starts_the_song() {
     let sung = || {
@@ -139,20 +139,20 @@ fn start_during_the_reveal_completes_it_and_the_next_starts_the_song() {
     assert!(shown.revealing(state.now_ms));
     assert_eq!(karaoke::result_motion(&state), Some(Motion::Revealing));
     state.now_ms += 500;
-    let fx = op(&mut state, Op::KaraokeStart);
+    let fx = op(&mut state, Op::KaraokeNext);
     assert!(engine(&fx).is_empty() && state.karaoke.countdown.is_none());
     let skipped = karaoke::result_shown(&state).expect("still shown");
     assert!(skipped.time(state.now_ms) >= skipped.reveal.settled() - 1e-9);
     assert_eq!(karaoke::result_motion(&state), Some(Motion::Twinkling));
-    let fx = op(&mut state, Op::KaraokeStart);
+    let fx = op(&mut state, Op::KaraokeNext);
     assert!(starts(&fx));
     assert!(karaoke::result_shown(&state).is_none() && state.karaoke.result.is_none());
 
-    // The reveal left to its end: START starts the next song.
+    // The reveal left to its end: Next starts the next song.
     let mut state = sung();
     let end = karaoke::result_shown(&state).unwrap().reveal.end();
     state.now_ms += (end * 1000.0) as u64 + 1;
-    assert!(starts(&op(&mut state, Op::KaraokeStart)));
+    assert!(starts(&op(&mut state, Op::KaraokeNext)));
 }
 
 /// The share of the window's height the controls' bar takes in the tests.
@@ -183,7 +183,7 @@ fn press_at(view: &StageView, (x, y): (f32, f32)) -> Option<Action> {
 }
 
 /// Where the stage drew Next's button (window points).
-fn start_box(view: &StageView) -> [f32; 4] {
+fn next_box(view: &StageView) -> [f32; 4] {
     let mut found = None;
     for y in (0..900).step_by(2) {
         for x in (0..1600).step_by(2) {
@@ -210,7 +210,7 @@ fn next_is_next_by_click_during_and_after_the_reveal() {
     let press = |state: &mut State, at: (f32, f32)| {
         let (view, _) = drawn(state);
         let action = press_at(&view, at).expect("Next");
-        assert!(matches!(action, Action::Op(Op::KaraokeStart)), "{action:?}");
+        assert!(matches!(action, Action::Op(Op::KaraokeNext)), "{action:?}");
         update(state, action)
     };
     let starts = |fx: &[Effect]| {
@@ -229,7 +229,7 @@ fn next_is_next_by_click_during_and_after_the_reveal() {
     let mut state = sung();
     state.now_ms += 500;
     let (view, frame) = drawn(&state);
-    let [x0, y0, x1, y1] = start_box(&view);
+    let [x0, y0, x1, y1] = next_box(&view);
     assert!(x0 > 1200.0 && x1 < 1600.0 && y0 > 270.0 && y1 < 450.0 && x1 - x0 > 40.0);
     let middle = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
     // The pill drawn is round that box.
@@ -238,7 +238,7 @@ fn next_is_next_by_click_during_and_after_the_reveal() {
         a <= x0 && b <= y0 && c >= x1 && d >= y1 && c - a < (x1 - x0) * 2.0
     };
     let frame = frame.expect("the stage");
-    assert!(frame.instances.iter().any(|i| round(&i)), "the pill");
+    assert!(frame.top.iter().any(|i| round(&i)), "the pill");
     // Just outside it: nothing (the picture under it takes no clicks).
     for outside in [
         (x0 - 4.0, middle.1),
@@ -262,7 +262,7 @@ fn next_is_next_by_click_during_and_after_the_reveal() {
     let now = state.now_ms + karaoke::controls::FADE_MS;
     update(&mut state, Action::Tick(now));
     assert!(karaoke::controls::shown(&state));
-    assert_eq!(start_box(&drawn(&state).0), [x0, y0, x1, y1]);
+    assert_eq!(next_box(&drawn(&state).0), [x0, y0, x1, y1]);
     // Pressed during the reveal: the reveal completed, nothing played.
     let fx = press(&mut state, middle);
     assert!(engine(&fx).is_empty() && state.karaoke.countdown.is_none());
@@ -284,7 +284,7 @@ fn next_is_next_by_click_during_and_after_the_reveal() {
     op(&mut state, Op::KaraokeEnter);
     let held = state.karaoke.held.expect("a song held");
     let (view, _) = drawn(&state);
-    let [x0, y0, x1, y1] = start_box(&view);
+    let [x0, y0, x1, y1] = next_box(&view);
     let fx = press(&mut state, ((x0 + x1) / 2.0, (y0 + y1) / 2.0));
     assert!(engine(&fx)
         .iter()
@@ -390,7 +390,7 @@ fn hear(state: &mut State, from: f64, to: f64, tune: f64) {
 }
 
 /// In the mode, the game on, two songs queued: song `index` held for
-/// START, started, heard from its start (its count-in over).
+/// Next, started, heard from its start (its count-in over).
 fn started(index: usize) -> State {
     use jodel_playback::PlayState;
     let mut state = tab();
@@ -401,7 +401,7 @@ fn started(index: usize) -> State {
     op(&mut state, Op::KaraokeEnter);
     assert_eq!(state.karaoke.held, Some(index));
     sung_song(&mut state, index);
-    let fx = op(&mut state, Op::KaraokeStart);
+    let fx = op(&mut state, Op::KaraokeNext);
     assert!(engine(&fx)
         .iter()
         .any(|c| matches!(c, Command::PlayIn { index: i, .. } if *i == index)));
@@ -414,7 +414,7 @@ fn started(index: usize) -> State {
     state
 }
 
-/// The engine plays track `index` to its end: the next held for START, or
+/// The engine plays track `index` to its end: the next held for Next, or
 /// (the last) the queue ended.
 fn ended(state: &mut State, index: usize) {
     use jodel_playback::PlayState;
@@ -434,7 +434,7 @@ fn ended(state: &mut State, index: usize) {
 }
 
 /// The result shown stays, its reveal running to its end and on, until
-/// START: the first completes it, the next starts `next` (the song held,
+/// Next: the first completes it, the next starts `next` (the song held,
 /// or after the last the last again), the result gone.
 fn stays_until_start(state: &mut State, next: usize) {
     let shown = karaoke::result_shown(state).expect("shown").clone();
@@ -445,10 +445,10 @@ fn stays_until_start(state: &mut State, next: usize) {
         assert_eq!(karaoke::result_shown(state), Some(&shown), "it stays");
     }
     assert_eq!(karaoke::result_motion(state), Some(Motion::Revealing));
-    let fx = op(state, Op::KaraokeStart);
+    let fx = op(state, Op::KaraokeNext);
     assert!(engine(&fx).is_empty(), "the reveal completed, no more");
     assert_eq!(karaoke::result_motion(state), Some(Motion::Twinkling));
-    let fx = op(state, Op::KaraokeStart);
+    let fx = op(state, Op::KaraokeNext);
     assert!(
         engine(&fx)
             .iter()
@@ -496,7 +496,7 @@ fn a_song_sought_on_and_played_out_shows_its_result() {
         let verdict = if seek { Verdict::Whole } else { Verdict::Cheer };
         assert_eq!(r.verdict(), verdict, "song {index}, sought {seek}");
         assert_eq!(r.new_best(), !seek);
-        // After the last, START sings it again, and says so.
+        // After the last, Next sings it again, and says so.
         let next = jodeldiplom::view::karaoke::result_now(&state).unwrap();
         let words = ["Next: Morning Light", "Again: Morning Light"][index];
         assert_eq!(next.next_words(), words);
@@ -604,7 +604,7 @@ fn no_result_where_no_song_was_played_out_in_the_mode() {
     // `N`: the next held, this one stopped short.
     let mut state = started(0);
     hear(&mut state, 0.0, 4.5, 3.0);
-    assert_eq!(engine(&op(&mut state, Op::Next)), [&Command::Stop]);
+    assert_eq!(engine(&op(&mut state, Op::Skip)), [&Command::Stop]);
     cut(&mut state, 0);
     assert!(none(&state));
     // Stopped in the mode.

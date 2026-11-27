@@ -16,7 +16,7 @@
 //!
 //! Writes `game_through_player.wav` into OUT_DIR (16-bit, the device's
 //! rate: what the device played, song and sounds; the song plays from
-//! autoplay first, then again from START), the song alone as `song.wav`
+//! autoplay first, then again from Next), the song alone as `song.wav`
 //! and its lyrics into `OUT_DIR/work`, the game's sounds alone (the song
 //! taken out where it was sung) as `game_sounds_alone.wav`, and prints the
 //! result and how loud the song and the sounds were.
@@ -337,8 +337,8 @@ fn main() {
     )
     .is_none()));
     app.dispatch(Action::Op(Op::KaraokeEnter));
-    app.dispatch(Action::Op(Op::KaraokeStart));
-    // START plays the song from its start under the countdown: about where
+    app.dispatch(Action::Op(Op::KaraokeNext));
+    // Next plays the song from its start under the countdown: about where
     // on the device that is (from where it is heard, its last second).
     let mut zero = None;
     let started = |a: &mut App| {
@@ -349,7 +349,7 @@ fn main() {
         }
         a.state.karaoke.countdown.is_none() && playing(a)
     };
-    assert!(frames(&mut app, wait, started), "START");
+    assert!(frames(&mut app, wait, started), "Next");
     app.dispatch(Action::Op(Op::KaraokeDemo));
     // Sung to its end: the demo let go over the words missed, each line's
     // phrase given its tier as its last word is over.

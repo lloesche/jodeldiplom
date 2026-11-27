@@ -118,11 +118,12 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
         };
         let picture = KaraokePicture {
             bar: 5.0 / 24.0,
+            reach: 0.0,
             lines: vec![line],
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: None,
@@ -213,11 +214,12 @@ fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(4.0));
         let picture = KaraokePicture {
             bar: 5.0 / 24.0,
+            reach: 0.0,
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: None,

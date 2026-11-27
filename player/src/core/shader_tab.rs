@@ -133,14 +133,10 @@ pub fn listed(state: &State) -> Vec<(&str, &Look)> {
         words.iter().all(|w| text.contains(w.as_str()))
     };
     let kept = state.shader.kept.iter().map(|l| (YOURS, l));
-    let built = presets::families()
-        .iter()
+    let built = (presets::families().iter())
+        .chain(presets::pass_families())
         .flat_map(|f| f.looks.iter().map(move |l| (f.family.as_str(), l)));
-    let passes = presets::passes().iter().map(|(f, l)| (f.as_str(), l));
-    kept.chain(built)
-        .chain(passes)
-        .filter(|(f, l)| found(f, l))
-        .collect()
+    kept.chain(built).filter(|(f, l)| found(f, l)).collect()
 }
 
 /// The stack edited: the tab's, else the first preset's.

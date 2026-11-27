@@ -249,6 +249,7 @@ fn a_look_draws_over_the_backdrop_and_none_leaves_it_as_it_was() {
             let cue = Cue {
                 look: look.map(|l| LookCue {
                     look: Arc::clone(l),
+                    strength: 1.0,
                     t,
                     signals: curves.at(t),
                     curves: Some(Arc::clone(&curves)),

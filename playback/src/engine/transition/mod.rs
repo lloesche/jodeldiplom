@@ -568,7 +568,6 @@ impl Engine {
         // B's clock from here: the cues, and what is heard until B is.
         self.cues.rebase(origin);
         self.heard = self.heard.as_ref().map(|h| h.rebased(origin));
-        self.last_report = None;
         let end = end.saturating_sub(origin);
         self.with_playing(|e, b| {
             b.pending = false;

@@ -1,5 +1,5 @@
 //! WGSL's types and builtins on the processor, and the helpers every pass
-//! shares, written twice: here, and in WGSL ([`WGSL`], each `lk_` and the
+//! shares, written twice: here, and in WGSL ([`wgsl`], each `lk_` and the
 //! same name). A pass's reference reads like its shader line for line, so
 //! the two agree wherever they are held to each other
 //! (`shader_check`). The hash is integer arithmetic, the same bits on
@@ -136,11 +136,19 @@ pub fn luma(c: V3) -> f32 {
     c.dot(v3(0.2126, 0.7152, 0.0722))
 }
 
-/// A colour's luminance in linear light (its encoded values to the power
-/// 2.2): what the eye's contrast against white is reckoned from.
+/// A colour's relative luminance in linear light (its encoded values
+/// decoded as sRGB, none below 0; over 1 as the curve goes on): what the
+/// eye's contrast against white and the screen's light are reckoned
+/// from, the lyric band's ceiling and the guards' measures alike.
 pub fn lum(c: V3) -> f32 {
-    c.max(1e-6)
-        .map(|v| v.powf(2.2))
+    c.max(0.0)
+        .map(|v| {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        })
         .dot(v3(0.2126, 0.7152, 0.0722))
 }
 
@@ -219,17 +227,26 @@ pub fn hue_turn(c: V3, turns: f32) -> V3 {
     )
 }
 
-/// Light added to `c` as a screen adds it, `light` held under 0.85: a
-/// drawn shape over a bright picture lightens it, never to white.
+/// The most light a drawn shape adds ([`add_light`]).
+pub const LIGHT_CAP: f32 = 0.85;
+/// Where the knee bends ([`knee`]).
+pub const KNEE: f32 = 0.5;
+/// How far over [`KNEE`] the knee rises at most.
+pub const KNEE_ROOM: f32 = 0.2;
+
+/// Light added to `c` as a screen adds it, `light` held under
+/// [`LIGHT_CAP`]: a drawn shape over a bright picture lightens it, never
+/// to white.
 pub fn add_light(c: V3, light: V3) -> V3 {
-    screen(c.clamp(0.0, 1.0), light.clamp(0.0, 0.85))
+    screen(c.clamp(0.0, 1.0), light.clamp(0.0, LIGHT_CAP))
 }
 
-/// A soft knee over 0.5: as it is below, then rising ever more slowly to
-/// 0.7 (an echo fed back piles up toward a grey, never to white).
+/// A soft knee over [`KNEE`]: as it is below, then rising ever more
+/// slowly to [`KNEE`] and [`KNEE_ROOM`] (an echo fed back piles up toward
+/// a grey, never to white).
 pub fn knee(x: f32) -> f32 {
-    if x > 0.5 {
-        0.5 + 0.2 * (1.0 - (-(x - 0.5) / 0.2).exp())
+    if x > KNEE {
+        KNEE + KNEE_ROOM * (1.0 - (-(x - KNEE) / KNEE_ROOM).exp())
     } else {
         x
     }
@@ -249,12 +266,24 @@ pub fn turn(p: V2, a: f32) -> V2 {
     v2(c * p.x - s * p.y, s * p.x + c * p.y)
 }
 
-/// The helpers in WGSL, as [`self`] has them on the processor.
-pub const WGSL: &str = r"
+/// The helpers in WGSL, as [`self`] has them on the processor, their
+/// numbers ([`LIGHT_CAP`], [`KNEE`], [`KNEE_ROOM`]) written in from here.
+pub fn wgsl() -> String {
+    format!(
+        "const LK_LIGHT_CAP: f32 = {LIGHT_CAP:?};\nconst LK_KNEE: f32 = {KNEE:?};\nconst LK_KNEE_ROOM: f32 = {KNEE_ROOM:?};{HELPERS}"
+    )
+}
+
+/// [`wgsl`]'s helpers.
+const HELPERS: &str = r"
 const LK_TAU: f32 = 6.2831853;
 fn lk_sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
 fn lk_luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
-fn lk_lum(c: vec3<f32>) -> f32 { return dot(pow(max(c, vec3<f32>(1e-6)), vec3<f32>(2.2)), vec3<f32>(0.2126, 0.7152, 0.0722)); }
+fn lk_lum(c: vec3<f32>) -> f32 {
+    let x = max(c, vec3<f32>(0.0));
+    let l = select(x / 12.92, pow((x + 0.055) / 1.055, vec3<f32>(2.4)), x > vec3<f32>(0.04045));
+    return dot(l, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
 fn lk_saturate(c: vec3<f32>, s: f32) -> vec3<f32> { return mix(vec3<f32>(lk_luma(c)), c, s); }
 fn lk_mix32(x: u32) -> u32 {
     var h = x;
@@ -304,10 +333,10 @@ fn lk_hue_turn(c: vec3<f32>, turns: f32) -> vec3<f32> {
 }
 fn lk_screen(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> { return vec3<f32>(1.0) - (vec3<f32>(1.0) - a) * (vec3<f32>(1.0) - b); }
 fn lk_add_light(c: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
-    return lk_screen(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(light, vec3<f32>(0.0), vec3<f32>(0.85)));
+    return lk_screen(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(light, vec3<f32>(0.0), vec3<f32>(LK_LIGHT_CAP)));
 }
 fn lk_knee(x: vec3<f32>) -> vec3<f32> {
-    return select(x, 0.5 + 0.2 * (1.0 - exp(-(x - 0.5) / 0.2)), x > vec3<f32>(0.5));
+    return select(x, LK_KNEE + LK_KNEE_ROOM * (1.0 - exp(-(x - LK_KNEE) / LK_KNEE_ROOM)), x > vec3<f32>(LK_KNEE));
 }
 fn lk_turn(p: vec2<f32>, a: f32) -> vec2<f32> {
     let s = sin(a);

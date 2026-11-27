@@ -181,11 +181,12 @@ fn main() {
     }
     let picture = KaraokePicture {
         bar: 5.0 / 24.0,
+        reach: 0.0,
         lines,
         count: None,
         cue: None,
         controls: None,
-        start: None,
+        next: None,
         before: Vec::new(),
         moved: 1.0,
         score: sing.map(|_| Score {
@@ -252,11 +253,12 @@ fn gpu_frames(
         let moved = ((now - changed_at) / 0.3).clamp(0.0, 1.0);
         let picture = KaraokePicture {
             bar: 5.0 / 24.0,
+            reach: 0.0,
             lines: lines.clone(),
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: if moved < 1.0 {
                 before.clone().unwrap_or_default()
             } else {

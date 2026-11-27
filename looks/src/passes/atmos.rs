@@ -1,6 +1,6 @@
 //! Weather and light in the air: haze and fog, rays and flares, rain,
 //! snow, petals and dust (each seeded, in layers of cells that fall on the
-//! song's time), heat haze, water, candlelight, an aurora, stars. Light
+//! song's time, confetti too), heat haze, water, candlelight, an aurora, stars. Light
 //! that flickers does so slowly and a little (the candle's under a tenth
 //! of its pool's light, a few times a second at most).
 
@@ -10,10 +10,6 @@ use crate::pass::{knob, natural, Ctx, Family, Pass, Src};
 use crate::passes::film::aspect;
 
 const W: Family = Family::Atmosphere;
-
-fn px1080(u: &Ctx, uv: V2) -> V2 {
-    uv * v2(u.size[0], u.size[1]) / u.scale()
-}
 
 fn haze(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
@@ -141,7 +137,7 @@ fn rain(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
     let t = u.time[0];
-    let p = px1080(u, uv);
+    let p = u.px1080(uv);
     let slant = k[1] * 0.3;
     let q = v2(p.x + p.y * slant, p.y);
     let mut acc = 0.0;
@@ -185,7 +181,7 @@ pub const RAIN: Pass = Pass {
 fn look_rain(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let t = u.time.x;
-    let p = uv * u.size.xy / lk_scale();
+    let p = lk_px1080(uv);
     let slant = u.k0.y * 0.3;
     let q = vec2<f32>(p.x + p.y * slant, p.y);
     var acc = 0.0;
@@ -225,7 +221,7 @@ pub(crate) fn fall(
     amount: f32,
 ) -> (V2, f32, f32, f32) {
     let t = u.time[0];
-    let p = px1080(u, uv);
+    let p = u.px1080(uv);
     let fl = layer as f32;
     let cs = cellpx / (1.0 + 0.6 * fl);
     let qq = p / cs
@@ -253,7 +249,7 @@ pub(crate) fn fall(
 const FALL: &str = r"
 fn lk_fall(uv: vec2<f32>, cellpx: f32, speed: f32, wind: f32, layer: u32, amount: f32) -> vec4<f32> {
     let t = u.time.x;
-    let p = uv * u.size.xy / lk_scale();
+    let p = lk_px1080(uv);
     let fl = f32(layer);
     let cs = cellpx / (1.0 + 0.6 * fl);
     let qq = p / cs + vec2<f32>(-t * wind * 0.3 * (1.0 + 0.5 * fl), -t * speed * (1.0 + 0.4 * fl));
@@ -426,7 +422,7 @@ fn look_dust(uv: vec2<f32>) -> vec3<f32> {
 
 fn heat_haze(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
-    let p = px1080(u, uv) / k[1];
+    let p = u.px1080(uv) / k[1];
     let n = vnoise(v2(p.x / 40.0, p.y / 25.0 + u.time[0] * 1.5), 221) - 0.5;
     let w = mix(1.0, uv.y, k[2]);
     s.src(uv + v2(n * 0.4, n) * (k[0] * 4.0 * u.scale() * w) * v2(u.size[2], u.size[3]))
@@ -446,7 +442,7 @@ pub const HEAT_HAZE: Pass = Pass {
     pairs: &["haze", "white_balance", "grain"],
     wgsl: r"
 fn look_heat_haze(uv: vec2<f32>) -> vec3<f32> {
-    let p = uv * u.size.xy / lk_scale() / u.k0.y;
+    let p = lk_px1080(uv) / u.k0.y;
     let n = lk_vnoise(vec2<f32>(p.x / 40.0, p.y / 25.0 + u.time.x * 1.5), 221u) - 0.5;
     let w = mix(1.0, uv.y, u.k0.z);
     return lk_src(uv + vec2<f32>(n * 0.4, n) * (u.k0.x * 4.0 * lk_scale() * w) * u.size.zw);
@@ -463,7 +459,7 @@ fn underwater(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let c = s.src(uv + wob);
     let d = k[2];
     let absorbed = c * v3(1.0 - 0.6 * d, 1.0 - 0.25 * d, 1.0) + v3(0.0, 0.04, 0.08) * d;
-    let p = px1080(u, uv) / 80.0;
+    let p = u.px1080(uv) / 80.0;
     let n1 = vnoise(p + v2(t * 0.3, 0.0), 231);
     let n2 = vnoise(p * 1.3 + v2(5.0, -t * 0.25), 232);
     let ca = sat(1.0 - (n1 - n2).abs() * 2.5).powf(4.0) * (1.0 - uv.y * 0.6);
@@ -491,7 +487,7 @@ fn look_underwater(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv + wob);
     let d = u.k0.z;
     let absorbed = c * vec3<f32>(1.0 - 0.6 * d, 1.0 - 0.25 * d, 1.0) + vec3<f32>(0.0, 0.04, 0.08) * d;
-    let p = uv * u.size.xy / lk_scale() / 80.0;
+    let p = lk_px1080(uv) / 80.0;
     let n1 = lk_vnoise(p + vec2<f32>(t * 0.3, 0.0), 231u);
     let n2 = lk_vnoise(p * 1.3 + vec2<f32>(5.0, -t * 0.25), 232u);
     let ca = pow(lk_sat(1.0 - abs(n1 - n2) * 2.5), 4.0) * (1.0 - uv.y * 0.6);
@@ -607,7 +603,7 @@ fn look_aurora(uv: vec2<f32>) -> vec3<f32> {
 fn starfield(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
-    let p = px1080(u, uv) / 28.0;
+    let p = u.px1080(uv) / 28.0;
     let cv = p.floor();
     let (x, y) = (cell(cv.x), cell(cv.y));
     let on = step(hash2(x, y, 251), k[0] * 0.5);
@@ -642,7 +638,7 @@ pub const STARFIELD: Pass = Pass {
     wgsl: r"
 fn look_starfield(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let p = uv * u.size.xy / lk_scale() / 28.0;
+    let p = lk_px1080(uv) / 28.0;
     let cv = floor(p);
     let x = i32(cv.x);
     let y = i32(cv.y);
@@ -759,5 +755,61 @@ fn look_tilt_shift(uv: vec2<f32>) -> vec3<f32> {
 }
 ",
     cpu: tilt_shift,
+    ..Pass::BASE
+};
+
+fn confetti(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
+    let k = &u.k;
+    let mut o = s.src(uv);
+    for l in 0..3u32 {
+        let (local, h, on, near) = fall(u, uv, (70.0, -0.3, k[2]), l, k[0] * 0.6);
+        let spin = u.time[0] * (2.0 + 3.0 * h) + h * 11.0;
+        let q = turn(local, spin);
+        let size = k[1] * near.sqrt();
+        let w = 4.0 * size;
+        let hgt = 2.0 * size * (spin * 1.3).cos().abs() + 0.5;
+        let inside = (1.0 - smoothstep(w - 0.7, w + 0.7, q.x.abs()))
+            * (1.0 - smoothstep(hgt - 0.7, hgt + 0.7, q.y.abs()));
+        let col = hsv(fract(h * 7.0), 0.8, 1.0);
+        o = mix3(o, col, inside * on);
+    }
+    o
+}
+
+/// Confetti falling.
+pub const CONFETTI: Pass = Pass {
+    name: "confetti",
+    family: W,
+    about: "confetti fluttering down in every colour, thicker in the choruses (party, celebrations, disco, Schlager, weddings)",
+    knobs: &[
+        knob("amount", "how much confetti", (0.0, 1.0, 0.4), "share", (0.5, 0.04)),
+        knob("size", "the pieces' size", (0.5, 3.0, 1.0), "share", (0.4, 0.03)),
+        knob("wind", "blowing left (-) or right (+)", (-1.0, 1.0, 0.2), "share", (0.4, 0.0)),
+    ],
+    cost: 1.3,
+    relief: 0.5,
+    cells: true,
+    natural: &[natural("amount", Driver::Chorus, 0.7), natural("wind", Driver::Bass, 0.5)],
+    pairs: &["glow", "sparks", "saturation"],
+    wgsl: r"
+fn look_confetti(uv: vec2<f32>) -> vec3<f32> {
+    var o = lk_src(uv);
+    for (var l = 0u; l < 3u; l = l + 1u) {
+        let f = lk_fall(uv, 70.0, -0.3, u.k0.z, l, u.k0.x * 0.6);
+        let near = 1.0 / (1.0 + 0.6 * f32(l));
+        let h = f.z;
+        let spin = u.time.x * (2.0 + 3.0 * h) + h * 11.0;
+        let q = lk_turn(f.xy, spin);
+        let size = u.k0.y * sqrt(near);
+        let w = 4.0 * size;
+        let hgt = 2.0 * size * abs(cos(spin * 1.3)) + 0.5;
+        let inside = (1.0 - smoothstep(w - 0.7, w + 0.7, abs(q.x))) * (1.0 - smoothstep(hgt - 0.7, hgt + 0.7, abs(q.y)));
+        let col = lk_hsv(fract(h * 7.0), 0.8, 1.0);
+        o = mix(o, col, inside * f.w);
+    }
+    return o;
+}
+",
+    cpu: confetti,
     ..Pass::BASE
 };

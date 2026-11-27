@@ -125,9 +125,11 @@ const WINDOW: f64 = 0.04;
 /// A song as it is heard, for the backdrop and the effects alike: its
 /// analysis (its beats and bars), and where there is one its waveform's
 /// lanes and how loud each gets, and where its sections start. Made once
-/// for an analysis ([`Song::follow`]), shared.
+/// for an analysis ([`Song::follow`]), shared; its id another for every
+/// one made ([`Song::id`]).
 #[derive(Clone, Debug)]
 pub struct Song {
+    id: u64,
     analysis: Arc<Analysis>,
     lanes: Option<Lanes>,
     /// Where the sections start, in seconds.
@@ -157,7 +159,9 @@ impl Song {
             stems: (w.stems.as_ref()).map(|s| s.each_ref().map(|l| Range::of(&l.rms))),
         });
         let sections = (lanes.as_ref()).map_or(Vec::new(), |l| sections(&l.waveform.mix, &bars));
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Song {
+            id: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             analysis: Arc::clone(a),
             lanes,
             sections,
@@ -182,6 +186,13 @@ impl Song {
         if !kept.as_deref().is_some_and(same) {
             *kept = Some(Arc::new(Song::of(r)));
         }
+    }
+
+    /// Its id: another for every song made (a new analysis, a grid fixed
+    /// by hand, its waveform come), the same for its clones; what is made
+    /// from a song is kept by it.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// Its analysis.

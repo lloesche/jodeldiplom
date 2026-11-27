@@ -15,7 +15,7 @@ fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
 }
 
-/// Whether `fx` plays a song (START's count-in).
+/// Whether `fx` plays a song (Next's count-in).
 fn plays(fx: &[Effect]) -> bool {
     fx.iter()
         .any(|e| matches!(e, Effect::Engine(Command::PlayIn { .. })))
@@ -172,13 +172,13 @@ fn no_karaoke_for_a_song_until_it_is_fully_prepared() {
         .contains("[primary] Enter Karaoke Mode"));
     op(&mut state, Op::KaraokeEnter);
     assert_eq!(state.screen, Screen::Karaoke);
-    // START plays it, after its count-in.
+    // Next plays it, after its count-in.
     update(&mut state, Action::Engine(Event::State(PlayState::Stopped)));
-    assert!(plays(&op(&mut state, Op::KaraokeStart)));
+    assert!(plays(&op(&mut state, Op::KaraokeNext)));
 }
 
 /// K1c: in the mode, the next song still being prepared is not started:
-/// START greyed, the stage says what is still to come; START (or space,
+/// Next greyed, the stage says what is still to come; Next (or space,
 /// or the demo) plays nothing, and once pressed the song starts with its
 /// count-in as soon as its last job is done. `N` calls the wait off.
 #[test]
@@ -195,14 +195,14 @@ fn in_the_mode_the_next_song_waits_until_it_is_prepared() {
     update(&mut state, Action::Engine(Event::Held { index: next }));
     update(&mut state, Action::Engine(Event::State(PlayState::Stopped)));
     assert_eq!(karaoke::song_index(&state), Some(next));
-    let start = picture(&state, 0.1, 0.0).start.expect("START shows");
-    assert!(!start.ready, "START greyed");
+    let button = picture(&state, 0.1, 0.0).next.expect("Next shows");
+    assert!(!button.ready, "Next greyed");
     let shows =
         |state: &State, words: &str| lines_now(state, 0.0).iter().any(|l| l.text.contains(words));
     assert!(shows(&state, "Being prepared: its cover taken apart"));
-    // The demo plays nothing; START and space wait for it.
+    // The demo plays nothing; Next and space wait for it.
     assert!(!plays(&op(&mut state, Op::KaraokeDemo)));
-    assert!(!plays(&op(&mut state, Op::KaraokeStart)));
+    assert!(!plays(&op(&mut state, Op::KaraokeNext)));
     assert!(!plays(&op(&mut state, Op::PlayPause)));
     assert_eq!(state.karaoke.start_when_ready, Some(next));
     assert!(said(&state).contains("starts as soon as it is prepared"));
@@ -221,21 +221,21 @@ fn in_the_mode_the_next_song_waits_until_it_is_prepared() {
     assert!(plays(&fx), "{fx:?}");
     assert!(state.karaoke.countdown.is_some());
     assert_eq!(state.karaoke.start_when_ready, None);
-    // N calls a wait off: the song after, not prepared, waits for START.
+    // N calls a wait off: the song after, not prepared, waits for Next.
     let mut state = prepared_tab();
     op(&mut state, Op::KaraokeEnter);
     let song = karaoke::song_index(&state).unwrap();
     for path in &state.queue.paths.clone()[song + 1..] {
         state.ready.insert(path.clone(), Vec::new());
     }
-    op(&mut state, Op::Next);
+    op(&mut state, Op::Skip);
     update(&mut state, Action::Engine(Event::State(PlayState::Stopped)));
-    op(&mut state, Op::KaraokeStart);
+    op(&mut state, Op::KaraokeNext);
     assert_eq!(state.karaoke.start_when_ready, Some(song + 1));
-    op(&mut state, Op::Next);
+    op(&mut state, Op::Skip);
     assert_eq!(state.karaoke.start_when_ready, None);
     // esc too.
-    op(&mut state, Op::KaraokeStart);
+    op(&mut state, Op::KaraokeNext);
     assert!(state.karaoke.start_when_ready.is_some());
     op(&mut state, Op::Back);
     assert_eq!(state.karaoke.start_when_ready, None);
@@ -285,9 +285,9 @@ fn what_cannot_be_done_here_holds_no_song_up() {
         .karaoke
         .lyrics
         .insert(next_path, SongLyrics::Instrumental);
-    op(&mut state, Op::Next);
+    op(&mut state, Op::Skip);
     update(&mut state, Action::Engine(Event::State(PlayState::Stopped)));
-    assert!(!plays(&op(&mut state, Op::KaraokeStart)));
+    assert!(!plays(&op(&mut state, Op::KaraokeNext)));
     assert_eq!(state.karaoke.start_when_ready, None);
     assert!(said(&state).contains("instrumental"), "{}", said(&state));
 }

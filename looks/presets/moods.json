@@ -1,5 +1,6 @@
 {
  "family": "moods",
+ "kind": "mood",
  "about": "Moods of light: night, golden hour, noir, dreams.",
  "looks": [
   {

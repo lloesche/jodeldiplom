@@ -36,7 +36,8 @@
 //! errors of skipped tracks, the end of the queue) are queued against the
 //! output frame they belong to and sent when the output clock
 //! ([`jodel_output::Output::position`]) reaches it. Position events are sent
-//! every [`PlayerOptions::position_interval`] while the clock moves.
+//! each time the clock has played [`PlayerOptions::position_interval`] more
+//! (by the output's frames, not the wall clock).
 //!
 //! Here: the engine's state, its command loop and its turns of work, new
 //! settings, the cues and what is reported. Its other parts: `api` (the
@@ -57,7 +58,7 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use jodel_output::mixer::desk_format;
 use jodel_output::StreamFormat;
@@ -93,7 +94,7 @@ pub use lanes::MakeStems;
 use cues::{CueEvent, CueQueue};
 use drop::drop_later;
 use moving::Move;
-use track::{preroll, Heard, Progress, StartAt, Track};
+use track::{frames_of, preroll, Heard, Progress, StartAt, Track};
 
 /// How long one output write may block, so commands stay responsive.
 const WRITE_WAIT: Duration = Duration::from_millis(10);
@@ -133,7 +134,6 @@ struct Engine {
     tail: Option<usize>,
     cues: CueQueue,
     heard: Option<Heard>,
-    last_report: Option<(Instant, u64)>,
     /// [`PlayerOptions::switch_fade`].
     switch_fade: Duration,
     /// [`PlayerOptions::offline`].
@@ -173,7 +173,6 @@ impl Engine {
             tail: None,
             cues: CueQueue::default(),
             heard: None,
-            last_report: None,
             switch_fade: options.switch_fade,
             offline: options.offline,
             transition: None,
@@ -476,7 +475,7 @@ impl Engine {
             match cue.event {
                 CueEvent::Started(start, heard) => {
                     self.heard = Some(heard);
-                    self.last_report = None;
+                    self.reported_anew();
                     self.emit(Event::TrackStarted(start));
                 }
                 CueEvent::Clipped { index, samples } => self.emit(Event::Clipped {
@@ -507,7 +506,7 @@ impl Engine {
                 CueEvent::Transition(state) => self.emit(Event::Transition(state)),
                 CueEvent::Heard(heard) => {
                     self.heard = Some(heard);
-                    self.last_report = None;
+                    self.reported_anew();
                 }
                 CueEvent::Jumped { index, seconds } => {
                     self.emit(Event::Jumped { index, seconds });
@@ -529,23 +528,38 @@ impl Engine {
             output_frame,
             key: heard.key,
         };
-        self.last_report = Some((Instant::now(), output_frame));
+        if let Some(out) = self.head.out.as_mut() {
+            out.last_report = Some(output_frame);
+        }
         self.emit(Event::Position(event));
     }
 
+    /// What is heard is new: its position is reported on the next turn.
+    fn reported_anew(&mut self) {
+        if let Some(out) = self.head.out.as_mut() {
+            out.last_report = None;
+        }
+    }
+
+    /// The position reported where the output has played
+    /// [`PlayerOptions::position_interval`] since the last report (or
+    /// `force`d): paced by what is played, not by the wall clock, so a
+    /// paused or stalled output says nothing more and an output on a test's
+    /// clock reports at the same frames every run.
     fn report_position(&mut self, force: bool) {
         let (Some(_), Some(out)) = (&self.heard, &self.head.out) else {
             return;
         };
         let position = out.clock.position();
-        if !force {
-            if let Some((at, last)) = self.last_report {
-                if last == position || at.elapsed() < self.position_interval {
-                    return;
-                }
-            }
+        let every = frames_of(self.position_interval, out.clock.format().rate).max(1);
+        // The last report is a frame of this output's clock, never past it.
+        if force
+            || out
+                .last_report
+                .is_none_or(|last| position.saturating_sub(last) >= every)
+        {
+            self.report_at(position);
         }
-        self.report_at(position);
     }
 
     /// One unit of work: write pending output, decode a write, or finish

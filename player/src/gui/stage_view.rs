@@ -428,11 +428,12 @@ mod tests {
     fn scored(points: u32) -> KaraokePicture {
         KaraokePicture {
             bar: 0.1,
+            reach: 0.0,
             lines: Vec::new(),
             count: None,
             cue: None,
             controls: None,
-            start: None,
+            next: None,
             before: Vec::new(),
             moved: 1.0,
             score: Some(Score { points, streak: 0 }),

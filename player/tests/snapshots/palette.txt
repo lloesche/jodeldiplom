@@ -22,8 +22,8 @@
 [match] Microphone: the next one  i
 [match] Key: a semitone down  -
 [match] Key: a semitone up  + / =
+[match] Karaoke: Next, the song held after a count-in  enter
 [match] Microphone: the echo canceller on or off  e
-[match] Synth: the next theme  c
 [spectrum] 0 dB · -40 · -80 · -120 | 20 Hz · 50 · 100 · 200 · 500 · 1k · 2k · 5k · 10k · 20k · 50k · [source] 88k
 [time] 1:23
 [seek] 34 %

@@ -17,7 +17,7 @@ mod result;
 mod tab;
 pub use mode::{
     break_cue, fill_at, hint, line_color, lines_now, picture, points_text, scrolling, sung_on,
-    timed_lines, Cue, KaraokePicture, LineKind, LyricLine, Score, Start, BREAK, SCROLL,
+    timed_lines, Cue, KaraokePicture, LineKind, LyricLine, Next, Score, BREAK, SCROLL,
 };
 pub use result::{
     best_words, date_words, plain_lines, result_now, DiplomaWords, ResultShown, DIPLOMA,

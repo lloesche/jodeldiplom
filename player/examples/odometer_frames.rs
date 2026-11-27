@@ -37,11 +37,12 @@ const ZOOM: usize = 5;
 fn picture(points: u32) -> KaraokePicture {
     KaraokePicture {
         bar: 3.0 / 30.0,
+        reach: 0.0,
         lines: Vec::new(),
         count: None,
         cue: None,
         controls: None,
-        start: None,
+        next: None,
         before: Vec::new(),
         moved: 1.0,
         score: Some(Score { points, streak: 25 }),

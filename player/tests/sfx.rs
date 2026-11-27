@@ -690,16 +690,16 @@ fn the_result_is_heard_after_the_song() {
         window.frames_until(&mut app, |a| karaoke::not_singable(&a.state, 0).is_none()
             && matches!(a.state.rhythm.get(&song), Some(Rhythm::Ready(_))))
     );
-    // Played out before it is sung: START then plays it from its start,
+    // Played out before it is sung: Next then plays it from its start,
     // not by a seek. (A seek's flush gives the device what the mixer
     // holds first, waiting for room in its ring; this device makes room
     // only as the frames go by, and this thread is in the app then.)
     let stopped = |a: &App| a.state.playing.state == PlayState::Stopped;
     assert!(window.frames_until(&mut app, stopped), "played out");
     app.dispatch(Action::Op(Op::KaraokeEnter));
-    app.dispatch(Action::Op(Op::KaraokeStart));
+    app.dispatch(Action::Op(Op::KaraokeNext));
     let started = |a: &App| a.state.karaoke.countdown.is_none() && playing(a);
-    assert!(window.frames_until(&mut app, started), "START");
+    assert!(window.frames_until(&mut app, started), "Next");
     // To its end, and the reveal after it drawn frame by frame, where the
     // mixer is as its first beat and its last are cued (the mixer waits
     // for the device, which waits for the next frame: nothing is mixed

@@ -5,7 +5,7 @@
 //! else the lines in its own widgets), and its controls' bar over it
 //! while it shows ([`KaraokePicture::controls`]): the voice slider, the
 //! seek bar, the transport and the keys ([`hint`]). Next is no control
-//! but the stage's button ([`KaraokePicture::start`]).
+//! but the stage's button ([`KaraokePicture::next`]).
 
 use super::super::palette;
 use super::{plain_lines, result_now, ResultShown};
@@ -17,7 +17,7 @@ use crate::core::State;
 
 /// Next's button on the stage, while the mode waits for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Start {
+pub struct Next {
     /// Whether the song it plays can be sung yet (else greyed).
     pub ready: bool,
 }
@@ -31,9 +31,9 @@ pub fn hint() -> String {
         key(Op::Back),
         key(Op::SliderDown),
         key(Op::SliderUp),
-        key(Op::KaraokeStart),
+        key(Op::KaraokeNext),
         key(Op::PlayPause),
-        key(Op::Next),
+        key(Op::Skip),
         key(Op::KaraokeDemo),
     )
 }
@@ -51,7 +51,7 @@ pub fn picture(state: &State, bar: f32, heard: f64) -> KaraokePicture {
         }),
     };
     // Before the singing starts (however the song started) or comes back
-    // after a break: the count-in again, the first one as large as Next's,
+    // after a break: the count-in again, the first one at its full size,
     // later ones half as large in the same place. Never two at once.
     let (count, cue) = match count {
         Some(c) => (Some(c), None),
@@ -67,16 +67,17 @@ pub fn picture(state: &State, bar: f32, heard: f64) -> KaraokePicture {
     let (before, moved) = scrolling(&lines, t, |t| lines_now(state, t));
     let result = result_now(state);
     // Next lit once the song it plays can be sung (N goes on).
-    let start = karaoke::waiting(state).then(|| Start {
+    let next = karaoke::waiting(state).then(|| Next {
         ready: karaoke::song_index(state).is_none_or(|i| karaoke::not_singable(state, i).is_none()),
     });
     KaraokePicture {
         bar,
+        reach: karaoke::controls::reach(state),
         lines,
         count,
         cue,
         controls: karaoke::controls::shown(state).then(|| karaoke::controls::fade(state)),
-        start,
+        next,
         before,
         moved,
         // The result's own points instead.
@@ -250,6 +251,10 @@ pub struct KaraokePicture {
     /// takes, 0 to 1, shown or not: what the line under a result stays clear
     /// above. The window says, as it lays the bar out.
     pub bar: f32,
+    /// How much of the screen's height, from its bottom, the pointer
+    /// brings the controls up in ([`karaoke::controls::reach`]): what
+    /// Next's button stays clear above.
+    pub reach: f32,
     /// The lines, top to bottom, centred.
     pub lines: Vec<LyricLine>,
     /// The count-in's number and how far through its beat, 0 to 1.
@@ -263,7 +268,7 @@ pub struct KaraokePicture {
     /// ([`karaoke::controls::fade`]).
     pub controls: Option<f64>,
     /// Next's button (the stage's), while the mode waits for it.
-    pub start: Option<Start>,
+    pub next: Option<Next>,
     /// The lines as they were just before they last changed, while they
     /// move to where they are now (empty once they are there).
     pub before: Vec<LyricLine>,
@@ -303,6 +308,14 @@ fn lyric(lines: &[&jodel_lyrics::Line], i: usize, fill: f64, kind: LineKind) -> 
 /// How long the lines take to move up when they change, in seconds.
 pub const SCROLL: f64 = 0.3;
 
+/// What the mode says with no song queued.
+pub(crate) fn nothing_queued() -> String {
+    format!("Queue some songs, then {PRESS_NEXT}")
+}
+
+/// What starts the next song, as the mode says it.
+pub(crate) const PRESS_NEXT: &str = "press Next";
+
 /// How early a line comes up before it is sung, in seconds.
 const EARLY: f64 = 2.0;
 /// A pause between lines longer than this shows a note instead of the
@@ -317,11 +330,7 @@ const PAUSE: f64 = 4.0;
 /// None: the title and artist and what is known.
 pub fn lines_now(state: &State, t: f64) -> Vec<LyricLine> {
     let Some(index) = karaoke::song_index(state) else {
-        return vec![line(
-            "Queue some songs, then press Next",
-            0.0,
-            LineKind::Info,
-        )];
+        return vec![line(nothing_queued(), 0.0, LineKind::Info)];
     };
     // How the song before was sung, until the next is started: its words
     // (the stage draws it instead where it draws: [`KaraokePicture::result`]).

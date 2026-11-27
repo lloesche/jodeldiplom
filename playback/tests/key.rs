@@ -526,7 +526,7 @@ fn offline_player(
     (player, events, captures, gate)
 }
 
-/// A key asked while nothing plays is the next song's: Karaoke's START
+/// A key asked while nothing plays is the next song's: Karaoke's Next
 /// (a count-in, then the song) plays it in that key from its first frame.
 #[test]
 fn a_key_asked_while_nothing_plays_is_the_next_songs() {
@@ -734,7 +734,7 @@ fn shifted_a_jump_is_refused_and_new_settings_wait_saying_so() {
     until_queue_end(&events);
 }
 
-/// Two keys during a count-in (one set before START, then nudged while it
+/// Two keys during a count-in (one set before Next, then nudged while it
 /// counts): the song is heard in the second from its first frame, where
 /// the count-in ends, its positions as they were.
 #[test]

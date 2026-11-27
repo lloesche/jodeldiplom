@@ -27,13 +27,13 @@ pub(crate) fn fixture(w: usize, h: usize) -> Image {
 /// A frame of `c` over `img` at `t` of the made-up song.
 pub(crate) fn drawn(c: &Checked, img: &Image, t: f64, band: Option<(f32, f32)>) -> Image {
     let moment = Moment {
-        size: (img.w as u32, img.h as u32),
-        t,
-        seed: seed(&c.id, "a song"),
-        dt: 1.0 / 30.0,
-        forget: false,
         band,
-        palette: crate::MEASURING_PALETTE,
+        ..Moment::measuring(
+            (img.w as u32, img.h as u32),
+            (t, 1.0 / 30.0),
+            false,
+            (seed(&c.id, "a song"), 1.0),
+        )
     };
     let signals = demo::signals_at(t);
     render::draw(&c.frame(&moment, &signals, None), img, None)
@@ -147,6 +147,7 @@ fn every_number_is_held_to_its_range() {
         forget: false,
         band: None,
         palette: [[0.5; 3]; 3],
+        strength: 1.0,
     };
     for (pass, ctx) in c.frame(&m, &s, None) {
         for (i, k) in pass.knobs.iter().enumerate() {
@@ -408,7 +409,7 @@ fn every_look_keeps_the_guards_over_a_whole_song() {
     };
     let band = (0.68, 0.86);
     let mut looks: Vec<&Look> = presets::all().iter().collect();
-    looks.extend(presets::passes().iter().map(|(_, l)| l));
+    looks.extend(presets::pass_families().iter().flat_map(|f| &f.looks));
     let failed = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|s| {
         for chunk in looks.chunks(looks.len().div_ceil(6)) {
@@ -419,14 +420,16 @@ fn every_look_keeps_the_guards_over_a_whole_song() {
                     for (picture, bright) in [(dark, false), (light, true)] {
                         let was = guard::exposure(&picture.px);
                         let readable = guard::band_contrast(&picture.px, picture.w, band);
-                        let strength = guard::strength(&c, picture, Some(curves));
                         let r = guard::over_song(&c, picture, curves, (12.0, band));
-                        let within = r.clipped <= guard::CLIPPED.max(was.clipped + 0.05) + 0.05
-                            && r.mean.0 >= guard::MEAN.0.min(was.mean - 0.1) - 0.03
-                            && r.mean.1 <= guard::MEAN.1.max(was.mean + 0.1) + 0.03;
+                        let within = r.clipped
+                            <= guard::CLIPPED.max(was.clipped + guard::CLIPPED_SLACK) + 0.05
+                            && r.mean.0 >= guard::MEAN.0.min(was.mean - guard::MEAN_SLACK) - 0.03
+                            && r.mean.1 <= guard::MEAN.1.max(was.mean + guard::MEAN_SLACK) + 0.03;
                         // A preset keeps most of its strength over a dark picture;
                         // over a light one, a bright look is softened.
-                        let least = match (presets::named(&look.id).is_some(), bright) {
+                        let preset = presets::family_of(&look.id)
+                            .is_some_and(|f| f.kind != presets::Kind::Pass);
+                        let least = match (preset, bright) {
                             (true, false) => 0.6,
                             (true, true) => 0.3,
                             (false, _) => 0.15,
@@ -435,12 +438,12 @@ fn every_look_keeps_the_guards_over_a_whole_song() {
                             && r.flashes <= 3
                             && within
                             && r.contrast >= 3.0_f32.min(readable) * 0.9
-                            && strength >= least)
+                            && r.strength >= least)
                         {
-                            failed.lock().unwrap().push(format!(
-                                "{} (mean {:.2}): {r:?}, strength {strength}",
-                                look.id, was.mean
-                            ));
+                            failed
+                                .lock()
+                                .unwrap()
+                                .push(format!("{} (mean {:.2}): {r:?}", look.id, was.mean));
                         }
                     }
                 }

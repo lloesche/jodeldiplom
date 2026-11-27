@@ -231,7 +231,7 @@ mod tests {
         let tint = &super::super::Tint::STAGE;
         let look = super::super::seal::look(crate::core::karaoke::result::Verdict::Cheer, tint);
         let area = (0.0, 0.0, w, h);
-        Room::new(area, super::super::Line::above(area, h * 0.9), tint, look)
+        super::super::tests::room_in(&mut Stage::default(), area, look)
     }
 
     /// The tally in a row while it fits, else in two, the first the

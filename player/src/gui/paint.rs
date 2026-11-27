@@ -311,7 +311,8 @@ impl Paint {
             .backdrop
             .frame((app, song), gpu, heard, size, backdrop_dt);
         if tab {
-            if let Some(r) = self.readout.step(app, backdrop.as_ref(), drawing) {
+            let small = self.backdrop.picture(app.art());
+            if let Some(r) = self.readout.step(app, (backdrop.as_ref(), &small), drawing) {
                 app.dispatch(Action::Shader(
                     crate::core::shader_tab::ShaderAction::Readout(r),
                 ));

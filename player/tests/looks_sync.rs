@@ -7,7 +7,6 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -172,7 +171,12 @@ fn the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause() {
     let mut seen = Vec::new();
     let mut look_at = |app: &App, heard: f64, seen: &mut Vec<Seen>| {
         let cue = looks
-            .cue(&app.state, (Some(&song), None), heard, (320, 180))
+            .cue(
+                &app.state,
+                (Some(&song), None),
+                (heard, 1.0 / 60.0),
+                (320, 180),
+            )
             .expect("the tab's look");
         assert_eq!(cue.t, heard, "the look at the time heard");
         let want = curves.at(heard);
@@ -189,18 +193,25 @@ fn the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause() {
         let heard = window.frame(&mut app);
         look_at(&app, heard, &mut seen);
     }
-    // A pause: the look holds still.
+    // A pause: once the engine has said so, the look holds still.
     app.dispatch(Action::Op(Op::PlayPause));
+    let guard = Instant::now() + GUARD;
     let mut paused = Vec::new();
-    for _ in 0..40 {
+    while app.state.playing.state != PlayState::Paused {
+        assert!(Instant::now() < guard, "paused");
         let heard = window.frame(&mut app);
         look_at(&app, heard, &mut paused);
     }
-    let held = paused[10].heard;
+    let from = paused.len();
+    for _ in 0..30 {
+        let heard = window.frame(&mut app);
+        look_at(&app, heard, &mut paused);
+    }
+    let held = paused[from];
     assert!(
-        paused[10..]
+        paused[from..]
             .iter()
-            .all(|s| s.heard == held && s.downbeat == paused[10].downbeat),
+            .all(|s| s.heard == held.heard && s.downbeat == held.downbeat),
         "still while paused"
     );
     app.dispatch(Action::Op(Op::PlayPause));
@@ -208,22 +219,10 @@ fn the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause() {
         let heard = window.frame(&mut app);
         look_at(&app, heard, &mut seen);
     }
-    // A seek forward, the device let play meanwhile (a seek waits for room
-    // in the device's ring).
-    let ticking = Arc::new(AtomicBool::new(true));
-    let ticker = {
-        let (ticking, time) = (Arc::clone(&ticking), window.time.clone());
-        std::thread::spawn(move || {
-            while ticking.load(Ordering::Acquire) {
-                let _ = time.advance(64);
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        })
-    };
+    // A seek forward (the engine's, on its own thread, while the frames go
+    // on: the device plays only as they step it).
     let before = seen.last().unwrap().heard;
     app.dispatch(Action::Op(Op::SeekForward));
-    ticking.store(false, Ordering::Release);
-    ticker.join().unwrap();
     for _ in 0..300 {
         let heard = window.frame(&mut app);
         look_at(&app, heard, &mut seen);

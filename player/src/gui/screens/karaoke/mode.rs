@@ -177,8 +177,8 @@ fn controls_row<'a>(state: &State, shown: f32) -> Element<'a, Message> {
     .boxed()
 }
 
-/// Previous and next (each holds that song for START) round play or
-/// pause: pause while a song is heard; otherwise play, greyed, for START
+/// Previous and next (each holds that song for Next) round play or
+/// pause: pause while a song is heard; otherwise play, greyed, for Next
 /// is the stage's (the controls have none).
 fn transport<'a>(state: &State, shown: f32) -> Element<'a, Message> {
     let act = |op| Message::Act(Action::Op(op));
@@ -201,7 +201,7 @@ fn transport<'a>(state: &State, shown: f32) -> Element<'a, Message> {
             widgets::button::icon(Icon::Next)
                 .opacity(shown)
                 .id("next")
-                .on_press(act(Op::Next))
+                .on_press(act(Op::Skip))
         ),
     ]
     .spacing(space::XS)

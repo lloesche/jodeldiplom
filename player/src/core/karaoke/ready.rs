@@ -1,7 +1,7 @@
 //! Whether a song can be sung now ([`not_singable`]): karaoke needs a
 //! graphics card, the song fully prepared (every job the queue's icons
 //! show for it done: [`crate::core::still_to_do`]) and lyrics to sing. A
-//! START pressed in the mode on a song still being prepared waits for it
+//! Next pressed in the mode on a song still being prepared waits for it
 //! ([`start_when_ready`]).
 
 use super::{in_mode, lyrics_of, song_index, SongLyrics};
@@ -77,7 +77,7 @@ pub fn not_singable(state: &State, index: usize) -> Option<NotSingable> {
     }
 }
 
-/// After every action: a START waiting for its song
+/// After every action: a Next waiting for its song
 /// ([`super::KaraokeState::start_when_ready`]) starts it, with its
 /// count-in, as soon as the song is prepared; it is called off once the
 /// mode is left or is about another song, and refused (said why) if the

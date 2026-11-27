@@ -17,10 +17,11 @@ use std::sync::Arc;
 
 use jodeldiplom::core::karaoke::result::{Medal, Shown, SongResult};
 use jodeldiplom::core::shine::{Shone, Tier};
+use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::stage::{Stage, Tint};
-use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, ResultShown, Start};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
+use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, Next, ResultShown};
 use jodeldiplom::work::art::Art;
 use jodeldiplom::work::picture::Swatch;
 
@@ -205,6 +206,7 @@ fn main() {
         let lines = plain_lines(&result, next);
         let shown = Arc::new(Shown::new(result, id, 0));
         let mut stage = Stage::default();
+        let singing = Singing::default();
         // Over the cover's blur, as the window's ground.
         let cue = Cue {
             art: art.clone(),
@@ -220,11 +222,12 @@ fn main() {
         for &t in &wanted {
             let picture = KaraokePicture {
                 bar: 5.0 / 30.0,
+                reach: 0.15,
                 lines: lines.clone(),
                 count: None,
                 cue: None,
                 controls: None,
-                start: Some(Start { ready: true }),
+                next: Some(Next { ready: true }),
                 before: Vec::new(),
                 moved: 1.0,
                 score: None,
@@ -236,7 +239,9 @@ fn main() {
                 }),
             };
             let area = (0.0, 0.0, w as f32, h as f32);
-            let frame = stage.result(&picture, &tint, area).expect("a result");
+            let song = Song::new(&singing, Vec::new(), None);
+            let frame = stage.scene((&song, false), &picture, area, (0.0, 0.0), &tint);
+            let frame = frame.expect("a result");
             gpu.set_stage(Some(&frame), w as u32, h as u32);
             let shown_px = gpu.show_frame(w as u32, h as u32).expect("a frame");
             let mut img = image::RgbImage::new(w as u32, h as u32);

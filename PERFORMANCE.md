@@ -494,6 +494,20 @@ as the cover's scenes' in the same runs did. Sending a scene whole in
 one frame, before it went a texture a frame, put the backdrop step's
 worst at 2.0–2.5 ms.
 
+The strength a look is drawn at (`jodel_looks::guard::strength`: the
+look drawn on the processor over the song's picture made 48 × 27, at 64
+moments, each strength tried, a look that feeds back drawn two seconds
+before each moment) is found once a look, song and picture on a thread
+of its own (`gui::backdrop::looks`), never on the window's: over the
+383 presets on this machine (release build, one core) it took 119 ms
+on average, 2.3 s at most (a visualizer that feeds back). Only the
+newest asked is found next (a look edited on the Shader tab asks each
+frame), and a strength found is kept only for the look it was found
+for; meanwhile the look draws at none (the picture as it is; for the
+same look or an edit of it over the same picture, at the strength found
+for it there), the strength drawn easing to the one found. A look whose
+strength is found is kept across leaving the mode or the tab.
+
 **The diploma's paper, baked.** `frame_cost` on the M4 Max (Metal,
 3024 × 1964, two runs) had every scene within its budget but the
 diploma: 1016 frames, the GPU's total median 4.0 ms, mean 4.0, worst

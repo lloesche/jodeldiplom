@@ -242,12 +242,12 @@ fn a_song_picked_while_paused_plays() {
         .all(|i| karaoke::not_singable(&a.state, i).is_none())));
     app.dispatch(Action::Op(Op::KaraokeEnter));
     assert_eq!(app.state.screen, Screen::Karaoke);
-    app.dispatch(Action::Op(Op::KaraokeStart));
+    app.dispatch(Action::Op(Op::KaraokeNext));
     assert!(app.state.karaoke.countdown.is_some());
     assert!(
         common::wait_for(&mut app, WAIT, |a| a.state.karaoke.countdown.is_none()
             && heard(0)(a)),
-        "START"
+        "Next"
     );
     pause(&mut app);
     app.dispatch(Action::Op(Op::Back));
