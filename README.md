@@ -167,15 +167,16 @@ revision) for the speech recogniser, which setup packs at 4 bits into
 take covers apart for karaoke's background, downloaded the same way at fixed
 revisions: `depth-anything/DA3-SMALL` (Depth Anything 3 Small, Apache 2.0)
 as `da3-small.safetensors` and `PramaLLC/BEN2` (BEN2 Base, MIT) as
-`ben2-base.safetensors`. Nor is karaoke story mode's language model,
-Gemma 4 E4B-it (Google's `google/gemma-4-E4B-it`, Apache 2.0) as Unsloth
-quantised it: `gemma-4-E4B-it-Q4_K_M.gguf` from `unsloth/gemma-4-E4B-it-GGUF`
-(Apache 2.0) at revision `bfc15c382204943c3a8fff0c750b94ae2364d7a3` (4.98 GB,
-SHA-256 `85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87`),
-which `jodel_gpu::Gemma` reads as it is, its text decoder and its tokeniser;
-setup downloads it directly. Nor are the models that draw the karaoke
-story's pictures (`jodel_gpu::image`; the example takes their folder), all
-Apache 2.0: FLUX.2 [klein] 4B from Black Forest Labs, its transformer as
-`black-forest-labs/FLUX.2-klein-4b-fp8` and its autoencoder from
-`black-forest-labs/FLUX.2-klein-4B`, and its text encoder `Qwen/Qwen3-4B-FP8`;
-setup does not fetch those yet.
+`ben2-base.safetensors`. Nor are karaoke story mode's models, downloaded the
+same way at fixed revisions, as published, into `story/` in the data
+folder's `models`: its language model Gemma 4 E4B-it (Google DeepMind,
+Apache 2.0) as Unsloth's 4-bit `gemma-4-E4B-it-Q4_K_M.gguf`
+(`unsloth/gemma-4-E4B-it-GGUF`), which `jodel_gpu::llm` reads as it is;
+the models that draw its pictures (`jodel_gpu::image`), FLUX.2 [klein] 4B
+(Black Forest Labs, Apache 2.0), the transformer at 8 bits from
+`black-forest-labs/FLUX.2-klein-4b-fp8` and the VAE and settings from
+`black-forest-labs/FLUX.2-klein-4B`; and the image model's text encoder
+Qwen3-4B (Apache 2.0) at 8 bits with its tokenizer, `Qwen/Qwen3-4B-FP8`.
+The covers' and the story's models are got only where there is a usable
+GPU; the story's folders and files are listed in
+[player/src/work/story_models.rs](player/src/work/story_models.rs).

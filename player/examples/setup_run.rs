@@ -43,7 +43,7 @@ fn main() {
                 );
             }
             println!("finished in {:.0} s:", started.elapsed().as_secs_f64());
-            for p in paths {
+            for (_, p) in paths {
                 println!("  {}", p.display());
             }
             return;

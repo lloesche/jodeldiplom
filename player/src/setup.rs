@@ -1,13 +1,17 @@
 //! The player's self-check, and its setup when that fails.
 //!
 //! Most of what the player needs is inside its executable (the beat and key
-//! networks, the stem separator, the singer's isolator, the fonts). Four
-//! models are too big for it: the speech model that times karaoke's words
-//! ([`crate::work::lyrics::models::MODEL_FILE`]), the speech recogniser that checks
-//! fetched lyrics belong to the song ([`crate::work::lyrics::models::ASR_FILE`]), and the
-//! depth and cut-out models that take covers apart for karaoke's background
-//! ([`crate::work::cover::DEPTH_FILE`], [`crate::work::cover::MATTE_FILE`]). Their
-//! names, lengths and SHA-256s are built in ([`manifest`]).
+//! networks, the stem separator, the singer's isolator, the fonts). The
+//! models too big for it are got here ([`manifest`]): the speech model that
+//! times karaoke's words ([`crate::work::lyrics::models::MODEL_FILE`]), the
+//! speech recogniser that checks fetched lyrics belong to the song
+//! ([`crate::work::lyrics::models::ASR_FILE`]), and where the machine has a
+//! usable GPU the depth and cut-out models that take covers apart for
+//! karaoke's background ([`crate::work::cover::DEPTH_FILE`],
+//! [`crate::work::cover::MATTE_FILE`]) and karaoke story mode's language
+//! and image models ([`crate::work::story_models`]). A model is one file,
+//! or a folder of files as its repository has them; every file's name,
+//! length and SHA-256 is built in.
 //!
 //! At every start [`Setup`], on a thread of its own, chooses the graphics
 //! card (the manifest depends on it) and looks for them ([`look`]) in
@@ -28,192 +32,29 @@
 //! not what it should be.
 
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use crate::work::download::Sha256;
 use crate::work::lyrics::models;
 use crate::work::outbox::Notify;
 use crate::work::{Job, Teller};
 
-/// A file downloaded as it is, checked against its length and SHA-256.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Part {
-    /// Its name where it is kept.
-    pub name: String,
-    /// Where it comes from.
-    pub url: String,
-    /// Its length in bytes.
-    pub bytes: u64,
-    /// Its SHA-256, in lower-case hex.
-    pub sha256: String,
-    /// What it is, as the screen says it ("the recogniser's weights").
-    pub title: String,
-}
+mod manifest;
+mod stamp;
+mod status;
+mod system;
+#[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: the stand-in downloader and packer, and model files where an older player left them"
+)]
+mod tests;
 
-/// How a needed file is got.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Source {
-    /// Downloaded as it is.
-    Download {
-        /// Where from.
-        url: String,
-    },
-    /// Made here from parts downloaded (a checkpoint packed at 4 bits).
-    Pack {
-        /// The parts.
-        parts: Vec<Part>,
-        /// Why it is packed, as the screen says it.
-        why: String,
-    },
-}
-
-/// A file the player needs.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Need {
-    /// Its file name.
-    pub file: String,
-    /// Its length in bytes.
-    pub bytes: u64,
-    /// Its SHA-256, in lower-case hex.
-    pub sha256: String,
-    /// What it is, as the screen names it ("the word-timing model").
-    pub title: String,
-    /// Whose it is ("wav2vec2 by Meta"), said where it is downloaded.
-    pub credit: String,
-    /// What it is for, as the screen says it.
-    pub why: String,
-    /// How it is got.
-    pub source: Source,
-}
-
-/// The files the player needs beside its executable, with their checksums:
-/// the speech models, and the covers' models where this machine has a
-/// usable GPU (they run nowhere else).
-pub fn manifest() -> Vec<Need> {
-    manifest_for(jodel_gpu::gpu_name().is_ok())
-}
-
-/// The models the player has found, by what they are ([`Found::of`] the
-/// paths setup gives in the manifest's order).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Found {
-    /// The word-timing model ([`models::MODEL_FILE`]).
-    pub speech: PathBuf,
-    /// The speech recogniser ([`models::ASR_FILE`]).
-    pub asr: PathBuf,
-    /// The covers' depth and cut-out models, where the machine needs them.
-    pub covers: Option<crate::work::cover::CoverModels>,
-}
-
-impl Found {
-    /// The models among `paths` (setup's, every needed file's path), each
-    /// known by its file's name; `None` without the speech models.
-    pub fn of(paths: &[PathBuf]) -> Option<Found> {
-        let named = |file: &str| {
-            paths
-                .iter()
-                .find(|p| p.file_name().is_some_and(|n| n == file))
-                .cloned()
-        };
-        let covers = match (
-            named(crate::work::cover::DEPTH_FILE),
-            named(crate::work::cover::MATTE_FILE),
-        ) {
-            (Some(depth), Some(matte)) => Some(crate::work::cover::CoverModels { depth, matte }),
-            _ => None,
-        };
-        Some(Found {
-            speech: named(models::MODEL_FILE)?,
-            asr: named(models::ASR_FILE)?,
-            covers,
-        })
-    }
-}
-
-/// [`manifest`] for a machine with a usable GPU (`gpu`) or without.
-pub fn manifest_for(gpu: bool) -> Vec<Need> {
-    let asr_parts = models::ASR_PARTS
-        .iter()
-        .map(|&(name, bytes, sha)| Part {
-            name: name.to_owned(),
-            url: format!("{}/{name}", models::ASR_BASE),
-            bytes,
-            sha256: sha.to_owned(),
-            title: match name {
-                "model.safetensors" => "the speech recogniser's weights",
-                "vocab.json" => "its vocabulary",
-                _ => "its tokenizer's settings",
-            }
-            .to_owned(),
-        })
-        .collect();
-    let mut needs = vec![
-        Need {
-            file: models::MODEL_FILE.to_owned(),
-            bytes: models::MODEL_BYTES,
-            sha256: models::MODEL_SHA256.to_owned(),
-            title: "the word-timing model".to_owned(),
-            credit: "wav2vec2 by Meta".to_owned(),
-            why: "It hears where each sung word falls, so karaoke and the Transition tab's lyrics \
-                  light up word by word."
-                .to_owned(),
-            source: Source::Download {
-                url: models::MODEL_URL.to_owned(),
-            },
-        },
-        Need {
-            file: models::ASR_FILE.to_owned(),
-            bytes: models::ASR_BYTES,
-            sha256: models::ASR_SHA256.to_owned(),
-            title: "the speech recogniser".to_owned(),
-            credit: "Qwen3-ASR 0.6B by Alibaba's Qwen team".to_owned(),
-            why: "It listens to the singing to check that lyrics found online belong to the \
-                  song."
-                .to_owned(),
-            source: Source::Pack {
-                parts: asr_parts,
-                why: "Packed at 4 bits, with our calibration from 1,000 songs, it keeps its \
-                      accuracy in a third of the memory: 589 MB instead of 1.9 GB."
-                    .to_owned(),
-            },
-        },
-    ];
-    if !gpu {
-        return needs;
-    }
-    needs.extend([
-        Need {
-            file: crate::work::cover::DEPTH_FILE.to_owned(),
-            bytes: crate::work::cover::DEPTH_BYTES,
-            sha256: crate::work::cover::DEPTH_SHA256.to_owned(),
-            title: "the depth model".to_owned(),
-            credit: "Depth Anything 3 Small by ByteDance Seed".to_owned(),
-            why: "It sees how near each part of a cover is, so karaoke's background can move \
-                  it in depth."
-                .to_owned(),
-            source: Source::Download {
-                url: crate::work::cover::DEPTH_URL.to_owned(),
-            },
-        },
-        Need {
-            file: crate::work::cover::MATTE_FILE.to_owned(),
-            bytes: crate::work::cover::MATTE_BYTES,
-            sha256: crate::work::cover::MATTE_SHA256.to_owned(),
-            title: "the cover's cut-out model".to_owned(),
-            credit: "BEN2 by Prama".to_owned(),
-            why: "It cuts the singer (or whatever stands out) off a cover, so karaoke's \
-                  background can light and move them on their own."
-                .to_owned(),
-            source: Source::Download {
-                url: crate::work::cover::MATTE_URL.to_owned(),
-            },
-        },
-    ]);
-    needs
-}
+pub use manifest::{manifest, manifest_for, under, Found, Need, Part, Source, Sum};
+use stamp::{hashes_to, known, present, stamp, verified};
+use status::failure;
+pub use status::{size, Failure, Paths, Status, Step, StepState, Unit};
 
 /// Where the needed files are looked for, and where setup puts them.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -245,87 +86,47 @@ impl Places {
     }
 }
 
-/// The stamp's file in the store: a line a file checked, `SHA-256 length
-/// written-at path` (written-at in ns since 1970).
-pub const STAMP: &str = "checked.txt";
-
-/// When `meta`'s file was last written, in ns since 1970.
-fn written(meta: &fs::Metadata) -> u128 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos())
-}
-
-fn stamp_lines(store: &Path) -> Vec<String> {
-    fs::read_to_string(store.join(STAMP))
-        .map(|t| t.lines().map(str::to_owned).collect())
-        .unwrap_or_default()
-}
-
-fn stamp_line(sha256: &str, path: &Path) -> Option<String> {
-    let meta = fs::metadata(path).ok()?;
-    Some(format!(
-        "{sha256} {} {} {}",
-        meta.len(),
-        written(&meta),
-        path.display()
-    ))
-}
-
-/// Whether `path` was checked against `sha256` as it is now.
-fn stamped(store: &Path, sha256: &str, path: &Path) -> bool {
-    stamp_line(sha256, path).is_some_and(|line| stamp_lines(store).contains(&line))
-}
-
-/// Records `path` as checked against `sha256` (its earlier lines gone).
-fn stamp(store: &Path, sha256: &str, path: &Path) -> Result<(), String> {
-    let Some(line) = stamp_line(sha256, path) else {
-        return Err(format!("{}: gone", path.display()));
-    };
-    let tail = format!(" {}", path.display());
-    let mut lines: Vec<String> = stamp_lines(store)
-        .into_iter()
-        .filter(|l| !l.ends_with(&tail))
-        .collect();
-    lines.push(line);
-    durable::write_atomic(&store.join(STAMP), (lines.join("\n") + "\n").as_bytes())
-        .map_err(|e| format!("{}: {e}", store.join(STAMP).display()))
-}
-
-/// Where a needed file was found.
+/// Where a needed model was found.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Lookup {
-    /// There and checked (stamped) as it is.
+    /// There and checked (stamped) as it is: its path.
     Checked(PathBuf),
-    /// There at its length, not checked as it is: to be hashed.
+    /// There at its lengths, not checked as it is: to be hashed.
     Unchecked(PathBuf),
-    /// Nowhere at its length.
+    /// Nowhere whole at its lengths.
     Missing,
 }
 
-/// Where `need` is: a copy checked anywhere first, else the first at its
-/// length (a copy beside the executable that is wrong is passed over once
-/// a good one is in the store).
+/// Where `need` is: a copy checked anywhere first, else the first whole at
+/// its lengths (a copy beside the executable that is wrong is passed over
+/// once a good one is in the store). A model's folder is taken from one
+/// place, all its files there. The path is where it is now
+/// ([`crate::store::mover::locate`]).
 pub fn look(need: &Need, places: &Places) -> Lookup {
-    // Through the mover: while the data folder moves, one not yet moved is
-    // where it was.
-    let candidates: Vec<PathBuf> = places
+    let whole: Vec<(PathBuf, bool)> = places
         .look
         .iter()
-        .map(|d| crate::store::mover::locate(&d.join(&need.file)))
-        .filter(|p| fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() == need.bytes))
+        .filter_map(|d| {
+            let at = need.at(d);
+            let expected = need.expected(&at);
+            expected
+                .iter()
+                .all(|(path, sum)| present(path, sum))
+                .then(|| {
+                    let checked = expected
+                        .iter()
+                        .all(|(path, sum)| known(&places.store, path, sum));
+                    (crate::store::mover::locate(&at), checked)
+                })
+        })
         .collect();
-    if let Some(p) = candidates
-        .iter()
-        .find(|p| stamped(&places.store, &need.sha256, p))
-    {
-        return Lookup::Checked(p.clone());
+    if let Some((at, _)) = whole.iter().find(|(_, checked)| *checked) {
+        return Lookup::Checked(at.clone());
     }
-    candidates
+    whole
         .into_iter()
         .next()
-        .map_or(Lookup::Missing, Lookup::Unchecked)
+        .map_or(Lookup::Missing, |(at, _)| Lookup::Unchecked(at))
 }
 
 /// What setup needs of the system: downloads, packing, the disk and the
@@ -353,6 +154,9 @@ pub trait Work: Send + Sync {
 /// what it is packed into), with room for the rest of the system.
 pub const PACK_MEMORY: u64 = 7_500_000_000;
 
+/// The bits each weight of a packed checkpoint is held in.
+pub const PACK_BITS: u32 = 4;
+
 /// The player's: from the web, packed by [`jodel_lyrics::asr::packed`].
 pub struct Real;
 
@@ -363,9 +167,13 @@ impl Work for Real {
         to: &Path,
         progress: &mut dyn FnMut(u64),
     ) -> Result<(), String> {
-        crate::work::download::download(&part.url, to, part.bytes, &part.sha256, |done, _| {
-            progress(done)
-        })
+        crate::work::download::download(
+            &part.url,
+            to,
+            part.sum.bytes,
+            &part.sum.sha256,
+            |done, _| progress(done),
+        )
     }
 
     fn pack(
@@ -378,7 +186,7 @@ impl Work for Real {
         let statistics = jodel_lyrics::asr::quant::Statistics::built_in();
         let packed = PackedModel::from_checkpoint(
             parts,
-            |_| 4,
+            |_| PACK_BITS,
             Some(&statistics),
             |done, all| progress(done as u64, all as u64),
         )?;
@@ -394,47 +202,12 @@ impl Work for Real {
     }
 }
 
-/// What a step's progress counts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Unit {
-    /// Bytes (downloaded, or hashed).
-    Bytes,
-    /// Tensors packed.
-    Tensors,
-}
-
-/// Where a step stands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StepState {
-    /// Still to come.
-    ToDo,
-    /// Under way.
-    Working,
-    /// Done.
-    Done,
-}
-
-/// A step, as the screen shows it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Step {
-    /// What it does ("Downloading the word-timing model (378 MB)").
-    pub title: String,
-    /// Why ("It hears where each sung word falls…").
-    pub why: String,
-    /// Where it stands.
-    pub state: StepState,
-    /// One of the player's own start ([`Then`]), not one that gets a file.
-    pub start: bool,
-    /// Its share of the whole, as a rough time.
-    weight: f64,
-}
-
 /// A step of the player's own start weighs as much as hashing this many
 /// bytes: next to a download it is nothing, alone the steps share the bar.
 const START_WEIGHT: f64 = 1e6;
 
 /// The player's own start, once its files are here ([`Setup::start`]):
-/// its steps, in order, and what does them, given every needed file's
+/// its steps, in order, and what does them, given every needed model's
 /// path and told as each step after the first begins.
 pub struct Then {
     /// Each step's title and why.
@@ -444,88 +217,7 @@ pub struct Then {
 }
 
 /// What does the player's own start's steps ([`Then::run`]).
-pub type Starts = Box<dyn FnOnce(Vec<PathBuf>, &mut dyn FnMut()) + Send>;
-
-/// Why setup stopped, and what to do.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Failure {
-    /// What went wrong.
-    pub what: String,
-    /// What to do about it.
-    pub advice: String,
-}
-
-/// Where setup stands, for the screen.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Status {
-    /// The graphics card is chosen and the files looked for: the steps
-    /// that get them are not known yet.
-    pub looking: bool,
-    /// Its steps, in order: those that get the files, then the player's
-    /// own start's.
-    pub steps: Vec<Step>,
-    /// The step under way.
-    pub current: Option<usize>,
-    /// The step's progress: so far, in all (0: not known), counting what.
-    pub done: u64,
-    /// See [`Status::done`].
-    pub total: u64,
-    /// See [`Status::done`].
-    pub unit: Option<Unit>,
-    /// A download's speed, bytes a second, once it can be told.
-    pub rate: Option<f64>,
-    /// Why it stopped: it waits for [`Setup::retry`].
-    pub failure: Option<Failure>,
-    /// Every needed file's path, in the manifest's order: the player can
-    /// start.
-    pub finished: Option<Vec<PathBuf>>,
-}
-
-impl Status {
-    /// Whether any step gets a file (a download, a check of one found).
-    pub fn files(&self) -> bool {
-        self.steps.iter().any(|s| !s.start)
-    }
-
-    /// Whether only the player's own start is still to come: nothing waits
-    /// for the network or the person (the files looked for counts).
-    pub fn starting(&self) -> bool {
-        self.failure.is_none()
-            && self.finished.is_none()
-            && self
-                .steps
-                .iter()
-                .all(|s| s.start || s.state == StepState::Done)
-    }
-
-    /// The share of the current step done (0 to 1).
-    pub fn step_share(&self) -> f64 {
-        if self.total == 0 {
-            0.0
-        } else {
-            (self.done as f64 / self.total as f64).clamp(0.0, 1.0)
-        }
-    }
-
-    /// The share of the whole done (0 to 1).
-    pub fn overall(&self) -> f64 {
-        let all: f64 = self.steps.iter().map(|s| s.weight).sum();
-        if all <= 0.0 {
-            return if self.finished.is_some() { 1.0 } else { 0.0 };
-        }
-        let done: f64 = self
-            .steps
-            .iter()
-            .enumerate()
-            .map(|(i, s)| match s.state {
-                StepState::Done => s.weight,
-                StepState::Working if Some(i) == self.current => s.weight * self.step_share(),
-                _ => 0.0,
-            })
-            .sum();
-        (done / all).clamp(0.0, 1.0)
-    }
-}
+pub type Starts = Box<dyn FnOnce(Paths, &mut dyn FnMut()) + Send>;
 
 /// How long hashing a byte takes against downloading one, for the weights.
 const HASH_WEIGHT: f64 = 0.05;
@@ -535,31 +227,44 @@ const PACK_WEIGHT: f64 = 1.5e9;
 /// One thing setup does.
 #[derive(Clone, Debug)]
 enum Task {
-    /// Hash a file found at its length.
+    /// Hash a model found whole at its lengths (at its path).
     Check(usize, PathBuf),
-    /// Download a file as it is, into the store.
-    Fetch(usize),
-    /// Download a part of a file to pack.
-    FetchPart(usize, usize),
-    /// Pack the parts, check the result.
+    /// Download those of a model's files (by their place in
+    /// [`Need::files`]) not in the store yet: its file or its folder's, or
+    /// the checkpoint a packed file is made from.
+    Fetch(usize, Vec<usize>),
+    /// Pack the checkpoint, check the result.
     Pack(usize),
-    /// Remove the parts.
+    /// Remove the checkpoint.
     Clean(usize),
 }
 
-fn megabytes(bytes: u64) -> String {
-    if bytes >= 1_000_000_000 {
-        format!("{:.1} GB", bytes as f64 / 1e9)
-    } else if bytes >= 1_000_000 {
-        format!("{} MB", bytes.div_ceil(1_000_000))
-    } else {
-        format!("{} KB", bytes.div_ceil(1_000).max(1))
+impl Task {
+    /// Whether it writes to the store (it needs room on the disk).
+    fn writes(&self) -> bool {
+        matches!(self, Task::Fetch(..) | Task::Pack(_))
     }
 }
 
-/// The folder a packed file's parts are downloaded into.
+/// The folder a packed file's checkpoint is downloaded into.
 fn parts_dir(places: &Places, need: &Need) -> PathBuf {
-    places.store.join(format!("{}.download", need.file))
+    under(&places.store, &format!("{}.download", need.file))
+}
+
+/// Where `need`'s downloads go: the model's file or folder in the store,
+/// or a packed file's checkpoint folder.
+fn fetched_at(places: &Places, need: &Need) -> PathBuf {
+    if need.packed().is_some() {
+        parts_dir(places, need)
+    } else {
+        need.at(&places.store)
+    }
+}
+
+/// The bytes of those of `need`'s files that `which` names.
+fn files_bytes(need: &Need, which: impl IntoIterator<Item = usize>) -> u64 {
+    let files = need.files(Path::new(""));
+    which.into_iter().map(|f| files[f].1.sum.bytes).sum()
 }
 
 fn capital(text: &str) -> String {
@@ -572,126 +277,91 @@ fn capital(text: &str) -> String {
 fn step_of(task: &Task, manifest: &[Need]) -> Step {
     let need = |i: usize| &manifest[i];
     let (title, why, weight) = match task {
-        Task::Check(i, _) => (
+        Task::Check(i, at) => (
             format!(
-                "Checking {} ({}) against its built-in checksum",
+                "Checking {} ({}) against its built-in {}",
                 need(*i).title,
-                megabytes(need(*i).bytes)
+                size(need(*i).bytes()),
+                if need(*i).expected(at).len() > 1 {
+                    "checksums"
+                } else {
+                    "checksum"
+                }
             ),
             need(*i).why.clone(),
-            need(*i).bytes as f64 * HASH_WEIGHT,
+            need(*i).bytes() as f64 * HASH_WEIGHT,
         ),
-        Task::Fetch(i) => (
+        Task::Fetch(i, missing) => {
+            let bytes = files_bytes(need(*i), missing.iter().copied());
+            (
+                format!(
+                    "Downloading {} ({}, {})",
+                    need(*i).title,
+                    need(*i).credit,
+                    size(bytes)
+                ),
+                need(*i).why.clone(),
+                bytes as f64,
+            )
+        }
+        Task::Pack(i) => (
             format!(
-                "Downloading {} ({}, {})",
-                need(*i).title,
-                need(*i).credit,
-                megabytes(need(*i).bytes)
+                "Packing {} at {PACK_BITS} bits, then checking it",
+                need(*i).title
             ),
-            need(*i).why.clone(),
-            need(*i).bytes as f64,
+            need(*i)
+                .packed()
+                .map(|(_, why)| why.to_owned())
+                .unwrap_or_default(),
+            PACK_WEIGHT,
         ),
-        Task::FetchPart(i, p) => {
-            let Source::Pack { parts, .. } = &need(*i).source else {
-                unreachable!("a part of a file not packed")
-            };
-            let part = &parts[*p];
-            (
-                // The first part says whose it is, as a file got whole does.
-                if *p == 0 {
-                    format!(
-                        "Downloading {} ({}, {})",
-                        part.title,
-                        need(*i).credit,
-                        megabytes(part.bytes)
-                    )
-                } else {
-                    format!("Downloading {} ({})", part.title, megabytes(part.bytes))
-                },
-                if *p == 0 {
-                    need(*i).why.clone()
-                } else {
-                    format!("Part of {}.", need(*i).title)
-                },
-                part.bytes as f64,
-            )
-        }
-        Task::Pack(i) => {
-            let Source::Pack { why, .. } = &need(*i).source else {
-                unreachable!("packing a file not packed")
-            };
-            (
-                format!("Packing {} at 4 bits, then checking it", need(*i).title),
-                why.clone(),
-                PACK_WEIGHT,
-            )
-        }
-        Task::Clean(i) => {
-            let Source::Pack { parts, .. } = &need(*i).source else {
-                unreachable!("cleaning after a file not packed")
-            };
-            let all: u64 = parts.iter().map(|p| p.bytes).sum();
-            (
-                format!("Removing the download ({})", megabytes(all)),
-                "Only the packed file is kept.".to_owned(),
-                1.0,
-            )
-        }
+        Task::Clean(i) => (
+            format!(
+                "Removing the download ({})",
+                size(need(*i).downloaded_bytes())
+            ),
+            "Only the packed file is kept.".to_owned(),
+            1.0,
+        ),
     };
     Step {
-        title: capital(&title),
-        why,
-        state: StepState::ToDo,
-        start: false,
         weight,
+        ..Step::new(capital(&title), why, StepState::ToDo)
     }
 }
 
-/// The tasks that get `need` (number `i`) into the store.
-fn obtain(i: usize, need: &Need) -> Vec<Task> {
-    match &need.source {
-        Source::Download { .. } => vec![Task::Fetch(i)],
-        Source::Pack { parts, .. } => (0..parts.len())
-            .map(|p| Task::FetchPart(i, p))
-            .chain([Task::Pack(i), Task::Clean(i)])
-            .collect(),
+/// The tasks that get `need` (number `i`) into the store: its files not
+/// there and known downloaded (a packed file's checkpoint, then packed and
+/// removed).
+fn obtain(i: usize, need: &Need, places: &Places) -> Vec<Task> {
+    let missing: Vec<usize> = need
+        .files(&fetched_at(places, need))
+        .iter()
+        .enumerate()
+        .filter(|(_, (path, part))| !known(&places.store, path, &part.sum))
+        .map(|(f, _)| f)
+        .collect();
+    let mut tasks = Vec::new();
+    if !missing.is_empty() {
+        tasks.push(Task::Fetch(i, missing));
     }
+    if need.packed().is_some() {
+        tasks.extend([Task::Pack(i), Task::Clean(i)]);
+    }
+    tasks
 }
 
 /// The bytes the store needs free for `tasks`: what is downloaded and what
-/// is made (a packed file's parts are there with it until removed).
+/// is made (a packed file's checkpoint is there with it until removed).
 fn space_for(tasks: &[Task], manifest: &[Need]) -> u64 {
     tasks
         .iter()
         .map(|t| match t {
-            Task::Fetch(i) | Task::Pack(i) => manifest[*i].bytes,
-            Task::FetchPart(i, p) => match &manifest[*i].source {
-                Source::Pack { parts, .. } => parts[*p].bytes,
-                Source::Download { .. } => 0,
-            },
+            Task::Fetch(i, missing) => files_bytes(&manifest[*i], missing.iter().copied()),
+            Task::Pack(i) => manifest[*i].bytes(),
             Task::Check(..) | Task::Clean(_) => 0,
         })
         .sum()
-}
-
-/// Hashes `path`, telling `progress` the bytes so far.
-fn hash_file(path: &Path, progress: &mut dyn FnMut(u64)) -> Result<String, String> {
-    let mut file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut hash = Sha256::new();
-    let mut buf = vec![0u8; 1 << 20];
-    let mut done = 0u64;
-    loop {
-        let n = file
-            .read(&mut buf)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hash.update(&buf[..n]);
-        done += n as u64;
-        progress(done);
-    }
-    Ok(hash.hex())
 }
 
 /// Setup under way, on a thread of its own.
@@ -717,11 +387,9 @@ impl Setup {
             steps: steps
                 .into_iter()
                 .map(|(title, why)| Step {
-                    title,
-                    why,
-                    state: StepState::ToDo,
                     start: true,
                     weight: START_WEIGHT,
+                    ..Step::new(title, why, StepState::ToDo)
                 })
                 .collect(),
             ..Status::default()
@@ -779,7 +447,7 @@ fn run(
 }
 
 /// The player's own start, its steps (after the files') told as they go.
-fn start_player(then: Starts, paths: Vec<PathBuf>, teller: &mut Teller<'_, Status>) {
+fn start_player(then: Starts, paths: Paths, teller: &mut Teller<'_, Status>) {
     let mut begun = Instant::now();
     // The step under way done, the next one begun.
     let mut next = || {
@@ -808,32 +476,34 @@ fn start_player(then: Starts, paths: Vec<PathBuf>, teller: &mut Teller<'_, Statu
     next();
 }
 
-fn failure(what: impl Into<String>, advice: impl Into<String>) -> Failure {
-    Failure {
-        what: what.into(),
-        advice: advice.into(),
-    }
-}
-
 /// What to do when the network let a step down.
 const NETWORK: &str = "Check that this computer is online, then try again. Once the files \
                        are here, the player never needs the network for them again.";
 
-/// One go at getting everything: the paths, or why it stopped.
+/// One go at getting everything: the paths, or why it stopped. It looks
+/// (every model's path known from then on: where it was found, else where
+/// setup puts it), lays the steps out, checks the disk's room before the
+/// first that writes, and does each step in turn.
 fn attempt(
     manifest: &[Need],
     places: &Places,
     work: &dyn Work,
     teller: &mut Teller<'_, Status>,
-) -> Result<Vec<PathBuf>, Failure> {
-    let mut paths: Vec<Option<PathBuf>> = vec![None; manifest.len()];
+) -> Result<Paths, Failure> {
+    let mut paths = Vec::with_capacity(manifest.len());
     let mut tasks = Vec::new();
     for (i, need) in manifest.iter().enumerate() {
-        match look(need, places) {
-            Lookup::Checked(p) => paths[i] = Some(p),
-            Lookup::Unchecked(p) => tasks.push(Task::Check(i, p)),
-            Lookup::Missing => tasks.extend(obtain(i, need)),
-        }
+        paths.push(match look(need, places) {
+            Lookup::Checked(p) => p,
+            Lookup::Unchecked(p) => {
+                tasks.push(Task::Check(i, p.clone()));
+                p
+            }
+            Lookup::Missing => {
+                tasks.extend(obtain(i, need, places));
+                need.at(&places.store)
+            }
+        });
     }
     // The files' steps, before the player's own start's.
     teller.set(true, |s| {
@@ -841,68 +511,24 @@ fn attempt(
         s.steps
             .splice(0..0, tasks.iter().map(|t| step_of(t, manifest)));
         s.looking = false;
-        s.current = None;
-        s.done = 0;
-        s.total = 0;
-        s.unit = None;
-        s.rate = None;
+        s.begin(None);
     });
+    let mut room_checked = false;
     let mut k = 0;
     while k < tasks.len() {
         let task = tasks[k].clone();
-        // Before the first download, the room on the disk for all of them.
-        if !matches!(task, Task::Check(..))
-            && !tasks[..k].iter().any(|t| !matches!(t, Task::Check(..)))
-        {
-            let need = space_for(&tasks[k..], manifest);
-            if let Some(free) = work.free_space(&places.store) {
-                if free < need + need / 20 {
-                    return Err(failure(
-                        format!(
-                            "There is not enough free space on the disk {} is on: setup needs {}, there are {} free.",
-                            places.store.display(),
-                            megabytes(need + need / 20),
-                            megabytes(free)
-                        ),
-                        "Free some space on that disk, then try again.",
-                    ));
-                }
-            }
+        // Before the first that writes, the room on the disk for all.
+        if task.writes() && !room_checked {
+            room(&tasks[k..], manifest, places, work)?;
+            room_checked = true;
         }
-        teller.set(true, |s| {
-            s.current = Some(k);
-            s.steps[k].state = StepState::Working;
-            s.done = 0;
-            s.total = 0;
-            s.unit = None;
-            s.rate = None;
-        });
+        teller.set(true, |s| s.begin(Some(k)));
         match &task {
-            Task::Check(i, path) => {
-                // Where it is as it is opened: the data folder may have
-                // moved it since it was found.
-                let path = &crate::store::mover::locate(path);
-                let need = &manifest[*i];
-                teller.set(true, |s| {
-                    s.total = need.bytes;
-                    s.unit = Some(Unit::Bytes);
-                });
-                let digest = hash_file(path, &mut |done| teller.set(false, |s| s.done = done))
-                    .map_err(|e| failure(e, "Check that the disk can be read, then try again."))?;
-                if digest == need.sha256 {
-                    // Where it is now: the data folder may have moved it
-                    // while it was hashed (the same file, renamed).
-                    let at = crate::store::mover::locate(path);
-                    stamp(&places.store, &need.sha256, &at)
-                        .map_err(|e| failure(e, "Check that the data folder can be written to."))?;
-                    paths[*i] = Some(at);
-                } else {
-                    // Not the file: got afresh into the store (one there is
-                    // ours to replace; one elsewhere is passed over).
-                    if path.starts_with(&places.store) {
-                        let _ = fs::remove_file(path);
-                    }
-                    let more = obtain(*i, need);
+            Task::Check(i, at) => {
+                if !check_need(&manifest[*i], at, places, teller)? {
+                    // Not the files: got afresh into the store.
+                    paths[*i] = manifest[*i].at(&places.store);
+                    let more = obtain(*i, &manifest[*i], places);
                     teller.set(true, |s| {
                         let steps: Vec<Step> = more.iter().map(|t| step_of(t, manifest)).collect();
                         s.steps.splice(k + 1..k + 1, steps);
@@ -910,105 +536,8 @@ fn attempt(
                     tasks.splice(k + 1..k + 1, more);
                 }
             }
-            Task::Fetch(i) => {
-                let need = &manifest[*i];
-                let Source::Download { url } = &need.source else {
-                    unreachable!("fetching a file that is packed")
-                };
-                let part = Part {
-                    name: need.file.clone(),
-                    url: url.clone(),
-                    bytes: need.bytes,
-                    sha256: need.sha256.clone(),
-                    title: need.title.clone(),
-                };
-                let to = places.store.join(&need.file);
-                fetch(work, &part, &to, teller)?;
-                stamp(&places.store, &need.sha256, &to).map_err(|e| {
-                    failure(e, "Check that the settings' folder can be written to.")
-                })?;
-                paths[*i] = Some(to);
-            }
-            Task::FetchPart(i, p) => {
-                let need = &manifest[*i];
-                let Source::Pack { parts, .. } = &need.source else {
-                    unreachable!("a part of a file not packed")
-                };
-                let part = &parts[*p];
-                let to = parts_dir(places, need).join(&part.name);
-                // A part from a run that stopped is kept if it is right.
-                let kept = fs::metadata(&to).is_ok_and(|m| m.len() == part.bytes) && {
-                    teller.set(true, |s| {
-                        s.total = part.bytes;
-                        s.unit = Some(Unit::Bytes);
-                    });
-                    hash_file(&to, &mut |done| teller.set(false, |s| s.done = done))
-                        .is_ok_and(|d| d == part.sha256)
-                };
-                if !kept {
-                    fetch(work, part, &to, teller)?;
-                }
-            }
-            Task::Pack(i) => {
-                let need = &manifest[*i];
-                if let Some(memory) = work.memory() {
-                    if memory < PACK_MEMORY {
-                        return Err(failure(
-                            format!(
-                                "Packing {} needs about {} of memory; this computer has {}.",
-                                need.title,
-                                megabytes(PACK_MEMORY),
-                                megabytes(memory)
-                            ),
-                            format!(
-                                "Copy the folder {} from a computer that has set the player up into {}, then try again.",
-                                models::MODEL_DIR,
-                                places.store.display()
-                            ),
-                        ));
-                    }
-                }
-                let dir = parts_dir(places, need);
-                let partial = places.store.join(format!("{}.partial", need.file));
-                teller.set(true, |s| s.unit = Some(Unit::Tensors));
-                work.pack(&dir, &partial, &mut |done, all| {
-                    teller.set(false, |s| {
-                        s.done = done;
-                        s.total = all;
-                    })
-                })
-                .map_err(|e| {
-                    failure(
-                        format!("Packing {} failed: {e}", need.title),
-                        "Try again; if it fails again, the download may be damaged: it is fetched afresh then.",
-                    )
-                })?;
-                teller.set(true, |s| {
-                    s.done = 0;
-                    s.total = need.bytes;
-                    s.unit = Some(Unit::Bytes);
-                });
-                let digest = hash_file(&partial, &mut |done| teller.set(false, |s| s.done = done))
-                    .map_err(|e| failure(e, "Check that the disk can be read, then try again."))?;
-                if digest != need.sha256 {
-                    let _ = fs::remove_file(&partial);
-                    let _ = fs::remove_dir_all(&dir);
-                    return Err(failure(
-                        format!(
-                            "{} came out different from what it should be (SHA-256 {digest}).",
-                            capital(&need.title)
-                        ),
-                        "Try again: the download is fetched afresh. If it comes out different again, this build of the player packs differently from the one its checksum was made with.",
-                    ));
-                }
-                let to = places.store.join(&need.file);
-                durable::rename_durable(&partial, &to)
-                    .map_err(|e| failure(format!("{}: {e}", to.display()), "Try again."))?;
-                stamp(&places.store, &need.sha256, &to).map_err(|e| {
-                    failure(e, "Check that the settings' folder can be written to.")
-                })?;
-                paths[*i] = Some(to);
-            }
+            Task::Fetch(i, missing) => fetch_need(&manifest[*i], missing, places, work, teller)?,
+            Task::Pack(i) => pack_need(&manifest[*i], places, work, teller)?,
             Task::Clean(i) => {
                 let _ = fs::remove_dir_all(parts_dir(places, &manifest[*i]));
             }
@@ -1019,406 +548,166 @@ fn attempt(
         });
         k += 1;
     }
-    paths
-        .into_iter()
-        .zip(manifest)
-        .map(|(p, need)| {
-            p.ok_or_else(|| {
-                failure(
-                    format!("{} is still missing.", capital(&need.title)),
-                    "Try again.",
-                )
-            })
-        })
-        .collect()
+    Ok(manifest
+        .iter()
+        .map(|need| need.file.clone())
+        .zip(paths)
+        .collect())
 }
 
-/// Downloads `part` to `to`, telling the screen the bytes and the speed.
-fn fetch(
+/// Whether the disk the store is on has room for `tasks` (and a twentieth
+/// more).
+fn room(
+    tasks: &[Task],
+    manifest: &[Need],
+    places: &Places,
     work: &dyn Work,
-    part: &Part,
-    to: &Path,
+) -> Result<(), Failure> {
+    let need = space_for(tasks, manifest);
+    let with_margin = need + need / 20;
+    match work.free_space(&places.store) {
+        Some(free) if free < with_margin => Err(failure(
+            format!(
+                "There is not enough free space on the disk {} is on: setup needs {}, there are {} free.",
+                places.store.display(),
+                size(with_margin),
+                size(free)
+            ),
+            "Free some space on that disk, then try again.",
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Checks `need` found whole at `at`: whether every file of it is right.
+/// The wrong ones in the store are removed (one elsewhere is passed over).
+fn check_need(
+    need: &Need,
+    at: &Path,
+    places: &Places,
+    teller: &mut Teller<'_, Status>,
+) -> Result<bool, Failure> {
+    teller.set(true, |s| {
+        s.total = need.bytes();
+        s.unit = Some(Unit::Bytes);
+    });
+    let mut before = 0;
+    let mut right = true;
+    for (path, sum) in need.expected(at) {
+        if !verified(&places.store, &path, sum, before, teller)? {
+            right = false;
+            if path.starts_with(&places.store) {
+                let _ = fs::remove_file(&path);
+            }
+        }
+        before += sum.bytes;
+    }
+    Ok(right)
+}
+
+/// Downloads those of `need`'s files that `missing` names, each checked
+/// and stamped; one already there and right (from a run that stopped) is
+/// kept.
+fn fetch_need(
+    need: &Need,
+    missing: &[usize],
+    places: &Places,
+    work: &dyn Work,
     teller: &mut Teller<'_, Status>,
 ) -> Result<(), Failure> {
     teller.set(true, |s| {
-        s.total = part.bytes;
+        s.total = files_bytes(need, missing.iter().copied());
         s.unit = Some(Unit::Bytes);
     });
-    let started = Instant::now();
-    work.download(part, to, &mut |done| {
-        let seconds = started.elapsed().as_secs_f64();
-        teller.set(false, |s| {
-            s.done = done;
-            s.rate = (seconds > 1.0).then(|| done as f64 / seconds);
-        })
-    })
-    .map_err(|e| failure(format!("Downloading {} failed: {e}", part.title), NETWORK))
+    let files = need.files(&fetched_at(places, need));
+    let mut before = 0;
+    for &f in missing {
+        let (to, part) = &files[f];
+        if !verified(&places.store, to, &part.sum, before, teller)? {
+            let started = Instant::now();
+            work.download(part, to, &mut |done| {
+                let seconds = started.elapsed().as_secs_f64();
+                teller.set(false, |s| {
+                    s.done = before + done;
+                    s.rate = (seconds > 1.0).then(|| done as f64 / seconds);
+                })
+            })
+            .map_err(|e| failure(format!("Downloading {} failed: {e}", need.title), NETWORK))?;
+            stamp(&places.store, &part.sum.sha256, to)?;
+        }
+        before += part.sum.bytes;
+    }
+    Ok(())
 }
 
-mod system;
-
-#[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "tests: the stand-in downloader and packer, and model files where an older player left them"
-)]
-mod tests {
-    use super::*;
-
-    /// Every needed file's path, when all are there and checked.
-    fn ready(manifest: &[Need], places: &Places) -> Option<Vec<PathBuf>> {
-        manifest
-            .iter()
-            .map(|need| match look(need, places) {
-                Lookup::Checked(p) => Some(p),
-                _ => None,
-            })
-            .collect()
-    }
-    use crate::work::told::Told;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn sha(data: &[u8]) -> String {
-        let mut h = Sha256::new();
-        h.update(data);
-        h.hex()
-    }
-
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "jodel-setup-{name}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    /// A made-up web: each URL's bytes; packing concatenates the parts.
-    struct Fake {
-        web: Vec<(String, Vec<u8>)>,
-        offline: std::sync::atomic::AtomicBool,
-        /// Downloads asked for (offline too).
-        downloads: AtomicUsize,
-        free: Option<u64>,
-        memory: Option<u64>,
-    }
-
-    impl Work for Fake {
-        fn download(
-            &self,
-            part: &Part,
-            to: &Path,
-            progress: &mut dyn FnMut(u64),
-        ) -> Result<(), String> {
-            self.downloads.fetch_add(1, Ordering::SeqCst);
-            if self.offline.load(Ordering::SeqCst) {
-                return Err("no network".into());
-            }
-            let data = &self.web.iter().find(|(u, _)| *u == part.url).unwrap().1;
-            progress(data.len() as u64);
-            if data.len() as u64 != part.bytes || sha(data) != part.sha256 {
-                return Err("not the file".into());
-            }
-            fs::create_dir_all(to.parent().unwrap()).unwrap();
-            fs::write(to, data).map_err(|e| e.to_string())
-        }
-
-        fn pack(
-            &self,
-            parts: &Path,
-            to: &Path,
-            progress: &mut dyn FnMut(u64, u64),
-        ) -> Result<(), String> {
-            let mut out = Vec::new();
-            for name in ["a", "b"] {
-                out.extend(fs::read(parts.join(name)).map_err(|e| e.to_string())?);
-            }
-            progress(2, 2);
-            fs::write(to, out).map_err(|e| e.to_string())
-        }
-
-        fn free_space(&self, _dir: &Path) -> Option<u64> {
-            self.free
-        }
-
-        fn memory(&self) -> Option<u64> {
-            self.memory
+/// Packs `need`'s checkpoint, downloaded beside the store's file, into
+/// the file, checked against its SHA-256 before it takes the name.
+fn pack_need(
+    need: &Need,
+    places: &Places,
+    work: &dyn Work,
+    teller: &mut Teller<'_, Status>,
+) -> Result<(), Failure> {
+    // A model downloaded as it is has nothing to pack.
+    let Some((packed, _)) = need.packed() else {
+        return Ok(());
+    };
+    let sha256 = &packed.sha256;
+    if let Some(memory) = work.memory() {
+        if memory < PACK_MEMORY {
+            return Err(failure(
+                format!(
+                    "Packing {} needs about {} of memory; this computer has {}.",
+                    need.title,
+                    size(PACK_MEMORY),
+                    size(memory)
+                ),
+                format!(
+                    "Copy the folder {} from a computer that has set the player up into {}, then try again.",
+                    models::MODEL_DIR,
+                    places.store.display()
+                ),
+            ));
         }
     }
-
-    fn fake() -> (Vec<Need>, Fake) {
-        let speech = b"the speech model".to_vec();
-        let (a, b) = (b"part a, ".to_vec(), b"part b".to_vec());
-        let packed: Vec<u8> = a.iter().chain(&b).copied().collect();
-        let part = |name: &str, data: &[u8]| Part {
-            name: name.into(),
-            url: format!("https://example.test/{name}"),
-            bytes: data.len() as u64,
-            sha256: sha(data),
-            title: format!("part {name}"),
-        };
-        let manifest = vec![
-            Need {
-                file: "speech.bin".into(),
-                bytes: speech.len() as u64,
-                sha256: sha(&speech),
-                title: "the speech model".into(),
-                credit: "us".into(),
-                why: "timing".into(),
-                source: Source::Download {
-                    url: "https://example.test/speech".into(),
-                },
-            },
-            Need {
-                file: "asr.bin".into(),
-                bytes: packed.len() as u64,
-                sha256: sha(&packed),
-                title: "the recogniser".into(),
-                credit: "us".into(),
-                why: "checking".into(),
-                source: Source::Pack {
-                    parts: vec![part("a", &a), part("b", &b)],
-                    why: "smaller".into(),
-                },
-            },
-        ];
-        let web = vec![
-            ("https://example.test/speech".into(), speech),
-            ("https://example.test/a".into(), a),
-            ("https://example.test/b".into(), b),
-        ];
-        (
-            manifest,
-            Fake {
-                web,
-                offline: false.into(),
-                downloads: AtomicUsize::new(0),
-                free: Some(1 << 40),
-                memory: Some(16 << 30),
-            },
-        )
-    }
-
-    fn places(dir: &Path) -> Places {
-        Places {
-            look: vec![dir.join("beside"), dir.join("store")],
-            store: dir.join("store"),
-        }
-    }
-
-    /// Setup started, and what it tells.
-    fn start(manifest: Vec<Need>, places: Places, work: Arc<dyn Work>) -> (Setup, Arc<Told>) {
-        let told = Told::new();
-        let setup = Setup::start(move || manifest, places, work, told.notify(), None);
-        (setup, told)
-    }
-
-    /// Where setup ends: finished or failed.
-    fn settle(setup: &Setup, told: &Told) -> Status {
-        told.until("setup settles", || {
-            let s = setup.status();
-            (s.finished.is_some() || s.failure.is_some()).then_some(s)
+    let dir = parts_dir(places, need);
+    let to = need.at(&places.store);
+    let mut name = to.file_name().unwrap_or_default().to_os_string();
+    name.push(".partial");
+    let partial = to.with_file_name(name);
+    teller.set(true, |s| s.unit = Some(Unit::Tensors));
+    work.pack(&dir, &partial, &mut |done, all| {
+        teller.set(false, |s| {
+            s.done = done;
+            s.total = all;
         })
-    }
-
-    #[test]
-    fn the_built_in_manifest_names_the_four_models() {
-        assert_eq!(manifest_for(false).len(), 2);
-        let m = manifest_for(true);
-        assert_eq!(m.len(), 4);
-        assert_eq!(m[0].file, models::MODEL_FILE);
-        assert_eq!(m[1].file, models::ASR_FILE);
-        assert_eq!(m[2].file, crate::work::cover::DEPTH_FILE);
-        assert_eq!(m[3].file, crate::work::cover::MATTE_FILE);
-        for need in &m {
-            assert_eq!(need.sha256.len(), 64);
-            assert!(need.sha256.chars().all(|c| c.is_ascii_hexdigit()));
-        }
-    }
-
-    #[test]
-    fn everything_is_got_checked_and_stamped_then_nothing_more() {
-        let dir = temp("all");
-        let (manifest, work) = fake();
-        let work = Arc::new(work);
-        let places = places(&dir);
-        assert_eq!(ready(&manifest, &places), None);
-        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
-        let s = settle(&setup, &told);
-        assert_eq!(s.failure, None);
-        let paths = s.finished.clone().unwrap();
-        assert_eq!(
-            paths,
-            vec![dir.join("store/speech.bin"), dir.join("store/asr.bin")]
-        );
-        assert_eq!(fs::read(&paths[1]).unwrap(), b"part a, part b");
-        // Speech, part a, part b, the packing, the cleaning.
-        assert_eq!(s.steps.len(), 5);
-        assert!(s.steps.iter().all(|st| st.state == StepState::Done));
-        assert_eq!(s.overall(), 1.0);
-        assert!(told.count() > 0);
-        assert!(
-            !dir.join("store/asr.bin.download").exists(),
-            "the parts removed"
-        );
-        // The next start: ready at once, nothing downloaded.
-        assert_eq!(ready(&manifest, &places), Some(paths));
-        assert_eq!(work.downloads.load(Ordering::SeqCst), 3);
-    }
-
-    #[test]
-    fn a_file_beside_the_executable_is_checked_once_and_a_wrong_one_replaced() {
-        let dir = temp("beside");
-        let (manifest, work) = fake();
-        let places = places(&dir);
-        fs::create_dir_all(dir.join("beside")).unwrap();
-        // The speech model beside, right; the recogniser beside, wrong (its
-        // length right, its bytes not).
-        fs::write(dir.join("beside/speech.bin"), b"the speech model").unwrap();
-        fs::write(dir.join("beside/asr.bin"), b"part A, part B").unwrap();
-        assert_eq!(
-            look(&manifest[0], &places),
-            Lookup::Unchecked(dir.join("beside/speech.bin"))
-        );
-        let work = Arc::new(work);
-        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
-        let s = settle(&setup, &told);
-        let paths = s.finished.expect("finished");
-        assert_eq!(
-            paths[0],
-            dir.join("beside/speech.bin"),
-            "the right one is used where it is"
-        );
-        assert_eq!(
-            paths[1],
-            dir.join("store/asr.bin"),
-            "the wrong one is got afresh"
-        );
-        assert!(dir.join("beside/asr.bin").exists(), "a file not ours stays");
-        // Two checks, then the recogniser's parts, packing, cleaning.
-        assert_eq!(s.steps.len(), 6);
-        assert_eq!(work.downloads.load(Ordering::SeqCst), 2);
-        // The next start passes over the wrong one for the checked one.
-        assert_eq!(ready(&manifest, &places), Some(paths));
-    }
-
-    #[test]
-    fn offline_it_waits_for_try_again_and_goes_on_from_there() {
-        let dir = temp("offline");
-        let (manifest, work) = fake();
-        work.offline.store(true, Ordering::SeqCst);
-        let work = Arc::new(work);
-        let (setup, told) = start(manifest, places(&dir), work.clone());
-        let s = settle(&setup, &told);
-        let f = s.failure.expect("a failure");
-        assert!(f.what.contains("no network"), "{f:?}");
-        assert!(f.advice.contains("online"), "{f:?}");
-        assert_eq!(s.finished, None);
-        // Where it ends once tried again (a download asked for again).
-        let retried = || {
-            let tried = work.downloads.load(Ordering::SeqCst);
-            setup.retry();
-            told.until("setup settles again", || {
-                let s = setup.status();
-                let again = work.downloads.load(Ordering::SeqCst) > tried;
-                (again && (s.finished.is_some() || s.failure.is_some())).then_some(s)
-            })
-        };
-        // Still offline: it fails again.
-        assert!(retried().failure.is_some());
-        work.offline.store(false, Ordering::SeqCst);
-        let s = retried();
-        assert_eq!(s.failure, None);
-        assert!(s.finished.is_some());
-    }
-
-    #[test]
-    fn too_little_disk_or_memory_is_said_before_anything_is_fetched() {
-        let dir = temp("room");
-        let (manifest, mut work) = fake();
-        work.free = Some(10);
-        let work = Arc::new(work);
-        let (setup, told) = start(manifest.clone(), places(&dir), work.clone());
-        let f = settle(&setup, &told).failure.expect("no room");
-        assert!(f.what.contains("not enough free space"), "{f:?}");
-        assert_eq!(work.downloads.load(Ordering::SeqCst), 0);
-
-        let dir = temp("memory");
-        let (manifest, mut work) = fake();
-        work.memory = Some(4 << 30);
-        let (setup, told) = start(manifest, places(&dir), Arc::new(work));
-        let f = settle(&setup, &told).failure.expect("too little memory");
-        assert!(f.what.contains("memory"), "{f:?}");
-        assert!(f.advice.contains("Copy the folder"), "{f:?}");
-    }
-
-    /// While the data folder moves, the models not yet moved are checked
-    /// where they still are (nothing fetched); moved, they are checked once
-    /// where they went.
-    #[test]
-    fn models_are_found_where_they_are_while_the_data_folder_moves() {
-        let dir = temp("moved");
-        let (manifest, work) = fake();
-        let old = dir.join("old/models");
-        fs::create_dir_all(&old).unwrap();
-        fs::write(old.join("speech.bin"), b"the speech model").unwrap();
-        fs::write(old.join("asr.bin"), b"part a, part b").unwrap();
-        let places = places(&dir);
-        crate::store::mover::begin(
-            &dir.join("settings"),
-            &[(old.clone(), places.store.clone())],
+    })
+    .map_err(|e| {
+        failure(
+            format!("Packing {} failed: {e}", need.title),
+            format!(
+                "Try again. If it fails again, the download may be damaged: remove the folder {} and try again, and it is fetched afresh.",
+                dir.display()
+            ),
         )
-        .unwrap();
-        assert_eq!(
-            look(&manifest[0], &places),
-            Lookup::Unchecked(old.join("speech.bin"))
-        );
-        let work = Arc::new(work);
-        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
-        let s = settle(&setup, &told);
-        assert_eq!(s.failure, None);
-        assert_eq!(
-            s.finished.unwrap(),
-            vec![old.join("speech.bin"), old.join("asr.bin")]
-        );
-        assert_eq!(work.downloads.load(Ordering::SeqCst), 0, "nothing fetched");
-        // The mover brings them over: checked once where they went.
-        fs::create_dir_all(&places.store).unwrap();
-        for name in ["speech.bin", "asr.bin"] {
-            fs::rename(old.join(name), places.store.join(name)).unwrap();
-        }
-        assert_eq!(ready(&manifest, &places), None);
-        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
-        let s = settle(&setup, &told);
-        assert_eq!(
-            s.finished.unwrap(),
-            vec![
-                places.store.join("speech.bin"),
-                places.store.join("asr.bin")
-            ]
-        );
-        assert_eq!(work.downloads.load(Ordering::SeqCst), 0, "nothing fetched");
-        assert!(ready(&manifest, &places).is_some());
+    })?;
+    teller.set(true, |s| {
+        s.done = 0;
+        s.total = need.bytes();
+        s.unit = Some(Unit::Bytes);
+    });
+    if let Some(digest) = hashes_to(&partial, sha256, 0, teller)? {
+        let _ = fs::remove_file(&partial);
+        let _ = fs::remove_dir_all(&dir);
+        return Err(failure(
+            format!(
+                "{} came out different from what it should be (SHA-256 {digest}).",
+                capital(&need.title)
+            ),
+            "Try again: the download is fetched afresh. If it comes out different again, this build of the player packs differently from the one its checksum was made with.",
+        ));
     }
-
-    #[test]
-    fn a_stamp_goes_stale_when_the_file_changes() {
-        let dir = temp("stale");
-        let (manifest, work) = fake();
-        let places = places(&dir);
-        let (setup, told) = start(manifest.clone(), places.clone(), Arc::new(work));
-        settle(&setup, &told).finished.expect("finished");
-        // Rewritten, the same length: not taken without a check. Its time
-        // set a second on, so that it differs on any file system's clock.
-        let path = dir.join("store/speech.bin");
-        let was = fs::metadata(&path).unwrap().modified().unwrap();
-        fs::write(&path, b"the speech MODEL").unwrap();
-        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
-        file.set_modified(was + Duration::from_secs(1)).unwrap();
-        drop(file);
-        assert_eq!(look(&manifest[0], &places), Lookup::Unchecked(path));
-        assert_eq!(ready(&manifest, &places), None);
-    }
+    durable::rename_durable(&partial, &to)
+        .map_err(|e| failure(format!("{}: {e}", to.display()), "Try again."))?;
+    stamp(&places.store, sha256, &to)
 }

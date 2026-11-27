@@ -37,14 +37,14 @@ impl Work for Made {
         progress: &mut dyn FnMut(u64),
     ) -> Result<(), String> {
         if self.downloads.fetch_add(1, Ordering::SeqCst) == 0 {
-            progress(part.bytes);
+            progress(part.sum.bytes);
             return durable::write_atomic(to, b"made up").map_err(|e| e.to_string());
         }
         match self.web {
             Web::Offline => Err("the connection timed out".into()),
             Web::Stalls { share, after } => {
                 std::thread::sleep(after);
-                progress((part.bytes as f64 * share) as u64);
+                progress((part.sum.bytes as f64 * share) as u64);
                 loop {
                     std::thread::park();
                 }

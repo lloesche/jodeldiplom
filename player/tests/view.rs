@@ -1240,10 +1240,11 @@ fn setup_screen() {
         &[
             "[title] Getting the player ready",
             "[done] Downloading the word-timing model",
-            "[working] Downloading the speech recogniser's weights",
+            "[working] Downloading the speech recogniser (",
             "  [bar accent] 43 %",
-            "  [dim] 806 MB of 1.88 GB",
+            "  [dim] 807 MB of 1.88 GB",
             "[to do] Packing the speech recogniser",
+            "[folded to do] ",
             "[label] All of it: ",
             "[button] Quit (Q)",
         ],
@@ -1256,8 +1257,8 @@ fn setup_screen() {
     has(
         &text,
         &[
-            "[failed] Downloading the speech recogniser's weights",
-            "[fail] Downloading the speech recogniser's weights failed: the connection timed out",
+            "[failed] Downloading the speech recogniser (",
+            "[fail] Downloading the speech recogniser failed: the connection timed out",
             "[text] Check that this computer is online",
             "[primary] Try again (Enter)",
             "[button] Quit (Q)",
@@ -1265,5 +1266,9 @@ fn setup_screen() {
     );
     assert!(!text.contains("[bar accent]"), "no step under way:\n{text}");
     snapshot("setup_failed", &text);
+    // No steps yet: nothing shown, nothing folded.
+    let empty = Screen::of(&jodeldiplom::setup::Status::default());
+    assert!(empty.steps.is_empty());
+    assert_eq!((empty.folded_done, empty.folded_to_come), (0, 0));
     let _ = std::fs::remove_dir_all(&dir);
 }

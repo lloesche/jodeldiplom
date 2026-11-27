@@ -309,11 +309,11 @@ pub fn start_setup(
     Setup::start(manifest, places, work, notify, Some(then))
 }
 
-/// Gives the app the models setup found (each known by its file:
-/// [`crate::setup::Found`]): the speech models to the lyrics (the voice
+/// Gives the app the models setup found (each known by its path in the
+/// store: [`crate::setup::Found`]): the speech models to the lyrics (the voice
 /// from the stems kept in the data folder), the covers' models to the
 /// covers' step.
-pub fn set_models(options: &mut AppOptions, paths: &[PathBuf]) {
+pub fn set_models(options: &mut AppOptions, paths: &[(String, PathBuf)]) {
     let Some(found) = crate::setup::Found::of(paths) else {
         return;
     };
@@ -416,17 +416,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// What setup's `ready` gives (every needed file's path, in the
-    /// manifest's order) sets the speech model, the timer and the covers'
+    /// What setup gives (every needed model's path, in the manifest's
+    /// order) sets the speech model, the timer and the covers'
     /// models, with or without the covers' files.
     #[test]
     fn the_models_setup_found_reach_the_app() {
         use crate::setup::{manifest_for, Found};
         let dir = std::path::Path::new("/models");
         for gpu in [true, false] {
-            let paths: Vec<PathBuf> = manifest_for(gpu)
+            let paths: crate::setup::Paths = manifest_for(gpu)
                 .iter()
-                .map(|n| dir.join(&n.file))
+                .map(|n| (n.file.clone(), n.at(dir)))
                 .collect();
             let mut options = AppOptions::new(PathBuf::from("."));
             options.lyrics = Some(crate::work::lyrics::Options::new(false));

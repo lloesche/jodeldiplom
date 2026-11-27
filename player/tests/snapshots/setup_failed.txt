@@ -1,16 +1,15 @@
 [title] Getting the player ready
 [dim] This happens once. The player needs these files and checks each against a checksum built into it. Once they are here it never needs the network for them again.
 [done] Downloading the word-timing model (wav2vec2 by Meta, 378 MB)
-[failed] Downloading the speech recogniser's weights (Qwen3-ASR 0.6B by Alibaba's Qwen team, 1.9 GB)
-[to do] Downloading its vocabulary (3 MB)
-[to do] Downloading its tokenizer's settings (13 KB)
+[failed] Downloading the speech recogniser (Qwen3-ASR 0.6B by Alibaba's Qwen team, 1.88 GB)
 [to do] Packing the speech recogniser at 4 bits, then checking it
-[to do] Removing the download (1.9 GB)
-[to do] Downloading the depth model (Depth Anything 3 Small by ByteDance Seed, 138 MB)
+[to do] Removing the download (1.88 GB)
+[to do] Downloading the depth model (Depth Anything 3 Small by ByteDance Seed, 137 MB)
 [to do] Downloading the cover's cut-out model (BEN2 by Prama, 381 MB)
-[label] All of it: 9 %
-[bar good] 9 %
-[fail] Downloading the speech recogniser's weights failed: the connection timed out
+[folded to do] 4 more to come
+[label] All of it: 2 %
+[bar good] 2 %
+[fail] Downloading the speech recogniser failed: the connection timed out
 [text] Check that this computer is online, then try again. Once the files are here, the player never needs the network for them again.
 [button] Quit (Q)
 [primary] Try again (Enter)

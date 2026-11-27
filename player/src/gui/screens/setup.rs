@@ -1,8 +1,9 @@
 //! The setup screen ([`crate::view::setup`]) in iced's widgets: one panel
-//! in the middle of the window, the steps marked as they go, the step
-//! under way opened up with why it is needed and its bar, the whole's bar,
-//! what went wrong when it did, and the choices as buttons (their keys
-//! work as well, through the window).
+//! in the middle of the window, the steps marked as they go (a long list
+//! folded round the step under way), the step under way opened up with
+//! why it is needed and its bar, the whole's bar, what went wrong when it
+//! did, and the choices as buttons (their keys work as well, through the
+//! window).
 
 use iced::widget::{column, container, responsive, row, scrollable, text, Column, Row, Space};
 use iced::{Alignment, Background, Border, Color, Element, Fill, Shrink, Size, Widget as _};
@@ -12,7 +13,8 @@ use crate::gui::widgets::{self, badge, card, note, panel, progress, Icon};
 use crate::gui::window::Message;
 use crate::setup::Status;
 use crate::view::setup::{
-    percent, Choice, Current, Mark, Screen, StepLine, Stopped, KEPT, LOOKING, TITLE, WHOLE,
+    done_before, percent, to_come, Choice, Current, Mark, Screen, StepLine, Stopped, KEPT, LOOKING,
+    TITLE, WHOLE,
 };
 
 /// The panel's widest, in points.
@@ -98,10 +100,26 @@ fn header(screen: &Screen) -> Element<'static, Message> {
     .boxed()
 }
 
-/// The steps, the one under way opened up; above them, while the files
-/// are looked for, that they are.
+/// The steps, the one under way opened up, those folded above and below
+/// them said in a line each; above them, while the files are looked for,
+/// that they are.
 fn steps(screen: &Screen) -> Element<'static, Message> {
     let mut list = Column::<Element<'static, Message>>::new().spacing(space::XS);
+    let said = |what: String, mark: Element<'static, Message>| {
+        container(
+            row![
+                mark,
+                text(what)
+                    .size(size::BODY)
+                    .font(look::font::body())
+                    .color(look::TEXT_DIM)
+            ]
+            .spacing(space::M)
+            .align_y(Alignment::Center),
+        )
+        .padding([space::XS, space::M])
+        .boxed()
+    };
     if screen.looking {
         list = list.push(
             container(
@@ -114,33 +132,36 @@ fn steps(screen: &Screen) -> Element<'static, Message> {
             .boxed(),
         );
     }
+    if screen.folded_done > 0 {
+        list = list.push(said(done_before(screen.folded_done), done_mark()));
+    }
     for (i, step) in screen.steps.iter().enumerate() {
         list = list.push(match screen.current.as_ref().filter(|c| c.index == i) {
-            Some(current) => working(i, step, current),
-            None => line(i, step),
+            Some(current) => working(step, current),
+            None => line(step),
         });
+    }
+    if screen.folded_to_come > 0 {
+        list = list.push(said(
+            to_come(screen.folded_to_come),
+            Space::new().width(MARK).boxed(),
+        ));
     }
     list.boxed()
 }
 
 /// A step's mark: a check when done, a cross when it failed, its number
 /// otherwise (on the accent while under way).
-fn mark(i: usize, mark: Mark) -> Element<'static, Message> {
+fn mark(number: usize, mark: Mark) -> Element<'static, Message> {
     let number = |color| {
-        text((i + 1).to_string())
+        text(number.to_string())
             .size(size::CAPTION)
             .font(look::font::numbers())
             .color(color)
     };
     let clear = Color::TRANSPARENT;
     match mark {
-        Mark::Done => badge(
-            widgets::icon(Icon::Check).size(14.0).color(look::GOOD),
-            MARK,
-            look::tint(look::GOOD, look::SURFACE, 0.14),
-            clear,
-        )
-        .boxed(),
+        Mark::Done => done_mark(),
         Mark::Failed => badge(
             widgets::icon(Icon::Cross).size(12.0).color(look::FAIL),
             MARK,
@@ -151,6 +172,17 @@ fn mark(i: usize, mark: Mark) -> Element<'static, Message> {
         Mark::Working => badge(number(look::ACCENT_INK), MARK, look::ACCENT, clear).boxed(),
         Mark::ToDo => badge(number(look::TEXT_FAINT), MARK, clear, look::EDGE).boxed(),
     }
+}
+
+/// The mark of what is done: a check.
+fn done_mark() -> Element<'static, Message> {
+    badge(
+        widgets::icon(Icon::Check).size(14.0).color(look::GOOD),
+        MARK,
+        look::tint(look::GOOD, look::SURFACE, 0.14),
+        Color::TRANSPARENT,
+    )
+    .boxed()
 }
 
 /// A step's title beside its mark.
@@ -170,9 +202,9 @@ fn title(step: &StepLine) -> Element<'static, Message> {
 }
 
 /// A step not under way: its mark and title on a row.
-fn line(i: usize, step: &StepLine) -> Element<'static, Message> {
+fn line(step: &StepLine) -> Element<'static, Message> {
     container(
-        row![mark(i, step.mark), title(step)]
+        row![mark(step.number, step.mark), title(step)]
             .spacing(space::M)
             .align_y(Alignment::Center),
     )
@@ -182,7 +214,7 @@ fn line(i: usize, step: &StepLine) -> Element<'static, Message> {
 
 /// The step under way, on a card: its title, why it is needed, and where
 /// it is measured its bar, what it has done and its share.
-fn working(i: usize, step: &StepLine, current: &Current) -> Element<'static, Message> {
+fn working(step: &StepLine, current: &Current) -> Element<'static, Message> {
     let mut body = Column::<Element<'static, Message>>::new()
         .spacing(space::S)
         .push(title(step))
@@ -212,7 +244,7 @@ fn working(i: usize, step: &StepLine, current: &Current) -> Element<'static, Mes
             .push(figures.boxed());
     }
     card(
-        row![mark(i, step.mark), body]
+        row![mark(step.number, step.mark), body]
             .spacing(space::M)
             .align_y(Alignment::Start),
     )

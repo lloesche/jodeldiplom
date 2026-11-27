@@ -29,6 +29,7 @@ pub mod rhythm;
 pub mod scenes;
 pub mod shine;
 pub mod story;
+pub mod story_models;
 #[cfg(test)]
 pub(crate) mod told;
 

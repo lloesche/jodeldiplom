@@ -110,10 +110,10 @@ fn covers(data: &crate::store::dirs::Data) -> Vec<String> {
     use crate::setup::Lookup;
     use crate::work::cover::{self, GpuSplitter};
     let places = crate::setup::Places::player(data);
-    let found: Vec<std::path::PathBuf> = crate::setup::manifest()
+    let found: crate::setup::Paths = crate::setup::manifest()
         .iter()
         .filter_map(|need| match crate::setup::look(need, &places) {
-            Lookup::Checked(p) | Lookup::Unchecked(p) => Some(p),
+            Lookup::Checked(p) | Lookup::Unchecked(p) => Some((need.file.clone(), p)),
             Lookup::Missing => None,
         })
         .collect();

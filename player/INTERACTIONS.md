@@ -448,14 +448,20 @@ really found, as its workers tell it: never a progress they did not tell.
   data folder, each checked against the length and SHA-256 built in (the
   recogniser's checkpoint downloaded and checked, packed at 4 bits, the
   packed file checked, the checkpoint removed); with both there and
-  checked, the player starts at once and never goes online for them. The
-  screen cannot be skipped: a failure offers only Try again and Quit, each a
+  checked, the player starts at once and never goes online for them. With
+  a usable GPU, the covers' and karaoke story mode's models are got the
+  same way; a model kept as a folder (the story's image model, its
+  decoder, its text encoder) is got in one step, each file at its path in
+  the folder and checked, a file left whole by a run that stopped kept.
+  The screen cannot be skipped: a failure offers only Try again and Quit, each a
   button and a key (Enter or r, q or Esc); while setup goes on, Quit.
   The window comes up at once, on this screen, at every start: the
   graphics card chosen and the files looked for, then the player's own
   start (the session read, the sound device opened) are its steps, done
   in the background, and the player shows once it has started.
   - `everything_is_got_checked_and_stamped_then_nothing_more`
+  - `a_models_folder_is_got_in_one_step_and_then_taken_as_it_is`
+  - `a_folder_with_one_wrong_file_gets_only_that_one_again`
   - `offline_it_waits_for_try_again_and_goes_on_from_there`
   - `the_setup_screen_offers_try_again_and_quit_by_click_and_key`
   - `the_first_view_comes_before_the_slow_start`

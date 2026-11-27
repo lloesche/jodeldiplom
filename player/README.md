@@ -73,7 +73,7 @@ The player keeps two folders (`store/dirs.rs`):
 | Folder | What | Where |
 |---|---|---|
 | Settings | `config.toml`, the session and the saved queues, the beat grids fixed by hand, the karaoke recordings, the record of a data move under way | fixed: `%APPDATA%\Jodeldiplom`, `~/Library/Application Support/Jodeldiplom`, `~/.config/Jodeldiplom` (`$XDG_CONFIG_HOME`); with `--config FILE`, that file's folder |
-| Data | what the player makes or gets and could make again: `models` (the speech models), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `loudness` (the songs' loudness), `shine` (the original singer's phrases), `covers` (the covers taken apart), `scene-parts` (the story scenes' depth and layers); `scenes` (each song's story scenes, as drawn); and the user's own: `lyric-edits` (the lyrics edited by hand: text, words moved, words not to be sung, the voice's level over them) and `scores.txt`, the best scores sung | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
+| Data | what the player makes or gets and could make again: `models` (the models setup gets: the speech models, the covers' and, under `story`, karaoke story mode's), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `loudness` (the songs' loudness), `shine` (the original singer's phrases), `covers` (the covers taken apart), `scene-parts` (the story scenes' depth and layers); `scenes` (each song's story scenes, as drawn); and the user's own: `lyric-edits` (the lyrics edited by hand: text, words moved, words not to be sung, the voice's level over them) and `scores.txt`, the best scores sung | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
 
 Both are decided once, when the player starts, and every part of it is
 given them: a player started with `--config FILE` keeps its session,
@@ -106,16 +106,38 @@ everything in the old one moves there (`store/mover.rs`), with a bar on the row:
   was, so a best sung mid-move keeps all the earlier ones. A file the
   player removes goes from both folders, so an old copy never comes over.
 
-**Setup.** Most of what the player needs is inside it; two models are too
+**Setup.** Most of what the player needs is inside it; some models are too
 big for that: the speech model that times karaoke's words
 (`wav2vec2-base-960h`, 378 MB) and the speech recogniser that checks
 fetched lyrics belong to the song (Qwen3-ASR-0.6B, packed at 4 bits to
-589 MB). Their names, lengths and SHA-256s are built in (`setup.rs`). At
-every start the player looks for them in `models` beside its executable
+589 MB); and where the machine has a usable GPU (they run nowhere else)
+the covers' depth and cut-out models (518 MB) and karaoke story mode's
+models (14.4 GB): its language model, Gemma 4 E4B-it at 4 bits (Unsloth's
+Q4_K_M GGUF, 4.98 GB), and its image model, FLUX.2 [klein] 4B at 8 bits
+(4.07 GB) with its VAE and settings (168 MB) and its text encoder Qwen3-4B
+at 8 bits with the tokenizer (5.2 GB). Every file's name, length and
+SHA-256 is built in, each downloaded from its repository at a fixed
+revision (`setup/manifest.rs`, `work/story_models.rs`). The story's models are
+kept as published, under `story` in `models`, each image model in a folder
+of its own with its files at the paths its repository has them:
+
+```text
+story/gemma-4-E4B-it-Q4_K_M.gguf     unsloth/gemma-4-E4B-it-GGUF
+story/flux2-klein-4b-fp8/            black-forest-labs/FLUX.2-klein-4b-fp8: flux-2-klein-4b-fp8.safetensors
+story/flux2-klein-4b/                black-forest-labs/FLUX.2-klein-4B: model_index.json,
+                                     scheduler/scheduler_config.json, transformer/config.json,
+                                     vae/config.json, vae/diffusion_pytorch_model.safetensors
+story/qwen3-4b-fp8/                  Qwen/Qwen3-4B-FP8: config.json, model.safetensors.index.json,
+                                     model-00001-of-00002.safetensors, model-00002-of-00002.safetensors,
+                                     vocab.json, merges.txt, tokenizer_config.json
+```
+
+At every start the player looks for them in `models` beside its executable
 (or a macOS app's `Contents/Resources/models`), then in the data folder's
-`models`; a file is taken once it matched its checksum (hashed the first
-time, a stamp of its length and date in `checked.txt` sparing later starts
-the hashing). With both there, it never goes online for them.
+`models` (a model's folder whole in one of them); a file is taken once it
+matched its checksum (hashed the first time, a stamp of its length and
+date in `checked.txt` sparing later starts the hashing). With all of them
+there, it never goes online for them.
 
 The window comes up at once on the setup screen, at every start: while the
 graphics card is chosen and the files looked for, then the session read and
@@ -123,14 +145,22 @@ the sound device opened, it says so, step by step; the player shows once it
 has started. When files are missing, getting them comes first on that
 screen, and cannot be skipped: each step says what it does and why
 (downloading the word-timing model; downloading the recogniser's 1.9 GB
-checkpoint, its vocabulary and tokenizer; packing it at 4 bits with the
+checkpoint with its vocabulary and tokenizer; packing it at 4 bits with the
 calibration built in, then checking the packed file against its checksum:
-packing gives the same bytes on every machine; removing the download), with
-a bar for the step (its MB and speed, the time left) and one for the whole.
+packing gives the same bytes on every machine; removing the download; with
+a GPU, downloading the depth and cut-out models, the story's language
+model, and each of the image model's folders in a step of its own; of a
+folder only the files not there and right yet), with a bar for the step
+(its MB and speed, the time left) and one for the whole. A list of more
+than eight steps shows the last one done, the one under way and the next
+four, those before and after folded into a line each, so that the buttons
+stay in sight.
 Before downloading it checks the disk has room, before packing that the
 computer has the memory (about 7.5 GB). A failure says what went wrong and
 what to do, with **Try again** (`enter`) and **Quit** (`q`): a part
-downloaded whole is kept. About 45 s on a fast line. To spare a computer
+downloaded whole is kept. The speech models take about 45 s on a fast
+line; the story's 14.4 GB took 22 min on one (the language model and the
+image model at about 100 MB/s, the text encoder's server at 4.5 MB/s). To spare a computer
 the downloads, put the `models` folder beside the executable.
 
 ## Screen

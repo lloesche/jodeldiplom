@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use crate::setup::{Status, StepState, Unit};
+use crate::setup::{size, Status, StepState, Unit};
 
 /// The screen's title.
 pub const TITLE: &str = "Getting the player ready";
@@ -77,9 +77,35 @@ pub enum Mark {
     ToDo,
 }
 
+/// The most steps shown whole: a longer list shows [`AFTER`] `+ 2` of
+/// them, the last step done, the one under way and those after it (near
+/// the end, the last ones), the others folded into a line above
+/// ([`done_before`]) and one below ([`to_come`]), so that the buttons stay
+/// in a window of 800 points.
+pub const SHOWN: usize = 8;
+
+/// The steps shown after the one under way in a folded list.
+pub const AFTER: usize = 4;
+
+/// The line in place of the `n` steps done folded above the list.
+pub fn done_before(n: usize) -> String {
+    if n == 1 {
+        "1 step done".to_owned()
+    } else {
+        format!("{n} steps done")
+    }
+}
+
+/// The line in place of the `n` steps to come folded below the list.
+pub fn to_come(n: usize) -> String {
+    format!("{n} more to come")
+}
+
 /// A step's line.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StepLine {
+    /// Its place among all the steps, from 1.
+    pub number: usize,
     /// What it does: "Downloading the word-timing model (wav2vec2 by Meta,
     /// 378 MB)".
     pub title: String,
@@ -90,7 +116,7 @@ pub struct StepLine {
 /// The step under way: why it is needed, how far it is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Current {
-    /// Its place among the steps.
+    /// Its place among the steps shown.
     pub index: usize,
     /// Why the player needs it.
     pub why: String,
@@ -118,8 +144,12 @@ pub struct Screen {
     /// Some step gets a file: [`INTRO`] shows, and [`KEPT`] (else
     /// [`STARTING`]).
     pub files: bool,
-    /// The steps, in order.
+    /// The steps shown, in order (all of them, up to [`SHOWN`]).
     pub steps: Vec<StepLine>,
+    /// The steps done folded above those shown.
+    pub folded_done: usize,
+    /// The steps to come folded below those shown.
+    pub folded_to_come: usize,
     /// The step under way, while setup goes on.
     pub current: Option<Current>,
     /// The whole's share done (0 to 1).
@@ -132,11 +162,15 @@ impl Screen {
     /// The screen for `status`.
     pub fn of(status: &Status) -> Screen {
         let failed = status.failure.is_some();
+        let shown = shown(status);
         let steps = status
             .steps
             .iter()
             .enumerate()
+            .take(shown.end)
+            .skip(shown.start)
             .map(|(i, step)| StepLine {
+                number: i + 1,
                 title: step.title.clone(),
                 mark: match step.state {
                     StepState::Done => Mark::Done,
@@ -150,16 +184,18 @@ impl Screen {
             .current
             .filter(|_| !failed)
             .and_then(|i| Some((i, status.steps.get(i)?)))
-            .map(|(index, step)| Current {
-                index,
+            .map(|(i, step)| Current {
+                index: i - shown.start,
                 why: step.why.clone(),
                 share: (!step.start).then(|| status.step_share()),
                 detail: detail(status),
             });
         Screen {
             looking: status.looking && !failed,
-            files: status.files(),
+            files: status.gets_files(),
             steps,
+            folded_done: shown.start,
+            folded_to_come: status.steps.len() - shown.end,
             current,
             whole: status.overall(),
             stopped: status.failure.as_ref().map(|f| Stopped {
@@ -201,6 +237,25 @@ impl Screen {
     }
 }
 
+/// The steps of `status` shown: all of them up to [`SHOWN`], else the last
+/// done before the one under way (or the first not done), it, and
+/// [`AFTER`] after it.
+fn shown(status: &Status) -> std::ops::Range<usize> {
+    let n = status.steps.len();
+    if n <= SHOWN {
+        return 0..n;
+    }
+    let at = status
+        .current
+        .or_else(|| status.steps.iter().position(|s| s.state != StepState::Done))
+        .unwrap_or(n - 1)
+        .min(n - 1);
+    // As many near the end as anywhere: the panel keeps its size.
+    let len = AFTER + 2;
+    let start = at.saturating_sub(1).min(n - len);
+    start..start + len
+}
+
 /// A share as whole percent: "43 %".
 pub fn percent(share: f64) -> String {
     format!("{:.0} %", share.clamp(0.0, 1.0) * 100.0)
@@ -213,6 +268,9 @@ impl fmt::Display for Screen {
         writeln!(f, "[dim] {}", self.intro())?;
         if self.looking {
             writeln!(f, "[dim] {LOOKING}")?;
+        }
+        if self.folded_done > 0 {
+            writeln!(f, "[folded done] {}", done_before(self.folded_done))?;
         }
         for (i, step) in self.steps.iter().enumerate() {
             let mark = match step.mark {
@@ -230,6 +288,9 @@ impl fmt::Display for Screen {
                 }
             }
         }
+        if self.folded_to_come > 0 {
+            writeln!(f, "[folded to do] {}", to_come(self.folded_to_come))?;
+        }
         writeln!(f, "[label] {WHOLE}: {}", percent(self.whole))?;
         writeln!(f, "[bar good] {}", percent(self.whole))?;
         if let Some(stopped) = &self.stopped {
@@ -243,14 +304,6 @@ impl fmt::Display for Screen {
             writeln!(f, "[{tone}] {} ({})", offer.label, offer.key)?;
         }
         Ok(())
-    }
-}
-
-fn size(bytes: u64) -> String {
-    if bytes >= 1_000_000_000 {
-        format!("{:.2} GB", bytes as f64 / 1e9)
-    } else {
-        format!("{} MB", bytes / 1_000_000)
     }
 }
 
@@ -279,5 +332,60 @@ fn detail(status: &Status) -> String {
         }
         Some(Unit::Tensors) => "reading the download…".to_owned(),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::setup::Step;
+
+    /// Twelve steps, the one numbered `current + 1` under way.
+    fn status(current: usize) -> Status {
+        let step = |i: usize| {
+            let state = match i.cmp(&current) {
+                std::cmp::Ordering::Less => StepState::Done,
+                std::cmp::Ordering::Equal => StepState::Working,
+                std::cmp::Ordering::Greater => StepState::ToDo,
+            };
+            Step::new(format!("Step {}", i + 1), String::new(), state)
+        };
+        Status {
+            steps: (0..12).map(step).collect(),
+            current: Some(current),
+            ..Status::default()
+        }
+    }
+
+    /// A long list: the last step done, the one under way and the next
+    /// four shown, the others folded into a line above and one below; at
+    /// the end as many shown; eight steps or fewer all shown.
+    #[test]
+    fn a_long_list_of_steps_is_folded_round_the_one_under_way() {
+        let screen = Screen::of(&status(6));
+        let numbers: Vec<usize> = screen.steps.iter().map(|s| s.number).collect();
+        assert_eq!(numbers, [6, 7, 8, 9, 10, 11]);
+        assert_eq!(screen.current.as_ref().map(|c| c.index), Some(1));
+        let text = screen.to_string();
+        assert!(
+            text.contains("[folded done] 5 steps done\n[done] Step 6\n[working] Step 7\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("[to do] Step 11\n[folded to do] 1 more to come\n"),
+            "{text}"
+        );
+        // The last step under way: six shown all the same.
+        let screen = Screen::of(&status(11));
+        let numbers: Vec<usize> = screen.steps.iter().map(|s| s.number).collect();
+        assert_eq!(numbers, [7, 8, 9, 10, 11, 12]);
+        assert_eq!((screen.folded_done, screen.folded_to_come), (6, 0));
+        assert_eq!(screen.current.as_ref().map(|c| c.index), Some(5));
+        // Eight steps or fewer: all of them.
+        let mut short = status(6);
+        short.steps.truncate(8);
+        let screen = Screen::of(&short);
+        assert_eq!(screen.steps.len(), 8);
+        assert_eq!((screen.folded_done, screen.folded_to_come), (0, 0));
     }
 }
