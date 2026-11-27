@@ -254,13 +254,41 @@ const UNDER_STORY: f32 = 0.6;
 /// The gap between two of the story's tiles, in points.
 const TILE_GAP: f32 = 1.0;
 
+/// The shape of a story's scene pictures, its width over its height.
+const SCENE_SHAPE: f32 =
+    crate::core::story::pictures::SCENE.0 as f32 / crate::core::story::pictures::SCENE.1 as f32;
+
 /// The rows and columns of a grid of `of` tiles over a picture of
-/// `size`: as many columns as keep the tiles nearest to square.
-fn grid(of: usize, size: Size) -> (usize, usize) {
+/// `size`: as many columns as keep the tiles nearest to the `shape` (width
+/// over height) of the pictures drawn in them.
+fn grid(of: usize, size: Size, shape: f32) -> (usize, usize) {
     let of = of.max(1);
-    let aspect = (size.width / size.height.max(1.0)).max(0.01);
-    let columns = ((of as f32 * aspect).sqrt().ceil() as usize).clamp(1, of);
+    let off = |columns: usize| {
+        let rows = of.div_ceil(columns) as f32;
+        let tile = (size.width / columns as f32) / (size.height.max(1.0) / rows);
+        (tile / shape).ln().abs()
+    };
+    let columns = (1..=of)
+        .min_by(|a, b| off(*a).total_cmp(&off(*b)))
+        .unwrap_or(1);
     (of.div_ceil(columns), columns)
+}
+
+/// The largest place of `shape` (width over height) inside `tile`,
+/// centred: a picture drawn there whole and unstretched.
+fn fitted(tile: Rectangle, shape: f32) -> Rectangle {
+    let (width, height) = if tile.width / tile.height.max(1.0) > shape {
+        (tile.height * shape, tile.height)
+    } else {
+        (tile.width, tile.width / shape)
+    };
+    Rectangle::new(
+        iced::Point::new(
+            tile.x + (tile.width - width) / 2.0,
+            tile.y + (tile.height - height) / 2.0,
+        ),
+        Size::new(width, height),
+    )
 }
 
 /// A song's story being built on its cover: the cover darkened (none: the
@@ -294,7 +322,7 @@ impl<M> iced::widget::canvas::Program<M> for Building {
         }
         let shade = look::alpha(Color::BLACK, UNDER_STORY);
         frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), shade);
-        let (rows, columns) = grid(self.of, bounds.size());
+        let (rows, columns) = grid(self.of, bounds.size(), SCENE_SHAPE);
         let tile = Size::new(bounds.width / columns as f32, bounds.height / rows as f32);
         for (index, handle, shown) in &self.tiles {
             let (row, column) = (index / columns, index % columns);
@@ -305,7 +333,7 @@ impl<M> iced::widget::canvas::Program<M> for Building {
             let size = Size::new(tile.width - TILE_GAP, tile.height - TILE_GAP);
             let mut scene = Picture::new(handle.clone());
             scene.opacity = *shown;
-            frame.draw_image(Rectangle::new(at, size), scene);
+            frame.draw_image(fitted(Rectangle::new(at, size), SCENE_SHAPE), scene);
         }
         vec![frame.into_geometry()]
     }
@@ -382,18 +410,39 @@ pub fn shade<'a, M: 'a>(content: Element<'a, M>) -> Container<'a, Element<'a, M>
 mod tests {
     use super::*;
 
-    /// The story's tiles are as near to square as their count lets them
-    /// be, every one of them in the grid, none of it a row too many.
+    /// The story's tiles are as near to its pictures' shape as their count
+    /// lets them be, every one of them in the grid, none of it a row too
+    /// many.
     #[test]
-    fn a_story_s_tiles_are_near_square_over_its_cover() {
+    fn a_story_s_tiles_are_near_its_pictures_shape_over_its_cover() {
         let wide = Size::new(1600.0, 900.0);
-        let (rows, columns) = grid(23, wide);
-        assert_eq!((rows, columns), (4, 7));
+        let (rows, columns) = grid(23, wide, 16.0 / 9.0);
+        assert_eq!((rows, columns), (5, 5), "16:9 tiles of 320 × 180");
         assert!(rows * columns >= 23 && (rows - 1) * columns < 23);
-        assert_eq!(grid(4, Size::new(300.0, 300.0)), (2, 2));
-        assert_eq!(grid(1, wide), (1, 1));
-        assert_eq!(grid(0, wide), (1, 1), "none told yet: one");
-        let (rows, columns) = grid(23, Size::new(900.0, 1600.0));
+        assert_eq!(grid(4, Size::new(300.0, 300.0), 1.0), (2, 2));
+        assert_eq!(grid(1, wide, SCENE_SHAPE), (1, 1));
+        assert_eq!(grid(0, wide, SCENE_SHAPE), (1, 1), "none told yet: one");
+        let (rows, columns) = grid(23, Size::new(900.0, 1600.0), SCENE_SHAPE);
         assert!(rows > columns && rows * columns >= 23);
+        // A square cover of 18 scenes: tiles wider than tall.
+        let (rows, columns) = grid(18, Size::new(576.0, 576.0), SCENE_SHAPE);
+        assert!(columns < rows, "{rows} × {columns}");
+    }
+
+    /// A scene is drawn whole in its tile, its shape kept, centred.
+    #[test]
+    fn a_scene_keeps_its_shape_in_its_tile() {
+        let square = Rectangle::new(iced::Point::new(10.0, 20.0), Size::new(100.0, 100.0));
+        let at = fitted(square, 2.0);
+        assert_eq!(
+            at,
+            Rectangle::new(iced::Point::new(10.0, 45.0), Size::new(100.0, 50.0))
+        );
+        let tall = Rectangle::new(iced::Point::ORIGIN, Size::new(100.0, 40.0));
+        let at = fitted(tall, 2.0);
+        assert_eq!(
+            at,
+            Rectangle::new(iced::Point::new(10.0, 0.0), Size::new(80.0, 40.0))
+        );
     }
 }
