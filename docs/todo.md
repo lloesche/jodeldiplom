@@ -25,6 +25,22 @@ Work agreed on but not started, roughly in the order it was raised.
   - **Crowds and groups** go in a scene's description, never as a
     character (no portrait of a crowd).
   - Most songs then take about 5–10 pictures, some one or two, some 20.
+  - **Forgiving reading** (the owner: be very error tolerant, a tiny
+    model makes mistakes; never discard its work for a slip). Repair
+    what can be, keep everything usable, refuse only when nothing is
+    left to draw:
+    - line ranges from the scenes' starts alone (each scene runs to the
+      next one's start), so gaps, overlaps and a wrong `last_line`
+      cannot happen;
+    - slightly broken JSON repaired before reading (a trailing comma, a
+      missing closing bracket, an unescaped quote, an answer cut off:
+      every whole scene kept);
+    - an unknown name (preset, style, pass): the correction pass, then
+      the nearest valid one;
+    - a value out of range clamped; a missing field its default;
+    - a scene naming a character no one described: the name dropped,
+      the scene kept.
+    Every repair in the trace, to see what to fix in the prompt.
 - **Next, in this order:** the look shaders finished (the rest of the
   passes, hundreds of presets, every one dancing to the song, the
   guards), then the story generator's first version in the player, as
