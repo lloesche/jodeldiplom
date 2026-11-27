@@ -1,22 +1,18 @@
 //! A network kept on a device of its own ([`Kept`]): set up when first
 //! needed, and set up again when its device is lost (a driver reset, a
 //! GPU unplugged or switched) or after it was let go. A setup that failed
-//! stands a while ([`RETRY`] at first, doubled after each failure up to
-//! [`MOST_RETRY`]); the next use after that tries again. It is a
+//! stands a while ([`Retrying`]: 30 s at first, doubled after each failure
+//! up to half an hour); the next use after that tries again. It is a
 //! [`Resident`]: what it takes on the GPU is said before it is set up (its
 //! footprint, worked out from its shapes once they can be read; until
 //! then [`UNKNOWN`]), and a scheduler may let it go.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use super::retrying::{Retrying, RETRY};
 use crate::{Footprint, Resident, Turned};
-
-/// How long a first failed setup stands before the next use tries again.
-pub(crate) const RETRY: Duration = Duration::from_secs(30);
-/// The longest a failed setup stands (each failure doubles the wait).
-pub(crate) const MOST_RETRY: Duration = Duration::from_secs(30 * 60);
 
 /// The footprint of a network whose shapes cannot be read yet (its files
 /// not there yet): the most there is, so a scheduler loads nothing beside
@@ -35,22 +31,9 @@ pub trait OnDevice {
 /// What sets a network up: the network on its device, and the GPU's name.
 pub type SetUp<T> = Box<dyn Fn() -> Result<(T, String), String> + Send + Sync>;
 
-/// How long a failed setup stands: `first`, else twice as long as the
-/// failure `before` it, up to [`MOST_RETRY`].
-pub(super) fn stands(before: Option<Duration>, first: Duration) -> Duration {
-    before.map_or(first, |before| (before * 2).min(MOST_RETRY))
-}
-
 /// What works a network's footprint out: `None` while its shapes cannot
 /// be read yet.
 type Plan = Box<dyn Fn() -> Option<Footprint> + Send + Sync>;
-
-/// The network now, and what the last setup gave.
-struct Slot<T> {
-    on: Option<Turned<T>>,
-    /// When the last setup failed, why, and how long that stands.
-    failed: Option<(Instant, String, Duration)>,
-}
 
 /// A network set up by `set_up` when first needed and kept, set up again
 /// when its device is lost or after it was let go, and run one use at a
@@ -66,7 +49,7 @@ pub struct Kept<T> {
     planning: Mutex<()>,
     /// How long a first failed setup stands ([`RETRY`]).
     retry: Duration,
-    slot: Mutex<Slot<T>>,
+    slot: Mutex<Retrying<Turned<T>>>,
     /// Whether the network is set up, read without waiting for a use.
     up: AtomicBool,
     /// The GPU's name, from the first setup that worked (the process's GPU
@@ -87,10 +70,7 @@ impl<T: OnDevice> Kept<T> {
             planned: OnceLock::new(),
             planning: Mutex::new(()),
             retry: RETRY,
-            slot: Mutex::new(Slot {
-                on: None,
-                failed: None,
-            }),
+            slot: Mutex::new(Retrying::new()),
             up: AtomicBool::new(false),
             name: OnceLock::new(),
         }
@@ -108,7 +88,7 @@ impl<T: OnDevice> Kept<T> {
 
     /// The slot; a use that panicked leaves no network behind (the next
     /// use sets one up).
-    fn lock(&self) -> MutexGuard<'_, Slot<T>> {
+    fn lock(&self) -> MutexGuard<'_, Retrying<Turned<T>>> {
         self.slot.lock().unwrap_or_else(|e| {
             let mut slot = e.into_inner();
             slot.on = None;
@@ -120,8 +100,8 @@ impl<T: OnDevice> Kept<T> {
 
     /// Sets the network up where it is not, or where its device was lost;
     /// a failed setup stands a while: `retry`, doubled after each failure
-    /// in a row, up to [`MOST_RETRY`].
-    fn ready(&self, slot: &mut Slot<T>) -> Result<(), String> {
+    /// in a row ([`Retrying`]).
+    fn ready(&self, slot: &mut Retrying<Turned<T>>) -> Result<(), String> {
         if slot.on.as_ref().is_some_and(|on| on.lost()) {
             slot.on = None;
         }
@@ -129,28 +109,13 @@ impl<T: OnDevice> Kept<T> {
             return Ok(());
         }
         self.up.store(false, Ordering::Release);
-        if let Some((at, why, stands)) = &slot.failed {
-            if at.elapsed() < *stands {
-                return Err(why.clone());
-            }
-        }
-        let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&self.set_up))
-            .unwrap_or_else(|_| Err("setting it up panicked".into()));
-        match made {
-            Ok((on, name)) => {
-                slot.on = Some(Turned::new(on));
-                let _ = self.name.set(name);
-                slot.failed = None;
-                self.up.store(true, Ordering::Release);
-                Ok(())
-            }
-            Err(why) => {
-                let before = slot.failed.as_ref().map(|&(_, _, before)| before);
-                let stands = stands(before, self.retry);
-                slot.failed = Some((Instant::now(), why.clone(), stands));
-                Err(why)
-            }
-        }
+        slot.ready(self.retry, || {
+            let (on, name) = (self.set_up)()?;
+            let _ = self.name.set(name);
+            Ok(Turned::new(on))
+        })?;
+        self.up.store(true, Ordering::Release);
+        Ok(())
     }
 
     /// `work` on the network where it is set up (and its device not
@@ -215,6 +180,7 @@ impl<T: OnDevice + Send> Resident for Kept<T> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::retrying::stands;
     use super::*;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
@@ -318,13 +284,10 @@ mod tests {
         let fail = Arc::new(AtomicBool::new(true));
         let (kept, _, _) = fake(Duration::ZERO, Arc::clone(&fail));
         assert!(!kept.usable());
-        assert_eq!(
-            kept.lock().failed.as_ref().map(|f| f.2),
-            Some(Duration::ZERO)
-        );
+        assert_eq!(kept.lock().standing(), Some(Duration::ZERO));
         fail.store(false, Ordering::SeqCst);
         assert!(kept.usable());
-        assert!(kept.lock().failed.is_none());
+        assert_eq!(kept.lock().standing(), None);
     }
 
     #[test]

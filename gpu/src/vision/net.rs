@@ -1,19 +1,19 @@
 //! The vision networks on the device: one GPU for both ([`Gpu`]: the
-//! device and the program of their kernels, set up when first needed and
-//! kept until its device is lost), and each network's own part ([`Net`]: its
-//! weights uploaded once, and the buffers, bind groups and dispatches of
-//! its plan for one input size, made when it runs and let go when asked).
+//! device and the program of their kernels, an `engine::SharedDevice` set
+//! up when first needed and again once its device is lost), and each
+//! network's own part ([`Net`]: its weights uploaded once, and the buffers,
+//! bind groups and dispatches of its plan for one input size, made when it
+//! runs and let go when asked).
 //!
 //! A network's weight buffer ends in a tail kept for its size-dependent
 //! constants (positions and their like), as large as the largest size
 //! needs: planning another size rewrites the tail and makes the plan's
 //! buffers again, nothing more (no new device, no weights uploaded again).
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::{source, Kernel, Plan};
-use crate::engine::{bytes, guarded, Kernels, Program, Recorded};
+use crate::engine::{bytes, guarded, Input, OnDevice, Output, Program, Recorded, SharedDevice};
 use crate::Turned;
 
 /// The vision networks' GPU.
@@ -25,28 +25,27 @@ pub(crate) struct Gpu {
 
 /// The GPU while set up (never torn down once set up: it holds no
 /// network's memory), until its device is lost.
-static GPU: Mutex<Option<Arc<Turned<Gpu>>>> = Mutex::new(None);
+static GPU: SharedDevice<Gpu> = SharedDevice::new(Gpu::open);
+
+impl OnDevice for Gpu {
+    fn lost(&self) -> bool {
+        self.program.lost()
+    }
+}
 
 impl Gpu {
     /// The vision networks' GPU, set up when first asked for (and again
     /// once its device is lost: the networks on the lost one say so,
-    /// [`Net::lost`]); why not where it cannot be (asked again, it tries
-    /// again).
+    /// [`Net::lost`]); why not where it cannot be (a failed setup stands
+    /// for a while).
     pub(crate) fn shared() -> Result<Arc<Turned<Gpu>>, String> {
-        let mut slot = GPU.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(gpu) = slot.as_ref().filter(|gpu| !gpu.program.lost()) {
-            return Ok(Arc::clone(gpu));
-        }
-        let gpu = std::panic::catch_unwind(|| {
-            crate::device::open("jodel-gpu vision", |device, queue, limits| {
-                Gpu::on(device, queue, limits)
-            })
-        })
-        .map_err(|_| "setting the GPU up panicked".to_owned())??;
-        let (mut gpu, name) = gpu;
+        GPU.get()
+    }
+
+    /// The device and the program of the kernels.
+    fn open() -> Result<Gpu, String> {
+        let (mut gpu, name) = crate::device::open("jodel-gpu vision", Gpu::on)?;
         gpu.name = name;
-        let gpu = Arc::new(Turned::new(gpu));
-        *slot = Some(Arc::clone(&gpu));
         Ok(gpu)
     }
 
@@ -69,7 +68,7 @@ impl Gpu {
 struct Planned {
     buffers: Vec<wgpu::Buffer>,
     staging: wgpu::Buffer,
-    recorded: Recorded<Kernel>,
+    recorded: Recorded<Kernel, [usize; 3]>,
     bytes: u64,
 }
 
@@ -97,7 +96,9 @@ impl Net {
         let program = &gpu.program;
         let weights = guarded(&program.device, || {
             let w = program.storage(label, base.len() + tail)?;
-            program.queue.write_buffer(&w, 0, &bytes(base));
+            let mut upload = program.upload();
+            upload.write(&w, 0, &bytes(base))?;
+            upload.finish()?;
             Ok(w)
         })?;
         Ok(Net {
@@ -185,59 +186,17 @@ impl Net {
         Ok(())
     }
 
-    /// Runs the plan: `input` written to buffer `into` first, then
-    /// `count` f32s of buffer `from` from `offset` read back.
+    /// Runs the plan: `input` written first, then `output` read back (the
+    /// plan's buffers by index).
     pub(crate) fn run(
         &mut self,
-        into: usize,
-        input: &[f32],
-        (from, offset, count): (usize, usize, usize),
+        input: Input<usize>,
+        output: Output<usize>,
     ) -> Result<Vec<f32>, String> {
-        let gpu = Arc::clone(&self.gpu);
-        let program = &gpu.program;
         let p = self.planned.as_ref().ok_or("not planned")?;
-        let pieces = &mut self.pieces;
-        guarded(&program.device, || {
-            program
-                .queue
-                .write_buffer(&p.buffers[into], 0, &bytes(input));
-            program.run(
-                pieces,
-                (&p.recorded.groups, &p.recorded.dispatches),
-                |_| {},
-                Some((&p.buffers[from], offset, count)),
-                &p.staging,
-            )
-        })
-    }
-
-    /// Each kernel's share of a run (its dispatches each submitted and
-    /// waited for on its own, the best of three, timed from encoding to
-    /// done), for a diagnostic: the kernel's name and work, its dispatches,
-    /// its milliseconds; the slowest first.
-    pub(crate) fn profile(
-        &mut self,
-        into: usize,
-        input: &[f32],
-    ) -> Result<Vec<(String, usize, f64)>, String> {
+        let buffer = |i: usize| &p.buffers[i];
+        let (write, read) = (input.write(buffer), output.read(buffer, &p.staging));
         let program = &self.gpu.program;
-        let p = self.planned.as_ref().ok_or("not planned")?;
-        program
-            .queue
-            .write_buffer(&p.buffers[into], 0, &bytes(input));
-        let mut took: HashMap<String, (usize, f64)> = HashMap::new();
-        for (i, d) in p.recorded.dispatches.iter().enumerate() {
-            let best = program.time(&p.recorded, &|j| j == i)?;
-            let [x, y, z] = d.groups;
-            let entry = took
-                .entry(format!("{} {x}x{y}x{z}", d.kernel.entry()))
-                .or_default();
-            entry.0 += 1;
-            entry.1 += best.as_secs_f64() * 1000.0;
-        }
-        let mut out: Vec<(String, usize, f64)> =
-            took.into_iter().map(|(k, (n, ms))| (k, n, ms)).collect();
-        out.sort_by(|a, b| b.2.total_cmp(&a.2));
-        Ok(out)
+        program.run(&mut self.pieces, &p.recorded, &[write], |_| {}, Some(read))
     }
 }

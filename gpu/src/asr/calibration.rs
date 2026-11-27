@@ -71,36 +71,38 @@ impl GpuAsr {
     /// Starts (afresh) or stops collecting calibration statistics: each
     /// matrix's input columns' sums of squares over what is heard.
     pub fn calibrate(&self, on: bool) -> Result<(), String> {
-        let mut inner = self.lock()?;
-        if on {
-            let zeros = vec![0.0f32; inner.stats.len];
-            inner.program.queue.write_buffer(
-                &inner.buffers[&Buf::Stats],
-                0,
-                &crate::engine::bytes(&zeros),
-            );
-            inner.stats.rows_seen.clear();
-        }
-        inner.stats.on = on;
-        Ok(())
+        self.using(|inner| {
+            if on {
+                let zeros = vec![0.0f32; inner.stats.len];
+                inner.program.queue.write_buffer(
+                    &inner.buffers[&Buf::Stats],
+                    0,
+                    &crate::engine::bytes(&zeros),
+                );
+                inner.stats.rows_seen.clear();
+            }
+            inner.stats.on = on;
+            Ok(())
+        })
     }
 
     /// The statistics collected since [`GpuAsr::calibrate`]: each matrix's
     /// name, the rows its input had, and its columns' sums of squares.
     pub fn statistics(&self) -> Result<Vec<(String, u64, Vec<f32>)>, String> {
-        let mut inner = self.lock()?;
-        let len = inner.stats.len;
-        let sums = inner.run(&[], Some((Buf::Stats, 0, len)), super::Runs::Steps)?;
-        let stats = &inner.stats;
-        let mut out: Vec<(String, u64, Vec<f32>)> = stats
-            .at
-            .iter()
-            .map(|(w, (name, at, cols))| {
-                let rows = stats.rows_seen.get(w).copied().unwrap_or(0);
-                (name.clone(), rows, sums[*at..*at + *cols].to_vec())
-            })
-            .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(out)
+        self.using(|inner| {
+            let len = inner.stats.len;
+            let sums = inner.run(&[], Some((Buf::Stats, 0, len)), crate::pace::Phase::Steps)?;
+            let stats = &inner.stats;
+            let mut out: Vec<(String, u64, Vec<f32>)> = stats
+                .at
+                .iter()
+                .map(|(w, (name, at, cols))| {
+                    let rows = stats.rows_seen.get(w).copied().unwrap_or(0);
+                    (name.clone(), rows, sums[*at..*at + *cols].to_vec())
+                })
+                .collect();
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok(out)
+        })
     }
 }

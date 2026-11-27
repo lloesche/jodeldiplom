@@ -1,6 +1,6 @@
 // The fused kernels: a few rows through a 4-bit matrix (`qa_rows`, also
 // the encoder's when a piece has one row) and the rest of the decoder's
-// steps for a batch of sequences, a row each (compiled after kernels.wgsl
+// steps for a batch of sequences, a row each (compiled after shared.wgsl
 // and asr.wgsl: their bindings, `qw` and helpers). A row's
 // values do not depend on how many rows go with it: each is summed in one
 // fixed order, the order the decoder's steps have always had (a row at a
@@ -215,7 +215,7 @@ fn st_in4(a: u32, k: u32) -> vec4<f32> {
     if ((p.f9 & 256u) != 0u) {
         return vec4<f32>(st_joined(a, k), st_joined(a, k + 1u), st_joined(a, k + 2u), st_joined(a, k + 3u));
     }
-    return qa_src4(a + k);
+    return src4(a + k);
 }
 
 // The output column of the invocations of `slot` in round `round`.

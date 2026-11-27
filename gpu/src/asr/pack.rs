@@ -10,6 +10,8 @@ use jodel_lyrics::asr::{
     piece_steps, sinusoids, ENC_DIM, ENC_LAYERS, HEAD, LAYERS, PIECE, ROPE_BASE,
 };
 
+use crate::engine::{rotary, Angles, Freqs};
+
 /// How a matrix's values are held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Format {
@@ -130,14 +132,12 @@ pub(super) fn pack(model: &PackedModel, rope: usize) -> Result<Packed, String> {
     let positions = small.len();
     small.extend(sinusoids(piece_steps(PIECE), ENC_DIM));
     let rope_at = small.len();
-    let half = HEAD / 2;
-    for pos in 0..rope {
-        for i in 0..half {
-            let a = pos as f64 / ROPE_BASE.powf(2.0 * i as f64 / HEAD as f64);
-            small.push(a.cos() as f32);
-            small.push(a.sin() as f32);
-        }
-    }
+    let freqs = Freqs {
+        base: ROPE_BASE,
+        dim: HEAD,
+        turned: HEAD / 2,
+    };
+    small.extend(rotary(0..rope, freqs, Angles::F64));
     let v = |name: &str| {
         values
             .get(name)

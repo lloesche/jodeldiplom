@@ -1,6 +1,7 @@
 // The speech recogniser's kernels (Qwen3-ASR-0.6B), compiled after
-// kernels.wgsl: they share its bindings (src, aux, dst, p) and helpers
-// (linear_id, gelu), and add the 4-bit weights, `qw`.
+// shared.wgsl: they share its bindings (src, aux, dst, p) and helpers
+// (linear_id, gelu, the sums of common.wgsl, the tiles keys and vals and
+// their readers), and add the 4-bit weights, `qw`.
 //
 // A 4-bit matrix ([n][k], a row an output) is groups of 32 values along
 // its rows, each 5 u32s: four of nibbles (value j in word j / 8, bits
@@ -196,7 +197,7 @@ fn qa_split_sum(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_work
     let c0 = 4u * (i % quads);
     var v = vec4<f32>(0.0);
     for (var part = 0u; part < p.f11; part++) {
-        v += qa_src4((part * p.f0 + r) * p.f1 + c0);
+        v += src4((part * p.f0 + r) * p.f1 + c0);
     }
     qa_store(r, c0, v);
 }
@@ -329,43 +330,32 @@ fn qa_place(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgrou
 }
 
 // ---- LayerNorm, src to dst (eps 1e-5), a workgroup a row (wid.x +
-// wid.y·nw.x): the row read into workgroup memory together, its sums
-// taken in order by one invocation. f0 rows, f1 dim (at most 1024), f2
-// w_off, f3 b_off.
-var<workgroup> qa_row: array<f32, 1024>;
-var<workgroup> qa_stats: vec2<f32>;
-
+// wid.y·nw.x), its sums over the workgroup's 64 invocations (sum64). f0
+// rows, f1 dim, f2 w_off, f3 b_off.
 @compute @workgroup_size(64)
 fn qa_layernorm(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
     let r = wid.x + wid.y * nw.x;
     let dim = p.f1;
     let x = r * dim;
     let valid = r < p.f0;
+    var sum = 0.0;
     if (valid) {
         for (var d = lid.x; d < dim; d += 64u) {
-            qa_row[d] = src[x + d];
+            sum += src[x + d];
         }
     }
-    workgroupBarrier();
-    if (valid && lid.x == 0u) {
-        var sum = 0.0;
-        for (var d = 0u; d < dim; d++) {
-            sum += qa_row[d];
-        }
-        let mean = sum / f32(dim);
-        var squares = 0.0;
-        for (var d = 0u; d < dim; d++) {
-            let v = qa_row[d] - mean;
+    let mean = sum64(lid.x, sum) / f32(dim);
+    var squares = 0.0;
+    if (valid) {
+        for (var d = lid.x; d < dim; d += 64u) {
+            let v = src[x + d] - mean;
             squares += v * v;
         }
-        qa_stats = vec2<f32>(mean, inverseSqrt(squares / f32(dim) + 1e-5));
     }
-    workgroupBarrier();
+    let k = inverseSqrt(sum64(lid.x, squares) / f32(dim) + 1e-5);
     if (valid) {
-        let mean = qa_stats.x;
-        let k = qa_stats.y;
         for (var d = lid.x; d < dim; d += 64u) {
-            dst[x + d] = (qa_row[d] - mean) * k * aux[p.f2 + d] + aux[p.f3 + d];
+            dst[x + d] = (src[x + d] - mean) * k * aux[p.f2 + d] + aux[p.f3 + d];
         }
     }
 }
@@ -376,59 +366,6 @@ fn qa_layernorm(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup
 // window long), within its sequence (wid.z, len steps each). f0 len, f1
 // window. Workgroups (queries / 64, 14, sequences); tiles of
 // 32 keys over the workgroup's windows, an online softmax.
-var<workgroup> qa_keys: array<vec4<f32>, 512>;
-var<workgroup> qa_vals: array<vec4<f32>, 512>;
-
-fn qa_src4(i: u32) -> vec4<f32> {
-    return vec4<f32>(src[i], src[i + 1u], src[i + 2u], src[i + 3u]);
-}
-
-fn qa_aux4(i: u32) -> vec4<f32> {
-    return vec4<f32>(aux[i], aux[i + 1u], aux[i + 2u], aux[i + 3u]);
-}
-
-fn qa_store4(i: u32, v: vec4<f32>) {
-    dst[i] = v.x;
-    dst[i + 1u] = v.y;
-    dst[i + 2u] = v.z;
-    dst[i + 3u] = v.w;
-}
-
-// A key of 64 values from the tile (its 16 vectors from b).
-fn qa_key64(b: u32) -> H64 {
-    return H64(qa_keys[b + 0u], qa_keys[b + 1u], qa_keys[b + 2u], qa_keys[b + 3u], qa_keys[b + 4u], qa_keys[b + 5u], qa_keys[b + 6u], qa_keys[b + 7u], qa_keys[b + 8u], qa_keys[b + 9u], qa_keys[b + 10u], qa_keys[b + 11u], qa_keys[b + 12u], qa_keys[b + 13u], qa_keys[b + 14u], qa_keys[b + 15u]);
-}
-
-// Its values from the tile.
-fn qa_val64(b: u32) -> H64 {
-    return H64(qa_vals[b + 0u], qa_vals[b + 1u], qa_vals[b + 2u], qa_vals[b + 3u], qa_vals[b + 4u], qa_vals[b + 5u], qa_vals[b + 6u], qa_vals[b + 7u], qa_vals[b + 8u], qa_vals[b + 9u], qa_vals[b + 10u], qa_vals[b + 11u], qa_vals[b + 12u], qa_vals[b + 13u], qa_vals[b + 14u], qa_vals[b + 15u]);
-}
-
-// 64 values of src from at.
-fn qa_src64(at: u32) -> H64 {
-    return H64(qa_src4(at + 0u * 4u), qa_src4(at + 1u * 4u), qa_src4(at + 2u * 4u), qa_src4(at + 3u * 4u), qa_src4(at + 4u * 4u), qa_src4(at + 5u * 4u), qa_src4(at + 6u * 4u), qa_src4(at + 7u * 4u), qa_src4(at + 8u * 4u), qa_src4(at + 9u * 4u), qa_src4(at + 10u * 4u), qa_src4(at + 11u * 4u), qa_src4(at + 12u * 4u), qa_src4(at + 13u * 4u), qa_src4(at + 14u * 4u), qa_src4(at + 15u * 4u));
-}
-
-// 64 values to dst from at.
-fn qa_store64(at: u32, v: H64) {
-    qa_store4(at + 0u, v.v0);
-    qa_store4(at + 4u, v.v1);
-    qa_store4(at + 8u, v.v2);
-    qa_store4(at + 12u, v.v3);
-    qa_store4(at + 16u, v.v4);
-    qa_store4(at + 20u, v.v5);
-    qa_store4(at + 24u, v.v6);
-    qa_store4(at + 28u, v.v7);
-    qa_store4(at + 32u, v.v8);
-    qa_store4(at + 36u, v.v9);
-    qa_store4(at + 40u, v.v10);
-    qa_store4(at + 44u, v.v11);
-    qa_store4(at + 48u, v.v12);
-    qa_store4(at + 52u, v.v13);
-    qa_store4(at + 56u, v.v14);
-    qa_store4(at + 60u, v.v15);
-}
-
 @compute @workgroup_size(64)
 fn qa_enc_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
     let len = p.f0;
@@ -443,7 +380,7 @@ fn qa_enc_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
     var q = h64_zero();
     var st = soft64();
     if (valid) {
-        q = h64_scale(qa_src64((o + qp) * 2688u + h * 64u), 0.125);
+        q = h64_scale(src64((o + qp) * 2688u + h * 64u), 0.125);
     }
     // The keys any query here may see.
     let last = min(first + 63u, len - 1u);
@@ -455,8 +392,8 @@ fn qa_enc_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
             let kp = k0 + slot / 16u;
             if (kp < len) {
                 let at = (o + kp) * 2688u + 896u + h * 64u + 4u * (slot % 16u);
-                qa_keys[slot] = qa_src4(at);
-                qa_vals[slot] = qa_src4(at + 896u);
+                keys[slot] = src4(at);
+                vals[slot] = src4(at + 896u);
             }
         }
         workgroupBarrier();
@@ -465,36 +402,36 @@ fn qa_enc_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
             // then those in the window taken in in their order.
             for (var j = 0u; j < 32u; j += 4u) {
                 let kb = j * 16u;
-                let s0 = h64_dot(q, qa_key64(kb));
-                let s1 = h64_dot(q, qa_key64(kb + 16u));
-                let s2 = h64_dot(q, qa_key64(kb + 32u));
-                let s3 = h64_dot(q, qa_key64(kb + 48u));
+                let s0 = h64_dot(q, key64(kb));
+                let s1 = h64_dot(q, key64(kb + 16u));
+                let s2 = h64_dot(q, key64(kb + 32u));
+                let s3 = h64_dot(q, key64(kb + 48u));
                 let kp = k0 + j;
                 if (kp >= w0 && kp < w1) {
-                    st = soft64_take(st, s0, qa_val64(kb));
+                    st = soft64_take(st, s0, val64(kb));
                 }
                 if (kp + 1u >= w0 && kp + 1u < w1) {
-                    st = soft64_take(st, s1, qa_val64(kb + 16u));
+                    st = soft64_take(st, s1, val64(kb + 16u));
                 }
                 if (kp + 2u >= w0 && kp + 2u < w1) {
-                    st = soft64_take(st, s2, qa_val64(kb + 32u));
+                    st = soft64_take(st, s2, val64(kb + 32u));
                 }
                 if (kp + 3u >= w0 && kp + 3u < w1) {
-                    st = soft64_take(st, s3, qa_val64(kb + 48u));
+                    st = soft64_take(st, s3, val64(kb + 48u));
                 }
             }
         }
         workgroupBarrier();
     }
     if (valid) {
-        qa_store64((o + qp) * 896u + h * 64u, h64_div(st.acc, st.total));
+        store64((o + qp) * 896u + h * 64u, h64_div(st.acc, st.total));
     }
 }
 
 // ---- RMSNorm (eps 1e-6), src to dst, a workgroup a row: dst[r·dim + d]
 // = src[a_off + r·lda + d] · k · aux[w_off + d]. f0 rows, f1 dim, f2 w_off,
-// f3 a_off, f4 lda. Workgroups: one a row (wid.x + wid.y·nw.x).
-var<workgroup> qa_sum: array<f32, 256>;
+// f3 a_off, f4 lda. Workgroups: one a row (wid.x + wid.y·nw.x); the
+// sum of squares over the workgroup (sum256).
 
 @compute @workgroup_size(256)
 fn qa_rmsnorm(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
@@ -508,18 +445,11 @@ fn qa_rmsnorm(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_i
             sum += v * v;
         }
     }
-    qa_sum[lid.x] = sum;
-    workgroupBarrier();
-    for (var half = 128u; half > 0u; half /= 2u) {
-        if (lid.x < half) {
-            qa_sum[lid.x] += qa_sum[lid.x + half];
-        }
-        workgroupBarrier();
-    }
+    let total = sum256(lid.x, sum);
     if (r >= p.f0) {
         return;
     }
-    let k = inverseSqrt(qa_sum[0] / f32(dim) + 1e-6);
+    let k = inverseSqrt(total / f32(dim) + 1e-6);
     for (var d = lid.x; d < dim; d += 256u) {
         dst[r * dim + d] = src[x + d] * k * aux[p.f2 + d];
     }
@@ -610,7 +540,7 @@ fn qa_dec_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
     var q = h64_zero();
     var st = soft64();
     if (valid) {
-        q = h64_scale(qa_src64((o + r) * 4096u + h * 128u + half * 64u), inverseSqrt(128.0));
+        q = h64_scale(src64((o + r) * 4096u + h * 128u + half * 64u), inverseSqrt(128.0));
     }
     let seen = start + min(first + 64u, rows);
     for (var k0 = 0u; k0 < seen; k0 += 8u) {
@@ -621,8 +551,8 @@ fn qa_dec_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
             if (kp < seen) {
                 let d = kv * 128u + 4u * (slot % 32u);
                 let at = cache + d * p.f4 + kp;
-                qa_keys[slot] = vec4<f32>(aux[at], aux[at + p.f4], aux[at + 2u * p.f4], aux[at + 3u * p.f4]);
-                qa_vals[slot] = qa_aux4(cache + p.f4 * 1024u + kp * 1024u + d);
+                keys[slot] = vec4<f32>(aux[at], aux[at + p.f4], aux[at + 2u * p.f4], aux[at + 3u * p.f4]);
+                vals[slot] = aux4(cache + p.f4 * 1024u + kp * 1024u + d);
             }
         }
         workgroupBarrier();
@@ -631,7 +561,7 @@ fn qa_dec_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
                 let kp = k0 + j;
                 var dots = 0.0;
                 if (kp <= pos && kp < seen) {
-                    dots = h64_dot(q, qa_key64(j * 32u + half * 16u));
+                    dots = h64_dot(q, key64(j * 32u + half * 16u));
                 }
                 qa_halves[t * 8u + j] = dots;
             }
@@ -644,13 +574,13 @@ fn qa_dec_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
                     break;
                 }
                 let s = qa_halves[qi * 8u + j] + qa_halves[(qi + 64u) * 8u + j];
-                st = soft64_take(st, s, qa_val64(j * 32u + half * 16u));
+                st = soft64_take(st, s, val64(j * 32u + half * 16u));
             }
         }
         workgroupBarrier();
     }
     if (valid) {
-        qa_store64((o + r) * 2048u + h * 128u + half * 64u, h64_div(st.acc, st.total));
+        store64((o + r) * 2048u + h * 128u + half * 64u, h64_div(st.acc, st.total));
     }
 }
 

@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use jodel_tensors::bpe::{Merges, Part, Specials};
+use jodel_tensors::bpe::{byte_chars, Merges, Part, Specials};
 use jodel_tensors::json::Json;
 
 /// The tokens a prompt is padded to.
@@ -135,24 +135,6 @@ impl Tokenizer {
         let ids = piece.bytes().map(|b| self.bytes[usize::from(b)]).collect();
         self.merges.word(ids, out);
     }
-}
-
-/// GPT-2's table: printable Latin-1 bytes as themselves, the rest from
-/// U+0100 on, in order.
-fn byte_chars() -> [char; 256] {
-    let printable =
-        |b: u32| (33..=126).contains(&b) || (161..=172).contains(&b) || (174..=255).contains(&b);
-    let mut out = ['\0'; 256];
-    let mut next = 256;
-    for b in 0..256u32 {
-        out[b as usize] = if printable(b) {
-            char::from_u32(b).unwrap_or('\0')
-        } else {
-            next += 1;
-            char::from_u32(next - 1).unwrap_or('\0')
-        };
-    }
-    out
 }
 
 fn letter(c: char) -> bool {

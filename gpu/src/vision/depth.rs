@@ -17,6 +17,7 @@ use super::net::Net;
 use super::ops::{Img, Plan, Resize, ADD, GELU, RELU, RELU_IN};
 use super::prep::{self, Rgb};
 use super::{Named, Packer};
+use crate::engine::{rotary, Angles, Freqs, Input, OnDevice, Output};
 use crate::Footprint;
 
 const C: usize = 384;
@@ -212,19 +213,13 @@ fn uv_positions(rows: usize, cols: usize, dim: usize, aspect: f64) -> Vec<f32> {
     out
 }
 
-/// The rotary positions' table: for each position up to `most`, 16
-/// cosines then 16 sines (frequencies 100^(−j/16)).
-fn rope_table(most: usize) -> Vec<f32> {
-    let mut out = Vec::new();
-    for pos in 0..=most {
-        let angles: Vec<f32> = (0..16)
-            .map(|j| pos as f32 * (1.0 / 100f32.powf((2 * j) as f32 / 32.0)))
-            .collect();
-        out.extend(angles.iter().map(|a| a.cos()));
-        out.extend(angles.iter().map(|a| a.sin()));
-    }
-    out
-}
+/// The rotary positions' frequencies: a half head's 16 pairs, turning at
+/// 100^(−j/16).
+const ROPE: Freqs = Freqs {
+    base: 100.0,
+    dim: 32,
+    turned: 16,
+};
 
 /// The plan for a `width × height` input, its size's constants packed
 /// into `tail`; the buffer the input goes to and the one the two output
@@ -242,7 +237,7 @@ fn plan(w: &Weights, tail: &mut Packer, width: usize, height: usize) -> (Plan, u
             tail.push(&first),
             tail.push(&pos),
             tail.push(&w.camera),
-            tail.push(&rope_table(h0.max(w0) + 1)),
+            tail.push(&rotary(0..=h0.max(w0) + 1, ROPE, Angles::F32)),
         )
     };
     let (first, pos, camera, rope) = consts;
@@ -608,12 +603,6 @@ impl GpuDepth {
             .unwrap_or_default()
     }
 
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is made instead.
-    pub fn is_lost(&self) -> bool {
-        self.lock().map_or(true, |p| p.net.lost())
-    }
-
     /// The bytes it keeps on the GPU now.
     pub fn gpu_bytes(&self) -> u64 {
         self.lock().map(|p| p.net.bytes()).unwrap_or(0)
@@ -669,19 +658,17 @@ impl GpuDepth {
         }
         let mut on = self.lock()?;
         let (i, o) = self.planned(&mut on, width, height)?;
-        on.net.run(i, input, (o, 0, width * height * 2))
-    }
-
-    /// Each kernel's share of a run (see `Net::profile`).
-    pub fn profile(
-        &self,
-        input: &[f32],
-        width: usize,
-        height: usize,
-    ) -> Result<Vec<(String, usize, f64)>, String> {
-        let mut on = self.lock()?;
-        let (i, _) = self.planned(&mut on, width, height)?;
-        on.net.profile(i, input)
+        let input = Input {
+            buf: i,
+            at: 0,
+            values: input,
+        };
+        let output = Output {
+            buf: o,
+            first: 0,
+            count: width * height * 2,
+        };
+        on.net.run(input, output)
     }
 
     /// The depth of `image`, at the size the network takes it
@@ -694,5 +681,11 @@ impl GpuDepth {
             height,
             values: raw.chunks_exact(2).map(|v| v[0].exp()).collect(),
         })
+    }
+}
+
+impl OnDevice for GpuDepth {
+    fn lost(&self) -> bool {
+        self.lock().map_or(true, |p| p.net.lost())
     }
 }

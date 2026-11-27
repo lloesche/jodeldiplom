@@ -8,10 +8,11 @@
 //! blocks (attention and feed-forward across the bands of each frame, then
 //! across the frames of each band, a convolution halving the bands), the
 //! projection, six transformer layers, the final RMSNorm and the head.
-//! The matrix multiply, RMSNorm and rotary kernels are the separator's
-//! (`kernels.wgsl`, in the beat network's modes); the rest are in
-//! `net.wgsl`. The process keeps one ([`GpuNetwork::shared`]), set up when
-//! first needed and again when its device is lost (`engine::Kept`).
+//! The matrix multiply, RMSNorm, rotary, transpose and GELU kernels are
+//! the shared ones (`shared.wgsl`, in the beat network's modes); the rest
+//! are in `net.wgsl`. The process keeps one ([`GpuNetwork::shared`]), set
+//! up when first needed and again when its device is lost
+//! (`engine::KeptNet`).
 
 use std::sync::{Arc, OnceLock};
 
@@ -20,8 +21,8 @@ use jodel_rhythm::net::{NetRunner, Network, BLOCKS, DIM, LAYERS, PIECE_FRAMES, S
 use jodel_rhythm::nn::layers::HEAD;
 
 use crate::engine::{
-    self, buffers_footprint, guarded, kernels_source, params, rotary, spread, Access, After,
-    Angles, Kept, Kernels, Model, Mul, OnDevice, Program, SetUp,
+    self, buffers_footprint, params, rotary, shared_source, spread, Access, Angles, Input, KeptNet,
+    Kernels, Model, ModelOp, Output, PackedNet, Program, Tiled, TiledMul, PARAM_WORDS_BYTES,
 };
 use crate::pace::{self, Pieces};
 use crate::packer::Named;
@@ -54,7 +55,7 @@ impl Kernels for Kernel {
         Kernel::Flatten,
         Kernel::Attention,
     ];
-    const PARAM_BYTES: u64 = 48;
+    const PARAM_BYTES: u64 = PARAM_WORDS_BYTES;
     const EXTRA: &'static [Access] = &[];
 
     fn entry(self) -> &'static str {
@@ -65,8 +66,8 @@ impl Kernels for Kernel {
             Kernel::In => "net_in",
             Kernel::Patches => "net_patches",
             Kernel::AffineGelu => "net_affine_gelu",
-            Kernel::Gelu => "net_gelu",
-            Kernel::Transpose => "net_transpose",
+            Kernel::Gelu => "gelu_in_place",
+            Kernel::Transpose => "transpose",
             Kernel::Flatten => "net_flatten",
             Kernel::Attention => "net_attention",
         }
@@ -98,7 +99,10 @@ fn pack() -> Result<Named, String> {
 }
 
 /// One dispatch.
-type Op = engine::Op<Kernel, [Buf; 3], 12>;
+type Op = ModelOp<Kernel, Buf>;
+
+/// The network on its device.
+type Net = PackedNet<Kernel, Buf>;
 
 /// `dst` (+)= `from` · the weights `w` (+ the bias `bias`), `m` rows of `k`
 /// to `n`, each matrix whole.
@@ -107,9 +111,11 @@ fn matmul(
     (from, to): (Buf, Buf),
     (m, n, k): (usize, usize, usize),
     (w, bias): (usize, Option<usize>),
-    after: After,
+    after: Tiled,
 ) {
-    ops.push(Mul::dense(from, to, (m, n, k), w, bias, after).tiled(Kernel::Matmul, Buf::Weights));
+    ops.push(
+        TiledMul::dense(from, to, (m, n, k), w, bias, after).tiled(Kernel::Matmul, Buf::Weights),
+    );
 }
 
 /// The network's RMSNorm (its mode 1) of `rows` rows of `dim` from `x` to
@@ -141,14 +147,14 @@ fn attention(
         (Buf::Normed, Buf::Qkv),
         (tokens, 3 * dim, dim),
         (at("qkv.w"), None),
-        After::Store,
+        Tiled::Store,
     );
     matmul(
         ops,
         (Buf::Normed, Buf::Gates),
         (tokens, heads, dim),
         (at("gates.w"), Some(at("gates.b"))),
-        After::Store,
+        Tiled::Store,
     );
     for col in [0, dim] {
         ops.push(Op {
@@ -169,7 +175,7 @@ fn attention(
         (Buf::Attended, x),
         (tokens, dim, dim),
         (at("out.w"), None),
-        After::Add,
+        Tiled::Add,
     );
 }
 
@@ -182,7 +188,7 @@ fn feed_forward(ops: &mut Vec<Op>, w: &Named, name: &str, x: Buf, (tokens, dim):
         (Buf::Normed, Buf::Hidden),
         (tokens, 4 * dim, dim),
         (at("up.w"), Some(at("up.b"))),
-        After::Store,
+        Tiled::Store,
     );
     let count = tokens * 4 * dim;
     ops.push(Op {
@@ -196,7 +202,7 @@ fn feed_forward(ops: &mut Vec<Op>, w: &Named, name: &str, x: Buf, (tokens, dim):
         (Buf::Hidden, x),
         (tokens, dim, 4 * dim),
         (at("down.w"), Some(at("down.b"))),
-        After::Add,
+        Tiled::Add,
     );
 }
 
@@ -235,7 +241,7 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
         (Buf::Patches, Buf::Y),
         (bands * f, STEM, 12),
         (w.at("stem.w"), None),
-        After::Store,
+        Tiled::Store,
     );
     elementwise(
         &mut ops,
@@ -294,7 +300,7 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
             (Buf::Patches, other),
             (out_bands * f, 2 * c, 6 * c),
             (w.at(&format!("{b}.conv.w")), None),
-            After::Store,
+            Tiled::Store,
         );
         let count = out_bands * f * 2 * c;
         elementwise(
@@ -326,7 +332,7 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
         (Buf::Patches, other),
         (f, DIM, c * bands),
         (w.at("project.w"), Some(w.at("project.b"))),
-        After::Store,
+        Tiled::Store,
     );
     for l in 0..LAYERS {
         attention(&mut ops, w, &format!("layer{l}.attn"), other, (f, f, DIM));
@@ -338,38 +344,21 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
         (Buf::Normed, Buf::Logits),
         (f, 2, DIM),
         (w.at("head.w"), Some(w.at("head.b"))),
-        After::Store,
+        Tiled::Store,
     );
     ops
 }
 
-/// The network on its device, and where its weights are there.
-struct Inner {
-    model: Model<Kernel, Buf>,
-    weights: Named,
-}
-
-impl OnDevice for Inner {
-    fn lost(&self) -> bool {
-        self.model.program.lost()
-    }
-}
-
 /// The beat network on the GPU.
 pub struct GpuNetwork {
-    kept: Arc<Kept<Inner>>,
-    /// What its runs cost, read without waiting for one (the same count
-    /// across setups).
-    counts: pace::Counts,
+    net: KeptNet<Kernel, Buf>,
 }
 
-/// What sets the network up on the best GPU, its runs paced as `pieces`
-/// say.
-fn set_up(pieces: Pieces) -> SetUp<Inner> {
-    Box::new(move || {
-        crate::device::open("jodel-gpu network", |device, queue, limits| {
-            Inner::new(device, queue, limits, pieces.clone())
-        })
+/// The network set up on the best GPU (with its name), its runs paced as
+/// `pieces` say.
+fn open(pieces: Pieces) -> Result<(Net, String), String> {
+    crate::device::open("jodel-gpu network", |device, queue, limits| {
+        on(device, queue, limits, pieces)
     })
 }
 
@@ -413,7 +402,7 @@ impl GpuNetwork {
     /// it up fails (it is tried again a while later).
     pub fn shared() -> Option<&'static GpuNetwork> {
         let net = GpuNetwork::kept_shared();
-        net.kept.usable().then_some(net)
+        net.net.usable().then_some(net)
     }
 
     /// The shared network as a scheduler keeps it, set up or not.
@@ -424,33 +413,27 @@ impl GpuNetwork {
     /// The network as a scheduler keeps it: its footprint, and its
     /// release.
     pub fn resident(&self) -> Arc<dyn Resident> {
-        Arc::clone(&self.kept) as Arc<dyn Resident>
+        self.net.resident()
     }
 
     /// The shared network, set up or not.
     fn kept_shared() -> &'static GpuNetwork {
         static NET: OnceLock<GpuNetwork> = OnceLock::new();
-        NET.get_or_init(|| {
-            let pieces = Pieces::resting();
-            GpuNetwork {
-                counts: pieces.counts(),
-                kept: Arc::new(Kept::new(footprint, set_up(pieces))),
-            }
+        NET.get_or_init(|| GpuNetwork {
+            net: KeptNet::new(Pieces::resting(), footprint, open),
         })
     }
 
     /// What its GPU work cost so far ([`pace::Tally::since`] an earlier
     /// tally says what was done between), without waiting for its work.
     pub fn tally(&self) -> pace::Tally {
-        self.counts.tally()
+        self.net.tally()
     }
 
     /// Sets up a network of its own on the best GPU.
     pub fn new() -> Result<GpuNetwork, String> {
-        let pieces = Pieces::resting();
         Ok(GpuNetwork {
-            counts: pieces.counts(),
-            kept: Arc::new(Kept::set_up_now(footprint, set_up(pieces))?),
+            net: KeptNet::set_up_now(Pieces::resting(), footprint, open)?,
         })
     }
 }
@@ -489,53 +472,59 @@ pub(crate) fn report() -> Vec<String> {
 
 impl NetRunner for GpuNetwork {
     fn name(&self) -> String {
-        self.kept.name()
+        self.net.name()
     }
 
     fn forward(&self, spect: &[f32], frames: usize) -> Result<(Vec<f32>, Vec<f32>), String> {
         if frames == 0 || frames > PIECE_FRAMES || spect.len() != frames * BANDS {
             return Err(format!("{frames} frames, {} values", spect.len()));
         }
-        self.kept.run(|inner| {
-            let device = inner.model.program.device.clone();
-            guarded(&device, || inner.run(frames, spect))
-        })
+        self.net.run(|net| net.run(frames, spect))
     }
 }
 
-impl Inner {
-    fn new(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        limits: &wgpu::Limits,
-        pieces: Pieces,
-    ) -> Result<Inner, String> {
-        let mut weights = pack()?;
-        let values = weights.take_values();
-        let f = PIECE_FRAMES;
-        let program = Program::new(
-            device,
-            queue,
-            limits,
-            "jodel-gpu network",
-            &kernels_source(&[include_str!("net.wgsl")]),
-        );
-        let model = Model::new(program, &sizes(values.len()), READ, pieces)?;
-        model.write(Buf::Weights, &values);
-        model.write(Buf::Table, &rotary(0..f, engine::HEAD_32, Angles::F32));
-        Ok(Inner { model, weights })
-    }
+/// The network on a device, its runs paced as `pieces` say.
+fn on(
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    limits: &wgpu::Limits,
+    pieces: Pieces,
+) -> Result<Net, String> {
+    let mut weights = pack()?;
+    let values = weights.take_values();
+    let f = PIECE_FRAMES;
+    let program = Program::new(
+        device,
+        queue,
+        limits,
+        "jodel-gpu network",
+        &shared_source(&[include_str!("net.wgsl")]),
+    );
+    let model = Model::new(program, &sizes(values.len()), READ, pieces)?;
+    model.write(Buf::Weights, &values);
+    model.write(Buf::Table, &rotary(0..f, engine::HEAD_32, Angles::F32));
+    Ok(PackedNet { model, weights })
+}
 
+impl Net {
     /// One piece through its plan (recorded on first use): the beat and
     /// downbeat logits.
     fn run(&mut self, frames: usize, spect: &[f32]) -> Result<(Vec<f32>, Vec<f32>), String> {
-        self.model.write(Buf::Spect, spect);
         let weights = &self.weights;
         let out = self.model.run(
             frames,
             || plan(weights, frames),
+            &[Input {
+                buf: Buf::Spect,
+                at: 0,
+                values: spect,
+            }],
             |_, _| {},
-            (Buf::Logits, 2 * frames),
+            Output {
+                buf: Buf::Logits,
+                first: 0,
+                count: 2 * frames,
+            },
         )?;
         let downbeat: Vec<f32> = out.chunks(2).map(|o| o[1]).collect();
         let beat = out.chunks(2).map(|o| o[0] + o[1]).collect();
@@ -560,9 +549,9 @@ mod tests {
             .collect();
         let before = network.forward(&spect, 300).unwrap();
         network
-            .kept
-            .run(|inner| {
-                inner.model.program.device.destroy();
+            .net
+            .run(|net| {
+                net.model.program.device.destroy();
                 Ok(())
             })
             .unwrap();

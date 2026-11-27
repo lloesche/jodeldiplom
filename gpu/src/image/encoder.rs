@@ -19,6 +19,7 @@ use super::gpu::{Loaded, Made};
 use super::plan::{At, Buf, Mat, Plan, Rope, Tail};
 use super::text::{Tokenizer, TOKENS};
 use super::weights::{Fp8, Packing, Source};
+use crate::engine::{Input, Output};
 use crate::{Footprint, Precision, Resident};
 
 const DIM: usize = 2560;
@@ -164,12 +165,6 @@ impl TextEncoder {
         &self.loaded.gpu.name
     }
 
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is loaded instead.
-    pub fn is_lost(&self) -> bool {
-        self.loaded.lost()
-    }
-
     /// What it holds on the GPU now: its weights, and its plan's buffers
     /// (made on the first prompt, kept until released).
     pub fn held(&self) -> Footprint {
@@ -212,18 +207,24 @@ impl TextEncoder {
             *slot = Some((real, slots, Made::new(&self.loaded, &p, TOKENS * WIDTH)?));
         }
         let (_, slots, made) = slot.as_mut().expect("made");
-        let values = made.run(
-            &self.loaded,
-            &[(slots.x, 0, &x)],
-            (slots.out, 0, TOKENS * WIDTH),
-        )?;
+        let input = Input {
+            buf: slots.x,
+            at: 0,
+            values: &x,
+        };
+        let output = Output {
+            buf: slots.out,
+            first: 0,
+            count: TOKENS * WIDTH,
+        };
+        let values = made.run(&self.loaded, &[input], output)?;
         Ok(Embeds { values })
     }
 }
 
 impl crate::OnDevice for TextEncoder {
     fn lost(&self) -> bool {
-        self.is_lost()
+        self.loaded.lost()
     }
 }
 

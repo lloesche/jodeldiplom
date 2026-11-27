@@ -62,8 +62,7 @@ fn layernorm_mod(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation
 // src's stride, n4 dst's offset, n5 the tokens of dst's layout, n6 the
 // first token's place in it, n7 the norm's weights (or 0xffffffff), n8 the
 // rotation (0 none, 1 pairs, 2 halves), n9 the table's offset, n10
-// epsilon's bits.
-var<workgroup> qk_red: array<f32, 64>;
+// epsilon's bits. The norm's sum over the workgroup is common.wgsl's sum64.
 
 @compute @workgroup_size(64)
 fn qk_prep(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -76,15 +75,7 @@ fn qk_prep(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
     var a = src_at(base + i0);
     var b = src_at(base + i1);
     if (p.n7 != 0xffffffffu) {
-        qk_red[li] = a * a + b * b;
-        workgroupBarrier();
-        for (var s = 32u; s > 0u; s >>= 1u) {
-            if (li < s) {
-                qk_red[li] += qk_red[li + s];
-            }
-            workgroupBarrier();
-        }
-        let r = inverseSqrt(qk_red[0] / 128.0 + bitcast<f32>(p.n10));
+        let r = inverseSqrt(sum64(li, a * a + b * b) / 128.0 + bitcast<f32>(p.n10));
         a = a * r * small[p.n7 + i0];
         b = b * r * small[p.n7 + i1];
     }

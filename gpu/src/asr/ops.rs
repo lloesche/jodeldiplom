@@ -8,7 +8,7 @@
 use super::pack::Matrix;
 use super::{Buf, Kernel, VOCAB};
 pub(super) use crate::engine::After;
-use crate::engine::{self, params, spread, ARGMAX, SWIGLU};
+use crate::engine::{self, params, spread, ARGMAX, PARAM_WORDS, SWIGLU};
 
 /// Rounds of eight columns a workgroup of the head (`qa_rows`).
 const HEAD_ROUNDS: usize = 8;
@@ -23,7 +23,7 @@ const STAGED: usize = 1024;
 
 /// One dispatch: its buffers src, aux, dst, and the second dst of a kernel
 /// that writes two.
-pub(super) type Op = engine::Op<Kernel, [Buf; 4], 12>;
+pub(super) type Op = engine::Op<Kernel, [Buf; 4], PARAM_WORDS>;
 
 /// A matrix multiply of the recogniser's: its 4-bit, 8-bit or half
 /// matrices.

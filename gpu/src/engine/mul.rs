@@ -1,11 +1,12 @@
 //! A matrix multiply as it is planned ([`Mul`]): the rows it reads, the
 //! rows it writes, the weights, and what becomes of the products. Every
 //! network's matrix kernels take the same first ten numbers
-//! ([`Mul::numbers`]): the separator's tiled one (`kernels.wgsl`, which
-//! the beat network and the speech model use too, [`Mul::tiled`]) and the
-//! recogniser's (`asr/ops.rs`).
+//! ([`Mul::numbers`]): the shared tiled one (`shared.wgsl`'s `matmul`, the
+//! separator's, the beat network's and the speech model's: [`Mul::tiled`],
+//! what it does with the products a [`Tiled`]) and the recogniser's
+//! (`asr/ops.rs`, an [`After`]).
 
-use super::{params, Op};
+use super::{params, ModelOp};
 
 /// The kernels' flags: the bias added, the products added to what is
 /// there, GELU taken, the gated products, the head's largest.
@@ -54,6 +55,28 @@ impl After {
     }
 }
 
+/// What the shared tiled matrix multiply does with the products (after
+/// the bias): those of [`After`] it has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tiled {
+    /// Written.
+    Store,
+    /// Added to what is there.
+    Add,
+    /// The columns are gates and ups in pairs: [`After::GeGlu`].
+    GeGlu,
+}
+
+impl From<Tiled> for After {
+    fn from(t: Tiled) -> After {
+        match t {
+            Tiled::Store => After::Store,
+            Tiled::Add => After::Add,
+            Tiled::GeGlu => After::GeGlu,
+        }
+    }
+}
+
 /// Where a matrix's weights are: their offset in the weights buffer, and
 /// the kernels' flag for how they are held (0: f32s, `[in][out]`).
 pub(crate) trait Matrix: Copy {
@@ -79,10 +102,10 @@ pub(crate) const MUL_NUMBERS: [&str; 10] =
 
 /// A matrix multiply: `to`'s rows (`m × n`, from its offset, its stride
 /// apart) (+)= `from`'s rows (`k` values from its offset, its stride
-/// apart) times `w` (+ the bias at `bias`), as `after` says. `B` names
-/// the buffers.
+/// apart) times `w` (+ the bias at `bias`), as `after` says (`A`: what
+/// its kernel does with the products). `B` names the buffers.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Mul<B, W = usize> {
+pub(crate) struct Mul<B, W = usize, A = After> {
     pub(crate) from: (B, usize, usize),
     pub(crate) to: (B, usize, usize),
     pub(crate) m: usize,
@@ -90,10 +113,10 @@ pub(crate) struct Mul<B, W = usize> {
     pub(crate) k: usize,
     pub(crate) w: W,
     pub(crate) bias: Option<usize>,
-    pub(crate) after: After,
+    pub(crate) after: A,
 }
 
-impl<B: Copy, W: Matrix> Mul<B, W> {
+impl<B: Copy, W: Matrix, A: Copy + Into<After>> Mul<B, W, A> {
     /// `m` rows of `k` values from the start of `from` through `w` (`n`
     /// columns) to the start of `to`.
     pub(crate) fn dense(
@@ -102,8 +125,8 @@ impl<B: Copy, W: Matrix> Mul<B, W> {
         (m, n, k): (usize, usize, usize),
         w: W,
         bias: Option<usize>,
-        after: After,
-    ) -> Mul<B, W> {
+        after: A,
+    ) -> Mul<B, W, A> {
         Mul {
             from: (from, 0, k),
             to: (to, 0, n),
@@ -119,7 +142,7 @@ impl<B: Copy, W: Matrix> Mul<B, W> {
     /// Its flags: the bias, what comes after, how the weights are held.
     pub(crate) fn flags(&self) -> usize {
         let bias = if self.bias.is_some() { BIAS } else { 0 };
-        self.w.flag() | bias | self.after.flag()
+        self.w.flag() | bias | self.after.into().flag()
     }
 
     /// The numbers every matrix kernel takes first ([`MUL_NUMBERS`]): `m`,
@@ -141,16 +164,17 @@ impl<B: Copy, W: Matrix> Mul<B, W> {
             self.flags(),
         ]
     }
+}
 
-    /// The tiled matrix multiply (`matmul` of `kernels.wgsl`, tiles of 128
-    /// rows × 64 columns) as `kernel`, the weights in `weights`; it writes,
-    /// adds or takes the GELU-gated products.
-    pub(crate) fn tiled<K>(&self, kernel: K, weights: B) -> Op<K, [B; 3], 12> {
-        assert!(
-            matches!(self.after, After::Store | After::Add | After::GeGlu),
-            "the tiled matrix multiply writes, adds or gates"
-        );
-        Op {
+/// A matrix multiply through the shared tiled kernel ([`Mul::tiled`]),
+/// its weights f32s.
+pub(crate) type TiledMul<B> = Mul<B, usize, Tiled>;
+
+impl<B: Copy> TiledMul<B> {
+    /// The shared tiled matrix multiply (`matmul` of `shared.wgsl`, tiles
+    /// of 128 rows × 64 columns) as `kernel`, the weights in `weights`.
+    pub(crate) fn tiled<K>(&self, kernel: K, weights: B) -> ModelOp<K, B> {
+        ModelOp {
             kernel,
             buffers: [self.from.0, weights, self.to.0],
             params: params(&self.numbers()),

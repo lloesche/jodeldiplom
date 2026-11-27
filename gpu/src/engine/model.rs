@@ -4,9 +4,8 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::time::Duration;
 
-use super::{bytes, Kernels, Op, Program, Recorded};
+use super::{bytes, guarded, Input, Kernels, ModelOp, OnDevice, Output, Program, Recorded, Write};
 use crate::pace::Pieces;
 use crate::Footprint;
 
@@ -28,13 +27,20 @@ const PLANS: usize = 8;
 
 /// A network on a device of its own, in buffers made once (`B` names
 /// them), planned once for each input size it sees: a plan's dispatches
-/// recorded when first run, and each run one plan and one read back.
+/// ([`ModelOp`]s) recorded when first run, and each run one plan and one
+/// read back.
 pub(crate) struct Model<K, B> {
     pub(crate) program: Program<K>,
     pub(crate) buffers: HashMap<B, wgpu::Buffer>,
     pub(crate) staging: wgpu::Buffer,
-    plans: HashMap<usize, Recorded<K>>,
+    plans: HashMap<usize, Recorded<K, [B; 3]>>,
     pub(crate) pieces: Pieces,
+}
+
+impl<K: Kernels, B> OnDevice for Model<K, B> {
+    fn lost(&self) -> bool {
+        self.program.lost()
+    }
 }
 
 impl<K: Kernels, B: Copy + Eq + Hash + Debug> Model<K, B> {
@@ -65,11 +71,7 @@ impl<K: Kernels, B: Copy + Eq + Hash + Debug> Model<K, B> {
     }
 
     /// The plan `key`, recorded from `ops` if it is not yet.
-    fn plan(
-        &mut self,
-        key: usize,
-        ops: impl FnOnce() -> Vec<Op<K, [B; 3], 12>>,
-    ) -> Result<(), String> {
+    fn plan(&mut self, key: usize, ops: impl FnOnce() -> Vec<ModelOp<K, B>>) -> Result<(), String> {
         if self.plans.contains_key(&key) {
             return Ok(());
         }
@@ -77,45 +79,36 @@ impl<K: Kernels, B: Copy + Eq + Hash + Debug> Model<K, B> {
             self.plans.clear();
         }
         let buffers = &self.buffers;
-        let recorded = self
-            .program
-            .record(&ops(), |bind: [B; 3]| bind.map(|b| &buffers[&b]).to_vec())?;
+        let recorded = guarded(&self.program.device, || {
+            self.program
+                .record(&ops(), |bind: [B; 3]| bind.map(|b| &buffers[&b]).to_vec())
+        })?;
         self.plans.insert(key, recorded);
         Ok(())
     }
 
-    /// Runs the plan `key` (recorded from `ops` on first use), `prelude`
-    /// before its dispatches: the first `count` f32s of `from`.
+    /// Runs the plan `key` (recorded from `ops` on first use): `inputs`
+    /// written first, `prelude` before its dispatches; then `output` read
+    /// back. A failure on the device is an `Err`.
     pub(crate) fn run(
         &mut self,
         key: usize,
-        ops: impl FnOnce() -> Vec<Op<K, [B; 3], 12>>,
+        ops: impl FnOnce() -> Vec<ModelOp<K, B>>,
+        inputs: &[Input<B>],
         prelude: impl FnOnce(&mut wgpu::CommandEncoder, &HashMap<B, wgpu::Buffer>),
-        (from, count): (B, usize),
+        output: Output<B>,
     ) -> Result<Vec<f32>, String> {
         self.plan(key, ops)?;
-        let plan = &self.plans[&key];
         let buffers = &self.buffers;
+        let buffer = |b: B| &buffers[&b];
+        let writes: Vec<Write> = inputs.iter().map(|i| i.write(buffer)).collect();
+        let read = output.read(buffer, &self.staging);
         self.program.run(
             &mut self.pieces,
-            (&plan.groups, &plan.dispatches),
+            &self.plans[&key],
+            &writes,
             |encoder| prelude(encoder, buffers),
-            Some((&buffers[&from], 0, count)),
-            &self.staging,
+            Some(read),
         )
-    }
-
-    /// The dispatches of the plan `key` that `keep` picks, timed
-    /// ([`Program::time`]); `Err` where it is not planned.
-    pub(crate) fn time(
-        &self,
-        key: usize,
-        keep: &dyn Fn(usize) -> bool,
-    ) -> Result<Duration, String> {
-        let plan = self
-            .plans
-            .get(&key)
-            .ok_or_else(|| format!("no plan for {key}"))?;
-        self.program.time(plan, keep)
     }
 }

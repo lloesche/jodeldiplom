@@ -3,12 +3,14 @@
 //! with the lowest merge rank is merged first (the leftmost of equals),
 //! until no pair merges. The models' tokenisers each make a word's first
 //! ids their own way (Gemma's characters with byte pieces as a fallback,
-//! Qwen's bytes as GPT-2's characters) and merge them here. A text is cut
-//! at its special pieces first ([`Specials`]: the longest that starts at
-//! a byte, found by that byte), and only the text between them merged.
+//! Qwen's bytes as GPT-2's characters, [`byte_chars`]) and merge them
+//! here. A text is cut at its special pieces first ([`Specials`]: the
+//! longest that starts at a byte, found by that byte), and only the text
+//! between them merged. Ids are read back as text by their pieces
+//! ([`Pieces`], the decoding half).
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap};
 
 /// A vocabulary's merges: each mergeable pair of ids, its rank and the id
 /// it makes.
@@ -97,6 +99,85 @@ impl Merges {
     }
 }
 
+/// GPT-2's table of the bytes as printable characters, in which Qwen's
+/// byte-level vocabulary spells its pieces: the printable Latin-1 bytes as
+/// themselves, the others from U+0100 on, in order.
+pub fn byte_chars() -> [char; 256] {
+    let printable =
+        |b: u32| (33..=126).contains(&b) || (161..=172).contains(&b) || (174..=255).contains(&b);
+    let mut out = ['\0'; 256];
+    let mut next = 256;
+    for b in 0..256u32 {
+        out[b as usize] = if printable(b) {
+            char::from_u32(b).unwrap_or('\0')
+        } else {
+            next += 1;
+            char::from_u32(next - 1).unwrap_or('\0')
+        };
+    }
+    out
+}
+
+/// A vocabulary's pieces by id, for reading ids back as text: each one's
+/// bytes, and whether it is special (left out of text).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Pieces {
+    bytes: Vec<Vec<u8>>,
+    special: Vec<bool>,
+}
+
+impl Pieces {
+    /// Piece `id` as `bytes`, special or not (any ids before it that are
+    /// not there yet empty).
+    pub fn put(&mut self, id: usize, bytes: Vec<u8>, special: bool) {
+        if self.bytes.len() <= id {
+            self.bytes.resize(id + 1, Vec::new());
+            self.special.resize(id + 1, false);
+        }
+        self.bytes[id] = bytes;
+        self.special[id] = special;
+    }
+
+    /// Each piece in the order of the ids: its bytes, and whether it is
+    /// special.
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8], bool)> {
+        self.bytes
+            .iter()
+            .map(Vec::as_slice)
+            .zip(self.special.iter().copied())
+    }
+
+    /// How many ids it has pieces for.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Whether it has none.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// The bytes piece `id` adds to text: none for a special one or an id
+    /// past the vocabulary.
+    pub fn text(&self, id: u32) -> &[u8] {
+        let id = id as usize;
+        match self.bytes.get(id) {
+            Some(bytes) if !self.special[id] => bytes,
+            _ => &[],
+        }
+    }
+
+    /// The text of `ids`: their pieces' bytes ([`Pieces::text`]), those
+    /// that are not UTF-8 replaced.
+    pub fn decode(&self, ids: &[u32]) -> String {
+        let mut out = Vec::new();
+        for &id in ids {
+            out.extend_from_slice(self.text(id));
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+}
+
 /// A stretch of text cut at its special tokens ([`Specials::split`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part<'t> {
@@ -106,23 +187,18 @@ pub enum Part<'t> {
     Special(u32),
 }
 
-/// A vocabulary's special tokens: found in text where they stand (the
-/// longest of those starting at the first place one does), and known by
-/// id.
+/// A vocabulary's special tokens, found in text where they stand (the
+/// longest of those starting at the first place one does).
 pub struct Specials {
     /// The specials by their first byte, the longest first.
     by_first: Vec<Vec<(Vec<u8>, u32)>>,
-    /// Their ids (as many as there are specials, whatever the ids).
-    is: HashSet<u32>,
 }
 
 impl Specials {
     /// The specials `list` (each its text and id).
     pub fn new(list: Vec<(Vec<u8>, u32)>) -> Specials {
         let mut by_first = vec![Vec::new(); 256];
-        let mut is = HashSet::with_capacity(list.len());
         for (text, id) in list {
-            is.insert(id);
             if let Some(&first) = text.first() {
                 by_first[usize::from(first)].push((text, id));
             }
@@ -130,12 +206,7 @@ impl Specials {
         for list in &mut by_first {
             list.sort_by_key(|(t, _)| Reverse(t.len()));
         }
-        Specials { by_first, is }
-    }
-
-    /// Whether `id` is a special.
-    pub fn is_special(&self, id: u32) -> bool {
-        self.is.contains(&id)
+        Specials { by_first }
     }
 
     /// `text` cut at its specials, in order (no empty text between them).
@@ -171,6 +242,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_byte_table_spells_every_byte_once() {
+        let chars = byte_chars();
+        let distinct: std::collections::HashSet<char> = chars.iter().copied().collect();
+        assert_eq!(distinct.len(), 256);
+        assert_eq!(chars[usize::from(b'A')], 'A');
+        assert_eq!(chars[usize::from(b' ')], '\u{120}');
+        assert_eq!(chars[usize::from(b'\n')], '\u{10a}');
+    }
+
+    #[test]
+    fn pieces_read_ids_back_without_the_special_ones() {
+        let mut p = Pieces::default();
+        p.put(2, b"!".to_vec(), false);
+        p.put(0, b"Hi".to_vec(), false);
+        p.put(3, b"<end>".to_vec(), true);
+        assert_eq!(p.decode(&[0, 2, 3, 1, 9]), "Hi!");
+        assert_eq!((p.len(), p.text(3), p.text(2)), (4, &b""[..], &b"!"[..]));
+        let listed: Vec<(&[u8], bool)> = p.iter().collect();
+        assert_eq!(listed[1], (&b""[..], false));
+        assert_eq!(listed[3], (&b"<end>"[..], true));
+    }
+
+    #[test]
     fn specials_cut_text_the_longest_first() {
         let s = Specials::new(vec![
             (b"<a>".to_vec(), 7),
@@ -188,7 +282,6 @@ mod tests {
             ]
         );
         assert_eq!(s.split("é<"), [Part::Text("é<")]);
-        assert!(s.is_special(9) && !s.is_special(3) && !s.is_special(1000));
     }
 
     #[test]

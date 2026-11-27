@@ -41,7 +41,7 @@ struct Vision {
 
 impl OnDevice for Vision {
     fn lost(&self) -> bool {
-        self.depth.is_lost() || self.matte.is_lost()
+        self.depth.lost() || self.matte.lost()
     }
 }
 

@@ -60,7 +60,8 @@ use self::model::Layout;
 pub use self::plan::MOST_CONTEXT;
 use self::plan::{Bind, ContextPlan, Plan, CHUNK};
 pub use self::tokens::{Stream, Tokenizer};
-use crate::engine::{self, bytes, guarded, Dispatch, Program, Recorded};
+use crate::engine::{bytes, using, InFlight, Program, Read, Recorded};
+use crate::pace::{Paces, Phase};
 use crate::{Footprint, Precision, Resident, Turned};
 use jodel_tensors::gguf::Gguf;
 
@@ -234,10 +235,14 @@ impl Gemma {
         }
     }
 
-    fn lock(&self) -> Result<MutexGuard<'_, Inner>, String> {
-        self.inner
-            .lock()
-            .map_err(|_| "the GPU language model failed before".to_owned())
+    /// `work` on the model, a failure on its device an `Err` ([`using`]).
+    fn using<R>(&self, work: impl FnOnce(&mut Inner) -> Result<R, String>) -> Result<R, String> {
+        using(
+            &self.inner,
+            "the GPU language model failed before",
+            |inner| &inner.program,
+            work,
+        )
     }
 
     /// The model for what it says of itself, even after a use failed.
@@ -249,13 +254,15 @@ impl Gemma {
     /// now (any room it had goes first): [`Gemma::planned`]'s working
     /// bytes, less a prompt's dispatches (recorded as it runs).
     pub fn reserve(&self, context: usize) -> Result<(), String> {
-        let mut inner = self.lock()?;
-        inner.context = None;
-        let device = inner.program.device.clone();
-        let made = guarded(&device, || inner.reserve(context));
+        let made = self.using(|inner| {
+            inner.context = None;
+            inner.reserve(context)
+        });
         if made.is_err() {
             // No room, and none to make again: the next use asks for one.
-            inner.reserved = None;
+            // Out here, as a failure on the device is told only once the
+            // work is done (`guarded`), not inside it.
+            self.peek().reserved = None;
         }
         made
     }
@@ -280,11 +287,7 @@ impl Gemma {
         most: usize,
         seen: impl FnMut(&[u32]),
     ) -> Result<Generated, String> {
-        let mut inner = self.lock()?;
-        let device = inner.program.device.clone();
-        guarded(&device, || {
-            inner.generate(prompt, (most, self.tokens.stop()), seen)
-        })
+        self.using(|inner| inner.generate(prompt, (most, self.tokens.stop()), seen))
     }
 
     /// [`Gemma::generate`]'s answer as text: `seen` is shown each piece as
@@ -316,12 +319,10 @@ impl Gemma {
     /// The logits after `prompt` (capped, as the head writes them), for
     /// checks.
     pub fn logits(&self, prompt: &[u32]) -> Result<Vec<f32>, String> {
-        let mut inner = self.lock()?;
-        let device = inner.program.device.clone();
-        guarded(&device, || {
+        self.using(|inner| {
             inner.ready()?;
-            let running = inner.prompt(prompt, Read::Logits)?;
-            inner.read(running)
+            let in_flight = inner.prompt(prompt, Wanted::Logits)?;
+            inner.read(in_flight, Phase::Prompt)
         })
     }
 }
@@ -337,12 +338,6 @@ impl Gemma {
         }
     }
 
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is opened instead.
-    pub fn is_lost(&self) -> bool {
-        self.peek().program.lost()
-    }
-
     /// The GPU's name.
     pub fn gpu_name(&self) -> &str {
         &self.name
@@ -351,7 +346,7 @@ impl Gemma {
 
 impl crate::OnDevice for Gemma {
     fn lost(&self) -> bool {
-        self.is_lost()
+        self.peek().program.lost()
     }
 }
 
@@ -373,14 +368,12 @@ impl Resident for Gemma {
     }
 }
 
-/// The room for a context: its plan, its buffers, the step recorded, the
-/// reads.
+/// The room for a context: its plan, its buffers, the steps recorded (a
+/// step's dispatches [`STEPS_A_READ`] times), the reads.
 struct Context {
     plan: ContextPlan,
     buffers: HashMap<Buf, wgpu::Buffer>,
-    step: Recorded<Kernel>,
-    /// The step's dispatches [`STEPS_A_READ`] times.
-    steps: Vec<Dispatch<Kernel>>,
+    steps: Recorded<Kernel, Bind>,
     staging: [wgpu::Buffer; 2],
     bytes: u64,
 }
@@ -396,32 +389,14 @@ struct Inner {
     /// The context last reserved, and its room at its most (made again by
     /// a use after it was let go).
     reserved: Option<(usize, u64)>,
-    prompt_pieces: crate::pace::Pieces,
-    step_pieces: crate::pace::Pieces,
+    paces: Paces,
 }
 
 /// What a prompt's run reads back: the token chosen, or the logits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Read {
+enum Wanted {
     Token,
     Logits,
-}
-
-/// What a run was: a prompt's, or a batch of steps'.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Phase {
-    Prompt,
-    Steps,
-}
-
-/// A run made and maybe still running: its last submission (`None`:
-/// done), the staging buffer it reads into, how many words, and what it
-/// was.
-struct Running {
-    index: Option<wgpu::SubmissionIndex>,
-    staging: usize,
-    count: usize,
-    phase: Phase,
 }
 
 /// Whether the matrices take their rows at 8 bits with `precision` on
@@ -462,8 +437,7 @@ impl Inner {
             q8,
             context: None,
             reserved: None,
-            prompt_pieces: crate::pace::Pieces::resting(),
-            step_pieces: crate::pace::Pieces::resting(),
+            paces: Paces::resting(),
         })
     }
 
@@ -484,16 +458,14 @@ impl Inner {
         self.program
             .queue
             .write_buffer(&buffers[&Buf::Rope], 0, &bytes(&room.sizes.rope()));
-        let step = self.record(&buffers, &self.plan(&room).step())?;
-        let steps = (0..STEPS_A_READ)
-            .flat_map(|_| step.dispatches.iter().copied())
-            .collect();
+        let mut steps = self.record(&buffers, &self.plan(&room).step())?;
+        steps.repeat(STEPS_A_READ);
         let staging = [0, 1].map(|_| self.program.staging(plan::STAGING_WORDS));
         let bytes = room.held_bytes();
         debug_assert_eq!(
             bytes,
             buffers.values().map(wgpu::Buffer::size).sum::<u64>()
-                + step.dispatches.len() as u64 * engine::PARAM_STRIDE
+                + steps.params_bytes()
                 + staging.iter().map(wgpu::Buffer::size).sum::<u64>(),
             "the room as planned"
         );
@@ -501,7 +473,6 @@ impl Inner {
         self.context = Some(Context {
             plan: room,
             buffers,
-            step,
             steps,
             staging,
             bytes,
@@ -523,7 +494,7 @@ impl Inner {
         &self,
         buffers: &HashMap<Buf, wgpu::Buffer>,
         ops: &[plan::Op],
-    ) -> Result<Recorded<Kernel>, String> {
+    ) -> Result<Recorded<Kernel, Bind>, String> {
         let get = |b: Buf| self.weights.get(&b).unwrap_or_else(|| &buffers[&b]);
         self.program.record(ops, |bind: Bind| {
             vec![
@@ -538,7 +509,7 @@ impl Inner {
 
     /// `prompt` through the decoder, its first token chosen; it reads
     /// back what `read` says.
-    fn prompt(&mut self, prompt: &[u32], read: Read) -> Result<Running, String> {
+    fn prompt(&mut self, prompt: &[u32], wanted: Wanted) -> Result<InFlight, String> {
         let context = room(&self.context)?;
         let n = prompt.len();
         if n == 0 || n > context.plan.context {
@@ -563,65 +534,37 @@ impl Inner {
             ops.extend(plan.chunk(first, rows, first + rows == n));
         }
         let recorded = self.record(&context.buffers, &ops)?;
-        let (from, first, count) = match read {
-            Read::Logits => (&context.buffers[&Buf::Logits], 0, VOCAB),
-            Read::Token => (ints, at + n, 1),
+        let (from, first, count) = match wanted {
+            Wanted::Logits => (&context.buffers[&Buf::Logits], 0, VOCAB),
+            Wanted::Token => (ints, at + n, 1),
         };
-        let index = self.program.submit(
-            &mut self.prompt_pieces,
-            (&recorded.groups, &recorded.dispatches),
-            |_| {},
-            Some((from, first, count)),
-            &context.staging[0],
-            true,
-        )?;
-        Ok(Running {
-            index,
-            staging: 0,
+        let read = Read {
+            from,
+            first,
             count,
-            phase: Phase::Prompt,
-        })
+            staging: &context.staging[0],
+        };
+        let pieces = self.paces.of(Phase::Prompt);
+        self.program.run_left(pieces, &recorded, Some(read))
     }
 
     /// [`STEPS_A_READ`] steps from the decoder's position `pos` (the
     /// tokens after it read back into the staging buffer `staging`).
-    fn steps(&mut self, pos: usize, staging: usize) -> Result<Running, String> {
+    fn steps(&mut self, pos: usize, staging: usize) -> Result<InFlight, String> {
         let context = room(&self.context)?;
-        let index = self.program.submit(
-            &mut self.step_pieces,
-            (&context.step.groups, &context.steps),
-            |_| {},
-            Some((
-                &context.buffers[&Buf::Ints],
-                kernels::TOKENS + pos + 1,
-                STEPS_A_READ,
-            )),
-            &context.staging[staging],
-            true,
-        )?;
-        Ok(Running {
-            index,
-            staging,
+        let read = Read {
+            from: &context.buffers[&Buf::Ints],
+            first: kernels::TOKENS + pos + 1,
             count: STEPS_A_READ,
-            phase: Phase::Steps,
-        })
+            staging: &context.staging[staging],
+        };
+        let pieces = self.paces.of(Phase::Steps);
+        self.program.run_left(pieces, &context.steps, Some(read))
     }
 
-    /// What `running` read, once it is done.
-    fn read(&mut self, running: Running) -> Result<Vec<f32>, String> {
-        if let Some(index) = running.index {
-            let pieces = match running.phase {
-                Phase::Prompt => &mut self.prompt_pieces,
-                Phase::Steps => &mut self.step_pieces,
-            };
-            crate::pace::finish(pieces, &self.program.device, index)?;
-        }
-        let context = room(&self.context)?;
-        crate::device::read_back(
-            &self.program.device,
-            &context.staging[running.staging],
-            running.count,
-        )
+    /// What `in_flight` (a run of `phase`) read, once it is done.
+    fn read(&mut self, in_flight: InFlight, phase: Phase) -> Result<Vec<f32>, String> {
+        self.program.finish(in_flight, self.paces.of(phase))
     }
 
     /// [`Gemma::generate`]'s work: at most `most` tokens, until one of
@@ -641,7 +584,7 @@ impl Inner {
             ));
         }
         let started = Instant::now();
-        let mut flying = VecDeque::from([self.prompt(prompt, Read::Token)?]);
+        let mut flying = VecDeque::from([(self.prompt(prompt, Wanted::Token)?, Phase::Prompt)]);
         // The decoder's position after the runs made so far.
         let mut pos = n;
         let mut out = Generated {
@@ -656,15 +599,19 @@ impl Inner {
             let made = 1 + (pos - n);
             if !out.stopped && flying.len() < 2 && made < most {
                 runs += 1;
-                flying.push_back(self.steps(pos, runs % 2)?);
+                flying.push_back((self.steps(pos, runs % 2)?, Phase::Steps));
                 pos += STEPS_A_READ;
                 out.steps += STEPS_A_READ;
                 continue;
             }
-            let Some(running) = flying.pop_front() else {
+            let Some((in_flight, phase)) = flying.pop_front() else {
                 break;
             };
-            let got: Vec<u32> = self.read(running)?.iter().map(|v| v.to_bits()).collect();
+            let got: Vec<u32> = self
+                .read(in_flight, phase)?
+                .iter()
+                .map(|v| v.to_bits())
+                .collect();
             first_read.get_or_insert_with(Instant::now);
             if out.stopped || out.tokens.len() >= most {
                 continue;

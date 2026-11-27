@@ -7,38 +7,57 @@
 //!   limits, and dispatches recorded: their parameters packed into one
 //!   uniform buffer, a bind group for each set of buffers they bind
 //!   ([`Program::record`]). The runs go in short submissions
-//!   ([`crate::pace::dispatch`]).
+//!   ([`crate::pace::dispatch`]), waited for ([`Program::run`]) or left
+//!   running while the processor does more ([`Program::run_left`]); a
+//!   failure on the device is an `Err` ([`guarded`]).
 //! - A network planned once per input size and kept on a device of its own
 //!   (the separator, the beat network, the speech model) is a [`Model`]
 //!   (`model.rs`): its plans recorded when first run, each run one plan and
-//!   one read back.
+//!   one read back; its dispatches are [`ModelOp`]s (three buffers and the
+//!   [`PARAM_WORDS`] numbers of `bindings.wgsl`). With its weights packed
+//!   from the CPU model it is a [`PackedNet`] (`network.rs`).
 //! - Every matrix multiply is planned as a [`Mul`] (`mul.rs`): what it
 //!   reads and writes, the weights, what becomes of the products.
-//! - A network the process keeps for itself (the separator's, the beat
-//!   network's) is [`Kept`] (`kept.rs`): set up when first needed, and
-//!   again when its device is lost; a failed setup is tried again a while
-//!   later. A network the caller holds says when its device is lost
-//!   ([`Program::lost`]), and the caller makes it again. A device the
-//!   parts of several models share (the picture models') is a
-//!   [`SharedDevice`] (`shared.rs`), set up and set up again the same way.
+//! - Every network is held as a [`Kept`] (`kept.rs`): set up when first
+//!   needed, and again when its device is lost (each says so: [`OnDevice`]);
+//!   a failed setup is tried again a while later. The process keeps the
+//!   separators and the beat network itself ([`KeptNet`]); the player
+//!   keeps the others. A device the parts of several models share (the
+//!   cover's networks', the picture models') is a [`SharedDevice`]
+//!   (`shared.rs`), set up and set up again the same way.
 
 mod kept;
 mod model;
 mod mul;
+mod network;
 mod program;
+mod retrying;
 mod shared;
 
 use std::hash::Hash;
 
 pub use kept::{Kept, OnDevice, SetUp, UNKNOWN};
 pub(crate) use model::{buffers_footprint, Model};
-pub(crate) use mul::{After, Matrix, Mul, ARGMAX, BIAS, MUL_NUMBERS, SWIGLU};
-pub(crate) use program::{Program, Recorded};
+pub(crate) use mul::{After, Matrix, Mul, Tiled, TiledMul, ARGMAX, BIAS, MUL_NUMBERS, SWIGLU};
+pub(crate) use network::{KeptNet, PackedNet};
+pub(crate) use program::{using, InFlight, Input, Output, Program, Read, Recorded, Write};
 pub(crate) use shared::SharedDevice;
 
 /// Bytes between the dispatches' parameters (the uniform offset
 /// alignment every device offers).
 pub(crate) const PARAM_STRIDE: u64 = 256;
+
+/// The numbers of a dispatch of the kernels on `bindings.wgsl` (the
+/// separator's, the beat network's, the speech model's and the
+/// recogniser's: its `Params`, `f0` to `f11`).
+pub(crate) const PARAM_WORDS: usize = 12;
+
+/// The bytes of those numbers ([`Kernels::PARAM_BYTES`] of those kernels).
+pub(crate) const PARAM_WORDS_BYTES: u64 = (PARAM_WORDS * 4) as u64;
+
+/// A dispatch of a [`Model`]: its kernel, its three buffers (`src`, `aux`,
+/// `dst`), its [`PARAM_WORDS`] numbers and its workgroups.
+pub(crate) type ModelOp<K, B> = Op<K, [B; 3], PARAM_WORDS>;
 
 /// How a kernel binds a buffer after its parameters (binding 4 on).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,7 +151,7 @@ pub(crate) struct Freqs {
     pub(crate) turned: usize,
 }
 
-/// The separator's, the beat network's and the speech model's heads of 32
+/// The separator's and the beat network's heads of 32
 /// (every pair turned, base 10⁴).
 pub(crate) const HEAD_32: Freqs = Freqs {
     base: 10_000.0,
@@ -144,13 +163,14 @@ pub(crate) const HEAD_32: Freqs = Freqs {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Angles {
     /// The frequencies, angles, cosines and sines in f32 (the separator's,
-    /// the beat network's, the speech model's and the text encoder's).
+    /// the beat network's, the depth network's and the text encoder's).
     F32,
     /// The frequencies and angles in f32, their cosines and sines in f64
     /// (the language model: its reference's f32 angles, the functions to
     /// the last bit).
     F32ThenF64,
-    /// All in f64 (the picture transformer, as its pipeline).
+    /// All in f64 (the picture transformer, as its pipeline; the
+    /// recogniser's decoder).
     F64,
 }
 
@@ -176,23 +196,25 @@ pub(crate) fn rotary(
         }
     };
     let freqs: Vec<f64> = (0..freqs.dim / 2).map(freq).collect();
+    // A position's turn at a pair's frequency: its cosine and sine.
+    let turn: fn(usize, f64) -> (f32, f32) = match angles {
+        Angles::F32 => |p, f| {
+            let a = p as f32 * f as f32;
+            (a.cos(), a.sin())
+        },
+        Angles::F32ThenF64 => |p, f| {
+            let a = f64::from(p as f32 * f as f32);
+            (a.cos() as f32, a.sin() as f32)
+        },
+        Angles::F64 => |p, f| {
+            let a = p as f64 * f;
+            (a.cos() as f32, a.sin() as f32)
+        },
+    };
     let mut out = Vec::new();
     for p in positions {
         for &f in &freqs {
-            let (c, s) = match angles {
-                Angles::F32 => {
-                    let a = p as f32 * f as f32;
-                    (a.cos(), a.sin())
-                }
-                Angles::F32ThenF64 => {
-                    let a = f64::from(p as f32 * f as f32);
-                    (a.cos() as f32, a.sin() as f32)
-                }
-                Angles::F64 => {
-                    let a = p as f64 * f;
-                    (a.cos() as f32, a.sin() as f32)
-                }
-            };
+            let (c, s) = turn(p, f);
             out.extend([c, s]);
         }
     }
@@ -249,14 +271,14 @@ pub(crate) fn guarded<T>(
 }
 
 /// The kernels' source for the separator, the beat network, the speech
-/// model and the recogniser: their prelude (`bindings.wgsl`), the shared
-/// helpers (`common.wgsl`), the separator's kernels (`kernels.wgsl`), then
-/// `more`.
-pub(crate) fn kernels_source(more: &[&str]) -> String {
+/// model and the recogniser: their prelude (`bindings.wgsl`), the helpers
+/// every model shares (`common.wgsl`), the kernels and helpers these four
+/// share (`shared.wgsl`), then `more` (each network's own).
+pub(crate) fn shared_source(more: &[&str]) -> String {
     let mut parts = vec![
         include_str!("../bindings.wgsl"),
         include_str!("../common.wgsl"),
-        include_str!("../kernels.wgsl"),
+        include_str!("../shared.wgsl"),
     ];
     parts.extend(more);
     parts.join("\n")
@@ -303,15 +325,22 @@ mod tests {
     /// and DirectX.
     #[test]
     fn the_kernels_validate_and_write_for_metal_and_directx() {
-        for more in [
-            &[][..],
-            &[include_str!("../net.wgsl")][..],
-            &[include_str!("../speech.wgsl")][..],
+        for (more, entry) in [
+            (include_str!("../separator.wgsl"), "attention"),
+            (include_str!("../net.wgsl"), "net_attention"),
+            (include_str!("../speech.wgsl"), "sp_attention"),
         ] {
             super::check_source(
-                &super::kernels_source(more),
+                &super::shared_source(&[more]),
                 naga::valid::Capabilities::empty(),
-                &["matmul", "rmsnorm", "attention", "transpose"],
+                &[
+                    "matmul",
+                    "rmsnorm",
+                    "rope",
+                    "transpose",
+                    "gelu_in_place",
+                    entry,
+                ],
             );
         }
     }

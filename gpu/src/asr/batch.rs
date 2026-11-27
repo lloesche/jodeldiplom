@@ -20,7 +20,8 @@ use std::time::{Duration, Instant};
 use jodel_lyrics::asr::{loop_start, text, DIM};
 
 use super::ops::{each, Op};
-use super::{Buf, Inner, Kernel, Runs, Shape, MAX_NEW, STEPS_A_READ};
+use super::{Buf, Inner, Kernel, Shape, MAX_NEW, STEPS_A_READ};
+use crate::pace::Phase;
 
 /// What the recogniser did so far ([`super::GpuAsr::hearing`]), for
 /// traces: the difference of two ([`Hearing::since`]) is what it did
@@ -149,15 +150,15 @@ impl Inner {
     ) -> Result<Vec<Option<Vec<u32>>>, String> {
         let shape = Shape::with_room(features.len(), frames, self.new_at_once);
         let (b, cap, r) = (shape.pieces, shape.positions, shape.rows);
-        let (t0, prompts) = (Instant::now(), self.prompt_pieces.tally());
-        let steps_before = self.step_pieces.tally();
+        let (t0, prompts) = (Instant::now(), self.paces.prompt.tally());
+        let steps_before = self.paces.steps.tally();
         let ops = self.prompt_run(features, &shape);
         let read_all = Some((Buf::Tokens, 0, b * cap));
         // The runs made and not read yet (each its first token's place and
         // its tokens a piece), in their order, each into its own staging
         // buffer: two at most (the prompts and the first steps; a piece
         // alone's steps), else one.
-        let mut flying = VecDeque::from([(self.submit(&ops, read_all, Runs::Prompt, 0)?, r, 1)]);
+        let mut flying = VecDeque::from([(self.submit(&ops, read_all, Phase::Prompt, 0)?, r, 1)]);
         let mut t1 = None;
         // None until the prompts' first tokens are read.
         let mut written: Option<Vec<Written>> = None;
@@ -173,7 +174,7 @@ impl Inner {
                 for k in 0..a_read {
                     self.step_ops(&mut ops, &shape, pos + k);
                 }
-                let running = self.submit(&ops, read_all, Runs::Steps, runs % 2)?;
+                let running = self.submit(&ops, read_all, Phase::Steps, runs % 2)?;
                 flying.push_back((running, pos + 1, a_read));
                 (made, steps, runs) = (made + a_read, steps + a_read, runs + 1);
                 continue;
@@ -182,7 +183,7 @@ impl Inner {
                 break;
             };
             let first = written.is_none();
-            let got = self.read(running, if first { Runs::Prompt } else { Runs::Steps })?;
+            let got = self.read(running, if first { Phase::Prompt } else { Phase::Steps })?;
             let w = written.get_or_insert_with(|| {
                 t1 = Some(Instant::now());
                 (0..b).map(|k| Written::new(got[k * cap + r])).collect()
@@ -201,11 +202,11 @@ impl Inner {
             runs: 1,
             pieces: b,
             prompted: t1 - t0,
-            prompt_gpu: self.prompt_pieces.tally().since(&prompts),
+            prompt_gpu: self.paces.prompt.tally().since(&prompts),
             tokens: written.iter().map(|w| w.ids.len()).sum(),
             steps,
             decoded: t1.elapsed(),
-            step_gpu: self.step_pieces.tally().since(&steps_before),
+            step_gpu: self.paces.steps.tally().since(&steps_before),
         });
         Ok(written
             .into_iter()
@@ -227,7 +228,7 @@ impl Inner {
     ) -> Result<Vec<f32>, String> {
         let ops = self.prompt_run(features, shape);
         let read = Some((Buf::Tokens, 0, shape.pieces * shape.positions));
-        self.run(&ops, read, Runs::Prompt)
+        self.run(&ops, read, Phase::Prompt)
     }
 
     /// The dispatches of [`Inner::prompted`], `features` uploaded and the

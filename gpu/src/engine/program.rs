@@ -1,15 +1,16 @@
-//! A device and a program of kernels on it ([`Program`]), and dispatches
-//! recorded for it ([`Recorded`]).
+//! A device and a program of kernels on it ([`Program`]), dispatches
+//! recorded for it ([`Recorded`]), and their runs: waited for
+//! ([`Program::run`]), or left running ([`Program::run_left`]: an
+//! [`InFlight`] the caller finishes later).
 
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
 
-use super::{Access, Dispatch, Kernels, Op, PARAM_STRIDE};
-use crate::pace::{self, Pieces};
+use super::{bytes, guarded, Access, Dispatch, Kernels, Op, PARAM_STRIDE};
+use crate::pace::{self, Left, Pieces};
 use crate::profile::Stamps;
 
 /// A device and a program of kernels on it: the module, the bind group
@@ -21,7 +22,9 @@ pub(crate) struct Program<K> {
     label: &'static str,
     /// Set when the device is lost (its callback).
     lost: Arc<AtomicBool>,
-    /// Whether the last run was left running ([`pace::dispatch`]).
+    /// Whether the last run on the device was left running
+    /// ([`Program::run_left`]): the next run's first wait may wait for it
+    /// too ([`pace`]).
     pub(crate) left: AtomicBool,
     layout: wgpu::BindGroupLayout,
     pipelines: HashMap<K, wgpu::ComputePipeline>,
@@ -29,13 +32,105 @@ pub(crate) struct Program<K> {
     most: u64,
 }
 
-/// Dispatches on the device: their parameters, a bind group for each set
-/// of buffers they bind, and what to dispatch.
-pub(crate) struct Recorded<K> {
-    pub(crate) dispatches: Vec<Dispatch<K>>,
-    pub(crate) groups: Vec<wgpu::BindGroup>,
-    /// Kept while the bind groups use it.
-    _params: wgpu::Buffer,
+/// Dispatches on the device: what to dispatch, their parameters (in a
+/// buffer with room for so many), and a bind group for each set of
+/// buffers they bind (`B`, a key its network turns into buffers), kept
+/// from one recording to the next ([`Recorded::again`]).
+pub(crate) struct Recorded<K, B> {
+    dispatches: Vec<Dispatch<K>>,
+    groups: Vec<wgpu::BindGroup>,
+    /// Each set of buffers' bind group (its index in `groups`).
+    index: HashMap<B, usize>,
+    /// The dispatches' parameters, kept while the bind groups use it.
+    params: wgpu::Buffer,
+    /// The most dispatches its parameters have room for.
+    room: usize,
+}
+
+/// What a run reads back: `count` f32s of `from` from its `first`,
+/// copied to `staging` (room for them) and read from there.
+#[derive(Clone, Copy)]
+pub(crate) struct Read<'a> {
+    pub(crate) from: &'a wgpu::Buffer,
+    pub(crate) first: usize,
+    pub(crate) count: usize,
+    pub(crate) staging: &'a wgpu::Buffer,
+}
+
+/// What is written before a run: `values` to `to` from its f32 `at`.
+#[derive(Clone, Copy)]
+pub(crate) struct Write<'a> {
+    pub(crate) to: &'a wgpu::Buffer,
+    pub(crate) at: usize,
+    pub(crate) values: &'a [f32],
+}
+
+/// What a network writes before a run of its plan: `values` to its buffer
+/// `buf` (`B`, its name for it) from its f32 `at`.
+#[derive(Clone, Copy)]
+pub(crate) struct Input<'a, B> {
+    pub(crate) buf: B,
+    pub(crate) at: usize,
+    pub(crate) values: &'a [f32],
+}
+
+/// What a network reads back of a run of its plan: `count` f32s of its
+/// buffer `buf` (`B`, its name for it) from its `first`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Output<B> {
+    pub(crate) buf: B,
+    pub(crate) first: usize,
+    pub(crate) count: usize,
+}
+
+impl<'a, B: Copy> Input<'a, B> {
+    /// The write it is, its buffer as `buffer` finds it.
+    pub(crate) fn write(&self, buffer: impl Fn(B) -> &'a wgpu::Buffer) -> Write<'a> {
+        Write {
+            to: buffer(self.buf),
+            at: self.at,
+            values: self.values,
+        }
+    }
+}
+
+impl<B: Copy> Output<B> {
+    /// The read it is, its buffer as `buffer` finds it, through `staging`.
+    pub(crate) fn read<'a>(
+        self,
+        buffer: impl Fn(B) -> &'a wgpu::Buffer,
+        staging: &'a wgpu::Buffer,
+    ) -> Read<'a> {
+        Read {
+            from: buffer(self.buf),
+            first: self.first,
+            count: self.count,
+            staging,
+        }
+    }
+}
+
+/// `work` on what `held` holds, locked (`Err(failed)` where a use
+/// panicked before), a failure on the device of its program (`program`
+/// finds it) an `Err` ([`guarded`]): a use of a model the caller holds.
+pub(crate) fn using<I, K, R>(
+    held: &Mutex<I>,
+    failed: &str,
+    program: fn(&I) -> &Program<K>,
+    work: impl FnOnce(&mut I) -> Result<R, String>,
+) -> Result<R, String> {
+    let mut inner = held.lock().map_err(|_| failed.to_owned())?;
+    let device = program(&inner).device.clone();
+    guarded(&device, || work(&mut inner))
+}
+
+/// A run made and maybe still running ([`Program::run_left`]): its last
+/// submission where it was left running, and what it reads back
+/// ([`Program::finish`] waits for it and reads that).
+pub(crate) struct InFlight {
+    left: Option<Left>,
+    staging: Option<wgpu::Buffer>,
+    count: usize,
 }
 
 impl<K: Kernels> Program<K> {
@@ -253,6 +348,18 @@ impl<K: Kernels> Program<K> {
         })
     }
 
+    /// Room for `room` dispatches recorded at a time ([`Recorded::again`]),
+    /// none recorded yet.
+    pub(crate) fn recording<B>(&self, room: usize) -> Recorded<K, B> {
+        Recorded {
+            dispatches: Vec::new(),
+            groups: Vec::new(),
+            index: HashMap::new(),
+            params: self.params_buffer(room),
+            room,
+        }
+    }
+
     /// `ops` on the device: their parameters in a buffer of their own, a
     /// bind group for each set of buffers they bind (`bound` gives a key's
     /// buffers, in binding order: 0, 1, 2, then 4 on), and their dispatches.
@@ -260,103 +367,73 @@ impl<K: Kernels> Program<K> {
         &self,
         ops: &[Op<K, B, P>],
         bound: impl Fn(B) -> Vec<&'a wgpu::Buffer>,
-    ) -> Result<Recorded<K>, String> {
-        let params = self.params_buffer(ops.len());
-        self.write_params(&params, ops)?;
-        let mut groups = Vec::new();
-        let mut index: HashMap<B, usize> = HashMap::new();
-        let dispatches = ops
-            .iter()
-            .enumerate()
-            .map(|(i, op)| {
-                let group = *index.entry(op.buffers).or_insert_with(|| {
-                    groups.push(self.bind_group(&bound(op.buffers), &params));
-                    groups.len() - 1
-                });
-                Dispatch {
-                    kernel: op.kernel,
-                    group,
-                    offset: i as u64 * PARAM_STRIDE,
-                    groups: op.groups,
-                }
-            })
-            .collect();
-        Ok(Recorded {
-            dispatches,
-            groups,
-            _params: params,
+    ) -> Result<Recorded<K, B>, String> {
+        let mut recorded = self.recording(ops.len());
+        recorded.again(self, ops, bound)?;
+        Ok(recorded)
+    }
+
+    /// `recorded`'s dispatches in short submissions ([`pace::dispatch`]),
+    /// `writes` written first and `prelude` before the dispatches; then
+    /// what `read` says read back (nothing without it). A failure on the
+    /// device is an `Err` ([`guarded`]).
+    pub(crate) fn run<B>(
+        &self,
+        pieces: &mut Pieces,
+        recorded: &Recorded<K, B>,
+        writes: &[Write],
+        prelude: impl FnOnce(&mut wgpu::CommandEncoder),
+        read: Option<Read>,
+    ) -> Result<Vec<f32>, String> {
+        guarded(&self.device, || {
+            for w in writes {
+                let at = (w.at * 4) as u64;
+                self.queue.write_buffer(w.to, at, &bytes(w.values));
+            }
+            pace::dispatch(self, pieces, recorded, (prelude, copy(read)))?;
+            match read {
+                Some(r) => crate::device::read_back(&self.device, r.staging, r.count),
+                None => Ok(Vec::new()),
+            }
         })
     }
 
-    /// `dispatches` (on the bind groups `groups`) in short submissions
-    /// ([`pace::dispatch`]), `prelude` before them; then `read`'s f32s (a
-    /// buffer, the first one's index, how many) copied to `staging` and
-    /// read back (none without `read`).
-    pub(crate) fn run(
+    /// [`Program::run`]'s dispatches of `recorded` and the copy of what
+    /// `read` says, made; the last submission may still run when it
+    /// returns ([`pace::dispatch_left`]): the caller does more meanwhile,
+    /// then [`Program::finish`]es it.
+    pub(crate) fn run_left<B>(
         &self,
         pieces: &mut Pieces,
-        (groups, dispatches): (&[wgpu::BindGroup], &[Dispatch<K>]),
-        prelude: impl FnOnce(&mut wgpu::CommandEncoder),
-        read: Option<(&wgpu::Buffer, usize, usize)>,
-        staging: &wgpu::Buffer,
+        recorded: &Recorded<K, B>,
+        read: Option<Read>,
+    ) -> Result<InFlight, String> {
+        guarded(&self.device, || {
+            let left = pace::dispatch_left(self, pieces, recorded, copy(read))?;
+            Ok(InFlight {
+                left,
+                staging: read.map(|r| r.staging.clone()),
+                count: read.map_or(0, |r| r.count),
+            })
+        })
+    }
+
+    /// Waits for `in_flight` (what it took learnt in `pieces`, those it
+    /// was run with) and reads back what it copied.
+    pub(crate) fn finish(
+        &self,
+        in_flight: InFlight,
+        pieces: &mut Pieces,
     ) -> Result<Vec<f32>, String> {
-        self.submit(pieces, (groups, dispatches), prelude, read, staging, false)?;
-        match read {
-            Some((_, _, count)) => crate::device::read_back(&self.device, staging, count),
-            None => Ok(Vec::new()),
-        }
-    }
-
-    /// [`Program::run`]'s dispatches and copy to `staging`, made; where it
-    /// `leaves` them, the last submission may still run when it returns
-    /// (its index, for [`pace::finish`]), else they are done.
-    pub(crate) fn submit(
-        &self,
-        pieces: &mut Pieces,
-        (groups, dispatches): (&[wgpu::BindGroup], &[Dispatch<K>]),
-        prelude: impl FnOnce(&mut wgpu::CommandEncoder),
-        read: Option<(&wgpu::Buffer, usize, usize)>,
-        staging: &wgpu::Buffer,
-        leaves: bool,
-    ) -> Result<Option<wgpu::SubmissionIndex>, String> {
-        let copy = |encoder: &mut wgpu::CommandEncoder| {
-            if let Some((from, first, count)) = read {
-                let size = (count * 4) as u64;
-                encoder.copy_buffer_to_buffer(from, (first * 4) as u64, staging, 0, size);
+        guarded(&self.device, || {
+            if let Some(left) = in_flight.left {
+                pace::finish(pieces, &self.device, left)?;
             }
-        };
-        pace::dispatch(self, pieces, groups, dispatches, (prelude, copy), leaves)
-    }
-
-    /// The dispatches of `recorded` that `keep` picks (by index) as one
-    /// submission, waited for, three times: the best time, from encoding to
-    /// done. For profiles.
-    pub(crate) fn time(
-        &self,
-        recorded: &Recorded<K>,
-        keep: &dyn Fn(usize) -> bool,
-    ) -> Result<Duration, String> {
-        let mut best = Duration::MAX;
-        for _ in 0..3 {
-            let started = Instant::now();
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some(self.label),
-                });
-            let kept: Vec<Dispatch<K>> = recorded
-                .dispatches
-                .iter()
-                .enumerate()
-                .filter(|&(i, _)| keep(i))
-                .map(|(_, &d)| d)
-                .collect();
-            self.encode(&mut encoder, &recorded.groups, &kept, None);
-            self.queue.submit([encoder.finish()]);
-            self.wait()?;
-            best = best.min(started.elapsed());
-        }
-        Ok(best)
+            match &in_flight.staging {
+                Some(staging) => crate::device::read_back(&self.device, staging, in_flight.count),
+                None => Ok(Vec::new()),
+            }
+        })
     }
 
     /// `dispatches` (on the bind groups `groups`) into `encoder`: in one
@@ -416,6 +493,78 @@ impl<K: Kernels> Program<K> {
             .poll(wgpu::PollType::wait_indefinitely())
             .map(|_| ())
             .map_err(|e| e.to_string())
+    }
+}
+
+/// What copies `read`'s values to its staging buffer, after a run's
+/// dispatches.
+fn copy(read: Option<Read<'_>>) -> impl FnOnce(&mut wgpu::CommandEncoder) + '_ {
+    move |encoder| {
+        if let Some(r) = read {
+            let size = (r.count * 4) as u64;
+            encoder.copy_buffer_to_buffer(r.from, (r.first * 4) as u64, r.staging, 0, size);
+        }
+    }
+}
+
+impl<K: Kernels, B: Copy + Eq + Hash> Recorded<K, B> {
+    /// `ops` recorded in place of what it held: their parameters written
+    /// over the last ones (in the queue's order, so after the work sent
+    /// before: a run left running reads its own), a bind group made for
+    /// each set of buffers not bound before (`bound` gives a key's buffers,
+    /// in binding order: 0, 1, 2, then 4 on); `Err` past its room.
+    pub(crate) fn again<'a, const P: usize>(
+        &mut self,
+        program: &Program<K>,
+        ops: &[Op<K, B, P>],
+        bound: impl Fn(B) -> Vec<&'a wgpu::Buffer>,
+    ) -> Result<(), String> {
+        if ops.len() > self.room {
+            return Err(format!("{} dispatches, room for {}", ops.len(), self.room));
+        }
+        program.write_params(&self.params, ops)?;
+        let (groups, index, params) = (&mut self.groups, &mut self.index, &self.params);
+        self.dispatches = ops
+            .iter()
+            .enumerate()
+            .map(|(i, op)| {
+                let group = *index.entry(op.buffers).or_insert_with(|| {
+                    groups.push(program.bind_group(&bound(op.buffers), params));
+                    groups.len() - 1
+                });
+                Dispatch {
+                    kernel: op.kernel,
+                    group,
+                    offset: i as u64 * PARAM_STRIDE,
+                    groups: op.groups,
+                }
+            })
+            .collect();
+        Ok(())
+    }
+
+    /// Its dispatches `times` over, one after the other (dispatches that
+    /// read where they are from the GPU: the language model's steps).
+    pub(crate) fn repeat(&mut self, times: usize) {
+        let once = std::mem::take(&mut self.dispatches);
+        self.dispatches = (0..times).flat_map(|_| once.iter().copied()).collect();
+    }
+
+    /// The bytes of its parameters' buffer.
+    pub(crate) fn params_bytes(&self) -> u64 {
+        self.params.size()
+    }
+}
+
+impl<K, B> Recorded<K, B> {
+    /// What it dispatches, in order.
+    pub(crate) fn dispatches(&self) -> &[Dispatch<K>] {
+        &self.dispatches
+    }
+
+    /// The bind groups its dispatches bind (by index).
+    pub(crate) fn groups(&self) -> &[wgpu::BindGroup] {
+        &self.groups
     }
 }
 

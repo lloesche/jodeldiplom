@@ -57,7 +57,7 @@ fn a_fused_step_is_the_unfused_one() {
                 .run(
                     &ops,
                     Some((Buf::Logits, 0, shape.pieces * VOCAB)),
-                    Runs::Steps,
+                    crate::pace::Phase::Steps,
                 )
                 .unwrap(),
         );

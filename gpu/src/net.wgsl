@@ -1,7 +1,8 @@
 // The beat network's kernels (Beat This!, small), compiled after
-// kernels.wgsl: they share its bindings (src, aux, dst, p) and helpers
-// (linear_id, gelu, src4, store4, the workgroup arrays keys and vals), and
-// the network also uses its matmul, rmsnorm (f7 = 1) and rope (f6 = 1).
+// shared.wgsl: they share its bindings (src, aux, dst, p) and helpers
+// (linear_id, gelu, src4, store4, the tiles keys and vals, Q32 and
+// Soft32), and the network also uses its matmul, rmsnorm (f7 = 1), rope
+// (f6 = 1), transpose and gelu_in_place.
 // Activations are [band][frame][channel] in the front end, tokens of the
 // width in the transformer.
 
@@ -63,33 +64,6 @@ fn net_affine_gelu(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_w
     dst[i] = gelu(dst[i] * aux[p.f2 + ch] + aux[p.f3 + ch]);
 }
 
-// ---- In place: dst[i] = gelu(dst[i]). f0 count.
-@compute @workgroup_size(256)
-fn net_gelu(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let i = linear_id(gid, groups);
-    if (i >= p.f0) {
-        return;
-    }
-    dst[i] = gelu(dst[i]);
-}
-
-// ---- [a][b][c] to [b][a][c]. f0 a, f1 b, f2 c.
-@compute @workgroup_size(256)
-fn net_transpose(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let i = linear_id(gid, groups);
-    let a = p.f0;
-    let b = p.f1;
-    let c = p.f2;
-    if (i >= a * b * c) {
-        return;
-    }
-    let ch = i % c;
-    let token = i / c;
-    let ia = token / b;
-    let jb = token % b;
-    dst[(jb * a + ia) * c + ch] = src[i];
-}
-
 // ---- The front end's end: each frame's channels × bands, channel-major.
 // src [band][frame][c] → dst [frame][c·bands]. f0 frames, f1 bands, f2 c.
 @compute @workgroup_size(256)
@@ -112,7 +86,7 @@ fn net_flatten(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workg
 // rotated before); aux: the gates' logits [token][heads]; dst [token][dim].
 // f0 len (tokens per sequence), f1 dim, f2 heads. Workgroups: (queries /
 // 64, heads, sequences); an online softmax over tiles of 64 keys, a head
-// held as eight vectors, each a variable (see attention).
+// held as eight vectors, each a variable (as the separator's attention).
 @compute @workgroup_size(64)
 fn net_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
     let len = p.f0;

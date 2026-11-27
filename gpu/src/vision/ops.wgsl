@@ -7,22 +7,6 @@
 // f0 rows, f1 dim, f2 src_off, f3 src_outer, f4 src_inner, f5 per, f6
 // dst_off, f7 dst_outer, f8 dst_inner, f9 w_off, f10 b_off, f11 eps (f32
 // bits), f12 flags (1: the rows are read from dst, in place).
-var<workgroup> red: array<f32, 64>;
-
-fn reduce_sum(t: u32, v: f32) -> f32 {
-    red[t] = v;
-    workgroupBarrier();
-    for (var s = 32u; s > 0u; s >>= 1u) {
-        if (t < s) {
-            red[t] += red[t + s];
-        }
-        workgroupBarrier();
-    }
-    let total = red[0];
-    workgroupBarrier();
-    return total;
-}
-
 fn ln_read(at: u32) -> f32 {
     if ((p.f12 & 1u) != 0u) {
         return dst[at];
@@ -43,13 +27,13 @@ fn layernorm(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id
     for (var d = t; d < dim; d += 64u) {
         sum += ln_read(row_in + d);
     }
-    let mean = reduce_sum(t, sum) / f32(dim);
+    let mean = sum64(t, sum) / f32(dim);
     var squares = 0.0;
     for (var d = t; d < dim; d += 64u) {
         let v = ln_read(row_in + d) - mean;
         squares += v * v;
     }
-    let inv = inverseSqrt(reduce_sum(t, squares) / f32(dim) + bitcast<f32>(p.f11));
+    let inv = inverseSqrt(sum64(t, squares) / f32(dim) + bitcast<f32>(p.f11));
     if (!live) {
         return;
     }
@@ -319,7 +303,8 @@ fn win_back(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgrou
 // ---- 2-D rotary positions on the queries and keys of a qkv buffer, in
 // place: a head's first half turned by its token's row, the second by its
 // column, each half's two quarters as a pair, the angle's cosine and sine
-// from aux's table (a position's 16 cosines then 16 sines, from f6).
+// from aux's table (a position's 16 pairs of a cosine and a sine, from
+// f6).
 // Token 0 is at (0, 0); token t at its patch's row and column plus one, or
 // with f5 = 1 every patch at (1, 1). f0 tokens, f1 heads, f2 the row
 // stride, f3 the grid's columns, f4 C (the keys' offset), f5 mode, f6 the
@@ -347,8 +332,8 @@ fn rope(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
         }
     }
     let at = t * p.f2 + which * p.f4 + head * 64u + half * 32u + j;
-    let cs = aux[p.f6 + pos * 32u + j];
-    let sn = aux[p.f6 + pos * 32u + 16u + j];
+    let cs = aux[p.f6 + pos * 32u + 2u * j];
+    let sn = aux[p.f6 + pos * 32u + 2u * j + 1u];
     let a = dst[at];
     let b = dst[at + 16u];
     dst[at] = a * cs - b * sn;

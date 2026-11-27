@@ -133,21 +133,12 @@ fn softmax(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
         }
         best = max(best, v);
     }
-    red[t] = best;
-    workgroupBarrier();
-    for (var w = 32u; w > 0u; w >>= 1u) {
-        if (t < w) {
-            red[t] = max(red[t], red[t + w]);
-        }
-        workgroupBarrier();
-    }
-    let most = red[0];
-    workgroupBarrier();
+    let most = max64(t, best);
     var sum = 0.0;
     for (var j = t; j < n; j += 64u) {
         sum += exp(dst[base + j] - most);
     }
-    let total = reduce_sum(t, sum);
+    let total = sum64(t, sum);
     if (!live) {
         return;
     }

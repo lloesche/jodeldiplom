@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use jodel_gpu::vision::check::{scene, stats};
-use jodel_gpu::{GpuDepth, GpuMatte};
+use jodel_gpu::{profile, GpuDepth, GpuMatte};
 use jodel_tensors::json::Json;
 
 fn f32s(path: &Path) -> Vec<f32> {
@@ -149,18 +149,19 @@ fn reference(root: &Path, only: &[String]) {
         median(&mut mt)
     );
     if std::env::var_os("JODEL_VISION_PROFILE").is_some() {
-        let input = vec![0.1f32; 504 * 504 * 3];
-        let show = |what: &str, rows: Vec<(String, usize, f64)>| {
-            let total: f64 = rows.iter().map(|r| r.2).sum();
-            println!("{what}: {total:.1} ms in single dispatches");
-            for (k, n, ms) in rows.iter().take(14) {
-                println!("  {ms:8.2} ms  {n:4}x  {k}");
-            }
+        // Each kernel's GPU time over one run (jodel_gpu::profile).
+        let profiled = |what: &str, run: &dyn Fn()| {
+            profile::start(profile::Detail::Kernels);
+            run();
+            println!("{what}: {}", profile::take());
         };
-        show("depth", depth.profile(&input, 504, 504).unwrap());
-        show(
-            "matte",
-            matte.profile(&vec![0.1f32; 1024 * 1024 * 3]).unwrap(),
-        );
+        let input = vec![0.1f32; 504 * 504 * 3];
+        profiled("depth", &|| {
+            depth.raw(&input, 504, 504).unwrap();
+        });
+        let input = vec![0.1f32; 1024 * 1024 * 3];
+        profiled("matte", &|| {
+            matte.raw(&input).unwrap();
+        });
     }
 }

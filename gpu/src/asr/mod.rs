@@ -1,6 +1,6 @@
 //! The speech recogniser of [`jodel_lyrics::asr`] (Qwen3-ASR-0.6B) on the
 //! GPU, its large weights at 4 bits (`asr.wgsl` and `fused.wgsl` with
-//! `kernels.wgsl`'s helpers): the encoder over the whole voice at once, then
+//! `shared.wgsl`'s helpers): the encoder over the whole voice at once, then
 //! the decoder with a cache of keys and values, a token a step, the next
 //! one chosen on the GPU (the steps go a few at a time between reads).
 //!
@@ -38,8 +38,10 @@ use self::ops::Op;
 use self::pack::{pack, Layout};
 use self::shape::{longest, Room, Shape};
 use crate::engine::{
-    bytes, guarded, kernels_source, Access, Dispatch, Kernels, OnDevice, Program, PARAM_STRIDE,
+    bytes, shared_source, using, Access, InFlight, Kernels, OnDevice, Program, Read, Recorded,
+    PARAM_STRIDE, PARAM_WORDS_BYTES,
 };
+use crate::pace::{Paces, Phase};
 use crate::{Footprint, Turned};
 
 /// The longest part of a voice heard at once, in seconds.
@@ -120,7 +122,7 @@ impl Kernels for Kernel {
         Kernel::ColSq,
         Kernel::SplitSum,
     ];
-    const PARAM_BYTES: u64 = 48;
+    const PARAM_BYTES: u64 = PARAM_WORDS_BYTES;
     /// After the parameters: the weights (read), a second dst.
     const EXTRA: &'static [Access] = &[Access::Read, Access::Write];
 
@@ -151,7 +153,7 @@ impl Kernels for Kernel {
 /// The kernels' source: the shared helpers, the recogniser's kernels, the
 /// fused ones.
 fn source() -> String {
-    kernels_source(&[include_str!("asr.wgsl"), include_str!("fused.wgsl")])
+    shared_source(&[include_str!("asr.wgsl"), include_str!("fused.wgsl")])
 }
 
 /// The buffers.
@@ -193,20 +195,13 @@ enum Buf {
     Spare,
 }
 
-/// Which runs a run is, each kind paced on its own ([`crate::pace`]
-/// learns how many dispatches make a submission of a few milliseconds:
-/// the encoder's and the prompt's are heavier than a step's).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Runs {
-    Prompt,
-    Steps,
-}
-
 struct Inner {
     program: Program<Kernel>,
     buffers: HashMap<Buf, wgpu::Buffer>,
     room: Room,
-    params: wgpu::Buffer,
+    /// The run under way's dispatches, recorded afresh for each run (its
+    /// bind groups kept: [`Recorded::again`]).
+    recorded: Recorded<Kernel, [Buf; 4]>,
     /// What is read back: two, so that one run's tokens are read while the
     /// next runs ([`Inner::hear`]).
     staging: [wgpu::Buffer; 2],
@@ -216,13 +211,13 @@ struct Inner {
     /// The tokens a piece heard with others has room for ([`NEW_AT_ONCE`];
     /// fewer in tests).
     new_at_once: usize,
-    bind_groups: Vec<wgpu::BindGroup>,
-    bind_index: HashMap<[Buf; 4], usize>,
-    prompt_pieces: crate::pace::Pieces,
-    step_pieces: crate::pace::Pieces,
+    paces: Paces,
     /// What it did so far.
     hearing: Hearing,
 }
+
+/// Why a use cannot be made: one before panicked.
+const FAILED: &str = "the GPU speech recogniser failed before";
 
 /// Qwen3-ASR-0.6B on the GPU.
 pub struct GpuAsr {
@@ -233,7 +228,7 @@ pub struct GpuAsr {
 
 impl OnDevice for GpuAsr {
     fn lost(&self) -> bool {
-        self.is_lost()
+        self.lock().map_or(true, |inner| inner.program.lost())
     }
 }
 
@@ -270,15 +265,13 @@ impl GpuAsr {
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
-        self.inner
-            .lock()
-            .map_err(|_| "the GPU speech recogniser failed before".to_owned())
+        self.inner.lock().map_err(|_| FAILED.to_owned())
     }
 
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is made instead.
-    pub fn is_lost(&self) -> bool {
-        self.lock().map_or(true, |inner| inner.program.lost())
+    /// `work` on the recogniser, a failure on its device an `Err`
+    /// ([`using`]).
+    fn using<R>(&self, work: impl FnOnce(&mut Inner) -> Result<R, String>) -> Result<R, String> {
+        using(&self.inner, FAILED, |inner| &inner.program, work)
     }
 
     /// What it did so far: its runs, the encoder's and the decoder's time,
@@ -314,13 +307,15 @@ impl GpuAsr {
         if frames == 0 || frames > longest() {
             return Err(format!("{frames} frames"));
         }
-        let mut inner = self.lock()?;
-        let device = inner.program.device.clone();
-        guarded(&device, || {
+        self.using(|inner| {
             let shape = Shape::new(1, frames);
             inner.upload(&[&features], &shape);
             let ops = inner.encoder_ops(&shape);
-            inner.run(&ops, Some((Buf::Audio, 0, shape.steps * DIM)), Runs::Prompt)
+            inner.run(
+                &ops,
+                Some((Buf::Audio, 0, shape.steps * DIM)),
+                Phase::Prompt,
+            )
         })
     }
 
@@ -349,28 +344,30 @@ impl GpuAsr {
         for (frames, all) in by_length {
             let mut left: &[usize] = &all;
             while !left.is_empty() {
-                let mut inner = self.lock()?;
-                let n = if inner.stats.on {
-                    1
-                } else {
-                    inner.room.at_once(frames).min(left.len())
-                };
-                let (now, rest) = left.split_at(n);
-                left = rest;
-                let device = inner.program.device.clone();
-                let chosen: Vec<&[f32]> = now.iter().map(|&i| &features[i].0[..]).collect();
-                let heard = guarded(&device, || inner.hear(&chosen, frames))?;
-                for (&i, ids) in now.iter().zip(heard) {
-                    out[i] = match ids {
-                        Some(ids) => ids,
-                        // Not done in the room the pieces heard together
-                        // have: again, on its own.
-                        None => guarded(&device, || inner.hear(&[&features[i].0], frames))?
-                            .pop()
-                            .flatten()
-                            .unwrap_or_default(),
+                let taken = self.using(|inner| {
+                    let n = if inner.stats.on {
+                        1
+                    } else {
+                        inner.room.at_once(frames).min(left.len())
                     };
-                }
+                    let now = &left[..n];
+                    let chosen: Vec<&[f32]> = now.iter().map(|&i| &features[i].0[..]).collect();
+                    let heard = inner.hear(&chosen, frames)?;
+                    for (&i, ids) in now.iter().zip(heard) {
+                        out[i] = match ids {
+                            Some(ids) => ids,
+                            // Not done in the room the pieces heard
+                            // together have: again, on its own.
+                            None => inner
+                                .hear(&[&features[i].0], frames)?
+                                .pop()
+                                .flatten()
+                                .unwrap_or_default(),
+                        };
+                    }
+                    Ok(n)
+                })?;
+                left = &left[taken..];
             }
         }
         Ok(out)
@@ -407,75 +404,38 @@ impl Inner {
         let write = |buf: Buf, data: &[u8]| program.queue.write_buffer(&buffers[&buf], 0, data);
         write(Buf::Weights, &bytes(&packed.weights));
         write(Buf::Small, &bytes(&packed.small));
-        let params = program.params_buffer(MAX_OPS);
+        let recorded = program.recording(MAX_OPS);
         let staging = [program.staging(room.staging), program.staging(room.staging)];
         Ok(Inner {
             program,
             buffers,
             room,
-            params,
+            recorded,
             staging,
             tensors: packed.layout,
             stats,
             new_at_once: NEW_AT_ONCE,
-            bind_groups: Vec::new(),
-            bind_index: HashMap::new(),
-            prompt_pieces: crate::pace::Pieces::resting(),
-            step_pieces: crate::pace::Pieces::resting(),
+            paces: Paces::resting(),
             hearing: Hearing::default(),
         })
     }
 
-    /// The bind group of `buffers` (and the weights, and the parameters).
-    fn bind_group(&mut self, buffers: [Buf; 4]) -> usize {
-        if let Some(&i) = self.bind_index.get(&buffers) {
-            return i;
-        }
-        let [a, b, c, d] = buffers.map(|buf| &self.buffers[&buf]);
-        let weights = &self.buffers[&Buf::Weights];
-        let group = self
-            .program
-            .bind_group(&[a, b, c, weights, d], &self.params);
-        self.bind_groups.push(group);
-        self.bind_index.insert(buffers, self.bind_groups.len() - 1);
-        self.bind_groups.len() - 1
-    }
-
-    /// Runs `ops` (their parameters written first), paced as `runs`;
+    /// Runs `ops` (their parameters written first), paced as `phase`;
     /// `read` copies `count` f32s of a buffer from an offset back.
     fn run(
         &mut self,
         ops: &[Op],
         read: Option<(Buf, usize, usize)>,
-        runs: Runs,
+        phase: Phase,
     ) -> Result<Vec<f32>, String> {
-        let running = self.submit(ops, read, runs, 0)?;
-        self.read(running, runs)
+        let in_flight = self.submit(ops, read, phase, 0)?;
+        self.read(in_flight, phase)
     }
 
-    /// What [`Inner::run`] reads back of `running` ([`Inner::submit`]'s),
-    /// once it is done.
-    fn read(&mut self, running: Running, runs: Runs) -> Result<Vec<f32>, String> {
-        if let Some(index) = running.index {
-            let device = self.program.device.clone();
-            crate::pace::finish(self.pieces(runs), &device, index)?;
-        }
-        if running.count == 0 {
-            return Ok(Vec::new());
-        }
-        crate::device::read_back(
-            &self.program.device,
-            &self.staging[running.staging],
-            running.count,
-        )
-    }
-
-    /// The pacing of `runs`.
-    fn pieces(&mut self, runs: Runs) -> &mut crate::pace::Pieces {
-        match runs {
-            Runs::Prompt => &mut self.prompt_pieces,
-            Runs::Steps => &mut self.step_pieces,
-        }
+    /// What [`Inner::run`] reads back of `in_flight` ([`Inner::submit`]'s,
+    /// paced as `phase`), once it is done.
+    fn read(&mut self, in_flight: InFlight, phase: Phase) -> Result<Vec<f32>, String> {
+        self.program.finish(in_flight, self.paces.of(phase))
     }
 
     /// [`Inner::run`]'s `ops` made, what it reads copied to the staging
@@ -487,9 +447,9 @@ impl Inner {
         &mut self,
         ops: &[Op],
         read: Option<(Buf, usize, usize)>,
-        runs: Runs,
+        phase: Phase,
         staging: usize,
-    ) -> Result<Running, String> {
+    ) -> Result<InFlight, String> {
         let counted;
         let ops = if self.stats.on {
             counted = self.stats.counted(ops);
@@ -497,46 +457,21 @@ impl Inner {
         } else {
             ops
         };
-        if ops.len() > MAX_OPS {
-            return Err(format!("{} dispatches, room for {MAX_OPS}", ops.len()));
-        }
-        self.program.write_params(&self.params, ops)?;
-        let dispatches: Vec<Dispatch<Kernel>> = ops
-            .iter()
-            .enumerate()
-            .map(|(i, op)| Dispatch {
-                kernel: op.kernel,
-                group: self.bind_group(op.buffers),
-                offset: i as u64 * PARAM_STRIDE,
-                groups: op.groups,
-            })
-            .collect();
-        let pieces = match runs {
-            Runs::Prompt => &mut self.prompt_pieces,
-            Runs::Steps => &mut self.step_pieces,
-        };
         let buffers = &self.buffers;
-        let index = self.program.submit(
-            pieces,
-            (&self.bind_groups, &dispatches),
-            |_| {},
-            read.map(|(buf, from, count)| (&buffers[&buf], from, count)),
-            &self.staging[staging],
-            true,
-        )?;
-        Ok(Running {
-            index,
-            staging,
-            count: read.map_or(0, |r| r.2),
-        })
+        // A kernel's buffers: src, aux, dst, the weights, the second dst.
+        self.recorded
+            .again(&self.program, ops, |[a, b, c, d]: [Buf; 4]| {
+                [a, b, c, Buf::Weights, d]
+                    .map(|buf| &buffers[&buf])
+                    .to_vec()
+            })?;
+        let read = read.map(|(buf, first, count)| Read {
+            from: &buffers[&buf],
+            first,
+            count,
+            staging: &self.staging[staging],
+        });
+        self.program
+            .run_left(self.paces.of(phase), &self.recorded, read)
     }
-}
-
-/// A run made and maybe still running ([`Inner::submit`]): its last
-/// submission (`None`: done), the staging buffer it reads into and how
-/// many f32s.
-struct Running {
-    index: Option<wgpu::SubmissionIndex>,
-    staging: usize,
-    count: usize,
 }

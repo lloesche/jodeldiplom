@@ -1,10 +1,12 @@
 //! The recogniser's tokens as text: Qwen's byte-level BPE vocabulary
-//! (`vocab.json`, each token's bytes spelt with printable characters) and
-//! its added tokens (`tokenizer_config.json`), for reading what the model
-//! writes. Only decoding: the prompts are fixed token ids.
+//! (`vocab.json`, each token's bytes spelt with printable characters,
+//! GPT-2's [`byte_chars`]) and its added tokens (`tokenizer_config.json`),
+//! for reading what the model writes (the BPE core's decoding half,
+//! [`Pieces`]). Only decoding: the prompts are fixed token ids.
 
 use std::path::Path;
 
+use jodel_tensors::bpe::{byte_chars, Pieces};
 use jodel_tensors::json::Json;
 
 /// `<|endoftext|>`.
@@ -52,32 +54,17 @@ pub fn is_end(id: u32) -> bool {
     id == IM_END || id == END_OF_TEXT
 }
 
-/// The byte each printable character of the vocabulary stands for (GPT-2's
-/// table: printable Latin-1 bytes as themselves, the rest from U+0100 on).
+/// The byte each printable character of the vocabulary stands for
+/// ([`byte_chars`] the other way).
 fn byte_of_char() -> std::collections::HashMap<char, u8> {
-    let mut printable: Vec<u32> = (33..=126).chain(161..=172).chain(174..=255).collect();
-    let mut chars: Vec<u32> = printable.clone();
-    let mut next = 0;
-    for b in 0..=255u32 {
-        if !printable.contains(&b) {
-            printable.push(b);
-            chars.push(256 + next);
-            next += 1;
-        }
-    }
-    printable
-        .iter()
-        .zip(&chars)
-        .filter_map(|(&b, &c)| Some((char::from_u32(c)?, b as u8)))
-        .collect()
+    (0..=255u8).zip(byte_chars()).map(|(b, c)| (c, b)).collect()
 }
 
 /// The vocabulary: each token's bytes, and whether it is special (left out
 /// of text).
 #[derive(Clone, Debug)]
 pub struct Vocab {
-    bytes: Vec<Vec<u8>>,
-    special: Vec<bool>,
+    pieces: Pieces,
 }
 
 impl Vocab {
@@ -95,20 +82,11 @@ impl Vocab {
         let Some(Json::Object(entries)) = Json::parse(vocab_json) else {
             return Err("vocab.json is not an object".into());
         };
-        let mut bytes: Vec<Vec<u8>> = Vec::new();
-        let mut special = Vec::new();
-        let mut put = |id: usize, b: Vec<u8>, s: bool| {
-            if bytes.len() <= id {
-                bytes.resize(id + 1, Vec::new());
-                special.resize(id + 1, false);
-            }
-            bytes[id] = b;
-            special[id] = s;
-        };
+        let mut pieces = Pieces::default();
         for (token, id) in &entries {
             let id = id.as_f64().ok_or("a token id is not a number")? as usize;
             let b: Option<Vec<u8>> = token.chars().map(|c| table.get(&c).copied()).collect();
-            put(
+            pieces.put(
                 id,
                 b.ok_or(format!("token {id} has a character outside the table"))?,
                 false,
@@ -120,17 +98,17 @@ impl Vocab {
                 let id: usize = id.parse().map_err(|_| "an added token's id")?;
                 let content = t.get("content").and_then(Json::as_str).unwrap_or("");
                 let s = t.get("special").and_then(Json::as_bool).unwrap_or(false);
-                put(id, content.as_bytes().to_vec(), s);
+                pieces.put(id, content.as_bytes().to_vec(), s);
             }
         }
-        Ok(Vocab { bytes, special })
+        Ok(Vocab { pieces })
     }
 
     /// As bytes: for each token its length (u16), whether it is special
     /// (u8), and its bytes. [`Vocab::from_bytes`] reads them back.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        for (b, &s) in self.bytes.iter().zip(&self.special) {
+        for (b, s) in self.pieces.iter() {
             out.extend_from_slice(&(b.len() as u16).to_le_bytes());
             out.push(u8::from(s));
             out.extend_from_slice(b);
@@ -140,32 +118,23 @@ impl Vocab {
 
     /// From [`Vocab::to_bytes`]'s.
     pub fn from_bytes(data: &[u8]) -> Result<Vocab, String> {
-        let (mut bytes, mut special) = (Vec::new(), Vec::new());
-        let mut at = 0;
+        let mut pieces = Pieces::default();
+        let (mut at, mut id) = (0, 0);
         while at < data.len() {
             let head = data.get(at..at + 3).ok_or("a broken vocabulary")?;
             let len = usize::from(u16::from_le_bytes([head[0], head[1]]));
-            special.push(head[2] != 0);
-            bytes.push(
-                data.get(at + 3..at + 3 + len)
-                    .ok_or("a broken vocabulary")?
-                    .to_vec(),
-            );
-            at += 3 + len;
+            let bytes = data
+                .get(at + 3..at + 3 + len)
+                .ok_or("a broken vocabulary")?;
+            pieces.put(id, bytes.to_vec(), head[2] != 0);
+            (at, id) = (at + 3 + len, id + 1);
         }
-        Ok(Vocab { bytes, special })
+        Ok(Vocab { pieces })
     }
 
     /// The text of `ids`, special tokens left out.
     pub fn decode(&self, ids: &[u32]) -> String {
-        let mut out = Vec::new();
-        for &id in ids {
-            let id = id as usize;
-            if id < self.bytes.len() && !self.special[id] {
-                out.extend_from_slice(&self.bytes[id]);
-            }
-        }
-        String::from_utf8_lossy(&out).into_owned()
+        self.pieces.decode(ids)
     }
 }
 
@@ -194,6 +163,17 @@ mod tests {
         assert_eq!(t[&'A'], b'A');
         assert_eq!(t[&'\u{120}'], b' ');
         assert_eq!(t[&'\u{10a}'], b'\n');
+    }
+
+    #[test]
+    fn the_vocabulary_goes_through_its_bytes_and_back() {
+        let vocab = r#"{"Hi": 0, "Ġyou": 2}"#;
+        let config =
+            r#"{"added_tokens_decoder": {"3": {"content": "<|im_end|>", "special": true}}}"#;
+        let v = Vocab::parse(vocab, config).unwrap();
+        let back = Vocab::from_bytes(&v.to_bytes()).unwrap();
+        assert_eq!(back.pieces, v.pieces);
+        assert_eq!(back.decode(&[0, 1, 2, 3]), "Hi you");
     }
 
     #[test]

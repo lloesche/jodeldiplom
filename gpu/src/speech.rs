@@ -1,7 +1,7 @@
 //! The speech model of [`jodel_lyrics::speech`] (wav2vec2-base-960h) on the
 //! GPU: the same network, weights and pieces as the CPU's, as one list of
-//! dispatches a piece (`speech.wgsl` with `kernels.wgsl`'s matrix
-//! multiply), giving the same logits to within rounding.
+//! dispatches a piece (`speech.wgsl` with `shared.wgsl`'s matrix multiply
+//! and GELU), giving the same logits to within rounding.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -14,8 +14,8 @@ use jodel_lyrics::speech::{
 use jodel_lyrics::{Maker, VOCALS_RATE};
 
 use crate::engine::{
-    self, buffers_footprint, guarded, kernels_source, params, spread, Access, After, Kernels,
-    Model, Mul, OnDevice, Program,
+    buffers_footprint, params, shared_source, spread, Access, Input, Kernels, Model, ModelOp,
+    OnDevice, Output, PackedNet, Program, Tiled, TiledMul, PARAM_WORDS_BYTES,
 };
 use crate::pace::Pieces;
 use crate::packer::Named;
@@ -53,7 +53,7 @@ impl Kernels for Kernel {
         Kernel::PosAdd,
         Kernel::Attention,
     ];
-    const PARAM_BYTES: u64 = 48;
+    const PARAM_BYTES: u64 = PARAM_WORDS_BYTES;
     const EXTRA: &'static [Access] = &[];
 
     fn entry(self) -> &'static str {
@@ -61,7 +61,7 @@ impl Kernels for Kernel {
             Kernel::Matmul => "matmul",
             Kernel::Conv0 => "sp_conv0",
             Kernel::ChanNormGelu => "sp_chan_norm_gelu",
-            Kernel::Gelu => "sp_gelu",
+            Kernel::Gelu => "gelu_in_place",
             Kernel::LayerNorm => "sp_layernorm",
             Kernel::PosPatches => "sp_pos_patches",
             Kernel::PosAdd => "sp_pos_add",
@@ -136,10 +136,13 @@ fn pack(model: &Wav2Vec2) -> Named {
 }
 
 /// One dispatch.
-type Op = engine::Op<Kernel, [Buf; 3], 12>;
+type Op = ModelOp<Kernel, Buf>;
+
+/// The model on its device.
+type Net = PackedNet<Kernel, Buf>;
 
 /// `mul` through the tiled matrix multiply.
-fn matmul(ops: &mut Vec<Op>, mul: Mul<Buf>) {
+fn matmul(ops: &mut Vec<Op>, mul: TiledMul<Buf>) {
     ops.push(mul.tiled(Kernel::Matmul, Buf::Weights));
 }
 
@@ -182,15 +185,15 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
         // Each frame's patch of `k` frames, `s` frames on from the last.
         matmul(
             &mut ops,
-            Mul {
+            TiledMul {
                 from: (from, 0, s * CHANNELS),
-                ..Mul::dense(
+                ..TiledMul::dense(
                     from,
                     to,
                     (m, CHANNELS, k * CHANNELS),
                     w(&format!("conv{l}")),
                     None,
-                    After::Store,
+                    Tiled::Store,
                 )
             },
         );
@@ -216,7 +219,7 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
     };
     // A layer `name` of `f` rows, its bias with it.
     let layer = |from, to, (n, k), name: &str, after| {
-        Mul::dense(
+        TiledMul::dense(
             from,
             to,
             (f, n, k),
@@ -228,7 +231,7 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
     norm(&mut ops, from, CHANNELS, "fp.ln");
     matmul(
         &mut ops,
-        layer(from, Buf::Hidden, (DIM, CHANNELS), "proj", After::Store),
+        layer(from, Buf::Hidden, (DIM, CHANNELS), "proj", Tiled::Store),
     );
     for g in 0..16 {
         each(
@@ -241,15 +244,15 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
         // Each group's 48 channels, into its columns of the width.
         matmul(
             &mut ops,
-            Mul {
+            TiledMul {
                 to: (Buf::Pos, g * 48, DIM),
-                ..Mul::dense(
+                ..TiledMul::dense(
                     Buf::Patches,
                     Buf::Pos,
                     (f, 48, POS),
                     w(&format!("pos{g}")),
                     None,
-                    After::Store,
+                    Tiled::Store,
                 )
             },
         );
@@ -266,7 +269,7 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
         let n = |what: &str| format!("{l}.{what}");
         matmul(
             &mut ops,
-            layer(Buf::Hidden, Buf::Qkv, (QKV, DIM), &n("qkv"), After::Store),
+            layer(Buf::Hidden, Buf::Qkv, (QKV, DIM), &n("qkv"), Tiled::Store),
         );
         ops.push(Op {
             kernel: Kernel::Attention,
@@ -276,12 +279,12 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
         });
         matmul(
             &mut ops,
-            layer(Buf::Attended, Buf::Hidden, (DIM, DIM), &n("o"), After::Add),
+            layer(Buf::Attended, Buf::Hidden, (DIM, DIM), &n("o"), Tiled::Add),
         );
         norm(&mut ops, Buf::Hidden, DIM, &n("ln"));
         matmul(
             &mut ops,
-            layer(Buf::Hidden, Buf::Up, (FF, DIM), &n("up"), After::Store),
+            layer(Buf::Hidden, Buf::Up, (FF, DIM), &n("up"), Tiled::Store),
         );
         each(
             &mut ops,
@@ -292,7 +295,7 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
         );
         matmul(
             &mut ops,
-            layer(Buf::Up, Buf::Hidden, (DIM, FF), &n("down"), After::Add),
+            layer(Buf::Up, Buf::Hidden, (DIM, FF), &n("down"), Tiled::Add),
         );
         norm(&mut ops, Buf::Hidden, DIM, &n("fln"));
     }
@@ -303,16 +306,10 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
             Buf::Logits,
             (TOKENS, DIM),
             "head",
-            After::Store,
+            Tiled::Store,
         ),
     );
     ops
-}
-
-/// The model on its device, and where its weights are there.
-struct Inner {
-    model: Model<Kernel, Buf>,
-    weights: Named,
 }
 
 /// wav2vec2-base-960h on the GPU.
@@ -320,14 +317,14 @@ pub struct GpuSpeech {
     name: String,
     /// The first convolution's weights, for a voice's [`Levels`].
     conv0: Vec<f32>,
-    inner: Turned<Mutex<Inner>>,
+    net: Turned<Mutex<Net>>,
 }
 
 impl GpuSpeech {
     /// The model on the best GPU, from the CPU's (its weights as they are).
     pub fn new(model: &Wav2Vec2) -> Result<GpuSpeech, String> {
-        let (inner, name) = crate::device::open("jodel-gpu speech", |device, queue, limits| {
-            Inner::new(device, queue, limits, model)
+        let (net, name) = crate::device::open("jodel-gpu speech", |device, queue, limits| {
+            on(device, queue, limits, model)
         })?;
         let mut conv0 = Vec::new();
         model.visit(&mut |name, values| {
@@ -338,21 +335,13 @@ impl GpuSpeech {
         Ok(GpuSpeech {
             name,
             conv0,
-            inner: Turned::new(Mutex::new(inner)),
+            net: Turned::new(Mutex::new(net)),
         })
     }
 
     /// The GPU's name.
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is made instead.
-    pub fn is_lost(&self) -> bool {
-        self.inner
-            .lock()
-            .map_or(true, |inner| inner.model.program.lost())
     }
 
     /// The logits (`frames × 32`) of a voice at 16 kHz heard on its own, in
@@ -371,19 +360,18 @@ impl GpuSpeech {
         if Wav2Vec2::frames_of(piece.len()) == 0 {
             return Ok(Vec::new());
         }
-        let mut inner = self
-            .inner
+        let mut net = self
+            .net
             .lock()
             .map_err(|_| "the GPU speech model failed before".to_owned())?;
-        let device = inner.model.program.device.clone();
         let x = levels.normalise(piece);
-        guarded(&device, || inner.run(&x, &levels.channels(&x)))
+        net.run(&x, &levels.channels(&x))
     }
 }
 
 impl OnDevice for GpuSpeech {
     fn lost(&self) -> bool {
-        self.is_lost()
+        self.net.lock().map_or(true, |net| net.lost())
     }
 }
 
@@ -432,41 +420,56 @@ impl Acoustic for GpuSpeech {
     }
 }
 
-impl Inner {
-    fn new(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        limits: &wgpu::Limits,
-        model: &Wav2Vec2,
-    ) -> Result<Inner, String> {
-        let mut weights = pack(model);
-        let values = weights.take_values();
-        let (sizes, read) = sizes(values.len());
-        let program = Program::new(
-            device,
-            queue,
-            limits,
-            "jodel-gpu speech",
-            &kernels_source(&[include_str!("speech.wgsl")]),
-        );
-        let model = Model::new(program, &sizes, read, Pieces::resting())?;
-        model.write(Buf::Weights, &values);
-        Ok(Inner { model, weights })
-    }
+/// The model on a device, from the CPU's.
+fn on(
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    limits: &wgpu::Limits,
+    model: &Wav2Vec2,
+) -> Result<Net, String> {
+    let mut weights = pack(model);
+    let values = weights.take_values();
+    let (sizes, read) = sizes(values.len());
+    let program = Program::new(
+        device,
+        queue,
+        limits,
+        "jodel-gpu speech",
+        &shared_source(&[include_str!("speech.wgsl")]),
+    );
+    let model = Model::new(program, &sizes, read, Pieces::resting())?;
+    model.write(Buf::Weights, &values);
+    Ok(PackedNet { model, weights })
+}
 
+impl Net {
     /// One piece through its plan (recorded on first use), its first
     /// convolution's channels at `channels` (each one's mean and 1/σ): the
     /// logits.
     fn run(&mut self, x: &[f32], channels: &[f32]) -> Result<Vec<f32>, String> {
-        self.model.write(Buf::Audio, x);
-        self.model.write(Buf::Stats, channels);
         let frames = conv_frames(x.len())[6];
         let weights = &self.weights;
         self.model.run(
             x.len(),
             || plan(weights, x.len()),
+            &[
+                Input {
+                    buf: Buf::Audio,
+                    at: 0,
+                    values: x,
+                },
+                Input {
+                    buf: Buf::Stats,
+                    at: 0,
+                    values: channels,
+                },
+            ],
             |_, _| {},
-            (Buf::Logits, frames * TOKENS),
+            Output {
+                buf: Buf::Logits,
+                first: 0,
+                count: frames * TOKENS,
+            },
         )
     }
 }

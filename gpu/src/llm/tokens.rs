@@ -13,10 +13,11 @@
 //!   `tokenizers` does.
 //!
 //! Decoding turns `▁` back into spaces and byte pieces into their bytes,
-//! the specials left out.
+//! the specials left out: each piece's text worked out once, read back by
+//! the BPE core's decoding half (`jodel_tensors::bpe::Pieces`).
 use std::collections::HashMap;
 
-use jodel_tensors::bpe::{Merges, Part, Specials};
+use jodel_tensors::bpe::{Merges, Part, Pieces, Specials};
 use jodel_tensors::gguf::{Array, Gguf};
 
 /// The pieces that end the model's answer, with the file's end-of-sequence
@@ -40,8 +41,10 @@ const TURNS: [&str; 4] = [
 
 /// The tokeniser.
 pub struct Tokenizer {
-    /// Each id's piece, as bytes (`▁` as its UTF-8).
-    pieces: Vec<Vec<u8>>,
+    /// Each id's text: its piece's bytes with `▁` a space, a byte piece's
+    /// byte, none for a special.
+    text: Pieces,
+    /// Each piece's id, by its bytes (`▁` as its UTF-8).
     ids: HashMap<Vec<u8>, u32>,
     /// Each mergeable pair of ids: its rank and the id it makes.
     merges: Merges,
@@ -164,6 +167,20 @@ impl Tokenizer {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let merges = Merges::new(&pieces, &ids, &pairs)?;
+        let mut text = Pieces::default();
+        for (i, piece) in pieces.iter().enumerate() {
+            let bytes = match byte_of(piece) {
+                Some(b) => vec![b],
+                None => match std::str::from_utf8(piece) {
+                    Ok(s) => s.replace(SPACE, " ").into_bytes(),
+                    Err(_) => piece.clone(),
+                },
+            };
+            text.put(i, bytes, false);
+        }
+        for &i in &specials {
+            text.put(i as usize, pieces[i as usize].clone(), true);
+        }
         let specials = Specials::new(
             specials
                 .iter()
@@ -178,7 +195,7 @@ impl Tokenizer {
                 .ok_or_else(|| format!("no piece {name}"))?;
         }
         Ok(Tokenizer {
-            pieces,
+            text,
             ids,
             merges,
             specials,
@@ -190,12 +207,12 @@ impl Tokenizer {
 
     /// The number of pieces.
     pub fn len(&self) -> usize {
-        self.pieces.len()
+        self.text.len()
     }
 
     /// Whether it has no pieces.
     pub fn is_empty(&self) -> bool {
-        self.pieces.is_empty()
+        self.text.is_empty()
     }
 
     /// The tokens that end an answer.
@@ -233,28 +250,7 @@ impl Tokenizer {
 
     /// The text of `ids`, the special tokens left out.
     pub fn decode(&self, ids: &[u32]) -> String {
-        let mut bytes = Vec::new();
-        for &id in ids {
-            self.bytes_of(id, &mut bytes);
-        }
-        String::from_utf8_lossy(&bytes).into_owned()
-    }
-
-    /// The bytes of token `id` (none for a special) appended to `out`.
-    fn bytes_of(&self, id: u32, out: &mut Vec<u8>) {
-        if self.specials.is_special(id) {
-            return;
-        }
-        let Some(piece) = self.pieces.get(id as usize) else {
-            return;
-        };
-        match byte_of(piece) {
-            Some(b) => out.push(b),
-            None => match std::str::from_utf8(piece) {
-                Ok(s) => out.extend(s.replace(SPACE, " ").into_bytes()),
-                Err(_) => out.extend(piece),
-            },
-        }
+        self.text.decode(ids)
     }
 
     /// A decoder of tokens as they come ([`Stream`]).
@@ -292,7 +288,7 @@ impl Stream<'_> {
     /// The text that token `id` completes (empty while a character is
     /// still in pieces; a byte that starts none as U+FFFD).
     pub fn push(&mut self, id: u32) -> String {
-        self.tokens.bytes_of(id, &mut self.held);
+        self.held.extend_from_slice(self.tokens.text.text(id));
         let mut out = String::new();
         loop {
             match std::str::from_utf8(&self.held) {

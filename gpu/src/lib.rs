@@ -21,13 +21,14 @@
 //! network pack their weights from the CPU models as those hold them.
 //!
 //! A device can be lost (a driver reset, a GPU unplugged or switched).
-//! The networks the process keeps ([`GpuSeparator::shared`] and
-//! [`GpuSeparator::background`], [`GpuNetwork::shared`], the vision
-//! networks' device) are set up again on their next use, and a setup that
-//! failed is tried again a while later; one the caller holds says so
-//! (`is_lost`: [`GpuSpeech::is_lost`], [`GpuAsr::is_lost`],
-//! [`GpuDepth::is_lost`], [`GpuMatte::is_lost`], [`Gemma::is_lost`], the
-//! picture model's parts), and the caller makes it again.
+//! Every network is held as a [`Kept`]: set up again on its next use, and
+//! a setup that failed tried again a while later. The process keeps the
+//! separators ([`GpuSeparator::shared`] and [`GpuSeparator::background`])
+//! and the beat network ([`GpuNetwork::shared`]) so; the caller keeps the
+//! others, each saying when its device is lost ([`OnDevice`]:
+//! [`GpuSpeech`], [`GpuAsr`], [`GpuDepth`], [`GpuMatte`], [`Gemma`], the
+//! picture model's parts). The devices the vision networks and the
+//! picture model's parts share are set up again the same way.
 //!
 //! The GPU is chosen once a process ([`chosen`], `device.rs`): one `wgpu`
 //! instance, the adapters on every backend listed once, the best one kept

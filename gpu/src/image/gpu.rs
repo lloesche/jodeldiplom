@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::plan::{Buf, Plan};
 use super::{source, Kernel};
-use crate::engine::{bytes, guarded, OnDevice, Program, Recorded, SharedDevice};
+use crate::engine::{guarded, Input, OnDevice, Output, Program, Recorded, SharedDevice, Write};
 use crate::{Precision, Turned};
 
 /// The workgroup memory the f32 kernels take at most (the attention's,
@@ -150,7 +150,7 @@ impl Loaded {
 /// the buffer its result is read back through.
 pub(crate) struct Made {
     slots: Vec<wgpu::Buffer>,
-    recorded: Recorded<Kernel>,
+    recorded: Recorded<Kernel, [Buf; 5]>,
     staging: wgpu::Buffer,
     pieces: crate::pace::Pieces,
 }
@@ -191,32 +191,25 @@ impl Made {
         self.slots.iter().map(wgpu::Buffer::size).sum()
     }
 
-    /// Runs it: each of `inputs` (a slot, an offset, values) written first,
-    /// then `count` f32s of slot `from` from `offset` read back.
+    /// Runs it: each of `inputs` written first, then `output` read back
+    /// (the plan's slots by number).
     pub(crate) fn run(
         &mut self,
         loaded: &Loaded,
-        inputs: &[(u8, usize, &[f32])],
-        (from, offset, count): (u8, usize, usize),
+        inputs: &[Input<u8>],
+        output: Output<u8>,
     ) -> Result<Vec<f32>, String> {
+        let slots = &self.slots;
+        let slot = |i: u8| &slots[usize::from(i)];
+        let writes: Vec<Write> = inputs.iter().map(|i| i.write(slot)).collect();
+        let read = output.read(slot, &self.staging);
         let program = &loaded.gpu.program;
-        let (slots, recorded, staging) = (&self.slots, &self.recorded, &self.staging);
-        let pieces = &mut self.pieces;
-        guarded(&program.device, || {
-            for &(slot, at, values) in inputs {
-                program.queue.write_buffer(
-                    &slots[usize::from(slot)],
-                    (at * 4) as u64,
-                    &bytes(values),
-                );
-            }
-            program.run(
-                pieces,
-                (&recorded.groups, &recorded.dispatches),
-                |_| {},
-                Some((&slots[usize::from(from)], offset, count)),
-                staging,
-            )
-        })
+        program.run(
+            &mut self.pieces,
+            &self.recorded,
+            &writes,
+            |_| {},
+            Some(read),
+        )
     }
 }

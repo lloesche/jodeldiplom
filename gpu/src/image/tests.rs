@@ -7,6 +7,7 @@ use jodel_tensors::SafeTensors;
 use super::gpu::{Gpu, Made};
 use super::plan::{At, Buf, Conv, Mat, Norm, Plan, Rope, Tail};
 use super::weights::{Fp8, Packing, Source};
+use crate::engine::{Input, Output};
 
 /// A slot handed over is caught where its next use reads it (as an input,
 /// or adding into it) and passes where that use writes it (no GPU).
@@ -204,11 +205,17 @@ fn run(
     p.need(read.0, read.1 + read.2);
     build(&mut p);
     let mut made = Made::new(&loaded, &p, read.2).unwrap();
-    let inputs: Vec<(u8, usize, &[f32])> = inputs
+    let inputs: Vec<Input<u8>> = inputs
         .iter()
-        .map(|(s, a, v)| (*s, *a, v.as_slice()))
+        .map(|(buf, at, v)| Input {
+            buf: *buf,
+            at: *at,
+            values: v.as_slice(),
+        })
         .collect();
-    Some(made.run(&loaded, &inputs, read).unwrap())
+    let (buf, first, count) = read;
+    let output = Output { buf, first, count };
+    Some(made.run(&loaded, &inputs, output).unwrap())
 }
 
 /// Whether the GPU has tensor cores (else the fast kernels are the f32

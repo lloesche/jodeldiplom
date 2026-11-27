@@ -26,6 +26,7 @@ use super::net::Net;
 use super::ops::{Act, Attend, Band, ConvW, Img, Plan, Resize, ADD, GELU, NORM_CHUNK, UP_IN};
 use super::prep::{self, Rgb};
 use super::{swin, Named};
+use crate::engine::{Input, OnDevice, Output};
 use crate::Footprint;
 
 const SIDE: usize = 1024;
@@ -578,12 +579,6 @@ impl GpuMatte {
             .unwrap_or_default()
     }
 
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is made instead.
-    pub fn is_lost(&self) -> bool {
-        self.net.lock().map_or(true, |n| n.lost())
-    }
-
     /// The bytes it keeps on the GPU now.
     pub fn gpu_bytes(&self) -> u64 {
         self.net.lock().map(|n| n.bytes()).unwrap_or(0)
@@ -610,13 +605,17 @@ impl GpuMatte {
                 input.len()
             ));
         }
-        self.planned()?
-            .run(self.input, input, (self.out, 0, SIDE * SIDE))
-    }
-
-    /// Each kernel's share of a run (see `Net::profile`).
-    pub fn profile(&self, input: &[f32]) -> Result<Vec<(String, usize, f64)>, String> {
-        self.planned()?.profile(self.input, input)
+        let input = Input {
+            buf: self.input,
+            at: 0,
+            values: input,
+        };
+        let output = Output {
+            buf: self.out,
+            first: 0,
+            count: SIDE * SIDE,
+        };
+        self.planned()?.run(input, output)
     }
 
     /// The matte of `image` at 1024 × 1024, stretched to its range as BEN2's
@@ -635,5 +634,11 @@ impl GpuMatte {
             height: SIDE,
             values,
         })
+    }
+}
+
+impl OnDevice for GpuMatte {
+    fn lost(&self) -> bool {
+        self.net.lock().map_or(true, |n| n.lost())
     }
 }

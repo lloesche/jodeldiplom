@@ -1,8 +1,9 @@
 // The speech model's kernels (wav2vec2-base-960h), compiled after
-// kernels.wgsl: they share its bindings (src, aux, dst, p) and helpers
-// (linear_id, gelu, src4, store4, the workgroup arrays keys and vals), and
-// the model also uses its matmul (the convolutions too: a frame's window is
-// a contiguous run of the frames before, read with lda = stride · 512).
+// shared.wgsl: they share its bindings (src, aux, dst, p) and helpers
+// (linear_id, gelu, lane_sum, the tiles keys and vals and their readers),
+// and the model also uses its matmul (the convolutions too: a frame's
+// window is a contiguous run of the frames before, read with lda = stride
+// · 512) and gelu_in_place.
 
 // ---- The first convolution: dst[t·512 + c] = Σj aux[w_off + c·10 + j] ·
 // src[5t + j]. f0 frames, f1 w_off.
@@ -36,16 +37,6 @@ fn sp_chan_norm_gelu(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num
     let c = i % p.f1;
     let v = (dst[i] - src[2u * c]) * src[2u * c + 1u];
     dst[i] = gelu(v * aux[p.f2 + c] + aux[p.f3 + c]);
-}
-
-// ---- In place: dst[i] = gelu(dst[i]). f0 count.
-@compute @workgroup_size(256)
-fn sp_gelu(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let i = linear_id(gid, groups);
-    if (i >= p.f0) {
-        return;
-    }
-    dst[i] = gelu(dst[i]);
 }
 
 // ---- LayerNorm in place: each row of dim values to zero mean and unit
@@ -117,41 +108,6 @@ fn sp_pos_add(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
 // side, [token][2304]; dst: [token][768]. f0 len. Workgroups (queries / 64,
 // heads); an online softmax over tiles of 32 keys (the workgroup arrays
 // hold 32 keys of 16 vectors, and their values).
-// A key of 64 values from the tile (its 16 vectors from b).
-fn sp_key64(b: u32) -> H64 {
-    return H64(keys[b + 0u], keys[b + 1u], keys[b + 2u], keys[b + 3u], keys[b + 4u], keys[b + 5u], keys[b + 6u], keys[b + 7u], keys[b + 8u], keys[b + 9u], keys[b + 10u], keys[b + 11u], keys[b + 12u], keys[b + 13u], keys[b + 14u], keys[b + 15u]);
-}
-
-// Its values from the tile.
-fn sp_val64(b: u32) -> H64 {
-    return H64(vals[b + 0u], vals[b + 1u], vals[b + 2u], vals[b + 3u], vals[b + 4u], vals[b + 5u], vals[b + 6u], vals[b + 7u], vals[b + 8u], vals[b + 9u], vals[b + 10u], vals[b + 11u], vals[b + 12u], vals[b + 13u], vals[b + 14u], vals[b + 15u]);
-}
-
-// 64 values of src from at.
-fn sp_src64(at: u32) -> H64 {
-    return H64(src4(at + 0u * 4u), src4(at + 1u * 4u), src4(at + 2u * 4u), src4(at + 3u * 4u), src4(at + 4u * 4u), src4(at + 5u * 4u), src4(at + 6u * 4u), src4(at + 7u * 4u), src4(at + 8u * 4u), src4(at + 9u * 4u), src4(at + 10u * 4u), src4(at + 11u * 4u), src4(at + 12u * 4u), src4(at + 13u * 4u), src4(at + 14u * 4u), src4(at + 15u * 4u));
-}
-
-// 64 values to dst from at.
-fn sp_store64(at: u32, v: H64) {
-    store4(at + 0u, v.v0);
-    store4(at + 4u, v.v1);
-    store4(at + 8u, v.v2);
-    store4(at + 12u, v.v3);
-    store4(at + 16u, v.v4);
-    store4(at + 20u, v.v5);
-    store4(at + 24u, v.v6);
-    store4(at + 28u, v.v7);
-    store4(at + 32u, v.v8);
-    store4(at + 36u, v.v9);
-    store4(at + 40u, v.v10);
-    store4(at + 44u, v.v11);
-    store4(at + 48u, v.v12);
-    store4(at + 52u, v.v13);
-    store4(at + 56u, v.v14);
-    store4(at + 60u, v.v15);
-}
-
 @compute @workgroup_size(64)
 fn sp_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
     let len = p.f0;
@@ -161,7 +117,7 @@ fn sp_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup
     var q = h64_zero();
     var st = soft64();
     if (valid) {
-        q = h64_scale(sp_src64(qp * 2304u + h * 64u), 0.125);
+        q = h64_scale(src64(qp * 2304u + h * 64u), 0.125);
     }
     for (var k0 = 0u; k0 < len; k0 += 32u) {
         // 64 invocations load 32 keys and values of 16 vectors: 8 each.
@@ -182,23 +138,23 @@ fn sp_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup
             var j = 0u;
             for (; j + 4u <= count; j += 4u) {
                 let kb = j * 16u;
-                let s0 = h64_dot(q, sp_key64(kb));
-                let s1 = h64_dot(q, sp_key64(kb + 16u));
-                let s2 = h64_dot(q, sp_key64(kb + 32u));
-                let s3 = h64_dot(q, sp_key64(kb + 48u));
-                st = soft64_take(st, s0, sp_val64(kb));
-                st = soft64_take(st, s1, sp_val64(kb + 16u));
-                st = soft64_take(st, s2, sp_val64(kb + 32u));
-                st = soft64_take(st, s3, sp_val64(kb + 48u));
+                let s0 = h64_dot(q, key64(kb));
+                let s1 = h64_dot(q, key64(kb + 16u));
+                let s2 = h64_dot(q, key64(kb + 32u));
+                let s3 = h64_dot(q, key64(kb + 48u));
+                st = soft64_take(st, s0, val64(kb));
+                st = soft64_take(st, s1, val64(kb + 16u));
+                st = soft64_take(st, s2, val64(kb + 32u));
+                st = soft64_take(st, s3, val64(kb + 48u));
             }
             for (; j < count; j++) {
                 let kb = j * 16u;
-                st = soft64_take(st, h64_dot(q, sp_key64(kb)), sp_val64(kb));
+                st = soft64_take(st, h64_dot(q, key64(kb)), val64(kb));
             }
         }
         workgroupBarrier();
     }
     if (valid) {
-        sp_store64(qp * 768u + h * 64u, h64_div(st.acc, st.total));
+        store64(qp * 768u + h * 64u, h64_div(st.acc, st.total));
     }
 }

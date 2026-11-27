@@ -99,14 +99,7 @@ impl Rig {
         };
         let recorded = p.record(&[op], |()| bufs.iter().collect()).unwrap();
         let mut pieces = crate::pace::Pieces::foreground();
-        p.run(
-            &mut pieces,
-            (&recorded.groups, &recorded.dispatches),
-            |_| {},
-            None,
-            &p.staging(1),
-        )
-        .unwrap();
+        p.run(&mut pieces, &recorded, &[], |_| {}, None).unwrap();
         let read = |b: &wgpu::Buffer, n: usize| {
             let staging = p.staging(n);
             let mut encoder = p.device.create_command_encoder(&Default::default());

@@ -1,6 +1,9 @@
-// The separator's kernels, compiled after `bindings.wgsl` (the bindings)
-// and `common.wgsl` (GELU); the beat network, the speech model and the
-// recogniser use some of them too.
+// The kernels and helpers the separator, the beat network, the speech
+// model and the recogniser share, compiled after `bindings.wgsl` (the
+// bindings) and `common.wgsl` (GELU, the heads of 64): the tiled matrix
+// multiply, RMSNorm, the rotary positions, a transpose and GELU in place;
+// a row's sum over its lanes; the attention kernels' tiles of keys and
+// values and their readers.
 
 // ---- dst[c_off + r*ldc + c] (+)= Σk src[a_off + r*lda + k] · aux[w_off + k*n + c] (+ aux[bias_off + c])
 // f0 m, f1 n, f2 k, f3 a_off, f4 lda, f5 w_off, f6 c_off, f7 ldc, f8 bias_off,
@@ -237,17 +240,15 @@ fn rope(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     dst[ib] = b * c + a * s;
 }
 
-// ---- Attention, 8 query heads on 4 key/value heads of 32. src: queries
-// [token][256]; aux: keys and values [token][256] (keys in columns 0..128,
-// values in 128..256); dst: [token][256]. f0 len (tokens per sequence).
-// Workgroups: (queries / 64, heads, sequences); an online softmax over
-// tiles of 64 keys, so the scores are never stored. A head is held as
-// eight vectors of four, each a variable of its own (q0…q7, the values'
-// sum a0…a7): an array indexed in a loop may be kept in memory rather
-// than registers (Apple's GPUs, from the loops wgpu writes for Metal),
-// and this loop runs for every query and key.
+// ---- The attention kernels' tiles: keys and values of a tile of a
+// sequence, as vectors of four (64 keys of heads of 32, or 32 of heads of
+// 64), and four values of src, aux or dst at a time.
 var<workgroup> keys: array<vec4<f32>, 512>;
 var<workgroup> vals: array<vec4<f32>, 512>;
+
+fn aux4(i: u32) -> vec4<f32> {
+    return vec4<f32>(aux[i], aux[i + 1u], aux[i + 2u], aux[i + 3u]);
+}
 
 fn src4(i: u32) -> vec4<f32> {
     return vec4<f32>(src[i], src[i + 1u], src[i + 2u], src[i + 3u]);
@@ -258,6 +259,41 @@ fn store4(i: u32, v: vec4<f32>) {
     dst[i + 1u] = v.y;
     dst[i + 2u] = v.z;
     dst[i + 3u] = v.w;
+}
+
+// A head of 64 values from the tile of keys (its 16 vectors from b).
+fn key64(b: u32) -> H64 {
+    return H64(keys[b + 0u], keys[b + 1u], keys[b + 2u], keys[b + 3u], keys[b + 4u], keys[b + 5u], keys[b + 6u], keys[b + 7u], keys[b + 8u], keys[b + 9u], keys[b + 10u], keys[b + 11u], keys[b + 12u], keys[b + 13u], keys[b + 14u], keys[b + 15u]);
+}
+
+// Its values from the tile of values.
+fn val64(b: u32) -> H64 {
+    return H64(vals[b + 0u], vals[b + 1u], vals[b + 2u], vals[b + 3u], vals[b + 4u], vals[b + 5u], vals[b + 6u], vals[b + 7u], vals[b + 8u], vals[b + 9u], vals[b + 10u], vals[b + 11u], vals[b + 12u], vals[b + 13u], vals[b + 14u], vals[b + 15u]);
+}
+
+// 64 values of src from at.
+fn src64(at: u32) -> H64 {
+    return H64(src4(at + 0u * 4u), src4(at + 1u * 4u), src4(at + 2u * 4u), src4(at + 3u * 4u), src4(at + 4u * 4u), src4(at + 5u * 4u), src4(at + 6u * 4u), src4(at + 7u * 4u), src4(at + 8u * 4u), src4(at + 9u * 4u), src4(at + 10u * 4u), src4(at + 11u * 4u), src4(at + 12u * 4u), src4(at + 13u * 4u), src4(at + 14u * 4u), src4(at + 15u * 4u));
+}
+
+// 64 values to dst from at.
+fn store64(at: u32, v: H64) {
+    store4(at + 0u, v.v0);
+    store4(at + 4u, v.v1);
+    store4(at + 8u, v.v2);
+    store4(at + 12u, v.v3);
+    store4(at + 16u, v.v4);
+    store4(at + 20u, v.v5);
+    store4(at + 24u, v.v6);
+    store4(at + 28u, v.v7);
+    store4(at + 32u, v.v8);
+    store4(at + 36u, v.v9);
+    store4(at + 40u, v.v10);
+    store4(at + 44u, v.v11);
+    store4(at + 48u, v.v12);
+    store4(at + 52u, v.v13);
+    store4(at + 56u, v.v14);
+    store4(at + 60u, v.v15);
 }
 
 // A query of a head of 32 (scaled), as eight vectors.
@@ -320,83 +356,29 @@ fn att_take(st: Soft32, s: f32, kb: u32) -> Soft32 {
     return o;
 }
 
-@compute @workgroup_size(64)
-fn attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
-    let len = p.f0;
-    let seq = wid.z;
-    let h = wid.y;
-    let kv = h / 2u;
-    let qp = wid.x * 64u + lid.x;
-    let valid = qp < len;
-    let scale = inverseSqrt(32.0);
-    let z = vec4<f32>(0.0);
-    var q = Q32(z, z, z, z, z, z, z, z);
-    if (valid) {
-        let at = (seq * len + qp) * 256u + h * 32u;
-        q = Q32(src4(at) * scale, src4(at + 4u) * scale, src4(at + 8u) * scale, src4(at + 12u) * scale,
-                src4(at + 16u) * scale, src4(at + 20u) * scale, src4(at + 24u) * scale, src4(at + 28u) * scale);
-    }
-    var st = Soft32(-1e30, 0.0, z, z, z, z, z, z, z, z);
-    for (var k0 = 0u; k0 < len; k0 += 64u) {
-        let kp = k0 + lid.x;
-        if (kp < len) {
-            let at = (seq * len + kp) * 256u + kv * 32u;
-            for (var d = 0u; d < 8u; d++) {
-                let i = at + 4u * d;
-                keys[lid.x * 8u + d] = vec4<f32>(aux[i], aux[i + 1u], aux[i + 2u], aux[i + 3u]);
-                let j = i + 128u;
-                vals[lid.x * 8u + d] = vec4<f32>(aux[j], aux[j + 1u], aux[j + 2u], aux[j + 3u]);
-            }
-        }
-        workgroupBarrier();
-        let count = min(64u, len - k0);
-        if (valid) {
-            // Four keys' scores at a time (four sums under way together),
-            // then taken in in their order.
-            var j = 0u;
-            for (; j + 4u <= count; j += 4u) {
-                let kb = j * 8u;
-                let s0 = att_score(q, kb);
-                let s1 = att_score(q, kb + 8u);
-                let s2 = att_score(q, kb + 16u);
-                let s3 = att_score(q, kb + 24u);
-                st = att_take(st, s0, kb);
-                st = att_take(st, s1, kb + 8u);
-                st = att_take(st, s2, kb + 16u);
-                st = att_take(st, s3, kb + 24u);
-            }
-            for (; j < count; j++) {
-                st = att_take(st, att_score(q, j * 8u), j * 8u);
-            }
-        }
-        workgroupBarrier();
-    }
-    if (valid) {
-        let at = (seq * len + qp) * 256u + h * 32u;
-        store4(at, st.a0 / st.total);
-        store4(at + 4u, st.a1 / st.total);
-        store4(at + 8u, st.a2 / st.total);
-        store4(at + 12u, st.a3 / st.total);
-        store4(at + 16u, st.a4 / st.total);
-        store4(at + 20u, st.a5 / st.total);
-        store4(at + 24u, st.a6 / st.total);
-        store4(at + 28u, st.a7 / st.total);
-    }
-}
-
-// ---- dst = src as tokens of 256 in [cols][rows] from [rows][cols].
-// f0 rows, f1 cols.
+// ---- [a][b][c] to [b][a][c]. f0 a, f1 b, f2 c.
 @compute @workgroup_size(256)
 fn transpose(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let i = linear_id(gid, groups);
-    let rows = p.f0;
-    let cols = p.f1;
-    if (i >= rows * cols * 256u) {
+    let a = p.f0;
+    let b = p.f1;
+    let c = p.f2;
+    if (i >= a * b * c) {
         return;
     }
-    let d = i % 256u;
-    let token = i / 256u;
-    let r = token / cols;
-    let c = token % cols;
-    dst[(c * rows + r) * 256u + d] = src[i];
+    let ch = i % c;
+    let token = i / c;
+    let ia = token / b;
+    let jb = token % b;
+    dst[(jb * a + ia) * c + ch] = src[i];
+}
+
+// ---- In place: dst[i] = gelu(dst[i]). f0 count.
+@compute @workgroup_size(256)
+fn gelu_in_place(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let i = linear_id(gid, groups);
+    if (i >= p.f0) {
+        return;
+    }
+    dst[i] = gelu(dst[i]);
 }

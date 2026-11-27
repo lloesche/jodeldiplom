@@ -8,6 +8,39 @@ fn linear_id(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
     return gid.x + gid.y * groups.x * 256u;
 }
 
+var<workgroup> red64: array<f32, 64>;
+
+// The sum of `v` over a workgroup of 64 (every invocation calls it, and
+// gets it), in a tree.
+fn sum64(t: u32, v: f32) -> f32 {
+    red64[t] = v;
+    workgroupBarrier();
+    for (var s = 32u; s > 0u; s >>= 1u) {
+        if (t < s) {
+            red64[t] += red64[t + s];
+        }
+        workgroupBarrier();
+    }
+    let total = red64[0];
+    workgroupBarrier();
+    return total;
+}
+
+// The largest `v` over a workgroup of 64, as sum64.
+fn max64(t: u32, v: f32) -> f32 {
+    red64[t] = v;
+    workgroupBarrier();
+    for (var s = 32u; s > 0u; s >>= 1u) {
+        if (t < s) {
+            red64[t] = max(red64[t], red64[t + s]);
+        }
+        workgroupBarrier();
+    }
+    let most = red64[0];
+    workgroupBarrier();
+    return most;
+}
+
 var<workgroup> red256: array<f32, 256>;
 
 // The sum of `v` over a workgroup of 256 (every invocation calls it, and

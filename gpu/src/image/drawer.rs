@@ -19,6 +19,7 @@ use super::sampling::{embedded_time, noise, schedule};
 use super::transformer::{self as tr, time_sinusoids, Tokens, Transformer, CHANNELS};
 use super::vae::{self, Vae};
 use super::weights::{Packing, Source};
+use crate::engine::{Input, Output};
 use crate::{Footprint, Precision, Resident};
 
 /// The files [`Drawer::load`] opens: the transformer's in BFL's FP8
@@ -89,9 +90,9 @@ struct Io {
 
 impl Io {
     /// The f32s `key`'s plan reads back.
-    fn read(&self, key: &Key) -> (u8, usize, usize) {
+    fn read(&self, key: &Key) -> Output<u8> {
         let t = key.tokens();
-        match key.part {
+        let (buf, first, count) = match key.part {
             Part::Picture | Part::Decode => (self.picture, 0, key.width * key.height * 3),
             Part::References => (
                 self.tr.lat,
@@ -99,7 +100,8 @@ impl Io {
                 (t.picture() - t.latent()) * CHANNELS,
             ),
             Part::FirstStep => (self.tr.pred, 0, t.latent() * CHANNELS),
-        }
+        };
+        Output { buf, first, count }
     }
 }
 
@@ -278,19 +280,22 @@ impl Drawer {
             *slot = None;
             let fast = self.loaded.fast(self.precision);
             let (p, io) = plan(&self.transformer, &self.vae, &key, fast);
-            let made = Made::new(&self.loaded, &p, io.read(&key).2)?;
+            let made = Made::new(&self.loaded, &p, io.read(&key).count)?;
             self.working = self.working.max(made.bytes());
             *slot = Some((key.clone(), io, made));
         }
         let (_, io, made) = slot.as_mut().expect("made");
-        let mut inputs: Vec<(u8, usize, &[f32])> = vec![
-            (io.tr.lat, 0, &lat),
-            (io.tr.txt, 0, &embeds.values),
-            (io.tr.times, 0, &times),
-            (io.tr.rope, 0, &rope),
+        fn whole(buf: u8, values: &[f32]) -> Input<'_, u8> {
+            Input { buf, at: 0, values }
+        }
+        let mut inputs = vec![
+            whole(io.tr.lat, &lat),
+            whole(io.tr.txt, &embeds.values),
+            whole(io.tr.times, &times),
+            whole(io.tr.rope, &rope),
         ];
         for (&slot, p) in io.refs.iter().zip(&pictures) {
-            inputs.push((slot, 0, p));
+            inputs.push(whole(slot, p));
         }
         let read = io.read(&key);
         made.run(&self.loaded, &inputs, read)
@@ -308,12 +313,6 @@ impl Drawer {
         }
     }
 
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is loaded instead.
-    pub fn is_lost(&self) -> bool {
-        self.loaded.lost()
-    }
-
     /// The GPU's name.
     pub fn gpu_name(&self) -> &str {
         &self.loaded.gpu.name
@@ -322,7 +321,7 @@ impl Drawer {
 
 impl crate::OnDevice for Drawer {
     fn lost(&self) -> bool {
-        self.is_lost()
+        self.loaded.lost()
     }
 }
 

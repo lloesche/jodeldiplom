@@ -15,14 +15,17 @@ every matrix multiply as a `Mul`, what it reads and writes and what becomes
 of the products; the separator, the beat network and the speech model keep
 a plan per input size there).
 
-A device can be lost: a driver reset, a GPU unplugged or switched. The
-networks the process keeps (`GpuSeparator::shared()` and `background()`,
-`GpuNetwork::shared()`, the vision networks' device) are set up again on
-their next use, and a chunk or piece under way when it happened runs again
-on the new one; a setup that failed is tried again 30 s later. A network
-the caller holds (`GpuSpeech`, `GpuAsr`, `GpuDepth`, `GpuMatte`, `Gemma`,
-the picture model's parts) says so (`is_lost()`), and the player makes it
-again.
+A device can be lost: a driver reset, a GPU unplugged or switched. Every
+network is held as a `Kept`: set up again on its next use, a chunk or
+piece under way when it happened run again on the new one, and a setup
+that failed tried again a while later (30 s, doubled after each failure
+in a row up to half an hour). The process keeps the separators
+(`GpuSeparator::shared()` and `background()`) and the beat network
+(`GpuNetwork::shared()`) so; the player keeps the others (`GpuSpeech`,
+`GpuAsr`, `GpuDepth`, `GpuMatte`, `Gemma`, the picture model's parts),
+each saying when its device is lost (`OnDevice::lost`). The devices the
+vision networks and the picture model's parts share are set up again the
+same way (`engine::SharedDevice`).
 
 ## The stem separator
 
@@ -42,13 +45,15 @@ lines for a diagnostic (the player's `--diag`): every adapter `wgpu` sees
 on every backend with the limits the separator needs, the one it would
 use, whether it sets up there (or the error), how long a 6 s chunk
 takes, and how that splits (its profile: five whole chunks
-in a row, the upload and the readback, and each kernel on its own with
-the matrix multiplies by layer, the best of three). It runs the same network on the same weights as the
+in a row, the upload and the readback, and each kernel's GPU time, also
+by its workgroups, from `jodel_gpu::profile`). It runs the same network on the same weights as the
 built-in CPU separator, packed from it as it holds them
 (`CpuSeparator::visit`: the layers input × output) with its sizes
 (`jodel_rhythm::stems::{DIM, HIDDEN, HEADS, …}`): the weights go up once
 (72 MB), and a chunk runs entirely on the GPU, as
-one list of dispatches of five kernels (`src/kernels.wgsl`):
+one list of dispatches of five kernels (`src/shared.wgsl`, the kernels the
+separator, the beat network, the speech model and the recogniser share,
+and `src/separator.wgsl`, its attention):
 
 - `matmul`: tiles of 128 rows × 64 columns through 16 inputs at a time,
   the next 16 loaded while these are multiplied, each invocation keeping
@@ -61,7 +66,8 @@ one list of dispatches of five kernels (`src/kernels.wgsl`):
   network and the speech model use it too);
 - `rmsnorm` (a row 32 invocations, neighbours reading neighbouring
   values), `rope` (rotary positions over split halves, from a table) and
-  `transpose` (between the frame-major and band-major grids);
+  `transpose` (between the frame-major and band-major grids; the beat
+  network's too);
 - `attention`: 8 query heads on 4 key/value heads of 32, an online
   softmax over tiles of 64 keys, so the scores are never stored; four
   keys' scores at a time, then taken in in their order.
@@ -134,11 +140,11 @@ dispatches: the spectrogram in, the stem's convolution as patches
 through `matmul`, the three front-end blocks (attention and feed-forward
 across the bands of each frame, then across the frames of each band, a
 convolution halving the bands), the projection, six transformer layers,
-the final RMSNorm and the head. It uses `matmul`, `rmsnorm` and `rope`
-from `src/kernels.wgsl` in the network's modes (RMSNorm as `x·√d/|x|`,
-neighbouring values rotated together) and its own kernels in
-`src/net.wgsl`: the spectrogram in, the patches, a per-channel scale and
-shift with GELU, GELU, a transpose and the flattening, and attention with
+the final RMSNorm and the head. It uses `matmul`, `rmsnorm`, `rope`,
+`transpose` and `gelu_in_place` from `src/shared.wgsl` in the network's
+modes (RMSNorm as `x·√d/|x|`, neighbouring values rotated together) and
+its own kernels in `src/net.wgsl`: the spectrogram in, the patches, a
+per-channel scale and shift with GELU, the flattening, and attention with
 a sigmoid gate per head (heads of 32, written out as above). On an RTX
 5080 a 30 s piece takes 11 ms, 40 s of a generated track 0.02 s against
 0.8 s on twelve processor threads; the logits agree with the processor's
@@ -245,8 +251,8 @@ instance norm merged from chunks' means and spreads, resizing as PyTorch's
 interpolate, adaptive pooling, strided copies, Swin's windows, 2-D rotary
 positions, tables and activations.
 
-The two share one device (`vision::net::Gpu`, set up when first needed,
-and again once it is lost). Each network keeps its weights on it, with a tail for its size's
+The two share one device (`vision::net::Gpu`, an `engine::SharedDevice`:
+set up when first needed, and again once it is lost). Each network keeps its weights on it, with a tail for its size's
 constants, and makes its plan's buffers when it runs: another input size
 rewrites the tail and makes the plan again, nothing more; `release` lets the
 plan's buffers go (the player does after each cover, so one network's are
