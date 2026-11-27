@@ -51,7 +51,7 @@ without one).
 | `--list-devices` | list the devices and what each takes (its rate and format, as the system mixes it) |
 | `--clean-cache` | forget the beat analyses, the stems kept, the lyrics, the songs' loudness, the original singer's phrases, the songs' stories planned and the story scenes' parts in the data folder, and in the one a move is still taking it from (each made again when wanted); the models, the lyrics edited by hand and the best scores stay (`make clean-cache`) |
 | `--clean-diag` | forget the record of the last analyses `--diag` shows (`make clean-diag`) |
-| `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
+| `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes, and the GPU side (every adapter with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
 
 Options override the settings file for one run; settings changed in the
 player are saved to it (only what was changed there, not the options).
@@ -1137,9 +1137,10 @@ it twinkles a few seconds once settled, then holds still
 (drawing nothing) until Next. The best
 score of each song is kept (`scores.txt` in the data folder).
 
-Karaoke needs a GPU (a graphics card on Vulkan, Metal, DirectX 12 or
-OpenGL, not a software renderer): without one there is no karaoke, and the tab says so and
-why none was found (none on any backend, only a software renderer); at
+Karaoke needs a GPU (a graphics card on Vulkan, or Metal on a Mac, not a
+software renderer): without one there is no karaoke, and the tab says so and
+why none was found (no graphics card on Vulkan, its driver perhaps not
+installed, or only a software renderer); at
 the start, while one is still looked for, it says that. Everything else
 plays without one. A song is sung only once it is fully prepared: all
 of what the queue's icons show for it done (its analysis and waveforms,

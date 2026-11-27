@@ -11,7 +11,13 @@
 //! (the cache of keys and values and the working buffers,
 //! [`Gemma::reserve`]) are separate, and the room goes when asked
 //! ([`Resident::release`], or the model dropped); what each takes is
-//! known before anything is loaded ([`Gemma::planned`]).
+//! known before anything is loaded ([`Gemma::planned`]), and so is the
+//! largest context a budget has room for ([`Gemma::fitting`]). A sliding
+//! layer keeps the keys and values of its window only, in a ring (with a
+//! chunk's rows: 1024 positions), so only the global layers' grow with the
+//! context, each in a buffer of its own (32 KB a position in all; with
+//! the rotary tables, 33.5 KB): up to the 128K positions the model was
+//! trained for ([`MOST_CONTEXT`]), each buffer well within a binding.
 //!
 //! The architecture is exactly the reference's (Hugging Face's
 //! `Gemma4TextModel`): 42 layers of width 2560, five sliding-window layers
@@ -58,8 +64,8 @@ use std::time::{Duration, Instant};
 
 use self::kernels::{source, Kernel};
 use self::model::Layout;
-pub use self::plan::MOST_CONTEXT;
 use self::plan::{Bind, ContextPlan, Plan, CHUNK};
+pub use self::plan::{LEAST_CONTEXT, MOST_CONTEXT};
 pub use self::tokens::{Stream, Take, Thinking, Tokenizer};
 use crate::engine::{bytes, using, InFlight, Program, Read, Recorded};
 use crate::pace::{Paces, Phase};
@@ -101,7 +107,7 @@ const PER_LAYER_PROJECTION_SCALE: f32 = 0.019_764_235;
 const STEPS_A_READ: usize = 8;
 
 /// Whether layer `l` is a global one (every sixth).
-fn is_global(l: usize) -> bool {
+const fn is_global(l: usize) -> bool {
     l % 6 == 5
 }
 
@@ -148,8 +154,12 @@ enum Buf {
     H,
     /// The embeddings' per-layer projection.
     PerLayer,
-    /// The keys and values, and the queries under way.
-    Cache,
+    /// The sliding layers' keys and values (a ring each), and the queries
+    /// under way of their rows.
+    Ring,
+    /// A global layer's keys and values (the `n`th of those with their
+    /// own), and the queries under way of its rows.
+    Global(usize),
     /// A step's attention chunks.
     Parts,
     Logits,
@@ -202,6 +212,19 @@ impl Gemma {
         })
     }
 
+    /// The largest context the model in the GGUF at `path` takes within
+    /// `room` bytes (its weights and the context's room at its most, as
+    /// [`Gemma::planned`] says them), each of its buffers within what the
+    /// process's GPU binds: in whole steps of 2048 positions, from
+    /// [`LEAST_CONTEXT`] (where none fits, or no room is told) to
+    /// [`MOST_CONTEXT`] (only the file's header read); an error without a
+    /// GPU.
+    pub fn fitting(path: &Path, room: Option<u64>) -> Result<usize, String> {
+        let layout = Layout::of(&Gguf::open(path)?)?;
+        let binding = crate::device::binding()?;
+        Ok(ContextPlan::fitting(&layout, layout.bytes(), room, binding))
+    }
+
     /// The model in the GGUF at `path` (Unsloth's
     /// `gemma-4-E4B-it-Q4_K_M.gguf`) on the best GPU, reckoning as
     /// `precision` says: its weights read a tensor at a time and kept
@@ -252,10 +275,18 @@ impl Gemma {
     }
 
     /// Room for `context` positions (a prompt and what it writes), made
-    /// now (any room it had goes first): [`Gemma::planned`]'s working
-    /// bytes, less a prompt's dispatches (recorded as it runs).
+    /// now where it has none as large (any other room it had goes first):
+    /// [`Gemma::planned`]'s working bytes, less a prompt's dispatches
+    /// (recorded as it runs).
     pub fn reserve(&self, context: usize) -> Result<(), String> {
         let made = self.using(|inner| {
+            if inner
+                .context
+                .as_ref()
+                .is_some_and(|c| c.plan.context == context)
+            {
+                return Ok(());
+            }
             inner.context = None;
             inner.reserve(context)
         });
@@ -389,6 +420,8 @@ struct Inner {
     layout: Layout,
     /// Whether its quantised matrices take their rows at 8 bits.
     q8: bool,
+    /// A global layer's chunks of a step's attention for one more split.
+    per: usize,
     context: Option<Context>,
     /// The context last reserved, and its room at its most (made again by
     /// a use after it was let go).
@@ -416,6 +449,17 @@ pub(crate) fn q8_on(backend: wgpu::Backend) -> bool {
     backend != wgpu::Backend::Metal
 }
 
+/// A global layer's chunks of a step's attention for one more split on
+/// `backend` ([`plan::Plan::per`]): spread on Metal (Apple's GPUs take many
+/// workgroups to fill), else as the sums were kept.
+fn chunks_a_split_on(backend: wgpu::Backend) -> usize {
+    if backend == wgpu::Backend::Metal {
+        plan::SPREAD_CHUNKS_A_SPLIT
+    } else {
+        plan::KEPT_CHUNKS_A_SPLIT
+    }
+}
+
 impl Inner {
     fn new(
         device: wgpu::Device,
@@ -426,6 +470,7 @@ impl Inner {
         precision: Precision,
     ) -> Result<Inner, String> {
         let q8 = q8_here(&device, precision);
+        let per = chunks_a_split_on(device.adapter_info().backend);
         let program = Program::new(device, queue, limits, "jodel-gpu gemma", &source());
         let mut weights = HashMap::new();
         for (buf, words) in [(Buf::Small, layout.small), (Buf::Shared, layout.shared)]
@@ -446,6 +491,7 @@ impl Inner {
             weights_bytes,
             layout,
             q8,
+            per,
             context: None,
             reserved: None,
             paces: Paces::resting(),
@@ -458,6 +504,7 @@ impl Inner {
             layout: &self.layout,
             sizes: plan.sizes,
             q8: self.q8,
+            per: self.per,
         }
     }
 

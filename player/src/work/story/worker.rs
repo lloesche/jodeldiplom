@@ -98,6 +98,9 @@ pub const MOST_RETRY: Duration = Duration::from_secs(15 * 60);
 
 /// The story's models, each run in its stage's turn.
 pub trait Models: Send + Sync {
+    /// The context the language model writes in on this card
+    /// ([`super::context`]); why there is none now.
+    fn context(&self) -> Result<usize, String>;
     /// `job` planned, its news told to `tell`.
     fn plan(&self, job: &StoryJob, tell: &mut dyn FnMut(Story)) -> Result<Plan, Failure>;
     /// The prompts of `drawing`'s pictures still to draw, encoded.
@@ -124,6 +127,8 @@ pub trait Models: Send + Sync {
 /// The story's models on the GPU, where setup put them: each held for
 /// its stage and registered there, set up on its first use in a turn.
 pub struct GpuModels {
+    /// The language model's file, and the model.
+    file: PathBuf,
     language: Arc<jodel_gpu::Kept<Gemma>>,
     encoder: Arc<jodel_gpu::Kept<TextEncoder>>,
     drawer: Arc<jodel_gpu::Kept<Drawer>>,
@@ -169,6 +174,7 @@ impl GpuModels {
         );
         stages::register(Stage::StoryDraw, Arc::clone(&drawer) as Arc<dyn Resident>);
         GpuModels {
+            file: files.language.clone(),
             language,
             encoder,
             drawer,
@@ -182,6 +188,10 @@ impl GpuModels {
 /// its device was lost runs its job again, the plan's words already told
 /// not told twice ([`past`]).
 impl Models for GpuModels {
+    fn context(&self) -> Result<usize, String> {
+        super::context(&locate(&self.file))
+    }
+
     fn plan(&self, job: &StoryJob, tell: &mut dyn FnMut(Story)) -> Result<Plan, Failure> {
         let told = &mut 0;
         (self.language)
@@ -462,7 +472,7 @@ pub fn round(songs: &[StorySong], ask: &Ask, tried: &mut Tried) -> Next {
         .collect();
     let mut stands = Songs::new();
     for song in looked {
-        match stands_of(song, ask.places) {
+        match stands_of(song, ask) {
             Ok(stand) => stands.push((song, stand)),
             Err(fact) => finish(ask, tried, song, fact),
         }
@@ -675,17 +685,21 @@ fn turn<T, E>(
     })
 }
 
-/// Where `song`'s story stands, looking at what is kept in `places`
-/// alone: to plan, to draw, to take apart; or how it ends (`Err`): made,
-/// none for good (no lyrics, no timed sung lines, or a plan that did not
-/// hold), or not now (its lyrics, its file or its scenes not read now).
-fn stands_of(song: &StorySong, places: &Places) -> Result<Stands, StoryFact> {
+/// Where `song`'s story stands, looking at what is kept in the places
+/// `ask` has alone (in the language model's context): to plan, to draw, to
+/// take apart; or how it ends (`Err`): made, none for good (no lyrics, no
+/// timed sung lines, a plan that did not hold, or no room for it in a
+/// context as large), or not now (its lyrics, its file, its scenes or the
+/// model's context not read now).
+fn stands_of(song: &StorySong, ask: &Ask) -> Result<Stands, StoryFact> {
+    let places = ask.places;
     let lyrics = (places.lyrics)(&song.path).map_err(StoryFact::NotNow)?;
     let lyrics = lyrics.ok_or(StoryFact::NoStory)?;
-    let job = job_of(&song.path, &lyrics, places)?;
+    let context = ask.models.context().map_err(StoryFact::NotNow)?;
+    let job = job_of(&song.path, &lyrics, (places, context))?;
     let plan = match job.kept() {
         Some(Kept::Plan(plan)) => *plan,
-        Some(Kept::NoStory(_)) => return Err(StoryFact::NoStory),
+        Some(Kept::NoStory(_) | Kept::Short { .. }) => return Err(StoryFact::NoStory),
         None => return Ok(Stands::Plan(job)),
     };
     let drawing = Drawing::new(song.path.clone(), plan, &places.scenes);
@@ -748,17 +762,22 @@ fn teller<'a>(outbox: &'a Outbox, path: &'a Path) -> impl FnMut(Story) + 'a {
     }
 }
 
-/// The plan's job for the song at `path` with `lyrics`, kept in `places`;
-/// none for good for a song with no timed sung lines, not now for one
-/// that cannot be read now.
-fn job_of(path: &Path, lyrics: &Lyrics, places: &Places) -> Result<StoryJob, StoryFact> {
+/// The plan's job for the song at `path` with `lyrics`, kept in `places`,
+/// written in a context of `context` positions; none for good for a song
+/// with no timed sung lines, not now for one that cannot be read now.
+fn job_of(
+    path: &Path,
+    lyrics: &Lyrics,
+    (places, context): (&Places, usize),
+) -> Result<StoryJob, StoryFact> {
     let info = jodel_playback::source::probe(path)
         .map_err(|e| StoryFact::NotNow(format!("its file could not be read: {e}")))?;
     let song = Song::of(&info, lyrics);
     if song.lines.is_empty() {
         return Err(StoryFact::NoStory);
     }
-    Ok(StoryJob::new(path.to_owned(), song, places.stories.clone()))
+    let stories = places.stories.clone();
+    Ok(StoryJob::new(path.to_owned(), song, stories, context))
 }
 
 #[cfg(test)]

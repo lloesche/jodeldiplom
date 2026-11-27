@@ -33,7 +33,7 @@
 //! towards its middle), a head held flat in the middle: the dearest a
 //! scene draws; one cut in and the next scene sent over within the second
 //! timed. The GPU must write
-//! timestamps (Vulkan, DirectX 12, Metal on Apple's chips). `--png
+//! timestamps (Vulkan, Metal on Apple's chips). `--png
 //! OUT_DIR`: the last frame of each as a PNG (`<scene>-<W>x<H>.png`,
 //! written whole), to hold the look to. Each scene's stage is also timed
 //! kind by kind (the frame drawn with that kind of shape alone: its stage,

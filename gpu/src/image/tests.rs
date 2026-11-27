@@ -43,7 +43,7 @@ fn a_slot_handed_over_and_read_is_caught() {
 }
 
 /// The kernels validate, and (without the tensor-core ones) write for
-/// Metal and DirectX; with them, they validate on both tiles, each
+/// Metal; with them, they validate on both tiles, each
 /// tensor-core kernel within the workgroup memory its tiles are chosen for
 /// (`Tiles::memory`; on 8 × 8 within Apple's 32 KB), and on the 8 × 8 ones
 /// (Metal's simdgroup matrices: the multiply, the attention f32) write for

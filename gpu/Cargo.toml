@@ -13,19 +13,15 @@ jodel-rhythm = { path = "../rhythm" }
 jodel-lyrics = { path = "../lyrics" }
 jodel-tensors = { path = "../tensors" }
 pollster = "1.0.1"
-# Native backends only: no WebGPU or GLES.
-wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+# Vulkan on Windows and Linux, Metal on the Mac: no DirectX, WebGPU or
+# GLES (the player's window takes the same).
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "wgsl"] }
 
 # The card's memory budget through Vulkan's own calls (`VK_EXT_memory_budget`;
 # Vulkan is not built on Apple's systems). The version is wgpu-hal's own: its
 # instance is called with these types, so a wgpu update moves this with it.
 [target.'cfg(not(target_vendor = "apple"))'.dependencies]
 ash = "0.38.0"
-
-# The card's memory budget through DXGI's own calls. The version is
-# wgpu-hal's own (its adapter is queried with these types): moved with wgpu.
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = ["Win32_Graphics_Dxgi"] }
 
 # The card's memory budget through Metal's own calls. The version is
 # wgpu-hal's own (its device is queried with these types): moved with wgpu.
@@ -38,8 +34,8 @@ durable = { path = "../durable" }
 hound = "3.5"
 # The picture example's PNGs (references in, pictures out).
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-# The recogniser's kernels checked through Metal's and DirectX's writers on any
-# machine (wgpu's own naga).
-naga = { version = "30.0.2", features = ["wgsl-in", "msl-out", "hlsl-out"] }
+# The kernels checked through Metal's writer on any machine (wgpu's own
+# naga).
+naga = { version = "30.0.2", features = ["wgsl-in", "msl-out"] }
 jodel-output = { path = "../output" }
 jodel-playback = { path = "../playback" }

@@ -205,6 +205,8 @@ const NUMBERS: [(&str, &[&str]); 10] = [
             "rope",
             "kv",
             "heads",
+            "mask",
+            "turned",
         ],
     ),
     (
@@ -217,9 +219,17 @@ const NUMBERS: [(&str, &[&str]); 10] = [
             "values",
             "positions",
             "splits",
+            "mask",
+            "least",
+            "per",
         ],
     ),
-    ("join", &["d", "splits", "qa", "qs", "mode", "heads"]),
+    (
+        "join",
+        &[
+            "d", "splits", "qa", "qs", "mode", "heads", "window", "least", "per",
+        ],
+    ),
     (
         "flash",
         &[
@@ -233,6 +243,7 @@ const NUMBERS: [(&str, &[&str]); 10] = [
             "positions",
             "heads",
             "group",
+            "mask",
         ],
     ),
 ];

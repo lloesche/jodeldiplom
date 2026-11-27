@@ -1,8 +1,9 @@
 # jodel-gpu
 
-The player's networks on the GPU, through `wgpu` (Vulkan, DirectX 12 or
-Metal; no WebGPU or GLES), each giving what its CPU version gives to within
-rounding: the stem separator and the beat network of
+The player's networks on the GPU, through `wgpu` (Vulkan on Windows and
+Linux, Metal on the Mac; no DirectX, WebGPU or GLES), each giving what
+its CPU version gives to within rounding: the stem separator and the
+beat network of
 [`jodel-rhythm`](../rhythm) (`GpuSeparator`, `GpuNetwork`), the speech
 model and the speech recogniser of [`jodel-lyrics`](../lyrics)
 (`GpuSpeech`, `GpuAsr`), the story scenes' depth and cut-out
@@ -222,7 +223,8 @@ if let Some(gpu) = GpuSeparator::shared() {
 first use (a high-performance one preferred, a software renderer refused)
 and is `None` without one, or while setting it up fails. `report()` says why, as
 lines for a diagnostic (the player's `--diag`): every adapter `wgpu` sees
-on every backend with the limits the separator needs, the one it would
+with the limits the separator needs (on Vulkan the driver's own storage
+binding beside `wgpu`'s), the one it would
 use, whether it sets up there (or the error), how long a 6 s chunk
 takes, and how that splits (its profile: five whole chunks
 in a row, the upload and the readback, and each kernel's GPU time, also
@@ -487,21 +489,48 @@ same plan (`src/llm/`).
   queries, keys and values one after another, the gate's and up's rows in
   turn; then the per-layer embeddings 4096 tokens at a time, each layer's
   slice of each token's row, one Q5_K block, with its layer) and the room for
-  a context (`Gemma::reserve`: the cache of keys and values, the working
-  buffers of a prompt's chunk and a step, the rotary tables; `release` lets
-  it go, and the next generation makes it again) are separate.
+  a context (`Gemma::reserve`: the keys and values, the working buffers of
+  a prompt's chunk and a step, the rotary tables; `release` lets it go,
+  and the next generation makes it again) are separate.
   `Gemma::planned(gguf, context)` says what each takes
   before anything is loaded (from the file's header): 4698 MB of weights (in
   15 buffers, the layers three to one, each above the allocator's 256 MB
   blocks: a layer a buffer, two to a block, held 1.3 GB more), and the
-  room for a context. A context takes at most `llm::MOST_CONTEXT`
-  positions (18 416), as the story's does (`work::story::CONTEXT`: its
-  prompt, the model's thought and its answer): the cache of keys and
-  values (112 KB a position, one buffer) stays within the 2 GB of a
-  storage binding on Direct3D 12, 2153 MB of room (6851 MB with the
-  weights; 16 368 positions took 1922 MB). More would be over it (32 752
-  positions: a cache of 3.8 GB, 8463 MB in all; 65 520: 7.5 GB,
-  12 149 MB), and over an 8 GB card's budget too.
+  room for a context.
+- **The context:** a sliding layer attends over its window of 512 alone,
+  so its keys and values are a ring of 1024 places (its window and a
+  chunk's rows: a chunk writes over nothing its first row still reads; a
+  position's place is its low bits), 84 MB for the 20 of them whatever
+  the context. Only the four global layers' grow with it, 32 KB a
+  position, each in a buffer of its own (1 GB at the most), and the
+  rotary tables, a global layer's turned pairs alone (1.5 KB): 33.5 KB a
+  position, where one buffer of every layer's took 115 KB. A context
+  takes at most `llm::MOST_CONTEXT` positions (131 056: the 128K the
+  model was trained for, less the steps run past a stop), and
+  `Gemma::fitting(gguf, room)` gives the largest that fits a budget, in
+  steps of 2048 positions from `llm::LEAST_CONTEXT` (18 416, the most
+  there was room for before). The storage binding is `wgpu`'s 2 GB on
+  every backend (`wgpu-hal` keeps it within `i32`: the RTX 5080's Vulkan
+  driver binds 4 GB), so no buffer here comes near it. The story chooses
+  its context once a process by the card's budget (`work::story::context`:
+  the prompt, the model's thought and its answer; the budget less the
+  stages' 1 GB margin and what else the process holds, 512 MB at the
+  least): on the RTX 5080 (a budget of 15.2 GB) the most, 131 056; on an
+  8 GB card (a budget of 7 to 7.5 GB) 22 512 to 36 848, taking turns with
+  the picture model; under that, the least (18 416, its room 0.8 GB). On the RTX 5080
+  (Vulkan), what each takes, as planned and as the budget counts it once
+  a prompt ran in it (before, one cache of every layer: 16 368 positions
+  took 1922 MB of room, 32 752 would have taken 8463 MB in all and 65 520
+  12 149 MB, over the binding):
+
+  | Context | Room planned | With the weights | Counted |
+  |---|---|---|---|
+  | 16 368 | 728 MB | 5427 MB | 744 MB |
+  | 32 752 | 1267 MB | 5966 MB | 1278 MB |
+  | 65 520 | 2345 MB | 7043 MB | 2350 MB |
+  | 131 056 | 4501 MB | 9199 MB | 4530 MB |
+
+  The room is made in 0.1 to 0.9 s (the rotary tables reckoned in f64).
 - **Text:** `Gemma::generate_text` gives the answer as it is read, in whole
   characters: each token decoded once, a character that comes in byte
   pieces over several tokens held until it is whole (`Tokenizer::stream`).
@@ -542,9 +571,19 @@ same plan (`src/llm/`).
   at a time between reads of the tokens, the next eight made while those
   run. A matrix multiply of one row (`gemv_*`) is 16 rows a workgroup, 32
   invocations a row each taking every 32nd 16 (or 8, as f32s) of its
-  inputs; attention
-  is split (8 splits on a sliding layer, 16 on a global one, each taking
-  every so many chunks of 64 positions with an online softmax) and joined.
+  inputs; attention is split (the splits taking chunks of 64 positions in
+  turn with an online softmax) and joined, a workgroup a head: 8 splits
+  on a sliding layer (its window's 8 chunks), 16 on a global one, and
+  where that is more one for every so many chunks as the positions grow,
+  up to 128 dispatched (those not at work return at once). On Vulkan
+  that is every 18 chunks, so up to the 18 432 positions a context had at
+  most before the sums are as they were (the plans token for token);
+  on Metal every 2 (`plan::SPREAD_CHUNKS_A_SPLIT`): Apple's GPUs take
+  many workgroups to fill, and 16 splits of two heads, 32 workgroups on a
+  40-core M4 Max, read a long context's keys and values at a fraction of
+  its bandwidth (at 12K positions, 94 splits). Within a chunk the scores'
+  exps are taken an invocation each (the largest and the totals as
+  before, in order).
 - **Precision:** the rows a Q4_K or Q6_K matrix multiplies are rounded to 8
   bits a block of 32 (by the block's largest, its scaled sum kept for the
   Q4_K minimums: finer than llama.cpp's q8_K, a scale for 256) and
@@ -570,6 +609,20 @@ the rows written for the matrices (650 dispatches a step). Our own 4-bit
 file before it (5 bits a weight, everything at 4 bits) took 0.58 s and 8.5
 ms a step in 4450 MB.
 
+Over a long context (RTX 5080, q8, 512 tokens written after a prompt of
+the length given; the tokens are those of one cache of every layer, and
+of the story's plans, token for token): 8.6K tokens 106 a second (98.6
+with one join for every head), 13K 100 (90.9), 32K 71, 64K 50 (with 16
+splits a global layer; their growing splits since spread its 1024
+chunks over 57). Profiled at 12K positions, a step's attention takes 3.2
+ms (the 35 sliding layers' a fixed part of it), its joins 0.5 ms (1.2 ms
+as one workgroup), the one-row matrix multiplies 4.3 ms: about 2.7 GB of
+weights a step at 630 GB/s, two thirds of the card's bandwidth (the f32
+path's 5.5 ms, 490 GB/s). A prompt's time grows with its square, the
+global layers' flash attention taking 12 s of a 12K prompt's 15 s (the
+story's 9.3K prompts take about 6 s; 35K tokens took 116 s,
+`tests/long_context.rs`).
+
 Against the reference (Hugging Face's own `Gemma4ForCausalLM` in f32 with
 the GGUF's weights dequantised as llama.cpp does):
 - **Plain:** the logits after the prompt agree to 1.8e-4 (of 26; 4.8e-5 on
@@ -584,7 +637,11 @@ the GGUF's weights dequantised as llama.cpp does):
 `cargo test -p jodel-gpu` holds every kernel (both paths, every kind of
 matrix) to a reference on the processor on small shapes (the blocks read as
 llama.cpp's `dequantize_row_*` reads them), the GGUF reader to a small file
-of its own (`jodel_tensors::gguf`), and the tokeniser to its rules.
+of its own (`jodel_tensors::gguf`), and the tokeniser to its rules; the
+attention in a ring (wrapped many times) and with its splits growing too.
+`tests/long_context.rs` (`--ignored`, the model's file in `JODEL_GEMMA`)
+finds a word given 33K tokens before the question, past every sliding
+layer's ring.
 
 `examples/gemma.rs` writes after a prompt file (one user turn) from the
 GGUF, with the timings and the memory held, or writes the logits after it.

@@ -99,7 +99,12 @@ struct Encodes<'a>(&'a Fakes);
 struct Paints<'a>(&'a Fakes);
 
 impl Writer for Writes<'_> {
-    fn write(&self, _: &str, _: usize, seen: &mut dyn FnMut(Writing)) -> Result<Written, Failure> {
+    fn write(
+        &self,
+        _: &str,
+        _: (usize, usize),
+        seen: &mut dyn FnMut(Writing),
+    ) -> Result<Written, Failure> {
         self.0.did("plan".into());
         seen(Writing::Answer(&self.1));
         Ok(Written {
@@ -150,6 +155,10 @@ fn paint((w, h): (usize, usize), refs: usize) -> String {
 }
 
 impl Models for Fakes {
+    fn context(&self) -> Result<usize, String> {
+        Ok(jodel_gpu::llm::LEAST_CONTEXT)
+    }
+
     fn plan(&self, job: &StoryJob, tell: &mut dyn FnMut(Story)) -> Result<Plan, Failure> {
         self.up().map_err(Failure::Model)?;
         let answer = self.answer.lock().unwrap().clone();

@@ -529,12 +529,22 @@ fn story_plan_files_are_pinned() {
     let kept = String::from_utf8(kept)
         .unwrap()
         .replace("\nmade story x\n", &made);
-    assert_eq!(from_text(&kept, asked), Some(Kept::Plan(Box::new(plan))));
+    assert_eq!(
+        from_text(&kept, asked, 32_752),
+        Some(Kept::Plan(Box::new(plan)))
+    );
     let none = to_text(
         asked,
         &Kept::NoStory("2 scenes: 15 to 30 were asked for".into()),
     );
     assert!(none.ends_with("\nnone 2 scenes: 15 to 30 were asked for\n"));
+    let short = Kept::Short {
+        context: 32_752,
+        why: "the thought did not end".into(),
+    };
+    let text = to_text(asked, &short);
+    assert!(text.ends_with("\nshort 32752 the thought did not end\n"));
+    assert_eq!(from_text(&text, asked, 32_752), Some(short));
 }
 
 /// A song's story scenes as the drawing step leaves them, and the parts

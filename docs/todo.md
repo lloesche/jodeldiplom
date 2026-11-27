@@ -75,9 +75,8 @@ Work agreed on but not started, roughly in the order it was raised.
   is first in, first out, no exceptions (not even for the song playing
   next). Singing takes the GPU first. How many models stay loaded
   follows the card's memory, read per backend through wgpu's escape
-  hatch (wgpu itself does not say): DXGI's budget and usage on DirectX
-  12, `VK_EXT_memory_budget` on Vulkan, the device's recommended working
-  set on Metal. A model stays resident while what is loaded fits the
+  hatch (wgpu itself does not say): `VK_EXT_memory_budget` on Vulkan,
+  the device's recommended working set on Metal. A model stays resident while what is loaded fits the
   budget less a margin for the window and other programs, and is let go
   only when the next one would not fit (the oldest unused first): on
   16 GB the language model, the encoder and the image model stay loaded
@@ -118,23 +117,6 @@ scenes' depth and cut-out alike. Measure first (per-kernel GPU time,
 submissions and waits per network, bandwidth- or compute-bound), then in
 order of what it buys:
 
-- **Next, once the story in pre-processing lands: Gemma's context, as
-  large as the card allows** (the owner, 2026-11-27: "optimize the heck
-  out of this"). Thinking needs room, and today 18,432 positions is the
-  most: the key/value cache is one buffer of about 112 KB a position,
-  and the largest storage binding is about 2 GB. The sliding-window
-  layers keep a ring of their window, so only the global layers grow
-  with the context; their cache split across bindings or kept in f16 if
-  it still must. The context is sized by the card: 8 GB is the least
-  that must work, and a 16 GB card uses its memory for a longer one. The
-  plans token for token as before, a test past 32k, and the footprints
-  measured again; the thought's room grows to match.
-- **Drop DirectX 12 entirely** (in the same piece of work): Vulkan on
-  Windows and Linux, Metal on the Mac. On a card with Vulkan the models
-  run on it already and the memory budget comes from
-  `VK_EXT_memory_budget`; the DirectX 12 adapter and its DXGI figures
-  only feed the diagnostic report. First print each backend's real
-  limits, to know whether the 2 GB binding is the driver's or `wgpu`'s.
 - **Q4 matmuls on int8 dot products:** two nibbles a word into int8
   lanes (`w & 0x0F0F0F0F`, `(w >> 4) & 0x0F0F0F0F`), the inputs rounded
   to int8 per block of 32 in the same even/odd order with a per-block

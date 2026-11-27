@@ -28,7 +28,7 @@ ab_glyph = "0.2.32"
 iced = { git = "https://github.com/iced-rs/iced.git", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11", default-features = false, features = ["wgpu-bare", "vello-cpu", "advanced", "canvas", "smol", "image-without-codecs", "x11", "wayland", "wayland-dlopen", "wayland-decorations", "linux-theme-detection"] }
 # The lanes and Karaoke mode on the GPU, in iced's shader widget; the
 # same wgpu as jodel-gpu.
-wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "wgsl"] }
 pollster = "1.0.1"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 # The looks Karaoke mode draws over its backdrop: their passes, presets,

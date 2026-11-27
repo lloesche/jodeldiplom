@@ -7,6 +7,9 @@ use std::cell::RefCell;
 use super::*;
 use crate::core::story::tests::{song, GOOD};
 
+/// The context the tests' plans are written in.
+const CONTEXT: usize = 32_752;
+
 /// A writer that answers each prompt with the next of its answers (said
 /// to think first where the answer has a thought), its text streamed in
 /// pieces of seven characters, and keeps the prompts.
@@ -28,7 +31,7 @@ impl Writer for Fake {
     fn write(
         &self,
         prompt: &str,
-        _most: usize,
+        _room: (usize, usize),
         seen: &mut dyn FnMut(Writing),
     ) -> Result<Written, Failure> {
         self.asked.borrow_mut().push(prompt.to_owned());
@@ -70,7 +73,7 @@ fn planned_by(fake: &Fake) -> (Planned, String) {
     let planned = plan(
         fake,
         &song,
-        &prompt::prompt(&song),
+        (&prompt::prompt(&song), CONTEXT),
         &mut |story| match story {
             Story::Words(words) => told.push_str(&words),
             Story::Thinking => told.push_str("[thinking]"),
@@ -93,8 +96,9 @@ fn a_thought_is_told_before_the_plan() {
     assert!(told.starts_with("[thinking]A woman remembers"), "{told}");
 }
 
-/// A thought that never ends is cut off: no story, not asked again (the
-/// model writes greedily: it would think as long again).
+/// A thought that never ends is cut off: no story in this context (short
+/// of room), not asked again (the model writes greedily: it would think
+/// as long again).
 #[test]
 fn a_thought_that_never_ends_is_cut_off() {
     let endless = Written {
@@ -103,7 +107,7 @@ fn a_thought_that_never_ends_is_cut_off() {
         ..Written::default()
     };
     let (planned, told) = planned_by(&Fake::new(vec![Ok(endless)]));
-    let Err(Failure::CutOff(why)) = planned.plan else {
+    let Err(Failure::Short(why)) = planned.plan else {
         panic!("cut off: {:?}", planned.plan);
     };
     assert_eq!(
@@ -173,7 +177,7 @@ fn a_plan_that_never_holds_is_refused_cut_off_or_failed() {
     assert!(matches!(planned.plan, Err(Failure::CutOff(_))));
     assert_eq!(planned.tries.len(), 1);
     for failure in [
-        Failure::Refused("too long".into()),
+        Failure::Short("too long".into()),
         Failure::Model("device lost".into()),
     ] {
         let fake = Fake::new(vec![Err(failure.clone())]);
@@ -191,7 +195,8 @@ fn a_song_with_no_lines_is_not_asked() {
     silent.lines.clear();
     let fake = Fake::new(vec![]);
     let mut told = String::new();
-    let planned = plan(&fake, &silent, &prompt::prompt(&silent), &mut |story| {
+    let asked = prompt::prompt(&silent);
+    let planned = plan(&fake, &silent, (&asked, CONTEXT), &mut |story| {
         if let Story::Words(words) = story {
             told.push_str(&words);
         }
@@ -201,31 +206,52 @@ fn a_song_with_no_lines_is_not_asked() {
     assert!(told.contains(NO_LINES));
 }
 
-/// What is kept is read back the same, a plan or that there is none; one
-/// made by another version or for another ask is not read.
+/// What is kept is read back the same, a plan or that there is none (in
+/// any context); one made by another version or for another ask is not
+/// read; one short of room in a context is read in one as small, not in a
+/// larger one.
 #[test]
 fn a_plan_is_kept_with_what_made_it() {
     let plan = check::read(GOOD, &song()).unwrap();
-    let text = to_text("0123456789abcdef", &Kept::Plan(Box::new(plan.clone())));
-    assert!(text.starts_with("jodeldiplom-cache story-plan 1 by "));
+    let asked = "0123456789abcdef";
+    let text = to_text(asked, &Kept::Plan(Box::new(plan.clone())));
+    assert!(text.starts_with("jodeldiplom-cache story-plan 2 by "));
+    for context in [LEAST, CONTEXT, 4 * CONTEXT] {
+        assert_eq!(
+            from_text(&text, asked, context),
+            Some(Kept::Plan(Box::new(plan.clone())))
+        );
+    }
     assert_eq!(
-        from_text(&text, "0123456789abcdef"),
-        Some(Kept::Plan(Box::new(plan)))
+        from_text(&text, "fedcba9876543210", CONTEXT),
+        None,
+        "another ask"
     );
-    assert_eq!(from_text(&text, "fedcba9876543210"), None, "another ask");
     let older = text.replace(&format!("{MADE} {VERSION}"), &format!("{MADE} 0"));
-    assert_eq!(from_text(&older, "0123456789abcdef"), None, "another maker");
-    let none = to_text("0123456789abcdef", &Kept::NoStory("too few\nscenes".into()));
+    assert_eq!(from_text(&older, asked, CONTEXT), None, "another maker");
+    let none = to_text(asked, &Kept::NoStory("too few\nscenes".into()));
     assert_eq!(
-        from_text(&none, "0123456789abcdef"),
+        from_text(&none, asked, 4 * CONTEXT),
         Some(Kept::NoStory("too few scenes".into()))
     );
+    let short = Kept::Short {
+        context: CONTEXT,
+        why: "the thought did not end".into(),
+    };
+    let text = to_text(asked, &short);
+    assert_eq!(from_text(&text, asked, LEAST), Some(short.clone()));
+    assert_eq!(from_text(&text, asked, CONTEXT), Some(short));
+    assert_eq!(from_text(&text, asked, CONTEXT + 1), None, "more room");
 }
 
+/// The least context a card is given.
+const LEAST: usize = jodel_gpu::llm::LEAST_CONTEXT;
+
 /// A job runs its plan, tells it and keeps it, found again for the song
-/// as it is asked (other words: planned again); a song that has no story
-/// is kept as such (its answers refused, or cut off), a model that failed
-/// is not kept.
+/// as it is asked (other words: planned again) in any context; a song
+/// that has no story is kept as such (its answers refused, or cut off),
+/// one short of room as such in its context (planned again in a larger
+/// one), a model that failed is not kept.
 #[test]
 fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
     let dir = jodel_testkit::TempDir::new("story");
@@ -233,16 +259,22 @@ fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
     durable::write_atomic(&file, b"not really a song").unwrap();
     let mut told = Vec::new();
     let tell = &mut |story: Story| told.push(story);
-    let job = StoryJob::new(file.clone(), song(), dir.join("stories"));
+    let job = StoryJob::new(file.clone(), song(), dir.join("stories"), CONTEXT);
     assert_eq!(job.kept(), None, "none kept yet");
     let failed = Fake::new(vec![Err(Failure::Model("device lost".into()))]);
     assert!(matches!(job.run(&failed, tell), Err(Failure::Model(_))));
     assert_eq!(job.kept(), None, "a model's failure is not kept");
     let plan = job.run(&Fake::new(vec![says(GOOD)]), tell).unwrap();
-    assert_eq!(job.kept(), Some(Kept::Plan(Box::new(plan))));
+    assert_eq!(job.kept(), Some(Kept::Plan(Box::new(plan.clone()))));
+    let larger = StoryJob::new(file.clone(), song(), dir.join("stories"), 2 * CONTEXT);
+    assert_eq!(
+        larger.kept(),
+        Some(Kept::Plan(Box::new(plan))),
+        "any context"
+    );
     let mut other = song();
     other.lines[0].text = "I ran down to the harbour".into();
-    let other = StoryJob::new(file, other, dir.join("stories"));
+    let other = StoryJob::new(file.clone(), other, dir.join("stories"), CONTEXT);
     assert_eq!(other.kept(), None, "other words, another ask");
     let refused = Fake::new(vec![says(&broken()), says(&broken())]);
     assert!(matches!(
@@ -254,7 +286,7 @@ fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
     // An answer cut off at its length: kept as none too, for this ask.
     let mut third = song();
     third.lines[0].text = "I swam out past the harbour".into();
-    let third = StoryJob::new(dir.join("song.flac"), third, dir.join("stories"));
+    let third = StoryJob::new(dir.join("song.flac"), third, dir.join("stories"), CONTEXT);
     let cut = Written {
         text: GOOD[..GOOD.len() / 2].to_owned(),
         stopped: false,
@@ -266,6 +298,26 @@ fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
         Err(Failure::CutOff(_))
     ));
     assert!(matches!(third.kept(), Some(Kept::NoStory(_))));
+    // A thought cut off by the context: none in it, planned again in more.
+    let mut fourth = song();
+    fourth.lines[0].text = "I flew over the harbour".into();
+    let at = |context| StoryJob::new(file.clone(), fourth.clone(), dir.join("stories"), context);
+    let endless = Written {
+        thinking: true,
+        thought_tokens: 3_000,
+        ..Written::default()
+    };
+    let short = at(CONTEXT).run(&Fake::new(vec![Ok(endless)]), &mut |_| {});
+    assert!(matches!(short, Err(Failure::Short(_))));
+    assert!(matches!(
+        at(CONTEXT).kept(),
+        Some(Kept::Short {
+            context: CONTEXT,
+            ..
+        })
+    ));
+    assert!(matches!(at(LEAST).kept(), Some(Kept::Short { .. })));
+    assert_eq!(at(2 * CONTEXT).kept(), None, "more room: planned again");
 }
 
 /// The whole job on the model, end to end: `JODEL_GEMMA` names the
@@ -298,7 +350,8 @@ fn a_song_is_planned_on_the_model() {
     for _ in 0..2 {
         let started = std::time::Instant::now();
         let mut prose = String::new();
-        let planned = plan(&gemma, &song, &asked, &mut |story| {
+        let context = context(&model).expect("its context");
+        let planned = plan(&gemma, &song, (&asked, context), &mut |story| {
             if let Story::Words(words) = story {
                 prose.push_str(&words);
             }

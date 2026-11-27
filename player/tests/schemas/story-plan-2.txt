@@ -1,0 +1,67 @@
+jodeldiplom-cache story-plan 2 by jodeldiplom x
+made story x
+asked 0123456789abcdef
+plan
+{
+  "story": "Two friends leave a grey town by the sea.",
+  "characters": [
+    {
+      "name": "narrator",
+      "looks": "Woman, 20s, long dark hair, yellow raincoat"
+    }
+  ],
+  "scenes": [
+    {
+      "first_line": 0,
+      "last_line": 3,
+      "from": 0.0,
+      "to": 41.5,
+      "section": "verse 1",
+      "shot": "close-up",
+      "characters": [
+        "narrator"
+      ],
+      "shows": "The narrator at the harbour.",
+      "prompt": "Narrator on a rainy quay at dusk, boats in front, hills behind"
+    }
+  ],
+  "art": {
+    "knowledge": "Not known.",
+    "confidence": "low",
+    "genre": "folk",
+    "era": "90s",
+    "style": "watercolor",
+    "style_keywords": "watercolor, rain, muted greys",
+    "palette": [
+      "#3a4a5a",
+      "#f0ece0"
+    ],
+    "motifs": [
+      "boats"
+    ],
+    "why": "Soft washes for a rainy town."
+  },
+  "look": {
+    "id": "film+song",
+    "name": "Film, the song's own",
+    "about": "Soft washes for a rainy town.",
+    "tags": [
+      "longing"
+    ],
+    "layers": [
+      {
+        "pass": "grain",
+        "knobs": {
+          "amount": 0.45
+        },
+        "drive": [
+          {
+            "knob": "amount",
+            "by": "chorus",
+            "amount": 0.6
+          }
+        ]
+      }
+    ]
+  }
+}

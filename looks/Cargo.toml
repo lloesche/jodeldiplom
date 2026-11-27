@@ -23,7 +23,7 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 # Every pass's shader held to its maths on the GPU (the testkit's compute
 # runner), its pipeline made there.
 jodel-testkit = { path = "../testkit", features = ["gpu"] }
-wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "wgsl"] }
 pollster = "1.0.1"
 # Every shader parsed and validated on any machine, GPU or not (wgpu's own
 # naga).

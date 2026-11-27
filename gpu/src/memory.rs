@@ -1,9 +1,8 @@
 //! What the card's memory allows this process ([`Budget`]), read through
 //! `wgpu`'s escape hatch to the backend under it (`wgpu` itself does not
-//! say): DXGI's `QueryVideoMemoryInfo` on DirectX 12 (the local segment's
-//! budget and this process's usage), `VK_EXT_memory_budget` on Vulkan
-//! (the largest device-local heap's), and the device's recommended working
-//! set and what it has allocated on Metal. Each is the operating system's
+//! say): `VK_EXT_memory_budget` on Vulkan (the largest device-local
+//! heap's), and the device's recommended working set and what it has
+//! allocated on Metal. Each is the operating system's
 //! own figure: the budget already leaves out what the other programs hold,
 //! and the usage is everything this process holds on the card (every
 //! model's device and the window's).
@@ -39,33 +38,12 @@ pub fn budget() -> Option<Budget> {
 /// not tell.
 pub fn of(adapter: &wgpu::Adapter) -> Option<Budget> {
     match adapter.get_info().backend {
-        #[cfg(windows)]
-        wgpu::Backend::Dx12 => dx12(adapter),
         #[cfg(not(target_vendor = "apple"))]
         wgpu::Backend::Vulkan => vulkan(adapter),
         #[cfg(target_vendor = "apple")]
         wgpu::Backend::Metal => metal(adapter),
         _ => None,
     }
-}
-
-/// DXGI's figures for the adapter's local segment (the card's own memory;
-/// on an integrated GPU, the share of system memory it is given).
-#[cfg(windows)]
-fn dx12(adapter: &wgpu::Adapter) -> Option<Budget> {
-    use windows::Win32::Graphics::Dxgi::DXGI_MEMORY_SEGMENT_GROUP_LOCAL;
-    // SAFETY: `as_hal`'s contract: the hal adapter is used only while the
-    // guard lives (this call), no handle of it is destroyed, kept or
-    // changed; `QueryVideoMemoryInfo` only reads.
-    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Dx12>() }?;
-    let info = hal
-        .raw_adapter()
-        .query_video_memory_info(DXGI_MEMORY_SEGMENT_GROUP_LOCAL)
-        .ok()?;
-    Some(Budget {
-        budget: info.Budget,
-        usage: info.CurrentUsage,
-    })
 }
 
 /// A memory heap as Vulkan tells it: whether it is the device's own, its
@@ -156,6 +134,29 @@ fn vulkan(adapter: &wgpu::Adapter) -> Option<Budget> {
     largest_local(&heaps)
 }
 
+/// The most bytes the Vulkan driver of `adapter` binds a storage buffer
+/// with (`maxStorageBufferRange`), for the report beside what `wgpu`
+/// allows (it keeps every backend within 2 GB); `None` elsewhere.
+pub(crate) fn driver_binding(adapter: &wgpu::Adapter) -> Option<u64> {
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        // SAFETY: as in `vulkan`: the hal adapter is used only while the
+        // guard lives, and its physical device is only queried.
+        let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+        let instance = hal.shared_instance().raw_instance();
+        // SAFETY: the physical device is the instance's, alive through the
+        // call.
+        let properties =
+            unsafe { instance.get_physical_device_properties(hal.raw_physical_device()) };
+        Some(u64::from(properties.limits.max_storage_buffer_range))
+    }
+    #[cfg(target_vendor = "apple")]
+    {
+        let _ = adapter;
+        None
+    }
+}
+
 /// The device's recommended working set (what it can hold without its
 /// performance suffering) and what has been allocated on it. Metal gives
 /// a process one `MTLDevice` per GPU (every device `wgpu` makes on the
@@ -173,9 +174,8 @@ fn metal(adapter: &wgpu::Adapter) -> Option<Budget> {
     })
 }
 
-/// The memory's lines of the diagnostic report ([`crate::report`]): the
-/// budget and usage of the process's GPU, and of its sibling on DirectX 12
-/// where one is kept.
+/// The memory's line of the diagnostic report ([`crate::report`]): the
+/// budget and usage of the process's GPU.
 pub(crate) fn report() -> Vec<String> {
     let mb = |bytes: u64| bytes / (1024 * 1024);
     let line = |adapter: &wgpu::Adapter| {
@@ -195,14 +195,10 @@ pub(crate) fn report() -> Vec<String> {
             ),
         }
     };
-    let chosen = crate::chosen();
-    let mut lines = Vec::new();
-    match &chosen.adapter {
-        Ok(adapter) => lines.push(line(adapter)),
-        Err(why) => lines.push(format!("memory: no GPU ({why})")),
+    match &crate::chosen().adapter {
+        Ok(adapter) => vec![line(adapter)],
+        Err(why) => vec![format!("memory: no GPU ({why})")],
     }
-    lines.extend(chosen.sibling.iter().map(line));
-    lines
 }
 
 #[cfg(test)]

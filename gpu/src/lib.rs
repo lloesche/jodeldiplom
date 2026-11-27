@@ -1,5 +1,6 @@
-//! The player's networks on the GPU, through `wgpu` (Vulkan, DirectX 12 or
-//! Metal), each giving what its CPU version gives to within rounding:
+//! The player's networks on the GPU, through `wgpu` (Vulkan on Windows and
+//! Linux, Metal on the Mac: the only backends built), each giving what its
+//! CPU version gives to within rounding:
 //!
 //! - the stem separator of [`jodel_rhythm::stems`] ([`GpuSeparator`],
 //!   `separator.rs`);
@@ -31,9 +32,9 @@
 //! picture model's parts share are set up again the same way.
 //!
 //! The GPU is chosen once a process ([`chosen`], `device.rs`): one `wgpu`
-//! instance, the adapters on every backend listed once, the best one kept
-//! (and the same card through DirectX 12, where the best is on another
-//! backend), and every model's device made on it. Listing the adapters
+//! instance, the adapters listed once, the best one kept, and every
+//! model's device made on it (without one, the error says there is no
+//! graphics card on Vulkan or Metal). Listing the adapters
 //! starts every GPU's driver, an unused integrated one's too, so the
 //! choice does not list them again for each model; a failed choice (no
 //! GPU) is kept too. Setups and teardowns take turns ([`setting_up`]).
