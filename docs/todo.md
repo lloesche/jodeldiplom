@@ -11,7 +11,10 @@ Work agreed on but not started, roughly in the order it was raised.
     the lyrics move (a new place, time, event or feeling), not every
     10–20 s (`SCENE_SECONDS` today forces a count from the length alone:
     18 for a 4-minute song). The model decides how many; the only limits
-    are a hard ceiling of 20 and at least one (a story needs a picture).
+    are at least one (a story needs a picture) and a ceiling of 20 the
+    model is never told (a number in the prompt anchors it): enforced
+    when the plan is read, the scenes past the 20th merged into it (it
+    shows on to the song's end), so every line keeps a picture.
   - **A repeated section reuses its scene.** A chorus that comes back
     names the earlier scene it shows again, drawing nothing new.
   - **Characters only when the song is about people.** The "I" and the
