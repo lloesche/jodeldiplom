@@ -76,8 +76,12 @@ Work agreed on but not started, roughly in the order it was raised.
   each other and take about a minute to load, so the work for the songs
   in the queue goes by stage: one queue per model (the language model's
   questions and plans, then the image model's scenes and sprites, then
-  depth and the cut), and one GPU scheduler keeping one big model at a
-  time, draining its queue for every song before it swaps. Each queue
+  depth and the cut), and one GPU scheduler that, where the models do
+  not fit together, keeps one big model at a time and drains its queue
+  for every song before it swaps: the language model writes every
+  waiting song's storyboard, then the image model draws them all; a song
+  queued meanwhile waits until the image model's queue is empty, then
+  the language model is loaded again for it. Each queue
   is first in, first out, no exceptions (not even for the song playing
   next). Singing takes the GPU first. How many models stay loaded
   follows the card's memory, read per backend through wgpu's escape
