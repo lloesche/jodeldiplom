@@ -4,6 +4,24 @@ Work agreed on but not started, roughly in the order it was raised.
 
 ## Karaoke
 
+- **The story's shape follows the lyrics** (the owner, 2026-11-28; next
+  once Gemma's context change lands, as it touches the same planner).
+  The story is an alternative to the album cover, the karaoke the game:
+  - **Scenes as the story moves, not by the clock.** A new scene when
+    the lyrics move (a new place, time, event or feeling), not every
+    10–20 s (`SCENE_SECONDS` today forces a count from the length alone:
+    18 for a 4-minute song). Guard rails only: at least 3, at most about
+    one per 15 s.
+  - **A repeated section reuses its scene.** A chorus that comes back
+    names the earlier scene it shows again, drawing nothing new.
+  - **Characters only when the song is about people.** The "I" and the
+    "you" need not be people on screen. A story may be places, objects,
+    a journey, nature or abstract imagery (a spaceship, a storm), with no
+    characters at all; a character need not be human. The prompt's
+    example is not anchored on a "narrator".
+  - **Crowds and groups** go in a scene's description, never as a
+    character (no portrait of a crowd).
+  - Most songs then take about 5–10 pictures, some 3, some 20.
 - **Next, in this order:** the look shaders finished (the rest of the
   passes, hundreds of presets, every one dancing to the song, the
   guards), then the story generator's first version in the player, as
