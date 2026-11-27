@@ -54,34 +54,57 @@ fn layernorm_mod(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation
     }
 }
 
-// One head of one token (a workgroup of 64, each a pair of values) from
-// its row to the heads' layout ([head][token][128]): RMSNorm over the head
-// where asked (its weights in `small`), then the rotary positions (pairs
-// side by side, or halves 64 apart; each pair's cosine and sine per token
-// in `src2`). n0 tokens, n1 heads, n2 the first value's offset in src, n3
-// src's stride, n4 dst's offset, n5 the tokens of dst's layout, n6 the
-// first token's place in it, n7 the norm's weights (or 0xffffffff), n8 the
-// rotation (0 none, 1 pairs, 2 halves), n9 the table's offset, n10
-// epsilon's bits. The norm's sum over the workgroup is common.wgsl's sum64.
+// Heads of tokens from their rows to the heads' layout ([head][token][128]):
+// RMSNorm over each head where asked (its weights in `small`), then the
+// rotary positions (pairs side by side, or halves 64 apart; each pair's
+// cosine and sine per token in `src2`). n0 tokens, n1 heads, n2 the first
+// value's offset in src, n3 src's stride, n4 dst's offset, n5 the tokens
+// of dst's layout, n6 the first token's place in it, n7 the norm's weights
+// (or 0xffffffff), n8 the rotation (0 none, 1 pairs, 2 halves), n9 the
+// table's offset, n10 epsilon's bits.
+//
+// A workgroup of 256 takes 32 heads (head u of the dispatch is token u /
+// n1's head u % n1), eight invocations a head, each eight of its 64 pairs
+// (pairs l, l + 8, .., l + 56 for invocation l of eight). The norm's sum of
+// squares is common.wgsl's sum64 tree over the pairs (pair t with t + 32,
+// then 16, 8, 4, 2 and 1), summed in its order: each invocation sums its
+// eight pairs as the tree's first three levels do, the eight sums meet in
+// `qk_part` (one barrier, where the tree took eight), and each invocation
+// sums them as its last three levels do. With a workgroup of 64 a head
+// (109,000 workgroups for a picture's 4544 tokens of 24 heads, each two
+// values an invocation and eight barriers), a dispatch took 4.9 ms on the
+// M4 Max and 0.15 ms on the 5080.
 
-@compute @workgroup_size(64)
-fn qk_prep(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-    let t = wg.x;
-    let h = wg.y;
-    let base = p.n2 + t * p.n3 + h * 128u;
-    let halves = p.n8 == 2u;
-    let i0 = select(2u * li, li, halves);
-    let i1 = select(2u * li + 1u, li + 64u, halves);
-    var a = src_at(base + i0);
-    var b = src_at(base + i1);
+var<workgroup> qk_part: array<f32, 256>;
+
+// The places of pair `t` in a head: side by side, or 64 apart.
+fn qk_at(t: u32, halves: bool) -> vec2<u32> {
+    return select(vec2<u32>(2u * t, 2u * t + 1u), vec2<u32>(t, t + 64u), halves);
+}
+
+// Pair `t`'s values from the head at `base`.
+fn qk_pair(base: u32, t: u32, halves: bool) -> vec2<f32> {
+    let i = qk_at(t, halves);
+    return vec2<f32>(src_at(base + i.x), src_at(base + i.y));
+}
+
+// A pair's share of the norm's sum: a² + b².
+fn qk_sq(v: vec2<f32>) -> f32 {
+    return v.x * v.x + v.y * v.y;
+}
+
+// Pair `t` (its values `v`) normed by `r` where asked, turned where asked,
+// and written to the head at `out` (token `place` of the layout).
+fn qk_put(v: vec2<f32>, t: u32, r: f32, place: u32, out: u32, halves: bool) {
+    let i = qk_at(t, halves);
+    var a = v.x;
+    var b = v.y;
     if (p.n7 != 0xffffffffu) {
-        let r = inverseSqrt(sum64(li, a * a + b * b) / 128.0 + bitcast<f32>(p.n10));
-        a = a * r * small[p.n7 + i0];
-        b = b * r * small[p.n7 + i1];
+        a = a * r * small[p.n7 + i.x];
+        b = b * r * small[p.n7 + i.y];
     }
-    let place = p.n6 + t;
     if (p.n8 != 0u) {
-        let at = p.n9 + (place * 64u + li) * 2u;
+        let at = p.n9 + (place * 64u + t) * 2u;
         let c = src2[at];
         let s = src2[at + 1u];
         let ra = a * c - b * s;
@@ -89,9 +112,62 @@ fn qk_prep(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
         a = ra;
         b = rb;
     }
+    dst_put(out + i.x, a);
+    dst_put(out + i.y, b);
+}
+
+@compute @workgroup_size(256)
+fn qk_prep(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+    let u = wg.x * 32u + li / 8u;
+    let l = li % 8u;
+    let live = u < p.n0 * p.n1;
+    let t = u / p.n1;
+    let h = u % p.n1;
+    let base = p.n2 + t * p.n3 + h * 128u;
+    let halves = p.n8 == 2u;
+    var x0 = vec2<f32>(0.0); var x1 = vec2<f32>(0.0); var x2 = vec2<f32>(0.0); var x3 = vec2<f32>(0.0);
+    var x4 = vec2<f32>(0.0); var x5 = vec2<f32>(0.0); var x6 = vec2<f32>(0.0); var x7 = vec2<f32>(0.0);
+    if (live) {
+        x0 = qk_pair(base, l, halves);
+        x1 = qk_pair(base, l + 8u, halves);
+        x2 = qk_pair(base, l + 16u, halves);
+        x3 = qk_pair(base, l + 24u, halves);
+        x4 = qk_pair(base, l + 32u, halves);
+        x5 = qk_pair(base, l + 40u, halves);
+        x6 = qk_pair(base, l + 48u, halves);
+        x7 = qk_pair(base, l + 56u, halves);
+    }
+    var r = 1.0;
+    if (p.n7 != 0xffffffffu) {
+        // The tree to its level of 8: pair l's sum (with l + 32, then
+        // l + 16's, then l + 8's).
+        let s0 = qk_sq(x0) + qk_sq(x4);
+        let s1 = qk_sq(x1) + qk_sq(x5);
+        let s2 = qk_sq(x2) + qk_sq(x6);
+        let s3 = qk_sq(x3) + qk_sq(x7);
+        qk_part[li] = (s0 + s2) + (s1 + s3);
+        workgroupBarrier();
+        let g = li - l;
+        let f0 = qk_part[g] + qk_part[g + 4u];
+        let f1 = qk_part[g + 1u] + qk_part[g + 5u];
+        let f2 = qk_part[g + 2u] + qk_part[g + 6u];
+        let f3 = qk_part[g + 3u] + qk_part[g + 7u];
+        let total = (f0 + f2) + (f1 + f3);
+        r = inverseSqrt(total / 128.0 + bitcast<f32>(p.n10));
+    }
+    if (!live) {
+        return;
+    }
+    let place = p.n6 + t;
     let out = p.n4 + (h * p.n5 + place) * 128u;
-    dst_put(out + i0, a);
-    dst_put(out + i1, b);
+    qk_put(x0, l, r, place, out, halves);
+    qk_put(x1, l + 8u, r, place, out, halves);
+    qk_put(x2, l + 16u, r, place, out, halves);
+    qk_put(x3, l + 24u, r, place, out, halves);
+    qk_put(x4, l + 32u, r, place, out, halves);
+    qk_put(x5, l + 40u, r, place, out, halves);
+    qk_put(x6, l + 48u, r, place, out, halves);
+    qk_put(x7, l + 56u, r, place, out, halves);
 }
 
 // The sampler's step: dst (n1..) += dt · src (n2..), n0 values, n3 dt's bits.

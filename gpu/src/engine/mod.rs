@@ -74,12 +74,6 @@ pub(crate) trait Kernels: Copy + Eq + Hash + 'static {
     const PARAM_BYTES: u64;
     const EXTRA: &'static [Access];
     fn entry(self) -> &'static str;
-
-    /// Whether the kernel is in the program on a device with `features`
-    /// (a program makes the pipelines of these only; every one by default).
-    fn available(self, _features: wgpu::Features) -> bool {
-        true
-    }
 }
 
 /// One dispatch as planned: its kernel, the buffers it binds (`B`, a key

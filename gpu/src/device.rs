@@ -188,35 +188,37 @@ pub(crate) fn open<T>(
             (
                 wgpu::Features::empty(),
                 wgpu::ExperimentalFeatures::disabled(),
+                (),
             )
         },
-        make,
+        |device, queue, limits, ()| make(device, queue, limits),
     )
 }
 
 /// [`open`], with the features `wanted` picks from the adapter's too, and
 /// wgpu's experimental features where it allows them (the caller's to
-/// answer for: the picture models' cooperative matrices).
-pub(crate) fn open_with<T>(
+/// answer for: the picture models' cooperative matrices); what else it
+/// chooses from the adapter is handed to `make`.
+pub(crate) fn open_with<T, W>(
     label: &'static str,
-    wanted: impl FnOnce(&wgpu::Adapter) -> (wgpu::Features, wgpu::ExperimentalFeatures),
-    make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits) -> Result<T, String>,
+    wanted: impl FnOnce(&wgpu::Adapter) -> (wgpu::Features, wgpu::ExperimentalFeatures, W),
+    make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits, W) -> Result<T, String>,
 ) -> Result<(T, String), String> {
     open_on(label, wgpu::MemoryHints::MemoryUsage, wanted, make)
 }
 
 /// [`open_with`], its memory taken as `memory` says.
-pub(crate) fn open_on<T>(
+pub(crate) fn open_on<T, W>(
     label: &'static str,
     memory: wgpu::MemoryHints,
-    wanted: impl FnOnce(&wgpu::Adapter) -> (wgpu::Features, wgpu::ExperimentalFeatures),
-    make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits) -> Result<T, String>,
+    wanted: impl FnOnce(&wgpu::Adapter) -> (wgpu::Features, wgpu::ExperimentalFeatures, W),
+    make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits, W) -> Result<T, String>,
 ) -> Result<(T, String), String> {
     let _turn = setting_up();
     let adapter = adapter()?;
     let info = adapter.get_info();
     let limits = adapter.limits();
-    let (wanted, experimental_features) = wanted(&adapter);
+    let (wanted, experimental_features, chosen) = wanted(&adapter);
     let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wanted);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(label),
@@ -229,7 +231,7 @@ pub(crate) fn open_on<T>(
     }))
     .map_err(|e| format!("{}: {e}", info.name))?;
     let probe = device.clone();
-    let made = crate::engine::guarded(&probe, || make(device, queue, &limits))
+    let made = crate::engine::guarded(&probe, || make(device, queue, &limits, chosen))
         .map_err(|e| format!("{}: {e}", info.name))?;
     Ok((made, info.name))
 }

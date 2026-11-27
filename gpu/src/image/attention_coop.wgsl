@@ -1,72 +1,77 @@
-// Attention on cooperative matrices (the numbers of `attention.wgsl`): a
-// workgroup takes 128 queries of a head, each of its eight subgroups 16 of
-// them, the queries (scaled) held as eight 16 × 16 f16 matrices; keys and
-// values come 32 at a time as f16, shared by all eight. The scores of a
-// subgroup's 16 × 32 go through workgroup memory, two invocations a row
-// (16 keys each): the row's largest score so far, each half's sum of
-// exp(score - largest), and exp(score - largest) as f16 for the values'
-// product. The largest is moved only when a tile's is more than 8 above it
-// (the exps stay below e⁸, in f16's range), and only then are the sums
-// rescaled (through workgroup memory), so most tiles add their products
-// straight into the eight f32 matrices of a row's 128 values.
+// Attention on cooperative matrices of 16 × 16 (the numbers of
+// `attention.wgsl`; not on 8 × 8: `Tiles::attention`): a workgroup takes
+// 128 queries of a head, each of its eight subgroups 16 of
+// them, the queries (scaled) held as eight tiles of 16 × 16 in f16
+// (`coop.wgsl`); keys and values come 32 at a time as f16, shared by all
+// eight. Each subgroup's scores of 16 queries × 32 keys go through its
+// 16 × 16 of `cm_f`, the first 16 keys' then the next 16's, into
+// registers, two invocations a row (16 keys each): the row's largest score
+// so far, each half's sum of exp(score - largest), and exp(score -
+// largest) as f16 for the values' product, written over the keys (no
+// longer read by then). The largest is moved only when a tile's is more
+// than 8 above it (the exps stay below e⁸, in f16's range), and only then
+// are the sums rescaled (through `cm_f`), so most tiles add their products
+// straight into the eight f32 tiles of a row's 128 values.
 
-// A row of a head in workgroup memory: 128 values and 8 of padding.
+// A row of a head in `cm_h`: 128 values and 8 of padding. Half the
+// queries' tile at a time, then the keys' (from 0; then the exps, 16 × 32
+// a subgroup) and the values' (from `FC_V`).
 const FC_S: u32 = 136u;
-// Half the queries' tile at a time, then the keys' (from 0) and the
-// values' (from 4352).
-var<workgroup> fc_kv: array<f16, 8704>;
-// Each subgroup's 16 × 32 scores (and a 16 × 16 of sums when rescaled).
-var<workgroup> fc_s: array<f32, 4096>;
-// Each subgroup's 16 × 32 exps.
-var<workgroup> fc_p: array<f16, 4096>;
+const FC_V: u32 = 4352u;
+// The exps (eight subgroups' 16 × 32) end before the values, and the
+// values (32 rows) within `cm_h`.
+const_assert 8u * 512u <= FC_V;
+const_assert FC_V + 32u * FC_S <= CM_H;
 // Each invocation's largest score of the tile (then its half-row's sum),
 // and each query's last rescale.
 var<workgroup> fc_part: array<f32, 256>;
 var<workgroup> fc_fade: array<f32, 128>;
 var<workgroup> fc_flag: u32;
 
+// Four f32s written at `at` of `cm_h` as f16s (a multiple of 4: whole
+// words, one invocation's).
 fn fc_put4(at: u32, v: vec4<f32>) {
-    fc_kv[at] = f16(v.x);
-    fc_kv[at + 1u] = f16(v.y);
-    fc_kv[at + 2u] = f16(v.z);
-    fc_kv[at + 3u] = f16(v.w);
+    cm_h[at] = f16(v.x);
+    cm_h[at + 1u] = f16(v.y);
+    cm_h[at + 2u] = f16(v.z);
+    cm_h[at + 3u] = f16(v.w);
 }
 
-// One of the sums' 16 × 16 scaled per row by `fc_fade`.
-fn fc_rescale(o: coop_mat16x16<f32, C>, sg: u32, lane: u32) -> coop_mat16x16<f32, C> {
-    let at = sg * 512u;
-    coopStore(o, &fc_s[at], 16u);
+// One of the sums' tiles scaled per row by `fc_fade`.
+fn fc_rescale(o: CmC, sg: u32, lane: u32) -> CmC {
+    let at = sg * 256u;
+    cm_st_c(o, at, 16u);
     workgroupBarrier();
     // Column-major: value (r, c) at c·16 + r; eight a lane.
     for (var j = 0u; j < 8u; j++) {
         let e = lane * 8u + j;
-        fc_s[at + e] *= fc_fade[sg * 16u + e % 16u];
+        cm_f[at + e] *= fc_fade[sg * 16u + e % 16u];
     }
     workgroupBarrier();
-    let out = coopLoad<coop_mat16x16<f32, C>>(&fc_s[at], 16u);
+    let out = cm_ld_c(at, 16u);
     workgroupBarrier();
     return out;
 }
 
-// One of the sums' 16 × 16 (values 16·d..) divided by the rows' sums (in
+// One of the sums' tiles (values 16·d..) divided by the rows' sums (in
 // `fc_part`) and written out.
-fn fc_out(o: coop_mat16x16<f32, C>, sg: u32, lane: u32, q0: u32, h: u32, d: u32) {
-    let at = sg * 512u;
-    coopStore(o, &fc_s[at], 16u);
+fn fc_out(o: CmC, sg: u32, lane: u32, q0: u32, h: u32, d: u32) {
+    let at = sg * 256u;
+    cm_st_c(o, at, 16u);
     workgroupBarrier();
     for (var j = 0u; j < 8u; j++) {
         let e = lane * 8u + j;
         let r = e % 16u;
         let query = q0 + sg * 16u + r;
         if (query < p.n0) {
-            dst_put(p.n7 + query * p.n8 + h * 128u + d * 16u + e / 16u, fc_s[at + e] / fc_part[sg * 32u + r]);
+            dst_put(p.n7 + query * p.n8 + h * 128u + d * 16u + e / 16u, cm_f[at + e] / fc_part[sg * 32u + r]);
         }
     }
     workgroupBarrier();
 }
 
 // The queries `half` (64 rows from q0 + 64·half), scaled, as f16 into
-// `fc_kv`: 64 × 32 vectors, 8 an invocation.
+// `cm_h`: 64 × 32 vectors, 8 an invocation.
 fn fc_queries(li: u32, h: u32, q0: u32, scale: f32) {
     for (var j = 0u; j < 8u; j++) {
         let e = li + 256u * j;
@@ -79,52 +84,119 @@ fn fc_queries(li: u32, h: u32, q0: u32, scale: f32) {
     }
 }
 
-// A subgroup's 16 queries' 128 values as eight matrices, from `fc_kv`'s
-// row `row`.
+// A subgroup's 16 queries' 128 values as eight tiles, from `cm_h`'s row
+// `row`.
 struct Qf {
-    q0: coop_mat16x16<f16, A>, q1: coop_mat16x16<f16, A>, q2: coop_mat16x16<f16, A>, q3: coop_mat16x16<f16, A>,
-    q4: coop_mat16x16<f16, A>, q5: coop_mat16x16<f16, A>, q6: coop_mat16x16<f16, A>, q7: coop_mat16x16<f16, A>,
+    q0: CmA, q1: CmA, q2: CmA, q3: CmA,
+    q4: CmA, q5: CmA, q6: CmA, q7: CmA,
 }
 
 fn fc_qf(row: u32) -> Qf {
     let a = row * FC_S;
     return Qf(
-        coopLoadT<coop_mat16x16<f16, A>>(&fc_kv[a], FC_S),
-        coopLoadT<coop_mat16x16<f16, A>>(&fc_kv[a + 16u], FC_S),
-        coopLoadT<coop_mat16x16<f16, A>>(&fc_kv[a + 32u], FC_S),
-        coopLoadT<coop_mat16x16<f16, A>>(&fc_kv[a + 48u], FC_S),
-        coopLoadT<coop_mat16x16<f16, A>>(&fc_kv[a + 64u], FC_S),
-        coopLoadT<coop_mat16x16<f16, A>>(&fc_kv[a + 80u], FC_S),
-        coopLoadT<coop_mat16x16<f16, A>>(&fc_kv[a + 96u], FC_S),
-        coopLoadT<coop_mat16x16<f16, A>>(&fc_kv[a + 112u], FC_S),
+        cm_ld_at(a, FC_S),
+        cm_ld_at(a + 16u, FC_S),
+        cm_ld_at(a + 32u, FC_S),
+        cm_ld_at(a + 48u, FC_S),
+        cm_ld_at(a + 64u, FC_S),
+        cm_ld_at(a + 80u, FC_S),
+        cm_ld_at(a + 96u, FC_S),
+        cm_ld_at(a + 112u, FC_S),
     );
 }
 
 // The scores of the subgroup's queries and 16 keys (from row `k` of the
 // keys' tile).
-fn fc_scores(q: Qf, k: u32) -> coop_mat16x16<f32, C> {
+fn fc_scores(q: Qf, k: u32) -> CmC {
     let b = k * FC_S;
-    var s = coop_mat16x16<f32, C>();
-    s = coopMultiplyAdd(q.q0, coopLoad<coop_mat16x16<f16, B>>(&fc_kv[b], FC_S), s);
-    s = coopMultiplyAdd(q.q1, coopLoad<coop_mat16x16<f16, B>>(&fc_kv[b + 16u], FC_S), s);
-    s = coopMultiplyAdd(q.q2, coopLoad<coop_mat16x16<f16, B>>(&fc_kv[b + 32u], FC_S), s);
-    s = coopMultiplyAdd(q.q3, coopLoad<coop_mat16x16<f16, B>>(&fc_kv[b + 48u], FC_S), s);
-    s = coopMultiplyAdd(q.q4, coopLoad<coop_mat16x16<f16, B>>(&fc_kv[b + 64u], FC_S), s);
-    s = coopMultiplyAdd(q.q5, coopLoad<coop_mat16x16<f16, B>>(&fc_kv[b + 80u], FC_S), s);
-    s = coopMultiplyAdd(q.q6, coopLoad<coop_mat16x16<f16, B>>(&fc_kv[b + 96u], FC_S), s);
-    s = coopMultiplyAdd(q.q7, coopLoad<coop_mat16x16<f16, B>>(&fc_kv[b + 112u], FC_S), s);
+    var s = cm_zero();
+    s = cm_mma(q.q0, cm_ld_b(b, FC_S), s);
+    s = cm_mma(q.q1, cm_ld_b(b + 16u, FC_S), s);
+    s = cm_mma(q.q2, cm_ld_b(b + 32u, FC_S), s);
+    s = cm_mma(q.q3, cm_ld_b(b + 48u, FC_S), s);
+    s = cm_mma(q.q4, cm_ld_b(b + 64u, FC_S), s);
+    s = cm_mma(q.q5, cm_ld_b(b + 80u, FC_S), s);
+    s = cm_mma(q.q6, cm_ld_b(b + 96u, FC_S), s);
+    s = cm_mma(q.q7, cm_ld_b(b + 112u, FC_S), s);
     return s;
 }
 
+// A row's 16 scores of a half-tile of keys, four by four.
+struct Row16 {
+    s0: vec4<f32>,
+    s1: vec4<f32>,
+    s2: vec4<f32>,
+    s3: vec4<f32>,
+}
+
+// The scores' tile `s` through the subgroup's 16 × 16 of `cm_f` (by rows),
+// row `row`'s taken by the invocations of `half`, the others keeping
+// `kept`.
+fn fc_row(s: CmC, sg: u32, row: u32, half: u32, mine: u32, kept: Row16) -> Row16 {
+    let at = sg * 256u;
+    coopStoreT(s, &cm_f[at], 16u);
+    workgroupBarrier();
+    var out = kept;
+    if (half == mine) {
+        let r = at + row * 16u;
+        out = Row16(
+            vec4<f32>(cm_f[r], cm_f[r + 1u], cm_f[r + 2u], cm_f[r + 3u]),
+            vec4<f32>(cm_f[r + 4u], cm_f[r + 5u], cm_f[r + 6u], cm_f[r + 7u]),
+            vec4<f32>(cm_f[r + 8u], cm_f[r + 9u], cm_f[r + 10u], cm_f[r + 11u]),
+            vec4<f32>(cm_f[r + 12u], cm_f[r + 13u], cm_f[r + 14u], cm_f[r + 15u]),
+        );
+    }
+    workgroupBarrier();
+    return out;
+}
+
+// The largest of `top` and the four scores of keys k.. that `query` sees.
+fn fc_top4(top: f32, s: vec4<f32>, query: u32, k: u32) -> f32 {
+    var t = top;
+    if (fa_sees(query, k)) {
+        t = max(t, s.x);
+    }
+    if (fa_sees(query, k + 1u)) {
+        t = max(t, s.y);
+    }
+    if (fa_sees(query, k + 2u)) {
+        t = max(t, s.z);
+    }
+    if (fa_sees(query, k + 3u)) {
+        t = max(t, s.w);
+    }
+    return t;
+}
+
+// exp(score - best) of four scores of keys k.. (0 where `query` does not
+// see the key), written as f16 at `at` and added to `total`, in order.
+fn fc_exp4(total: f32, s: vec4<f32>, query: u32, k: u32, best: f32, at: u32) -> f32 {
+    var e = vec4<f32>(0.0);
+    if (fa_sees(query, k)) {
+        e.x = exp_held(s.x - best);
+    }
+    if (fa_sees(query, k + 1u)) {
+        e.y = exp_held(s.y - best);
+    }
+    if (fa_sees(query, k + 2u)) {
+        e.z = exp_held(s.z - best);
+    }
+    if (fa_sees(query, k + 3u)) {
+        e.w = exp_held(s.w - best);
+    }
+    fc_put4(at, e);
+    return total + e.x + e.y + e.z + e.w;
+}
+
 // The exps' product with the values' 16 columns from `d`, added to `o`.
-fn fc_pv(o: coop_mat16x16<f32, C>, p0: coop_mat16x16<f16, A>, p1: coop_mat16x16<f16, A>, d: u32) -> coop_mat16x16<f32, C> {
-    let v = 4352u + d;
-    let a = coopMultiplyAdd(p0, coopLoadT<coop_mat16x16<f16, B>>(&fc_kv[v], FC_S), o);
-    return coopMultiplyAdd(p1, coopLoadT<coop_mat16x16<f16, B>>(&fc_kv[v + 16u * FC_S], FC_S), a);
+fn fc_pv(o: CmC, p0: CmA, p1: CmA, d: u32) -> CmC {
+    let v = FC_V + d;
+    let a = cm_mma(p0, coopLoadT<CmB>(&cm_h[v], FC_S), o);
+    return cm_mma(p1, coopLoadT<CmB>(&cm_h[v + 16u * FC_S], FC_S), a);
 }
 
 @compute @workgroup_size(256)
-fn attention16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+fn attention_coop(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
     let h = wg.y;
     let kvh = h / p.n3;
     let q0 = wg.x * 128u;
@@ -134,34 +206,32 @@ fn attention16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     let half = lane / 16u;
     let query = q0 + sg * 16u + row;
     let scale = bitcast<f32>(p.n9);
-    // The queries, half at a time through `fc_kv`.
-    var q = Qf(coop_mat16x16<f16, A>(), coop_mat16x16<f16, A>(), coop_mat16x16<f16, A>(), coop_mat16x16<f16, A>(),
-        coop_mat16x16<f16, A>(), coop_mat16x16<f16, A>(), coop_mat16x16<f16, A>(), coop_mat16x16<f16, A>());
+    cm_zero_init(li);
+    // The queries, half at a time through `cm_h` (the second half's
+    // subgroups load the first's rows too, then their own: no cooperative
+    // matrix starts as WGSL's zero value).
     fc_queries(li, h, q0, scale);
     if (li == 0u) {
         fc_flag = 0u;
     }
     workgroupBarrier();
-    if (sg < 4u) {
-        q = fc_qf(sg * 16u);
-    }
+    var q = fc_qf((sg % 4u) * 16u);
     workgroupBarrier();
     fc_queries(li, h, q0 + 64u, scale);
     workgroupBarrier();
     if (sg >= 4u) {
         q = fc_qf((sg - 4u) * 16u);
     }
-    var o0 = coop_mat16x16<f32, C>(); var o1 = coop_mat16x16<f32, C>();
-    var o2 = coop_mat16x16<f32, C>(); var o3 = coop_mat16x16<f32, C>();
-    var o4 = coop_mat16x16<f32, C>(); var o5 = coop_mat16x16<f32, C>();
-    var o6 = coop_mat16x16<f32, C>(); var o7 = coop_mat16x16<f32, C>();
+    var o0 = cm_zero(); var o1 = cm_zero(); var o2 = cm_zero(); var o3 = cm_zero();
+    var o4 = cm_zero(); var o5 = cm_zero(); var o6 = cm_zero(); var o7 = cm_zero();
     // This invocation's row: its largest score so far, its half's sum.
     var best = -1.0e30;
     var total = 0.0;
     let kbase = p.n5 + kvh * p.n1 * 128u;
     let vbase = p.n6 + kvh * p.n1 * 128u;
     let tiles = (p.n1 + 31u) / 32u;
-    let at = sg * 512u + row * 32u + half * 16u;
+    // Its 16 exps in the subgroup's 16 × 32 (over the keys).
+    let pat = sg * 512u + row * 32u + half * 16u;
     for (var t = 0u; t < tiles; t++) {
         workgroupBarrier();
         // Keys and values: 32 × 32 vectors each, 4 an invocation.
@@ -176,20 +246,18 @@ fn attention16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
             }
             let kat = (e / 32u) * FC_S + 4u * (e % 32u);
             fc_put4(kat, kv);
-            fc_put4(4352u + kat, vv);
+            fc_put4(FC_V + kat, vv);
         }
         workgroupBarrier();
-        // Row-major, 32 a row.
-        coopStoreT(fc_scores(q, 0u), &fc_s[sg * 512u], 32u);
-        coopStoreT(fc_scores(q, 16u), &fc_s[sg * 512u + 16u], 32u);
-        workgroupBarrier();
-        var top = -1.0e30;
+        // The row's 16 scores of this invocation's half of the keys; past
+        // the second store's barrier no subgroup reads the keys again.
+        var sc = fc_row(fc_scores(q, 0u), sg, row, half, 0u, Row16(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0)));
+        sc = fc_row(fc_scores(q, 16u), sg, row, half, 1u, sc);
         let k0 = t * 32u + half * 16u;
-        for (var j = 0u; j < 16u; j++) {
-            if (fa_sees(query, k0 + j)) {
-                top = max(top, fc_s[at + j]);
-            }
-        }
+        var top = fc_top4(-1.0e30, sc.s0, query, k0);
+        top = fc_top4(top, sc.s1, query, k0 + 4u);
+        top = fc_top4(top, sc.s2, query, k0 + 8u);
+        top = fc_top4(top, sc.s3, query, k0 + 12u);
         fc_part[li] = top;
         workgroupBarrier();
         top = max(top, fc_part[li ^ 16u]);
@@ -202,14 +270,10 @@ fn attention16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
             }
         }
         total *= fade;
-        for (var j = 0u; j < 16u; j++) {
-            var e = 0.0;
-            if (fa_sees(query, k0 + j)) {
-                e = exp_held(fc_s[at + j] - best);
-            }
-            total += e;
-            fc_p[at + j] = f16(e);
-        }
+        total = fc_exp4(total, sc.s0, query, k0, best, pat);
+        total = fc_exp4(total, sc.s1, query, k0 + 4u, best, pat + 4u);
+        total = fc_exp4(total, sc.s2, query, k0 + 8u, best, pat + 8u);
+        total = fc_exp4(total, sc.s3, query, k0 + 12u, best, pat + 12u);
         if (half == 0u) {
             fc_fade[sg * 16u + row] = fade;
         }
@@ -229,8 +293,8 @@ fn attention16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         }
         // The values' product: 16 queries × 32 keys times 32 keys × 128.
         let pa = sg * 512u;
-        let p0 = coopLoadT<coop_mat16x16<f16, A>>(&fc_p[pa], 32u);
-        let p1 = coopLoadT<coop_mat16x16<f16, A>>(&fc_p[pa + 16u], 32u);
+        let p0 = cm_ld_at(pa, 32u);
+        let p1 = cm_ld_at(pa + 16u, 32u);
         o0 = fc_pv(o0, p0, p1, 0u);
         o1 = fc_pv(o1, p0, p1, 16u);
         o2 = fc_pv(o2, p0, p1, 32u);

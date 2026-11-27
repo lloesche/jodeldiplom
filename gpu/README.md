@@ -89,16 +89,26 @@ the 5080.
    buffers are rounded up to whole vectors (`whole_vectors`), and their
    sizes are counted so too; a network that reads its buffers as vectors
    does the same, and no kernel writes past its binding's end.
-5. **The Mac runs the plain paths.** Metal through `wgpu` has no
-   cooperative matrices of the 16 × 16 tiles klein's tensor-core kernels
-   take. It does have experimental 8 × 8 ones (f32, f16 → f16 and
-   f16 → f32), and the probe on the M4 Max found their products right
-   (section 8), but no kernel uses them yet. Gemma picks its f32 path
-   there (`Full`), so the plain multiply, the plain attention and the
-   f32 matrix paths are what an Apple user runs. An optimisation made
-   only to the fast (tensor-core, int8) paths does nothing for them, and
-   one that breaks the plain paths breaks the Mac while the 5080's tests
-   stay green.
+5. **The Mac runs the plain paths, but for klein's matrix multiply.**
+   Metal through `wgpu` has experimental cooperative matrices of 8 × 8
+   only (f32, f16 → f16 and f16 → f32), and the probe on the M4 Max found
+   their products right (section 8); unlike NVIDIA's they raise no
+   ceiling there (f16 → f32 at 13.0 TFLOP/s, plain f32 multiply-adds at
+   12.1), but they read far less workgroup memory a multiply-add. klein's
+   tensor-core multiply is written on tiles of 16 × 16
+   (`image/coop.wgsl`), each four 8 × 8 matrices there (`coop8.wgsl`)
+   and one 16 × 16 on the 5080 (`coop16.wgsl`), so the 5080's tests
+   check all of its code but those few loads, stores and products; on
+   the M4 Max it took 9.9 s of a picture where the f32 one took 25.7.
+   Its tensor-core attention, built the same way, does not run there
+   (`Tiles::attention`): it took 334 s of a 350 s picture (3.3 s a
+   dispatch, against the f32 attention's 14.8 s in all) and its test's
+   output was wrong, so the Mac runs the f32 attention. Everything else
+   is the plain path on an Apple GPU too: klein's other kernels and
+   `Precision::Full`, and Gemma's f32 path (`Full`). An
+   optimisation made only to the fast (tensor-core, int8) paths does
+   nothing for them, and one that breaks the plain paths breaks the Mac
+   while the 5080's tests stay green.
 6. **Workgroup memory is not zeroed: write it before reading it.** WGSL
    zeroes a kernel's workgroup memory at the start of each workgroup by
    default, and on Metal that costs time for every workgroup a dispatch
@@ -613,11 +623,15 @@ The FP8 matrices stay FP8 on the GPU, four values a word, turned to
 numbers as the matrix multiply reads them, times the checkpoint's scales
 (one a matrix for BFL's, one per 128 × 128 block for Qwen's); the bf16 ones
 (the embedders, the modulations, the autoencoder) stay bf16. Activations
-are f32. Where the GPU has cooperative matrices (tensor cores) of 16 × 16 ×
-16 in f16 with f32 sums, subgroups of 32 and 44 KB of workgroup memory
-(Vulkan on NVIDIA), the matrix multiplies and the transformer's attention
-run on them (`Precision::Fast`; wgpu's experimental cooperative matrices),
-their inputs rounded to f16; elsewhere, and with `Precision::Full`, on f32
+are f32. Where the GPU has cooperative matrices (tensor cores) in f16 with
+f32 sums, of 16 × 16 × 16 (Vulkan on NVIDIA) or of 8 × 8 × 8 (Metal on
+Apple's GPUs: four to each tile of 16 × 16 the kernels are written on,
+`coop8.wgsl`), subgroups of 32 and the workgroup memory their kernels
+take on those tiles (47 KB on 16 × 16, 29 KB on 8 × 8), the matrix
+multiplies run on them (`Precision::Fast`; wgpu's experimental
+cooperative matrices), their inputs rounded to f16, and on 16 × 16 the
+transformer's attention too (on Apple's 8 × 8 it was slow and wrong:
+the GPU rules, rule 5); elsewhere, and with `Precision::Full`, on f32
 multiply-adds. The kernels (`src/image/*.wgsl`):
 
 - the matrix multiply (`gemm.wgsl`, `gemm_coop.wgsl`, the shared tail in
@@ -630,10 +644,10 @@ multiply-adds. The kernels (`src/image/*.wgsl`):
   before it applied as it reads (doubled first for the decoder's
   upsampling; zero-padded after for the encoder's strided downsampling);
 - flash attention (`attention.wgsl`, `attention_coop.wgsl`): an online
-  softmax over tiles of keys, the scores never stored. On tensor cores 128
-  queries a workgroup share each tile of 32 keys; the largest score is
-  moved (and the sums rescaled) only when a tile's is 8 above it, so the
-  exps fit f16;
+  softmax over tiles of keys, the scores never stored. On tensor cores of
+  16 × 16 (not on 8 × 8) 128 queries a workgroup share each tile of 32
+  keys; the largest score is moved (and the sums rescaled) only when a
+  tile's is 8 above it, so the exps fit f16;
 - RMSNorm, LayerNorm with the modulation's shift and scale, the heads'
   norms and rotary positions (into a heads-first layout), the group norm's
   statistics (Welford per chunk, merged), the latents' 2 × 2 patches and
@@ -663,6 +677,12 @@ TFLOPS: the transformer's and the decoder's 146 TFLOPs) and the attention
 encoder and 3.3 s for the drawer (PyTorch: 4.8 and 3.4 s). The GPU's
 allocator holds 6.5 GB at its peak with the encoder freed first (PyTorch:
 7.3 GB), 9.0 GB with both kept.
+
+On an M4 Max (Metal, the multiply on 8 × 8 tensor cores, the attention
+f32): the same picture without a reference in 30.75 s, profiled (f32
+throughout: 52 s; with the 8 × 8 attention it was 350 s, and wrong). Of
+it the matrix multiplies take about 9.9 s (f32: 25.7), the attention
+15.0 s and the heads' preparation 0.48 s (it was 1.76).
 
 ## Stem playback
 

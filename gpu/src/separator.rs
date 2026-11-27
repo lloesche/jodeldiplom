@@ -314,11 +314,15 @@ fn open(
             (
                 wgpu::Features::empty(),
                 wgpu::ExperimentalFeatures::disabled(),
+                (),
             )
         };
-        crate::device::open_on(label, blocks.clone(), wanted, |device, queue, limits| {
-            on(device, queue, limits, (label, pieces))
-        })
+        crate::device::open_on(
+            label,
+            blocks.clone(),
+            wanted,
+            |device, queue, limits, ()| on(device, queue, limits, (label, pieces)),
+        )
     }
 }
 

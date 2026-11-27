@@ -12,9 +12,8 @@ use crate::engine::{guarded, Input, OnDevice, Output, Program, Recorded, SharedD
 use crate::{Precision, Turned};
 
 /// The workgroup memory the f32 kernels take at most (the attention's,
-/// 24 KB), and the tensor-core ones (the matrix multiply's, 44 KB).
+/// 24 KB).
 const WORKGROUP_MEMORY: u32 = 32 * 1024;
-const COOP_MEMORY: u32 = 44 * 1024;
 
 /// The features the tensor-core kernels need.
 pub(crate) const COOP: wgpu::Features =
@@ -25,8 +24,45 @@ pub(crate) struct Gpu {
     pub(crate) program: Program<Kernel>,
     /// The GPU's name.
     pub(crate) name: String,
-    /// Whether the fast kernels run on tensor cores.
-    pub(crate) coop: bool,
+    /// The tiles the fast kernels run on tensor cores with, where they do.
+    pub(crate) coop: Option<Tiles>,
+}
+
+/// The cooperative matrices the tensor-core kernels are made of
+/// (`coop.wgsl`): their tiles of 16 × 16 as one of 16 × 16 × 16 each, or
+/// as four of 8 × 8 × 8 (all Metal offers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tiles {
+    Sixteen,
+    Eight,
+}
+
+impl Tiles {
+    /// The side of its cooperative matrices.
+    fn side(self) -> u32 {
+        match self {
+            Tiles::Sixteen => 16,
+            Tiles::Eight => 8,
+        }
+    }
+
+    /// Whether the tensor-core attention runs on these tiles. Not on 8 × 8:
+    /// on the M4 Max it took 334 s of a picture's 350 (3.3 s a dispatch,
+    /// the f32 attention's 14.8 s in all) and its test's output was wrong,
+    /// so there the f32 attention runs.
+    pub(crate) fn attention(self) -> bool {
+        self == Tiles::Sixteen
+    }
+
+    /// The workgroup memory its kernels take at most (on 16 × 16 the
+    /// attention's 46.5 KB, on 8 × 8 the multiply's 29 KB: `coop.wgsl`;
+    /// `the_kernels_validate` sums them).
+    pub(crate) fn memory(self) -> u32 {
+        match self {
+            Tiles::Sixteen => 47 * 1024,
+            Tiles::Eight => 29 * 1024,
+        }
+    }
 }
 
 /// The GPU while set up (never torn down once set up: the parts hold their
@@ -39,20 +75,35 @@ impl OnDevice for Gpu {
     }
 }
 
-/// Whether `adapter` has what the tensor-core kernels need: f16,
-/// cooperative matrices of 16 × 16 × 16 in f16 with f32 sums, subgroups
-/// of 32 (eight to a workgroup of 256), and 44 KB of workgroup memory.
-fn has_tensor_cores(adapter: &wgpu::Adapter) -> bool {
+/// The tiles the tensor-core kernels take on `adapter`, where it has what
+/// they need: f16, cooperative matrices of 16 × 16 × 16 (else of 8 × 8 ×
+/// 8) in f16 with f32 sums, subgroups of 32 (eight to a workgroup of 256)
+/// and the workgroup memory the kernels take on those tiles
+/// ([`Tiles::memory`]: the 8 × 8 ones run only the multiply). Through Metal
+/// the name is all there is to go by: wgpu says subgroups of 4 to 64 for
+/// every Metal adapter and gives no vendor or device (0), and it offers the
+/// same 8 × 8 matrices on Apple's GPUs (family Apple7) and on the Intel and
+/// AMD GPUs of older Macs (Mac2), whose SIMD-groups need not be 32 wide.
+/// Apple's are 32, and a simdgroup matrix is one of them; their names start
+/// with "Apple", which keeps the others out.
+fn tiles(adapter: &wgpu::Adapter) -> Option<Tiles> {
     let info = adapter.get_info();
-    adapter.features().contains(COOP)
-        && adapter.limits().max_compute_workgroup_storage_size >= COOP_MEMORY
-        && info.subgroup_min_size == 32
-        && info.subgroup_max_size == 32
-        && adapter.cooperative_matrix_properties().iter().any(|p| {
-            (p.m_size, p.n_size, p.k_size) == (16, 16, 16)
-                && p.ab_type == wgpu::CooperativeScalarType::F16
-                && p.cr_type == wgpu::CooperativeScalarType::F32
-        })
+    let of_32 = (info.subgroup_min_size, info.subgroup_max_size) == (32, 32)
+        || (info.backend == wgpu::Backend::Metal && info.name.starts_with("Apple"));
+    if !adapter.features().contains(COOP) || !of_32 {
+        return None;
+    }
+    let memory = adapter.limits().max_compute_workgroup_storage_size;
+    let properties = adapter.cooperative_matrix_properties();
+    [Tiles::Sixteen, Tiles::Eight].into_iter().find(|t| {
+        let n = t.side();
+        memory >= t.memory()
+            && properties.iter().any(|p| {
+                (p.m_size, p.n_size, p.k_size) == (n, n, n)
+                    && p.ab_type == wgpu::CooperativeScalarType::F16
+                    && p.cr_type == wgpu::CooperativeScalarType::F32
+            })
+    })
 }
 
 impl Gpu {
@@ -68,10 +119,12 @@ impl Gpu {
         let (mut gpu, name) = crate::device::open_with(
             "jodel-gpu image",
             |adapter| {
-                if !has_tensor_cores(adapter) {
+                let coop = tiles(adapter);
+                if coop.is_none() {
                     return (
                         wgpu::Features::empty(),
                         wgpu::ExperimentalFeatures::disabled(),
+                        None,
                     );
                 }
                 // SAFETY: wgpu's cooperative matrices are experimental: its
@@ -79,10 +132,10 @@ impl Gpu {
                 // so a wrong kernel could misbehave on the device instead of
                 // failing validation. That risk is accepted for the two
                 // tensor-core kernels, and only on adapters that pass
-                // `has_tensor_cores` (the matrices' shape and types, the
+                // `tiles` (the matrices' shape and types, the
                 // subgroup size and workgroup memory they are written for);
                 // the tests hold them to the f32 kernels on such a GPU.
-                (COOP, unsafe { wgpu::ExperimentalFeatures::enabled() })
+                (COOP, unsafe { wgpu::ExperimentalFeatures::enabled() }, coop)
             },
             Gpu::on,
         )?;
@@ -90,16 +143,29 @@ impl Gpu {
         Ok(gpu)
     }
 
-    fn on(device: wgpu::Device, queue: wgpu::Queue, limits: &wgpu::Limits) -> Result<Gpu, String> {
+    /// The picture models' program on `device`, its tensor-core kernels on
+    /// `coop`'s tiles (the device has their features: it was asked for them).
+    fn on(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        limits: &wgpu::Limits,
+        coop: Option<Tiles>,
+    ) -> Result<Gpu, String> {
         if limits.max_compute_workgroup_storage_size < WORKGROUP_MEMORY {
             return Err(format!(
                 "{} bytes of workgroup memory, 32 KB needed",
                 limits.max_compute_workgroup_storage_size
             ));
         }
-        let coop = device.features().contains(COOP);
         Ok(Gpu {
-            program: Program::new(device, queue, limits, "jodel-gpu image", &source(coop)),
+            program: Program::of(
+                device,
+                queue,
+                limits,
+                "jodel-gpu image",
+                &source(coop),
+                &Kernel::on(coop),
+            ),
             name: String::new(),
             coop,
         })
@@ -150,10 +216,10 @@ impl Loaded {
         self.gpu.program.lost()
     }
 
-    /// Whether its plans run the fast kernels on tensor cores with
-    /// `precision`: where it is fast and the GPU has them.
-    pub(crate) fn fast(&self, precision: Precision) -> bool {
-        precision == Precision::Fast && self.gpu.coop
+    /// The tiles its plans run the fast kernels on with `precision` (on
+    /// tensor cores): where it is fast and the GPU has them.
+    pub(crate) fn fast(&self, precision: Precision) -> Option<Tiles> {
+        self.gpu.coop.filter(|_| precision == Precision::Fast)
     }
 }
 

@@ -13,7 +13,7 @@ use std::sync::{Mutex, PoisonError};
 use jodel_tensors::SafeTensors;
 
 use super::encoder::{Embeds, WIDTH};
-use super::gpu::{Loaded, Made};
+use super::gpu::{Loaded, Made, Tiles};
 use super::plan::{At, Plan};
 use super::sampling::{embedded_time, noise, schedule};
 use super::transformer::{self as tr, time_sinusoids, Tokens, Transformer, CHANNELS};
@@ -158,7 +158,7 @@ impl Drawer {
         };
         Footprint {
             resident: packing.bytes(),
-            working: plan(&transformer, &vae, &key, false).0.bytes(),
+            working: plan(&transformer, &vae, &key, None).0.bytes(),
         }
     }
 
@@ -188,7 +188,7 @@ impl Drawer {
 
     /// Whether the fast kernels run on tensor cores here.
     pub fn tensor_cores(&self) -> bool {
-        self.loaded.fast(self.precision)
+        self.loaded.fast(self.precision).is_some()
     }
 
     /// The bytes the GPU's allocator holds for every part now (where the
@@ -278,8 +278,8 @@ impl Drawer {
         let slot = self.made.get_mut().unwrap_or_else(PoisonError::into_inner);
         if slot.as_ref().is_none_or(|(k, _, _)| *k != key) {
             *slot = None;
-            let fast = self.loaded.fast(self.precision);
-            let (p, io) = plan(&self.transformer, &self.vae, &key, fast);
+            let coop = self.loaded.fast(self.precision);
+            let (p, io) = plan(&self.transformer, &self.vae, &key, coop);
             let made = Made::new(&self.loaded, &p, io.read(&key).count)?;
             self.working = self.working.max(made.bytes());
             *slot = Some((key.clone(), io, made));
@@ -355,8 +355,8 @@ fn pixels(r: &Reference) -> Vec<f32> {
 }
 
 /// The plan for `key`, and its slots for what goes in and comes out.
-fn plan(transformer: &Transformer, vae: &Vae, key: &Key, fast: bool) -> (Plan, Io) {
-    let mut p = Plan::new(fast);
+fn plan(transformer: &Transformer, vae: &Vae, key: &Key, coop: Option<Tiles>) -> (Plan, Io) {
+    let mut p = Plan::new(coop);
     let tokens = key.tokens();
     let slots = tr::Slots::new(&mut p, &tokens, STEPS);
     let vae_slots = vae::Slots {
@@ -425,10 +425,13 @@ fn plan(transformer: &Transformer, vae: &Vae, key: &Key, fast: bool) -> (Plan, I
 
 #[cfg(test)]
 mod tests {
-    use super::{pack, plan, Key, Packing, Part, Source};
+    use super::{pack, plan, Key, Packing, Part, Source, Tiles};
+    use crate::image::Kernel;
 
-    /// Every part's plan, with and without references, writes a slot it
-    /// takes over before it reads it (no GPU: the weights' shapes alone).
+    /// Every part's plan, with and without references, on f32 and on
+    /// either tiles, writes a slot it takes over before it reads it, and
+    /// runs only kernels the program on those tiles has (no GPU: the
+    /// weights' shapes alone).
     #[test]
     fn a_slot_taken_over_is_written_first() {
         let mut packing = Packing::new();
@@ -447,8 +450,15 @@ mod tests {
                     refs,
                     part,
                 };
-                let (p, _) = plan(&transformer, &vae, &key, false);
-                assert_eq!(p.check(), None, "{key:?}");
+                for coop in [None, Some(Tiles::Sixteen), Some(Tiles::Eight)] {
+                    let (p, _) = plan(&transformer, &vae, &key, coop);
+                    assert_eq!(p.check(), None, "{key:?}");
+                    let kernels = Kernel::on(coop);
+                    assert!(
+                        p.ops.iter().all(|op| kernels.contains(&op.kernel)),
+                        "{key:?} on {coop:?}"
+                    );
+                }
             }
         }
     }

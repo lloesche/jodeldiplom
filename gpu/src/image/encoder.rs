@@ -15,7 +15,7 @@ use std::sync::{Mutex, PoisonError};
 use jodel_tensors::half::bf16_to_f32;
 use jodel_tensors::{DType, Shards};
 
-use super::gpu::{Loaded, Made};
+use super::gpu::{Loaded, Made, Tiles};
 use super::plan::{At, Buf, Mat, Plan, Rope, Tail};
 use super::text::{Tokenizer, TOKENS};
 use super::weights::{Fp8, Packing, Source};
@@ -135,7 +135,7 @@ impl TextEncoder {
         let (layers, rope) = pack(Source::Shapes, &mut packing).expect("shapes alone do not fail");
         Footprint {
             resident: packing.bytes(),
-            working: plan(&layers, rope, false, TOKENS).0.bytes(),
+            working: plan(&layers, rope, None, TOKENS).0.bytes(),
         }
     }
 
@@ -207,8 +207,8 @@ impl TextEncoder {
         let slot = self.made.get_mut().unwrap_or_else(PoisonError::into_inner);
         if slot.as_ref().is_none_or(|(n, _, _)| *n != real) {
             *slot = None;
-            let fast = self.loaded.fast(self.precision);
-            let (p, slots) = plan(&self.layers, self.rope, fast, real);
+            let coop = self.loaded.fast(self.precision);
+            let (p, slots) = plan(&self.layers, self.rope, coop, real);
             *slot = Some((real, slots, Made::new(&self.loaded, &p, TOKENS * WIDTH)?));
         }
         let (_, slots, made) = slot.as_mut().expect("made");
@@ -238,7 +238,7 @@ impl Resident for TextEncoder {
     fn footprint(&self) -> Footprint {
         Footprint {
             resident: self.loaded.bytes(),
-            working: plan(&self.layers, self.rope, false, TOKENS).0.bytes(),
+            working: plan(&self.layers, self.rope, None, TOKENS).0.bytes(),
         }
     }
 
@@ -275,8 +275,8 @@ fn rope_table() -> Vec<f32> {
 
 /// The encoder's plan over 512 tokens, the first `valid` the prompt's (the
 /// padding's keys left out), and its slots.
-fn plan(layers: &[Layer], rope: usize, fast: bool, valid: usize) -> (Plan, Slots) {
-    let mut p = Plan::new(fast);
+fn plan(layers: &[Layer], rope: usize, coop: Option<Tiles>, valid: usize) -> (Plan, Slots) {
+    let mut p = Plan::new(coop);
     let n = TOKENS;
     let s = Slots {
         x: p.slot(n * DIM),
@@ -324,4 +324,31 @@ fn plan(layers: &[Layer], rope: usize, fast: bool, valid: usize) -> (Plan, Slots
         }
     }
     (p, s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pack, plan, Packing, Source, Tiles, TOKENS};
+    use crate::image::Kernel;
+
+    /// The encoder's plan, on f32 and on either tiles, for a prompt of
+    /// every length and a short one, writes a slot it takes over before it
+    /// reads it and runs only kernels the program on those tiles has (no
+    /// GPU: the weights' shapes alone).
+    #[test]
+    fn its_plans_run_only_the_kernels_there_are() {
+        let mut packing = Packing::new();
+        let (layers, rope) = pack(Source::Shapes, &mut packing).expect("shapes alone");
+        for coop in [None, Some(Tiles::Sixteen), Some(Tiles::Eight)] {
+            for valid in [TOKENS, 7] {
+                let (p, _) = plan(&layers, rope, coop, valid);
+                assert_eq!(p.check(), None, "{valid} on {coop:?}");
+                let kernels = Kernel::on(coop);
+                assert!(
+                    p.ops.iter().all(|op| kernels.contains(&op.kernel)),
+                    "{valid} on {coop:?}"
+                );
+            }
+        }
+    }
 }

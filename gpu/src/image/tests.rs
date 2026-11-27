@@ -4,7 +4,7 @@
 
 use jodel_tensors::SafeTensors;
 
-use super::gpu::{Gpu, Made};
+use super::gpu::{Gpu, Made, Tiles};
 use super::plan::{At, Buf, Conv, Mat, Norm, Plan, Rope, Tail};
 use super::weights::{Fp8, Packing, Source};
 use crate::engine::{Input, Output};
@@ -14,7 +14,7 @@ use crate::engine::{Input, Output};
 #[test]
 fn a_slot_handed_over_and_read_is_caught() {
     let check = |build: &dyn Fn(&mut Plan)| {
-        let mut p = Plan::new(false);
+        let mut p = Plan::new(None);
         for _ in 0..3 {
             p.slot(16);
         }
@@ -43,28 +43,103 @@ fn a_slot_handed_over_and_read_is_caught() {
 }
 
 /// The kernels validate, and (without the tensor-core ones) write for
-/// Metal and DirectX; with them, they validate.
+/// Metal and DirectX; with them, they validate on both tiles, each
+/// tensor-core kernel within the workgroup memory its tiles are chosen for
+/// (`Tiles::memory`; on 8 × 8 within Apple's 32 KB), and on the 8 × 8 ones
+/// (Metal's simdgroup matrices: the multiply, the attention f32) write for
+/// Metal in every language version wgpu may take there (2.3, the first
+/// with them, to 4.0), their products as simdgroup matrices of f16 into
+/// f32.
 #[test]
 fn the_kernels_validate() {
+    use super::Kernel;
     use crate::engine::Kernels;
-    let entries: Vec<&str> = <super::Kernel as Kernels>::ALL
-        .iter()
-        .filter(|k| k.available(wgpu::Features::empty()))
-        .map(|k| k.entry())
-        .collect();
+    let entries = |coop| -> Vec<&str> { Kernel::on(coop).iter().map(|k| k.entry()).collect() };
     crate::engine::check_source(
-        &super::source(false),
+        &super::source(None),
         naga::valid::Capabilities::empty(),
-        &entries,
+        &entries(None),
     );
-    let module =
-        naga::front::wgsl::parse_str(&super::source(true)).unwrap_or_else(|e| panic!("{e}"));
-    naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::SHADER_FLOAT16 | naga::valid::Capabilities::COOPERATIVE_MATRIX,
-    )
-    .validate(&module)
-    .unwrap_or_else(|e| panic!("{e:?}"));
+    assert!(
+        Tiles::Eight.memory() <= 32 * 1024,
+        "8 × 8 within Apple's 32 KB"
+    );
+    for tiles in [Tiles::Sixteen, Tiles::Eight] {
+        let module = naga::front::wgsl::parse_str(&super::source(Some(tiles)))
+            .unwrap_or_else(|e| panic!("{tiles:?}: {e}"));
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::SHADER_FLOAT16
+                | naga::valid::Capabilities::COOPERATIVE_MATRIX,
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{tiles:?}: {e:?}"));
+        // The program's kernels are the source's entry points, all of them.
+        let mut all = entries(Some(tiles));
+        let mut points: Vec<&str> = module
+            .entry_points
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        all.sort_unstable();
+        points.sort_unstable();
+        assert_eq!(points, all, "{tiles:?}");
+        for entry in ["gemm_coop", "attention_coop"] {
+            if !all.contains(&entry) {
+                continue;
+            }
+            let bytes = workgroup_bytes(&module, &info, entry);
+            assert!(
+                bytes <= tiles.memory(),
+                "{entry} on {tiles:?}: {bytes} bytes of workgroup memory"
+            );
+        }
+        if tiles == Tiles::Sixteen {
+            continue;
+        }
+        for lang_version in [(2, 3), (3, 2), (4, 0)] {
+            let options = naga::back::msl::Options {
+                lang_version,
+                ..Default::default()
+            };
+            let (msl, _) = naga::back::msl::write_string(
+                &module,
+                &info,
+                &options,
+                &naga::back::msl::PipelineOptions::default(),
+            )
+            .unwrap_or_else(|e| panic!("Metal {lang_version:?}: {e}"));
+            for e in &all {
+                assert!(msl.contains(e), "{e} in Metal {lang_version:?}");
+            }
+            for part in [
+                "simdgroup_half8x8",
+                "simdgroup_float8x8",
+                "simdgroup_multiply_accumulate",
+                "simdgroup_store",
+            ] {
+                assert!(msl.contains(part), "{part} in Metal {lang_version:?}");
+            }
+            assert!(!msl.contains("16x16"), "no 16 × 16 in Metal");
+        }
+    }
+}
+
+/// The bytes of workgroup memory the entry point `entry` of `module` uses
+/// (its workgroup variables', each counted once).
+fn workgroup_bytes(module: &naga::Module, info: &naga::valid::ModuleInfo, entry: &str) -> u32 {
+    let index = module
+        .entry_points
+        .iter()
+        .position(|e| e.name == entry)
+        .unwrap_or_else(|| panic!("{entry} is an entry point"));
+    let uses = info.get_entry_point(index);
+    module
+        .global_variables
+        .iter()
+        .filter(|(h, g)| g.space == naga::AddressSpace::WorkGroup && !uses[*h].is_empty())
+        .map(|(_, g)| module.types[g.ty].inner.size(module.to_ctx()))
+        .sum()
 }
 
 /// A few weights of each kind packed from `src` (the FP8 matrix's bytes
@@ -194,7 +269,7 @@ fn run(
     }
     Gpu::shared().expect("the picture kernels set up on the GPU");
     let loaded = pack.upload("test").unwrap();
-    let mut p = Plan::new(fast && coop());
+    let mut p = Plan::new(coop().filter(|_| fast));
     // The tests' slots: 0 to 3.
     for _ in 0..4 {
         p.slot(0);
@@ -218,10 +293,10 @@ fn run(
     Some(made.run(&loaded, &inputs, output).unwrap())
 }
 
-/// Whether the GPU has tensor cores (else the fast kernels are the f32
-/// ones, checked once).
-fn coop() -> bool {
-    Gpu::shared().is_ok_and(|g| g.coop)
+/// The tiles of the GPU's tensor cores (without them the fast kernels are
+/// the f32 ones, checked once).
+fn coop() -> Option<Tiles> {
+    Gpu::shared().ok().and_then(|g| g.coop)
 }
 
 /// The largest difference of `got` from `want`, against `want`'s largest
@@ -237,7 +312,7 @@ fn worst(got: &[f32], want: &[f32]) -> f32 {
 
 /// The tolerances of the f32 kernels and of the f16 inputs.
 fn tolerance(fast: bool) -> f32 {
-    if fast && coop() {
+    if fast && coop().is_some() {
         4e-3
     } else {
         1e-5
@@ -727,7 +802,7 @@ fn attention_matches_the_processor() {
             };
             let e = worst(&got, &want);
             assert!(
-                e < 3.0 * tolerance(fast),
+                e < 3.0 * tolerance(fast && coop().is_some_and(Tiles::attention)),
                 "attention {heads}/{kv} causal {causal} fast {fast}: {e}"
             );
         }
@@ -800,58 +875,69 @@ fn the_small_kernels_match_the_processor() {
     .unwrap();
     assert!(worst(&got, &ln) < 1e-5, "layernorm");
     // The heads: 3 tokens of 2 heads (rows 300 apart from 40), normed,
-    // turned by pairs and by halves.
-    let (tokens, heads, stride) = (3, 2, 300);
-    let src = values(44, tokens * stride);
-    let nw = values(45, 128);
-    let table: Vec<f32> = (0..(tokens + 2) * 64)
-        .flat_map(|i| [(i as f32 * 0.1).cos(), (i as f32 * 0.1).sin()])
-        .collect();
-    for rope in [Rope::Pairs, Rope::Halves] {
-        let mut pack = Packing::new();
-        let nat = pack.vector(&nw);
-        let tat = pack.vector(&table);
-        let mut want = vec![0.0; heads * (tokens + 2) * 128];
-        for t in 0..tokens {
-            for h in 0..heads {
-                let v = &src[40 + t * stride + h * 128..][..128];
-                let r = (v.iter().map(|x| x * x).sum::<f32>() / 128.0 + 1e-6).sqrt();
-                let n: Vec<f32> = v.iter().zip(&nw).map(|(x, w)| x / r * w).collect();
-                for i in 0..64 {
-                    let (a, b) = if rope == Rope::Pairs {
-                        (2 * i, 2 * i + 1)
+    // turned by pairs and by halves; and 17 tokens of 3 heads (the heads
+    // of two workgroups, the second's partly), normed or not.
+    for (tokens, heads, normed) in [(3, 2, true), (17, 3, true), (17, 3, false)] {
+        let stride = 44 + heads * 128;
+        let src = values(44, tokens * stride);
+        let nw = values(45, 128);
+        let table: Vec<f32> = (0..(tokens + 2) * 64)
+            .flat_map(|i| [(i as f32 * 0.1).cos(), (i as f32 * 0.1).sin()])
+            .collect();
+        for rope in [Rope::Pairs, Rope::Halves] {
+            let mut pack = Packing::new();
+            let nat = pack.vector(&nw);
+            let tat = pack.vector(&table);
+            let mut want = vec![0.0; heads * (tokens + 2) * 128];
+            for t in 0..tokens {
+                for h in 0..heads {
+                    let v = &src[40 + t * stride + h * 128..][..128];
+                    let r = (v.iter().map(|x| x * x).sum::<f32>() / 128.0 + 1e-6).sqrt();
+                    let n: Vec<f32> = if normed {
+                        v.iter().zip(&nw).map(|(x, w)| x / r * w).collect()
                     } else {
-                        (i, i + 64)
+                        v.to_vec()
                     };
-                    let at = ((t + 2) * 64 + i) * 2;
-                    let (c, s) = (table[at], table[at + 1]);
-                    let out = (h * (tokens + 2) + t + 2) * 128;
-                    want[out + a] = n[a] * c - n[b] * s;
-                    want[out + b] = n[b] * c + n[a] * s;
+                    for i in 0..64 {
+                        let (a, b) = if rope == Rope::Pairs {
+                            (2 * i, 2 * i + 1)
+                        } else {
+                            (i, i + 64)
+                        };
+                        let at = ((t + 2) * 64 + i) * 2;
+                        let (c, s) = (table[at], table[at + 1]);
+                        let out = (h * (tokens + 2) + t + 2) * 128;
+                        want[out + a] = n[a] * c - n[b] * s;
+                        want[out + b] = n[b] * c + n[a] * s;
+                    }
                 }
             }
+            let got = run(
+                pack,
+                false,
+                |p| {
+                    p.qk_prep(
+                        (tokens, heads),
+                        (At::new(0, 40), stride),
+                        (At::new(1, 0), tokens + 2, 2),
+                        normed.then_some(nat),
+                        Some((rope, Buf::Small, tat)),
+                        1e-6,
+                    )
+                },
+                &[
+                    (0, 0, src.clone()),
+                    (1, 0, vec![0.0; heads * (tokens + 2) * 128]),
+                ],
+                (1, 0, heads * (tokens + 2) * 128),
+            )
+            .unwrap();
+            let e = worst(&got, &want);
+            assert!(
+                e < 1e-5,
+                "qk_prep {tokens}x{heads} normed {normed} {rope:?}: {e}"
+            );
         }
-        let got = run(
-            pack,
-            false,
-            |p| {
-                p.qk_prep(
-                    (tokens, heads),
-                    (At::new(0, 40), stride),
-                    (At::new(1, 0), tokens + 2, 2),
-                    Some(nat),
-                    Some((rope, Buf::Small, tat)),
-                    1e-6,
-                )
-            },
-            &[
-                (0, 0, src.clone()),
-                (1, 0, vec![0.0; heads * (tokens + 2) * 128]),
-            ],
-            (1, 0, heads * (tokens + 2) * 128),
-        )
-        .unwrap();
-        assert!(worst(&got, &want) < 1e-5, "qk_prep {rope:?}");
     }
     // The sampler's step, SiLU, a copy.
     let a = values(46, 1000);

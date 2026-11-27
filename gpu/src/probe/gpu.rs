@@ -67,9 +67,9 @@ impl Gpu {
                     } else {
                         wgpu::ExperimentalFeatures::disabled()
                     };
-                (wanted, experimental)
+                (wanted, experimental, ())
             },
-            |device, queue, limits| {
+            |device, queue, limits, ()| {
                 // An error outside the probes' scopes is printed, not a
                 // panic (wgpu's default).
                 device.on_uncaptured_error(Arc::new(|e| eprintln!("probe: GPU error: {e}")));

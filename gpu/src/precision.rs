@@ -5,8 +5,9 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Precision {
     /// As fast as the GPU does well: the picture models' large matrix
-    /// multiplies and attention on tensor cores (their inputs rounded to
-    /// f16) where it has them; the language model's quantised matrices
+    /// multiplies on tensor cores (their inputs rounded to f16) where it
+    /// has them, and their attention too where they are of 16 × 16 (not
+    /// Apple's 8 × 8); the language model's quantised matrices
     /// taking their rows at 8 bits where it multiplies bytes four at a time
     /// natively (not Metal, where that is emulated). Elsewhere as
     /// [`Precision::Full`].

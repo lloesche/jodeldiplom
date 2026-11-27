@@ -4,6 +4,7 @@
 //! the same slot (wgpu binds a buffer one way a dispatch); a dispatch that
 //! adds to what is there reads it through its output.
 
+use super::gpu::Tiles;
 use super::Kernel;
 use crate::engine::{self, params, spread, After, Matrix, Mul, MUL_NUMBERS};
 
@@ -216,13 +217,13 @@ impl Conv {
     }
 }
 
-/// A plan: its slots' sizes (in f32s), its dispatches, and whether the
-/// tensor-core kernels are used (only where the GPU has them).
+/// A plan: its slots' sizes (in f32s), its dispatches, and the tiles its
+/// tensor-core kernels run on, where they do.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Plan {
     pub(crate) slots: Vec<usize>,
     pub(crate) ops: Vec<Op>,
-    pub(crate) fast: bool,
+    pub(crate) coop: Option<Tiles>,
     /// Slots taken over by another use, and from which dispatch.
     handovers: Vec<(u8, usize)>,
     /// The dispatches that read the slot they write (adding into it, or
@@ -231,9 +232,9 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
-    pub(crate) fn new(fast: bool) -> Plan {
+    pub(crate) fn new(coop: Option<Tiles>) -> Plan {
         Plan {
-            fast,
+            coop,
             ..Plan::default()
         }
     }
@@ -356,8 +357,8 @@ impl Plan {
     }
 
     fn mm_kernel(&self) -> Kernel {
-        if self.fast {
-            Kernel::Gemm16
+        if self.coop.is_some() {
+            Kernel::GemmCoop
         } else {
             Kernel::Gemm
         }
@@ -519,7 +520,8 @@ impl Plan {
                 table,
                 eps.to_bits() as usize,
             ],
-            [tokens as u32, heads as u32, 1],
+            // 32 heads a workgroup.
+            [(tokens * heads).div_ceil(32) as u32, 1, 1],
         );
     }
 
@@ -575,8 +577,8 @@ impl Plan {
         assert!(q.slot == k.slot && k.slot == v.slot);
         let scale = 1.0f32 / 128f32.sqrt();
         // 128 queries a workgroup on tensor cores, else 64.
-        let (kernel, per) = if self.fast {
-            (Kernel::Attention16, 128)
+        let (kernel, per) = if self.coop.is_some_and(Tiles::attention) {
+            (Kernel::AttentionCoop, 128)
         } else {
             (Kernel::Attention, 64)
         };

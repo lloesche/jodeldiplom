@@ -134,8 +134,7 @@ pub(crate) struct InFlight {
 }
 
 impl<K: Kernels> Program<K> {
-    /// `source`'s kernels (those of `K::ALL` the device has:
-    /// [`Kernels::available`]) on the device, labelled
+    /// `source`'s kernels (all of `K::ALL`) on the device, labelled
     /// `label`, on the layout `K` says; the device watched for its loss.
     pub(crate) fn new(
         device: wgpu::Device,
@@ -143,6 +142,19 @@ impl<K: Kernels> Program<K> {
         limits: &wgpu::Limits,
         label: &'static str,
         source: &str,
+    ) -> Program<K> {
+        Program::of(device, queue, limits, label, source, K::ALL)
+    }
+
+    /// [`Program::new`] with only `kernels`, those `source` holds (a
+    /// program whose kernels depend on the device).
+    pub(crate) fn of(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        limits: &wgpu::Limits,
+        label: &'static str,
+        source: &str,
+        kernels: &[K],
     ) -> Program<K> {
         let lost = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&lost);
@@ -190,10 +202,8 @@ impl<K: Kernels> Program<K> {
             label: Some(label),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let features = device.features();
-        let pipelines = K::ALL
+        let pipelines = kernels
             .iter()
-            .filter(|k| k.available(features))
             .map(|&k| {
                 let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(k.entry()),
