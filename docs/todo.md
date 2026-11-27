@@ -40,8 +40,9 @@ Work agreed on but not started, roughly in the order it was raised.
   only when it is striking, its lettering painted out first. No face
   redrawing afterwards (tried: it changed good faces and planted
   features on profiles). Distilled, it takes no negative prompt: the
-  prompt itself asks for no text, writing or lettering, and a text
-  check redraws a picture that has some anyway. Each scene moves by a slow camera push and either a depth
+  prompt itself asks for no text, writing or lettering; no text check
+  (the owner: what slips through is unreadable anyway). Each scene
+  moves by a slow camera push and either a depth
   warp from its depth map (no edge to tear, so stronger than the
   prototype's 1.5 %; the depth held flat over each whole head, found
   from the face and the depth around it so a profile's nose and the
@@ -53,9 +54,6 @@ Work agreed on but not started, roughly in the order it was raised.
   cut on the downbeats, the look's shaders over it. No second language-model pass to judge the pictures.
   Dropped after trying: every layer drawn apart (a collage, bad faces),
   an upscaling model, Gemma's audio input (useless for music).
-- **The story's text check:** a scene picture with lettering in it
-  anyway is to be found (an OCR detector with the face veto, in Rust)
-  and drawn again with another seed; the drawing step does not check yet.
 - **The song's objects in the game, not in the story:** a few objects
   per song (from the look's motifs) replacing the game's generic
   graphics where it already puts things: the coin out of a word hit,
