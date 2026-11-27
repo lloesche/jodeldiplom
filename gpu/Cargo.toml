@@ -7,6 +7,8 @@ license = "MIT"
 description = "The player's networks on the GPU, through wgpu: the stem separator, the beat network, the speech models and the cover's depth and cut-out"
 
 [dependencies]
+# The packed language model's file: whole or not at all, made durable.
+durable = { path = "../durable" }
 jodel-rhythm = { path = "../rhythm" }
 jodel-lyrics = { path = "../lyrics" }
 jodel-tensors = { path = "../tensors" }

@@ -167,4 +167,8 @@ revision) for the speech recogniser, which setup packs at 4 bits into
 take covers apart for karaoke's background, downloaded the same way at fixed
 revisions: `depth-anything/DA3-SMALL` (Depth Anything 3 Small, Apache 2.0)
 as `da3-small.safetensors` and `PramaLLC/BEN2` (BEN2 Base, MIT) as
-`ben2-base.safetensors`.
+`ben2-base.safetensors`. Nor is karaoke story mode's language model,
+`google/gemma-4-E4B-it` (Gemma 4 E4B, Apache 2.0), whose text decoder
+`jodel_gpu::llm::pack` packs from its checkpoint at 4 bits into a
+`.jdlgemma` file (`gpu/examples/gemma.rs pack`); setup does not fetch it
+yet.

@@ -7,7 +7,9 @@
 //! - the speech model of [`jodel_lyrics::speech`] ([`GpuSpeech`],
 //!   `speech.rs`) and the speech recogniser of [`jodel_lyrics::asr`]
 //!   ([`GpuAsr`], `asr/`);
-//! - the cover's depth and cut-out ([`GpuDepth`], [`GpuMatte`], `vision/`).
+//! - the cover's depth and cut-out ([`GpuDepth`], [`GpuMatte`], `vision/`);
+//! - the karaoke story mode's language model, Gemma 4 E4B's text decoder
+//!   ([`Gemma`], `llm/`).
 //!
 //! Each is a program of kernels on one bind group layout, its dispatches
 //! planned on the processor (every matrix multiply as the engine's `Mul`)
@@ -21,8 +23,8 @@
 //! networks' device) are set up again on their next use, and a setup that
 //! failed is tried again a while later; one the caller holds says so
 //! (`is_lost`: [`GpuSpeech::is_lost`], [`GpuAsr::is_lost`],
-//! [`GpuDepth::is_lost`], [`GpuMatte::is_lost`]), and the caller makes it
-//! again.
+//! [`GpuDepth::is_lost`], [`GpuMatte::is_lost`], [`Gemma::is_lost`]), and
+//! the caller makes it again.
 //!
 //! The GPU is chosen once a process ([`chosen`], `device.rs`): one `wgpu`
 //! instance, the adapters on every backend listed once, the best one kept
@@ -47,6 +49,7 @@ mod asr;
 mod device;
 mod diag;
 mod engine;
+pub mod llm;
 mod net;
 pub mod pace;
 mod packer;
@@ -58,6 +61,7 @@ pub mod vision;
 pub use asr::{GpuAsr, Hearing, MAX_NEW, MAX_SECONDS};
 pub use device::{card, chosen, gpu_name, setting_up, Chosen, Turn, Turned};
 pub use diag::report;
+pub use llm::Gemma;
 pub use net::GpuNetwork;
 pub use separator::GpuSeparator;
 pub use speech::GpuSpeech;

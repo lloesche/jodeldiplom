@@ -5,8 +5,9 @@ Metal; no WebGPU or GLES), each giving what its CPU version gives to within
 rounding: the stem separator and the beat network of
 [`jodel-rhythm`](../rhythm) (`GpuSeparator`, `GpuNetwork`), the speech
 model and the speech recogniser of [`jodel-lyrics`](../lyrics)
-(`GpuSpeech`, `GpuAsr`), and the cover's depth and cut-out (`GpuDepth`,
-`GpuMatte`). Each is a program of kernels on one bind group layout, its
+(`GpuSpeech`, `GpuAsr`), the cover's depth and cut-out (`GpuDepth`,
+`GpuMatte`), and karaoke story mode's language model (`Gemma`, Gemma 4
+E4B's text decoder, to within rounding of its reference). Each is a program of kernels on one bind group layout, its
 dispatches planned on the processor and run in short submissions
 (`src/engine/`: the program, its buffers, parameters and bind groups;
 every matrix multiply as a `Mul`, what it reads and writes and what becomes
@@ -18,7 +19,7 @@ networks the process keeps (`GpuSeparator::shared()` and `background()`,
 `GpuNetwork::shared()`, the vision networks' device) are set up again on
 their next use, and a chunk or piece under way when it happened runs again
 on the new one; a setup that failed is tried again 30 s later. A network
-the caller holds (`GpuSpeech`, `GpuAsr`, `GpuDepth`, `GpuMatte`) says so
+the caller holds (`GpuSpeech`, `GpuAsr`, `GpuDepth`, `GpuMatte`, `Gemma`) says so
 (`is_lost()`), and the player makes it again.
 
 ## The stem separator
@@ -270,6 +271,93 @@ most 0.011 off (the official half-precision run is up to 0.99 off its own
 full-precision one). `cargo test -p jodel-gpu --test vision` holds both to
 the reference on a generated scene (`tests/fixtures`);
 `examples/vision_check.rs` runs the comparison on reference dumps.
+
+## The language model
+
+`Gemma` runs the text decoder of Gemma 4 E4B-it (Apache-2.0,
+`google/gemma-4-E4B-it`) for karaoke's story mode: a song's storyboard and
+look written from its lyrics, greedily, so the same song always gets the
+same plan (`src/llm/`).
+
+- **Packing:** `llm::pack` reads the checkpoint once (all 16 GB, and the
+  per-layer embeddings as 11 GB of f32s; 2.5 minutes) and writes our own file
+  (`.jdlgemma`, 4.4 GB): every matrix at 4 bits in groups of 32 with a fitted
+  half scale and offset (the recogniser's rounding,
+  `jodel_lyrics::asr::quant`), the norms as f32s, and the tokeniser.
+- **Memory:** loading the weights (`Gemma::open`, read a buffer at a time:
+  the embeddings with the per-layer projection, then a buffer each layer
+  with its slice of the per-layer embeddings) and the room for a context
+  (`Gemma::reserve`: the cache of keys and values, the working buffers of a
+  prompt's chunk and a step, the rotary tables; `release` lets it go) are
+  separate. `Memory::of(context)` says what each takes before anything is
+  loaded: 4450 MB of weights (in 15 buffers, the layers three to one, each
+  above the allocator's 256 MB blocks: a layer a buffer, two to a block,
+  held 1.3 GB more), and 536 MB for 4041 positions (the story prompt and
+  2500 tokens).
+- **The architecture** is the reference's (Hugging Face's
+  `Gemma4TextModel`): 42 layers of 2560, five sliding-window layers (a window
+  of 512, heads of 256) to a global one (heads of 512, a quarter turned);
+  8 query heads on 2 key/value heads, queries and keys normed per head, no
+  scaling or cap of the scores; the last 18 layers on the keys and values of
+  the last earlier layer of their kind; norms before and after attention and
+  the GELU-gated feed-forward; each token's per-layer embeddings (and its
+  embedding's projection, normed) gating a residual of their own in each
+  layer; each layer's output scaled; the head tied to the embeddings, its
+  logits capped at 30.
+- **Tokeniser:** Gemma's byte-pair encoding, our own (`llm::Tokenizer`), as
+  Hugging Face's `tokenizers` does it (specials first, the lowest-ranked
+  merge first, byte pieces for what has no piece); it gives the reference's
+  ids for the story prompt exactly.
+- **A prompt** goes in chunks of up to 512 rows: the 24 layers with keys and
+  values of their own over all of them (a tiled matrix multiply, 64 × 64
+  tiles; flash attention over tiles of 8 keys, a query's 16 values an
+  invocation), the other 18 for its last row alone.
+- **A step** is recorded once: every kernel reads the position it decodes at
+  from the GPU, and the head's largest logit (capped, the first of equals)
+  is put after it as the next token, the position moved on. Steps go eight
+  at a time between reads of the tokens, the next eight made while those
+  run. A matrix multiply of one row (`gemv_*`) is 16 rows a workgroup, 32
+  invocations a row each taking every 32nd half-group of inputs; attention
+  is split (8 splits on a sliding layer, 16 on a global one, each taking
+  every so many chunks of 64 positions with an online softmax) and joined.
+- **Precision:** the rows a matrix multiplies are rounded to 8 bits a block
+  of 32 (by the block's largest, its scaled sum kept for the weights'
+  offsets, as llama.cpp's q8_1) and multiplied four at a time with
+  `dot4I8Packed`, the weights' two nibbles a word unpacked into byte lanes;
+  where that instruction is emulated (Metal) they stay f32s
+  (`llm::Precision`; `JODEL_GEMMA_PRECISION=plain` or `q8` says otherwise).
+
+On an RTX 5080 (November 2026), the Fast Car storyboard prompt of the story
+prototype (1541 tokens): loading takes 5 s, the prompt 0.58 s (2650 tokens a
+second), the answer 118 tokens a second (787 tokens in 6.7 s, at 8.5 ms a
+step); the prototype's Hugging Face run at 4 bits (bitsandbytes' nf4) wrote
+10.7 a second. The GPU holds 5.0 GB (5.2 GB in use, by the driver's count).
+As f32s (`plain`) the prompt takes 1.03 s and a step 12 ms (83 a second).
+Profiled, a step's GPU time goes mostly to the one-row matrix multiplies
+(4.7 ms: the weights' 2.9 GB a token at 610 GB/s), then the residual
+steps, the attention, its joins and the rows written for the matrices
+(each of the last a few microseconds, 640 dispatches a step).
+
+Against the reference (Hugging Face's own `Gemma4ForCausalLM` in f32 with
+our file's weights dequantised, and every matrix's input rounded as ours
+where we round it):
+- **Plain:** the logits after the prompt agree to 2.0e-4 (of 28; 3.4e-5 on
+  average), and the greedy answer is the reference's token for token, all
+  1020 of them.
+- **At 8 bits:** the rounding of every matrix's rows makes any difference
+  of rounding grow: the reference itself, its embeddings' scale nudged by
+  one part in a million, moves its logits by 0.53 on average (the best
+  logit leads by 5.9). Ours are as far from it (0.48), and 0.31 from the
+  plain path's, and the answers part after 15 tokens: as different as two
+  roundings of the same model, each as good (both plans take the lyrics'
+  18 lines in order, in 7 and 9 scenes).
+
+`cargo test -p jodel-gpu` holds every kernel (both paths) to a reference on
+the processor on small shapes, and the tokeniser to its rules.
+
+`examples/gemma.rs` packs the checkpoint, writes after a prompt file (one
+user turn) with the timings and the memory held, or writes the logits after
+it.
 
 ## Stem playback
 
