@@ -28,6 +28,56 @@ each saying when its device is lost (`OnDevice::lost`). The devices the
 vision networks and the picture model's parts share are set up again the
 same way (`engine::SharedDevice`).
 
+## Rules for kernels: they must hold on Apple's GPUs too
+
+Every kernel runs on Vulkan (NVIDIA, AMD, Intel) and on Metal (Apple
+silicon), and Metal is stricter in ways an NVIDIA card never shows. On
+2026-11-27 Gemma wrote nothing on an M4 Max (every token's logits NaN, so
+every story there failed) and klein drew wrong pictures, while every test
+passed on Windows. These are the rules that came out of it; an
+optimisation must keep them, however much faster the other way looks on
+the 5080.
+
+1. **Never write one lane of a vector that another invocation also
+   writes.** On Apple's GPUs a store to one lane of a `vec4` (or `vec2`)
+   may be done as a read-modify-write of the whole vector, so two
+   invocations writing different lanes of the same vector at once lose
+   each other's values. This holds in workgroup memory *and* in storage
+   buffers. Found in Gemma's flash attention (its key/value tile written a
+   lane an invocation; the step's per-head weights, largest score, total
+   and fade, a head an invocation) and in klein (its output buffer `dst`
+   as `array<vec4<f32>>` written a value at a time by `dst_put`, and the
+   plain matrix multiply's tiles). The fix everywhere: the shared array or
+   the buffer is `f32`s, written a whole value an invocation, read four at
+   a time into a `vec4` where that is what the maths wants
+   (`flash4`, `step_p4`, `gemm_a4`, `dst_put4`). A vector written whole by
+   one invocation is fine. `scripts/check-rules.sh` fails on a store into
+   a vector's lane by index (`a[i][j] = v`, `a[i].x = v`) in any WGSL.
+2. **Never feed `exp` or `tanh` an argument far out of range.** Metal
+   compiles with fast maths: its `exp` turns the exponent's whole part
+   into an integer, which overflows for a huge argument (garbage, not 0),
+   and its `tanh` goes through `exp(2x)` (∞ / ∞ = NaN for a large `x`).
+   The -1e30 that stands for "no score" in an online softmax made
+   `exp(best − next)` such an argument on the first chunk; GELU's tanh
+   took `x³`. Use the held forms in `llm/prelude.wgsl`: `exp_held`
+   (`exp_held4` for a vec4; held to -87 first, exp(-87) = 1.6e-38, so
+   what it weighs is gone either way) and `tanh_held` (held to ±10, tanh
+   is ±1 in f32 past ±9.1). On Vulkan both give the same numbers as
+   before, bit for bit.
+3. **A change to a kernel is tested on the Mac before it lands.** The
+   kernel tests (`cargo test --release -p jodel-gpu --lib`) hold every
+   kernel to a processor reference on whatever GPU runs them; on Windows
+   they say nothing about Metal. Run them on the Mac too, and the end to
+   end checks there (`--example gemma`, a story), before saying a GPU
+   change works. A plan that is token for token the same as before on
+   Windows is not evidence about the Mac.
+4. **The Mac runs the plain paths.** Metal through `wgpu` has no
+   cooperative matrices and Gemma picks its f32 path there (`Full`), so
+   the plain multiply, the plain attention and the f32 matrix paths are
+   what an Apple user runs. An optimisation made only to the fast
+   (tensor-core, int8) paths does nothing for them, and one that breaks
+   the plain paths breaks the Mac while the 5080's tests stay green.
+
 ## The stem separator
 
 ```rust

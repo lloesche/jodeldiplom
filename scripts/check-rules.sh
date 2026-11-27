@@ -8,6 +8,8 @@
 #   in random bytes;
 # - every text file is stored with LF line endings (in the index: as it
 #   is committed);
+# - no shader writes one lane of a vector by index (Apple's GPUs may write
+#   the whole vector back: gpu/README.md, "Rules for kernels");
 # - big source files are reported, not failed: over 1000 lines of code is
 #   a question for review (split by concern where that helps), not a limit.
 #
@@ -67,6 +69,22 @@ if eol=$(g ls-files --eol); then
 else
     fail "git ls-files --eol failed"
 fi
+
+echo "== Shader lane writes"
+# A store into one lane of a vector by index (`a[i][j] = v`, `a[i].x = v`)
+# in any WGSL: on Apple's GPUs it may write the whole vector back, over
+# what other invocations wrote to its other lanes (gpu/README.md, "Rules
+# for kernels"). Shared arrays and buffers are f32s, written whole.
+hits=$(g grep -n -E -e '\][[:space:]]*\[[^]]+\][[:space:]]*[-+*/]?=[^=]' \
+    -e '\]\.[xyzw][[:space:]]*[-+*/]?=[^=]' -- '*.wgsl')
+case $? in
+0)
+    printf '%s\n' "$hits"
+    fail "the shader lines above write one lane of a vector (write f32s whole)"
+    ;;
+1) ;;
+*) fail "git grep failed" ;;
+esac
 
 echo "== Big files (a question for review, not a failure)"
 # Lines of code of each tracked source file: tests (a tests folder, a
