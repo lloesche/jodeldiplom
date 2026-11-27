@@ -81,7 +81,9 @@ Work agreed on but not started, roughly in the order it was raised.
   for every song before it swaps: the language model writes every
   waiting song's storyboard, then the image model draws them all; a song
   queued meanwhile waits until the image model's queue is empty, then
-  the language model is loaded again for it. Each queue
+  the language model is loaded again for it. Once every queue is empty
+  and has stayed so for a minute, every model is let go, on any card:
+  the memory goes back to the game and the other programs. Each queue
   is first in, first out, no exceptions (not even for the song playing
   next). Singing takes the GPU first. How many models stay loaded
   follows the card's memory, read per backend through wgpu's escape
