@@ -19,7 +19,10 @@ struct Params {
 
 @group(0) @binding(0) var<storage, read> src: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read> wts: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read_write> dst: array<vec4<f32>>;
+// dst in f32s: an invocation writes whole values, never one lane of a
+// vec4 another invocation writes too (on Apple's GPUs a lane's store may
+// write the whole vector back, over its neighbours' lanes).
+@group(0) @binding(2) var<storage, read_write> dst: array<f32>;
 @group(0) @binding(3) var<uniform> p: Params;
 @group(0) @binding(4) var<storage, read> small: array<f32>;
 @group(0) @binding(5) var<storage, read> src2: array<f32>;
@@ -30,11 +33,20 @@ fn src_at(i: u32) -> f32 {
 }
 
 fn dst_at(i: u32) -> f32 {
-    return dst[i >> 2u][i & 3u];
+    return dst[i];
 }
 
 fn dst_put(i: u32, v: f32) {
-    dst[i >> 2u][i & 3u] = v;
+    dst[i] = v;
+}
+
+// dst's vector `i4` (values 4·i4 to 4·i4 + 3) written.
+fn dst_put4(i4: u32, v: vec4<f32>) {
+    let b = 4u * i4;
+    dst[b] = v.x;
+    dst[b + 1u] = v.y;
+    dst[b + 2u] = v.z;
+    dst[b + 3u] = v.w;
 }
 
 // One FP8 (e4m3) byte's value: its exponent rebased from 7 to f32's 127

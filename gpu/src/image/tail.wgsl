@@ -62,7 +62,7 @@ fn mm_swiglu4(row: u32, col: u32, g: vec4<f32>, u: vec4<f32>) {
         return;
     }
     let at = mm_c() + row * mm_ldc() + col;
-    dst[at >> 2u] = vec4<f32>(silu(g.x), silu(g.y), silu(g.z), silu(g.w)) * u;
+    dst_put4(at >> 2u, vec4<f32>(silu(g.x), silu(g.y), silu(g.z), silu(g.w)) * u);
 }
 
 // A's values k0.. k0 + 3 of row `row` (k0 a multiple of 4; zeros past m

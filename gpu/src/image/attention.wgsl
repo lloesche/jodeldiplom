@@ -99,8 +99,8 @@ fn attention_f32(wg: vec3<u32>, li: u32) {
     }
     o = h64_div(o, total);
     let out = (p.n7 + query * p.n8 + h * 128u + half * 64u) / 4u;
-    dst[out] = o.v0; dst[out + 1u] = o.v1; dst[out + 2u] = o.v2; dst[out + 3u] = o.v3;
-    dst[out + 4u] = o.v4; dst[out + 5u] = o.v5; dst[out + 6u] = o.v6; dst[out + 7u] = o.v7;
-    dst[out + 8u] = o.v8; dst[out + 9u] = o.v9; dst[out + 10u] = o.v10; dst[out + 11u] = o.v11;
-    dst[out + 12u] = o.v12; dst[out + 13u] = o.v13; dst[out + 14u] = o.v14; dst[out + 15u] = o.v15;
+    dst_put4(out, o.v0); dst_put4(out + 1u, o.v1); dst_put4(out + 2u, o.v2); dst_put4(out + 3u, o.v3);
+    dst_put4(out + 4u, o.v4); dst_put4(out + 5u, o.v5); dst_put4(out + 6u, o.v6); dst_put4(out + 7u, o.v7);
+    dst_put4(out + 8u, o.v8); dst_put4(out + 9u, o.v9); dst_put4(out + 10u, o.v10); dst_put4(out + 11u, o.v11);
+    dst_put4(out + 12u, o.v12); dst_put4(out + 13u, o.v13); dst_put4(out + 14u, o.v14); dst_put4(out + 15u, o.v15);
 }

@@ -4,10 +4,24 @@
 // invocations keeps 8 rows × 8 columns (rows ty·4.. and 64 + ty·4..,
 // columns likewise).
 
-// A's tile as [16 k][128 rows] and W's as [16 k][128 columns], four
-// values a vector.
-var<workgroup> gemm_tile_a: array<vec4<f32>, 512>;
-var<workgroup> gemm_tile_b: array<vec4<f32>, 512>;
+// A's tile as [16 k][128 rows] and W's as [16 k][128 columns], in f32s
+// read four at a time ([`gemm_a4`], [`gemm_b4`]): an invocation writes
+// single values, never one lane of a shared vec4 (on Apple's GPUs that
+// may write the whole vector back, over its neighbours' lanes).
+var<workgroup> gemm_tile_a: array<f32, 2048>;
+var<workgroup> gemm_tile_b: array<f32, 2048>;
+
+// A's tile, vector `i` (values 4i to 4i + 3).
+fn gemm_a4(i: u32) -> vec4<f32> {
+    let b = 4u * i;
+    return vec4<f32>(gemm_tile_a[b], gemm_tile_a[b + 1u], gemm_tile_a[b + 2u], gemm_tile_a[b + 3u]);
+}
+
+// W's tile, vector `i`.
+fn gemm_b4(i: u32) -> vec4<f32> {
+    let b = 4u * i;
+    return vec4<f32>(gemm_tile_b[b], gemm_tile_b[b + 1u], gemm_tile_b[b + 2u], gemm_tile_b[b + 3u]);
+}
 
 fn gemm_f32(wg: vec3<u32>, li: u32) {
     let tx = li % 16u;
@@ -36,22 +50,22 @@ fn gemm_f32(wg: vec3<u32>, li: u32) {
     for (var s = 0u; s < steps; s++) {
         workgroupBarrier();
         // Transposed: value j of A's four is k = aq + j.
-        gemm_tile_a[(aq + 0u) * 32u + ra][ca] = na0.x;
-        gemm_tile_a[(aq + 1u) * 32u + ra][ca] = na0.y;
-        gemm_tile_a[(aq + 2u) * 32u + ra][ca] = na0.z;
-        gemm_tile_a[(aq + 3u) * 32u + ra][ca] = na0.w;
-        gemm_tile_a[(aq + 0u) * 32u + ra + 16u][ca] = na1.x;
-        gemm_tile_a[(aq + 1u) * 32u + ra + 16u][ca] = na1.y;
-        gemm_tile_a[(aq + 2u) * 32u + ra + 16u][ca] = na1.z;
-        gemm_tile_a[(aq + 3u) * 32u + ra + 16u][ca] = na1.w;
-        gemm_tile_b[(wh + 0u) * 32u + rb][cb] = nw.lo.x;
-        gemm_tile_b[(wh + 1u) * 32u + rb][cb] = nw.lo.y;
-        gemm_tile_b[(wh + 2u) * 32u + rb][cb] = nw.lo.z;
-        gemm_tile_b[(wh + 3u) * 32u + rb][cb] = nw.lo.w;
-        gemm_tile_b[(wh + 4u) * 32u + rb][cb] = nw.hi.x;
-        gemm_tile_b[(wh + 5u) * 32u + rb][cb] = nw.hi.y;
-        gemm_tile_b[(wh + 6u) * 32u + rb][cb] = nw.hi.z;
-        gemm_tile_b[(wh + 7u) * 32u + rb][cb] = nw.hi.w;
+        gemm_tile_a[4u * ((aq + 0u) * 32u + ra) + ca] = na0.x;
+        gemm_tile_a[4u * ((aq + 1u) * 32u + ra) + ca] = na0.y;
+        gemm_tile_a[4u * ((aq + 2u) * 32u + ra) + ca] = na0.z;
+        gemm_tile_a[4u * ((aq + 3u) * 32u + ra) + ca] = na0.w;
+        gemm_tile_a[4u * ((aq + 0u) * 32u + ra + 16u) + ca] = na1.x;
+        gemm_tile_a[4u * ((aq + 1u) * 32u + ra + 16u) + ca] = na1.y;
+        gemm_tile_a[4u * ((aq + 2u) * 32u + ra + 16u) + ca] = na1.z;
+        gemm_tile_a[4u * ((aq + 3u) * 32u + ra + 16u) + ca] = na1.w;
+        gemm_tile_b[4u * ((wh + 0u) * 32u + rb) + cb] = nw.lo.x;
+        gemm_tile_b[4u * ((wh + 1u) * 32u + rb) + cb] = nw.lo.y;
+        gemm_tile_b[4u * ((wh + 2u) * 32u + rb) + cb] = nw.lo.z;
+        gemm_tile_b[4u * ((wh + 3u) * 32u + rb) + cb] = nw.lo.w;
+        gemm_tile_b[4u * ((wh + 4u) * 32u + rb) + cb] = nw.hi.x;
+        gemm_tile_b[4u * ((wh + 5u) * 32u + rb) + cb] = nw.hi.y;
+        gemm_tile_b[4u * ((wh + 6u) * 32u + rb) + cb] = nw.hi.z;
+        gemm_tile_b[4u * ((wh + 7u) * 32u + rb) + cb] = nw.hi.w;
         workgroupBarrier();
         if (s + 1u < steps) {
             let k1 = (s + 1u) * 16u;
@@ -60,10 +74,10 @@ fn gemm_f32(wg: vec3<u32>, li: u32) {
             nw = mm_w8(col0 + wc, k1 + wh);
         }
         for (var kk = 0u; kk < 16u; kk++) {
-            let a0 = gemm_tile_a[kk * 32u + ty];
-            let a1 = gemm_tile_a[kk * 32u + ty + 16u];
-            let b0 = gemm_tile_b[kk * 32u + tx];
-            let b1 = gemm_tile_b[kk * 32u + tx + 16u];
+            let a0 = gemm_a4(kk * 32u + ty);
+            let a1 = gemm_a4(kk * 32u + ty + 16u);
+            let b0 = gemm_b4(kk * 32u + tx);
+            let b1 = gemm_b4(kk * 32u + tx + 16u);
             acc0 = fma(vec4<f32>(a0.x), b0, acc0);
             acc1 = fma(vec4<f32>(a0.x), b1, acc1);
             acc2 = fma(vec4<f32>(a0.y), b0, acc2);

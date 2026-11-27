@@ -20,7 +20,7 @@ fn rmsnorm(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
     let yi = (p.n4 + row * p.n5) / 4u;
     for (var i = li; i < d4; i += 256u) {
         let w = p.n6 + 4u * i;
-        dst[yi + i] = src[xi + i] * r * vec4<f32>(small[w], small[w + 1u], small[w + 2u], small[w + 3u]);
+        dst_put4(yi + i, src[xi + i] * r * vec4<f32>(small[w], small[w + 1u], small[w + 2u], small[w + 3u]));
     }
 }
 
@@ -50,7 +50,7 @@ fn layernorm_mod(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation
         let c = 4u * i;
         let shift = vec4<f32>(src2[p.n6 + c], src2[p.n6 + c + 1u], src2[p.n6 + c + 2u], src2[p.n6 + c + 3u]);
         let scale = vec4<f32>(src2[p.n7 + c], src2[p.n7 + c + 1u], src2[p.n7 + c + 2u], src2[p.n7 + c + 3u]);
-        dst[yi + i] = (src[xi + i] - vec4<f32>(mean)) * r * (1.0 + scale) + shift;
+        dst_put4(yi + i, (src[xi + i] - vec4<f32>(mean)) * r * (1.0 + scale) + shift);
     }
 }
 
@@ -125,7 +125,7 @@ fn copy(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: v
     }
     let r = i / w4;
     let c = i % w4;
-    dst[(p.n4 + r * p.n5) / 4u + c] = src[(p.n2 + r * p.n3) / 4u + c];
+    dst_put4((p.n4 + r * p.n5) / 4u + c, src[(p.n2 + r * p.n3) / 4u + c]);
 }
 
 // The autoencoder's latents (2·n0 × 2·n1 pixels of n3 channels, the first
