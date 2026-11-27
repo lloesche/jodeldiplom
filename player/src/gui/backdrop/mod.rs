@@ -274,7 +274,7 @@ impl Visualiser {
         }
         let playing = state.playing.state == PlayState::Playing;
         // The look reads the song where it is, playing or not.
-        let look = self.looks.cue(state, song, heard, window);
+        let look = self.looks.cue(state, (song, app.art()), heard, window);
         let gains = StripKind::PARTS.map(|k| state.desk.heard_gain(k).min(1.0) as f32);
         let song = song.filter(|_| playing);
         let levels = song.map_or(Levels::default(), |s| s.levels(heard).times(gains));

@@ -33,7 +33,7 @@ pub(crate) fn drawn(c: &Checked, img: &Image, t: f64, band: Option<(f32, f32)>) 
         dt: 1.0 / 30.0,
         forget: false,
         band,
-        palette: [[0.9, 0.5, 0.2], [0.2, 0.4, 0.8], [0.1, 0.1, 0.12]],
+        palette: crate::MEASURING_PALETTE,
     };
     let signals = demo::signals_at(t);
     render::draw(&c.frame(&moment, &signals, None), img, None)
@@ -376,4 +376,65 @@ fn the_lyric_band_stays_readable_under_every_pass() {
             p.name
         );
     }
+}
+
+/// Every preset and every pass as a look of its own, drawn through a
+/// whole made-up song frame by frame (twelve a second, small, the frame
+/// before fed back), over a dark picture and a light one: at most three
+/// flashes in any second, never washed out or blacked out (within the
+/// exposure guard), the lyrics readable throughout, no number that is
+/// none, and a preset drawn at no less than 60 % of its strength over
+/// the dark picture (its defaults are not extreme) and 30 % over the light
+/// one (where a bright look is softened); a pass alone at 15 %.
+#[test]
+fn every_look_keeps_the_guards_over_a_whole_song() {
+    let curves = demo::Song::new(64.0, 124.0).curves();
+    let dark = fixture(20, 12);
+    let light = Image {
+        px: dark.px.iter().map(|&c| c * 0.5 + 0.45).collect(),
+        ..dark.clone()
+    };
+    let band = (0.68, 0.86);
+    let mut looks: Vec<&Look> = presets::all().iter().collect();
+    looks.extend(presets::passes().iter().map(|(_, l)| l));
+    let failed = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for chunk in looks.chunks(looks.len().div_ceil(6)) {
+            let (failed, curves, dark, light) = (&failed, &curves, &dark, &light);
+            s.spawn(move || {
+                for look in chunk {
+                    let c = look.check();
+                    for (picture, bright) in [(dark, false), (light, true)] {
+                        let was = guard::exposure(&picture.px);
+                        let readable = guard::band_contrast(&picture.px, picture.w, band);
+                        let strength = guard::strength(&c, picture, Some(curves));
+                        let r = guard::over_song(&c, picture, curves, (12.0, band));
+                        let within = r.clipped <= guard::CLIPPED.max(was.clipped + 0.05) + 0.05
+                            && r.mean.0 >= guard::MEAN.0.min(was.mean - 0.1) - 0.03
+                            && r.mean.1 <= guard::MEAN.1.max(was.mean + 0.1) + 0.03;
+                        // A preset keeps most of its strength over a dark picture;
+                        // over a light one, a bright look is softened.
+                        let least = match (presets::named(&look.id).is_some(), bright) {
+                            (true, false) => 0.6,
+                            (true, true) => 0.3,
+                            (false, _) => 0.15,
+                        };
+                        if !(r.finite
+                            && r.flashes <= 3
+                            && within
+                            && r.contrast >= 3.0_f32.min(readable) * 0.9
+                            && strength >= least)
+                        {
+                            failed.lock().unwrap().push(format!(
+                                "{} (mean {:.2}): {r:?}, strength {strength}",
+                                look.id, was.mean
+                            ));
+                        }
+                    }
+                }
+            });
+        }
+    });
+    let failed = failed.into_inner().unwrap();
+    assert!(failed.is_empty(), "{} failed: {failed:#?}", failed.len());
 }

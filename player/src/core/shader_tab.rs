@@ -24,7 +24,9 @@ pub const YOURS: &str = "yours";
 /// What the guards measured on what the tab drew lately: the most
 /// flashes in any second of the last few, the lyric band's contrast
 /// (white words against its brightest tenth, 1 to 21), the stack's cost,
-/// and the passes the budget dropped.
+/// the passes the budget dropped, the frame's exposure (the share of it
+/// clipped, its mean light) and the strength the look draws at to keep it
+/// (1: as made).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Readout {
     /// The most flashes in a second.
@@ -35,6 +37,12 @@ pub struct Readout {
     pub cost: f32,
     /// The passes dropped.
     pub dropped: Vec<&'static str>,
+    /// The share clipped.
+    pub clipped: f32,
+    /// The mean light.
+    pub mean: f32,
+    /// The strength it draws at.
+    pub strength: f32,
 }
 
 /// The Shader tab.
@@ -110,8 +118,9 @@ pub fn shows(state: &State) -> bool {
     state.showing(Side::Shader)
 }
 
-/// The presets the list shows: the user's own, then every family's, each
-/// with its family, as the search finds them (none: all).
+/// The looks the list shows: the user's own, then every preset family's,
+/// then every pass as a look of its own under its pass family's group,
+/// each with its group's name, as the search finds them (none: all).
 pub fn listed(state: &State) -> Vec<(&str, &Look)> {
     let words: Vec<String> = (state.shader.search.as_ref())
         .map(|(s, _)| s.to_lowercase())
@@ -127,7 +136,11 @@ pub fn listed(state: &State) -> Vec<(&str, &Look)> {
     let built = presets::families()
         .iter()
         .flat_map(|f| f.looks.iter().map(move |l| (f.family.as_str(), l)));
-    kept.chain(built).filter(|(f, l)| found(f, l)).collect()
+    let passes = presets::passes().iter().map(|(f, l)| (f.as_str(), l));
+    kept.chain(built)
+        .chain(passes)
+        .filter(|(f, l)| found(f, l))
+        .collect()
 }
 
 /// The stack edited: the tab's, else the first preset's.

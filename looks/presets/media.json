@@ -1,0 +1,144 @@
+{
+ "family": "media",
+ "about": "The picture painted, drawn and printed.",
+ "looks": [
+  {
+   "id": "oil-painting",
+   "name": "Oil painting",
+   "about": "flat painterly patches, strokes catching the light, canvas showing through",
+   "tags": [
+    "classical and orchestral",
+    "folk",
+    "ballads",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "kuwahara",
+     "knobs": {
+      "radius": 5
+     }
+    },
+    {
+     "pass": "oil_paint",
+     "knobs": {
+      "brush": 6,
+      "relief": 0.6
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "comic-ink",
+   "name": "Comic ink",
+   "about": "cel shading in four tones with bold ink lines, a halftone in the shadows",
+   "tags": [
+    "punk",
+    "pop",
+    "humour",
+    "children's songs",
+    "80s"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 4,
+      "ink": 0.85,
+      "width": 1.8,
+      "vivid": 1.4
+     }
+    },
+    {
+     "pass": "halftone",
+     "knobs": {
+      "dot": 7,
+      "ink": 1.0,
+      "amount": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "pop-art-halftone",
+   "name": "Pop-art halftone",
+   "about": "four-colour process dots a little off register, bold flat colour",
+   "tags": [
+    "pop",
+    "disco",
+    "60s",
+    "party",
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.6
+     }
+    },
+    {
+     "pass": "halftone_cmyk",
+     "knobs": {
+      "dot": 9,
+      "registration": 0.35
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "watercolour",
+   "name": "Watercolour",
+   "about": "soft washes bleeding at wobbly edges on paper, lifted and gentle",
+   "tags": [
+    "folk",
+    "celtic",
+    "childhood",
+    "nature",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "watercolor",
+     "knobs": {
+      "wash": 0.7,
+      "bleed": 0.55
+     }
+    },
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.35,
+      "gamma": 0.2
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2,
+      "scale": 1.0
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,536 @@
+{
+ "family": "classical",
+ "about": "Classical, orchestral and the stage.",
+ "looks": [
+  {
+   "id": "orchestral",
+   "name": "Classical and orchestral",
+   "about": "Classical and orchestral: its own look",
+   "tags": [
+    "orchestral"
+   ],
+   "layers": [
+    {
+     "pass": "oil_paint",
+     "knobs": {
+      "amount": 0.7,
+      "relief": 0.5
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "orchestral-1920s",
+   "name": "Classical and orchestral, 1920s sepia and silent film",
+   "about": "Classical and orchestral as in the 1920s sepia and silent film",
+   "tags": [
+    "orchestral",
+    "1920s"
+   ],
+   "layers": [
+    {
+     "pass": "oil_paint",
+     "knobs": {
+      "amount": 0.7,
+      "relief": 0.5
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "orchestral-nature",
+   "name": "Classical and orchestral, nature (seasons, weather, sea, mountains)",
+   "about": "Classical and orchestral for a song of nature (seasons, weather, sea, mountains)",
+   "tags": [
+    "orchestral",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "oil_paint",
+     "knobs": {
+      "amount": 0.7,
+      "relief": 0.5
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "orchestral-grief",
+   "name": "Classical and orchestral, grief and death",
+   "about": "Classical and orchestral for a song of grief and death",
+   "tags": [
+    "orchestral",
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "oil_paint",
+     "knobs": {
+      "amount": 0.7,
+      "relief": 0.5
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "orchestral-faith",
+   "name": "Classical and orchestral, faith",
+   "about": "Classical and orchestral for a song of faith",
+   "tags": [
+    "orchestral",
+    "faith"
+   ],
+   "layers": [
+    {
+     "pass": "oil_paint",
+     "knobs": {
+      "amount": 0.7,
+      "relief": 0.5
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "orchestral-1920s-nature",
+   "name": "Classical and orchestral, 1920s sepia and silent film, nature (seasons, weather, sea, mountains)",
+   "about": "Classical and orchestral of nature (seasons, weather, sea, mountains) as in the 1920s sepia and silent film",
+   "tags": [
+    "orchestral",
+    "1920s",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "oil_paint",
+     "knobs": {
+      "amount": 0.7,
+      "relief": 0.5
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "opera",
+   "name": "Opera",
+   "about": "Opera: its own look",
+   "tags": [
+    "opera"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.5,
+      "y": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "letterbox",
+     "knobs": {
+      "ratio": 2.39
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "opera-1920s",
+   "name": "Opera, 1920s sepia and silent film",
+   "about": "Opera as in the 1920s sepia and silent film",
+   "tags": [
+    "opera",
+    "1920s"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.5,
+      "y": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "letterbox",
+     "knobs": {
+      "ratio": 2.39
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "opera-love",
+   "name": "Opera, love",
+   "about": "Opera for a song of love",
+   "tags": [
+    "opera",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.5,
+      "y": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "letterbox",
+     "knobs": {
+      "ratio": 2.39
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    }
+   ]
+  },
+  {
+   "id": "opera-grief",
+   "name": "Opera, grief and death",
+   "about": "Opera for a song of grief and death",
+   "tags": [
+    "opera",
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.5,
+      "y": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "letterbox",
+     "knobs": {
+      "ratio": 2.39
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "opera-war",
+   "name": "Opera, war",
+   "about": "Opera for a song of war",
+   "tags": [
+    "opera",
+    "war"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.5,
+      "y": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "letterbox",
+     "knobs": {
+      "ratio": 2.39
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.8
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "opera-1920s-love",
+   "name": "Opera, 1920s sepia and silent film, love",
+   "about": "Opera of love as in the 1920s sepia and silent film",
+   "tags": [
+    "opera",
+    "1920s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.5,
+      "y": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "letterbox",
+     "knobs": {
+      "ratio": 2.39
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    }
+   ]
+  }
+ ]
+}

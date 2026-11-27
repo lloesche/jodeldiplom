@@ -1386,20 +1386,22 @@ is a workbench for Karaoke mode's looks ([`jodel-looks`](../looks),
 `docs/looks.md`). On the right the playing song's pictures (its cover)
 are drawn as Karaoke mode draws them, the stage and its lyrics over
 them, through the tab's look, moved by the song as in the game. On the
-left the presets by family (yours first), searched as `/` is typed; one
-picked is the stack edited in the middle: its passes (a click selects
+left a browser of every look: the presets by family (yours first), then
+every pass as a look of its own under its pass family, searched as `/`
+is typed; one picked is the stack edited in the middle: its passes (a click selects
 one; `↑` `↓` `✕` beside it), the selected pass's knobs on sliders (their
 ranges, units and meanings from the pass) and under each its driver
 (`‹ ›` round the drivers, or still) and how far it moves it, and the
 passes to add, by family. Under the picture what the guards measure:
 the most flashes in a second lately, the lyrics' contrast, the stack's
-cost against the budget (and what it dropped). Copy puts the stack on
+cost against the budget (and what it dropped), the frame's exposure and
+the strength the look draws at to keep it. Copy puts the stack on
 the clipboard as JSON; Keep writes it to `looks` in the data folder as a
 preset of your own.
 
 | Key | Shader tab |
 |---|---|
-| `↑` `↓` | the preset above, below (drawn at once) |
+| `↑` `↓` | the look above, below (drawn at once) |
 | `pgup` `pgdn` | the family before, after |
 | `home` `end` | the first, the last preset |
 | `enter` | the selected preset again, as made |

@@ -1,0 +1,2346 @@
+{
+ "family": "pop",
+ "about": "Pop in its many colours: bright, glossy, danceable.",
+ "looks": [
+  {
+   "id": "pop",
+   "name": "Pop",
+   "about": "Pop: its own look",
+   "tags": [
+    "pop"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "pop-today",
+   "name": "Pop, today's clean digital",
+   "about": "Pop as in the today's clean digital",
+   "tags": [
+    "pop",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "pop-love",
+   "name": "Pop, love",
+   "about": "Pop for a song of love",
+   "tags": [
+    "pop",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    }
+   ]
+  },
+  {
+   "id": "pop-party",
+   "name": "Pop, party",
+   "about": "Pop for a song of party",
+   "tags": [
+    "pop",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "pop-empowerment",
+   "name": "Pop, empowerment",
+   "about": "Pop for a song of empowerment",
+   "tags": [
+    "pop",
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "pop-today-love",
+   "name": "Pop, today's clean digital, love",
+   "about": "Pop of love as in the today's clean digital",
+   "tags": [
+    "pop",
+    "today",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "synth-pop",
+   "name": "Synth-pop",
+   "about": "Synth-pop: its own look",
+   "tags": [
+    "synth-pop"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.72,
+      "middle": 0.88,
+      "light": 0.12,
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "neon_edges",
+     "knobs": {
+      "glow": 0.6,
+      "dark": 0.45
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.3,
+      "glow": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "synth-pop-80s",
+   "name": "Synth-pop, 80s neon and VHS",
+   "about": "Synth-pop as in the 80s neon and VHS",
+   "tags": [
+    "synth-pop",
+    "80s"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.72,
+      "middle": 0.88,
+      "light": 0.12,
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "neon_edges",
+     "knobs": {
+      "glow": 0.6,
+      "dark": 0.45
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.3,
+      "glow": 0.4
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.35,
+      "mask": 0.2,
+      "curve": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "synth-pop-night",
+   "name": "Synth-pop, night and city",
+   "about": "Synth-pop for a song of night and city",
+   "tags": [
+    "synth-pop",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.72,
+      "middle": 0.88,
+      "light": 0.12,
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "neon_edges",
+     "knobs": {
+      "glow": 0.6,
+      "dark": 0.45
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.3,
+      "glow": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.08
+     }
+    }
+   ]
+  },
+  {
+   "id": "synth-pop-love",
+   "name": "Synth-pop, love",
+   "about": "Synth-pop for a song of love",
+   "tags": [
+    "synth-pop",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.72,
+      "middle": 0.88,
+      "light": 0.12,
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "neon_edges",
+     "knobs": {
+      "glow": 0.6,
+      "dark": 0.45
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.3,
+      "glow": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "synth-pop-space",
+   "name": "Synth-pop, space and stars",
+   "about": "Synth-pop for a song of space and stars",
+   "tags": [
+    "synth-pop",
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.72,
+      "middle": 0.88,
+      "light": 0.12,
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "neon_edges",
+     "knobs": {
+      "glow": 0.6,
+      "dark": 0.45
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.3,
+      "glow": 0.4
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "synth-pop-80s-night",
+   "name": "Synth-pop, 80s neon and VHS, night and city",
+   "about": "Synth-pop of night and city as in the 80s neon and VHS",
+   "tags": [
+    "synth-pop",
+    "80s",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.72,
+      "middle": 0.88,
+      "light": 0.12,
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "neon_edges",
+     "knobs": {
+      "glow": 0.6,
+      "dark": 0.45
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.3,
+      "glow": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "disco",
+   "name": "Disco",
+   "about": "Disco: its own look",
+   "tags": [
+    "disco"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.78,
+      "middle": 0.92,
+      "light": 0.13,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.12
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.1,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "disco-70s",
+   "name": "Disco, 70s film stock",
+   "about": "Disco as in the 70s film stock",
+   "tags": [
+    "disco",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.78,
+      "middle": 0.92,
+      "light": 0.13,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.12
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.1,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "disco-party",
+   "name": "Disco, party",
+   "about": "Disco for a song of party",
+   "tags": [
+    "disco",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.78,
+      "middle": 0.92,
+      "light": 0.13,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.12
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.1,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "disco-love",
+   "name": "Disco, love",
+   "about": "Disco for a song of love",
+   "tags": [
+    "disco",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.78,
+      "middle": 0.92,
+      "light": 0.13,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.12
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.1,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "disco-night",
+   "name": "Disco, night and city",
+   "about": "Disco for a song of night and city",
+   "tags": [
+    "disco",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.78,
+      "middle": 0.92,
+      "light": 0.13,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.12
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.1,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "disco-70s-party",
+   "name": "Disco, 70s film stock, party",
+   "about": "Disco of party as in the 70s film stock",
+   "tags": [
+    "disco",
+    "70s",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.78,
+      "middle": 0.92,
+      "light": 0.13,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.12
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.1,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "funk",
+   "name": "Funk",
+   "about": "Funk: its own look",
+   "tags": [
+    "funk"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.5,
+      "vivid": 1.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "funk-70s",
+   "name": "Funk, 70s film stock",
+   "about": "Funk as in the 70s film stock",
+   "tags": [
+    "funk",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.5,
+      "vivid": 1.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "funk-party",
+   "name": "Funk, party",
+   "about": "Funk for a song of party",
+   "tags": [
+    "funk",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.5,
+      "vivid": 1.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "funk-money",
+   "name": "Funk, money and hustle",
+   "about": "Funk for a song of money and hustle",
+   "tags": [
+    "funk",
+    "money"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.5,
+      "vivid": 1.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.5,
+      "hue": 0.12,
+      "tint": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "funk-humour",
+   "name": "Funk, humour",
+   "about": "Funk for a song of humour",
+   "tags": [
+    "funk",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.5,
+      "vivid": 1.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "funk-70s-party",
+   "name": "Funk, 70s film stock, party",
+   "about": "Funk of party as in the 70s film stock",
+   "tags": [
+    "funk",
+    "70s",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.5,
+      "vivid": 1.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "soul-rnb",
+   "name": "Soul and R&B",
+   "about": "Soul and R&B: its own look",
+   "tags": [
+    "soul-rnb"
+   ],
+   "layers": [
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.62,
+      "lights": 0.07,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "soul-rnb-70s",
+   "name": "Soul and R&B, 70s film stock",
+   "about": "Soul and R&B as in the 70s film stock",
+   "tags": [
+    "soul-rnb",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.62,
+      "lights": 0.07,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45,
+      "size": 1.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "soul-rnb-love",
+   "name": "Soul and R&B, love",
+   "about": "Soul and R&B for a song of love",
+   "tags": [
+    "soul-rnb",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.62,
+      "lights": 0.07,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "soul-rnb-heartbreak",
+   "name": "Soul and R&B, heartbreak",
+   "about": "Soul and R&B for a song of heartbreak",
+   "tags": [
+    "soul-rnb",
+    "heartbreak"
+   ],
+   "layers": [
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.62,
+      "lights": 0.07,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "soul-rnb-night",
+   "name": "Soul and R&B, night and city",
+   "about": "Soul and R&B for a song of night and city",
+   "tags": [
+    "soul-rnb",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.62,
+      "lights": 0.07,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "soul-rnb-70s-love",
+   "name": "Soul and R&B, 70s film stock, love",
+   "about": "Soul and R&B of love as in the 70s film stock",
+   "tags": [
+    "soul-rnb",
+    "70s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.62,
+      "lights": 0.07,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45,
+      "size": 1.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "k-pop",
+   "name": "K-pop",
+   "about": "K-pop: its own look",
+   "tags": [
+    "k-pop"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.93,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.12
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "k-pop-today",
+   "name": "K-pop, today's clean digital",
+   "about": "K-pop as in the today's clean digital",
+   "tags": [
+    "k-pop",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.93,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.12
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "k-pop-love",
+   "name": "K-pop, love",
+   "about": "K-pop for a song of love",
+   "tags": [
+    "k-pop",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.93,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.12
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "k-pop-party",
+   "name": "K-pop, party",
+   "about": "K-pop for a song of party",
+   "tags": [
+    "k-pop",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.93,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.12
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "k-pop-empowerment",
+   "name": "K-pop, empowerment",
+   "about": "K-pop for a song of empowerment",
+   "tags": [
+    "k-pop",
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.93,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.12
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "k-pop-today-love",
+   "name": "K-pop, today's clean digital, love",
+   "about": "K-pop of love as in the today's clean digital",
+   "tags": [
+    "k-pop",
+    "today",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.93,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.12
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "city-pop",
+   "name": "J-pop and city pop",
+   "about": "J-pop and city pop: its own look",
+   "tags": [
+    "city-pop"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.74,
+      "middle": 0.94,
+      "light": 0.08,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.95
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.15,
+      "bleed": 0.3,
+      "noise": 0.1
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "city-pop-80s",
+   "name": "J-pop and city pop, 80s neon and VHS",
+   "about": "J-pop and city pop as in the 80s neon and VHS",
+   "tags": [
+    "city-pop",
+    "80s"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.74,
+      "middle": 0.94,
+      "light": 0.08,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.95
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.15,
+      "bleed": 0.3,
+      "noise": 0.1
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.88,
+      "tint": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "city-pop-night",
+   "name": "J-pop and city pop, night and city",
+   "about": "J-pop and city pop for a song of night and city",
+   "tags": [
+    "city-pop",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.74,
+      "middle": 0.94,
+      "light": 0.08,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.95
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.15,
+      "bleed": 0.3,
+      "noise": 0.1
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.08
+     }
+    }
+   ]
+  },
+  {
+   "id": "city-pop-summer",
+   "name": "J-pop and city pop, summer",
+   "about": "J-pop and city pop for a song of summer",
+   "tags": [
+    "city-pop",
+    "summer"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.74,
+      "middle": 0.94,
+      "light": 0.08,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.95
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.15,
+      "bleed": 0.3,
+      "noise": 0.1
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.6
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "city-pop-longing",
+   "name": "J-pop and city pop, longing",
+   "about": "J-pop and city pop for a song of longing",
+   "tags": [
+    "city-pop",
+    "longing"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.74,
+      "middle": 0.94,
+      "light": 0.08,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.95
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.15,
+      "bleed": 0.3,
+      "noise": 0.1
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "city-pop-80s-night",
+   "name": "J-pop and city pop, 80s neon and VHS, night and city",
+   "about": "J-pop and city pop of night and city as in the 80s neon and VHS",
+   "tags": [
+    "city-pop",
+    "80s",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.74,
+      "middle": 0.94,
+      "light": 0.08,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.95
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.15,
+      "bleed": 0.3,
+      "noise": 0.1
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.35,
+      "mask": 0.2,
+      "curve": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "musicals",
+   "name": "Musicals",
+   "about": "Musicals: its own look",
+   "tags": [
+    "musicals"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.6,
+      "punch": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "musicals-1950s",
+   "name": "Musicals, 1950s Technicolor",
+   "about": "Musicals as in the 1950s Technicolor",
+   "tags": [
+    "musicals",
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.6,
+      "punch": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "musicals-love",
+   "name": "Musicals, love",
+   "about": "Musicals for a song of love",
+   "tags": [
+    "musicals",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.6,
+      "punch": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    }
+   ]
+  },
+  {
+   "id": "musicals-dreams",
+   "name": "Musicals, dreams and the surreal",
+   "about": "Musicals for a song of dreams and the surreal",
+   "tags": [
+    "musicals",
+    "dreams"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.6,
+      "punch": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "musicals-humour",
+   "name": "Musicals, humour",
+   "about": "Musicals for a song of humour",
+   "tags": [
+    "musicals",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.6,
+      "punch": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "musicals-1950s-love",
+   "name": "Musicals, 1950s Technicolor, love",
+   "about": "Musicals of love as in the 1950s Technicolor",
+   "tags": [
+    "musicals",
+    "1950s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.6,
+      "punch": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "schlager",
+   "name": "Schlager and Volksmusik",
+   "about": "Schlager and Volksmusik: its own look",
+   "tags": [
+    "schlager"
+   ],
+   "layers": [
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.35
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.85
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "schlager-70s",
+   "name": "Schlager and Volksmusik, 70s film stock",
+   "about": "Schlager and Volksmusik as in the 70s film stock",
+   "tags": [
+    "schlager",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.35
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.85
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "schlager-love",
+   "name": "Schlager and Volksmusik, love",
+   "about": "Schlager and Volksmusik for a song of love",
+   "tags": [
+    "schlager",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.35
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.85
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "schlager-hometown",
+   "name": "Schlager and Volksmusik, hometown",
+   "about": "Schlager and Volksmusik for a song of hometown",
+   "tags": [
+    "schlager",
+    "hometown"
+   ],
+   "layers": [
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.35
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.85
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "schlager-party",
+   "name": "Schlager and Volksmusik, party",
+   "about": "Schlager and Volksmusik for a song of party",
+   "tags": [
+    "schlager",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.35
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.85
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "schlager-70s-love",
+   "name": "Schlager and Volksmusik, 70s film stock, love",
+   "about": "Schlager and Volksmusik of love as in the 70s film stock",
+   "tags": [
+    "schlager",
+    "70s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.35
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.85
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    }
+   ]
+  }
+ ]
+}

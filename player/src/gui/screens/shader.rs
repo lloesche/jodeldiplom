@@ -96,6 +96,7 @@ fn presets<'a>(state: &State) -> Element<'a, Message> {
         Some((s, false)) => format!("search: {s}"),
         None => "/ to search".to_owned(),
     };
+    let title = format!("Looks: {} by family, and every pass", listed.len());
     let mut list = Column::<Element<'a, Message>>::new().spacing(2.0);
     let mut family = None;
     for (k, (f, l)) in listed.iter().enumerate() {
@@ -133,6 +134,10 @@ fn presets<'a>(state: &State) -> Element<'a, Message> {
         list = list.push(container(r).id(preset_id(k)).boxed());
     }
     column![
+        text(title)
+            .size(size::LABEL)
+            .font(look::font::label())
+            .color(look::TEXT),
         text(search).size(size::LABEL).color(look::TEXT_DIM),
         widgets::card(
             scrollable(list.padding(Padding::from([space::XS, 0.0])))
@@ -353,6 +358,14 @@ fn picture<'a>(state: &State, stage: &StageView) -> Element<'a, Message> {
         text(format!("cost {:.1} of {}", r.cost, guard::BUDGET))
             .size(size::LABEL)
             .color(ok(r.cost <= guard::BUDGET && r.dropped.is_empty())),
+        text(format!(
+            "clipped {:.0} %, light {:.2}, strength {:.0} %",
+            r.clipped * 100.0,
+            r.mean,
+            r.strength * 100.0
+        ))
+        .size(size::LABEL)
+        .color(ok(r.strength >= 1.0)),
         Space::new().width(Fill),
         Element::from(
             widgets::secondary("Copy JSON")

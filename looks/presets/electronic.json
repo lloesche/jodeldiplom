@@ -1,0 +1,1947 @@
+{
+ "family": "electronic",
+ "about": "Electronic music: the club, the drop, the machine.",
+ "looks": [
+  {
+   "id": "synthwave",
+   "name": "Synthwave",
+   "about": "neon edges over a dark violet picture, a tube's scan lines, a spectrum's bars on the beat",
+   "tags": [
+    "synth-pop",
+    "80s neon and VHS",
+    "night and city",
+    "space and stars"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.72,
+      "middle": 0.88,
+      "light": 0.12,
+      "amount": 0.8
+     }
+    },
+    {
+     "pass": "neon_edges",
+     "knobs": {
+      "hue": 0.85,
+      "glow": 0.7,
+      "dark": 0.5
+     }
+    },
+    {
+     "pass": "bars",
+     "knobs": {
+      "height": 0.35,
+      "hue": 0.85
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.45,
+      "mask": 0.25,
+      "curve": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "house",
+   "name": "House",
+   "about": "House: its own look",
+   "tags": [
+    "house"
+   ],
+   "layers": [
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1,
+      "spread": 0.1
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "house-today",
+   "name": "House, today's clean digital",
+   "about": "House as in the today's clean digital",
+   "tags": [
+    "house",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1,
+      "spread": 0.1
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "house-party",
+   "name": "House, party",
+   "about": "House for a song of party",
+   "tags": [
+    "house",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1,
+      "spread": 0.1
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "house-night",
+   "name": "House, night and city",
+   "about": "House for a song of night and city",
+   "tags": [
+    "house",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1,
+      "spread": 0.1
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "house-freedom",
+   "name": "House, freedom and road trips",
+   "about": "House for a song of freedom and road trips",
+   "tags": [
+    "house",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1,
+      "spread": 0.1
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.07
+     }
+    }
+   ]
+  },
+  {
+   "id": "house-today-party",
+   "name": "House, today's clean digital, party",
+   "about": "House of party as in the today's clean digital",
+   "tags": [
+    "house",
+    "today",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1,
+      "spread": 0.1
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "techno",
+   "name": "Techno",
+   "about": "Techno: its own look",
+   "tags": [
+    "techno"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.6,
+      "middle": 0.55,
+      "light": 0.5,
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.4,
+      "glow": 0.6
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "techno-today",
+   "name": "Techno, today's clean digital",
+   "about": "Techno as in the today's clean digital",
+   "tags": [
+    "techno",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.6,
+      "middle": 0.55,
+      "light": 0.5,
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.4,
+      "glow": 0.6
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "techno-night",
+   "name": "Techno, night and city",
+   "about": "Techno for a song of night and city",
+   "tags": [
+    "techno",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.6,
+      "middle": 0.55,
+      "light": 0.5,
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.4,
+      "glow": 0.6
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "techno-rebellion",
+   "name": "Techno, rebellion and protest",
+   "about": "Techno for a song of rebellion and protest",
+   "tags": [
+    "techno",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.6,
+      "middle": 0.55,
+      "light": 0.5,
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.4,
+      "glow": 0.6
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "techno-drugs",
+   "name": "Techno, drugs and psychedelia",
+   "about": "Techno for a song of drugs and psychedelia",
+   "tags": [
+    "techno",
+    "drugs"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.6,
+      "middle": 0.55,
+      "light": 0.5,
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.4,
+      "glow": 0.6
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.4,
+      "speed": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "techno-today-night",
+   "name": "Techno, today's clean digital, night and city",
+   "about": "Techno of night and city as in the today's clean digital",
+   "tags": [
+    "techno",
+    "today",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.6,
+      "middle": 0.55,
+      "light": 0.5,
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.4,
+      "glow": 0.6
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "trance",
+   "name": "Trance",
+   "about": "Trance: its own look",
+   "tags": [
+    "trance"
+   ],
+   "layers": [
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.55,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.8
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "trance-y2k",
+   "name": "Trance, Y2K chrome and glitch",
+   "about": "Trance as in the Y2K chrome and glitch",
+   "tags": [
+    "trance",
+    "y2k"
+   ],
+   "layers": [
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.55,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.8
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "trance-space",
+   "name": "Trance, space and stars",
+   "about": "Trance for a song of space and stars",
+   "tags": [
+    "trance",
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.55,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.8
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "trance-dreams",
+   "name": "Trance, dreams and the surreal",
+   "about": "Trance for a song of dreams and the surreal",
+   "tags": [
+    "trance",
+    "dreams"
+   ],
+   "layers": [
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.55,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.8
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "trance-freedom",
+   "name": "Trance, freedom and road trips",
+   "about": "Trance for a song of freedom and road trips",
+   "tags": [
+    "trance",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.55,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.8
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "trance-y2k-space",
+   "name": "Trance, Y2K chrome and glitch, space and stars",
+   "about": "Trance of space and stars as in the Y2K chrome and glitch",
+   "tags": [
+    "trance",
+    "y2k",
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.55,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.8
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.1
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "dubstep",
+   "name": "Dubstep",
+   "about": "Dubstep: its own look",
+   "tags": [
+    "dubstep"
+   ],
+   "layers": [
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "dubstep-y2k",
+   "name": "Dubstep, Y2K chrome and glitch",
+   "about": "Dubstep as in the Y2K chrome and glitch",
+   "tags": [
+    "dubstep",
+    "y2k"
+   ],
+   "layers": [
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "solarize",
+     "knobs": {
+      "chrome": 1.0,
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "dubstep-rebellion",
+   "name": "Dubstep, rebellion and protest",
+   "about": "Dubstep for a song of rebellion and protest",
+   "tags": [
+    "dubstep",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "dubstep-party",
+   "name": "Dubstep, party",
+   "about": "Dubstep for a song of party",
+   "tags": [
+    "dubstep",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "dubstep-night",
+   "name": "Dubstep, night and city",
+   "about": "Dubstep for a song of night and city",
+   "tags": [
+    "dubstep",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "dubstep-y2k-rebellion",
+   "name": "Dubstep, Y2K chrome and glitch, rebellion and protest",
+   "about": "Dubstep of rebellion and protest as in the Y2K chrome and glitch",
+   "tags": [
+    "dubstep",
+    "y2k",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "drum-and-bass",
+   "name": "Drum and bass",
+   "about": "Drum and bass: its own look",
+   "tags": [
+    "drum-and-bass"
+   ],
+   "layers": [
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.5,
+      "middle": 0.45,
+      "light": 0.35,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "drum-and-bass-90s",
+   "name": "Drum and bass, 90s camcorder and MTV",
+   "about": "Drum and bass as in the 90s camcorder and MTV",
+   "tags": [
+    "drum-and-bass",
+    "90s"
+   ],
+   "layers": [
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.5,
+      "middle": 0.45,
+      "light": 0.35,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "drum-and-bass-night",
+   "name": "Drum and bass, night and city",
+   "about": "Drum and bass for a song of night and city",
+   "tags": [
+    "drum-and-bass",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.5,
+      "middle": 0.45,
+      "light": 0.35,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "drum-and-bass-freedom",
+   "name": "Drum and bass, freedom and road trips",
+   "about": "Drum and bass for a song of freedom and road trips",
+   "tags": [
+    "drum-and-bass",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.5,
+      "middle": 0.45,
+      "light": 0.35,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.07
+     }
+    }
+   ]
+  },
+  {
+   "id": "drum-and-bass-space",
+   "name": "Drum and bass, space and stars",
+   "about": "Drum and bass for a song of space and stars",
+   "tags": [
+    "drum-and-bass",
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.5,
+      "middle": 0.45,
+      "light": 0.35,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "drum-and-bass-90s-night",
+   "name": "Drum and bass, 90s camcorder and MTV, night and city",
+   "about": "Drum and bass of night and city as in the 90s camcorder and MTV",
+   "tags": [
+    "drum-and-bass",
+    "90s",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.5,
+      "middle": 0.45,
+      "light": 0.35,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "ambient",
+   "name": "Ambient",
+   "about": "Ambient: its own look",
+   "tags": [
+    "ambient"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "ambient-today",
+   "name": "Ambient, today's clean digital",
+   "about": "Ambient as in the today's clean digital",
+   "tags": [
+    "ambient",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "ambient-nature",
+   "name": "Ambient, nature (seasons, weather, sea, mountains)",
+   "about": "Ambient for a song of nature (seasons, weather, sea, mountains)",
+   "tags": [
+    "ambient",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "ambient-space",
+   "name": "Ambient, space and stars",
+   "about": "Ambient for a song of space and stars",
+   "tags": [
+    "ambient",
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "ambient-dreams",
+   "name": "Ambient, dreams and the surreal",
+   "about": "Ambient for a song of dreams and the surreal",
+   "tags": [
+    "ambient",
+    "dreams"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "ambient-today-nature",
+   "name": "Ambient, today's clean digital, nature (seasons, weather, sea, mountains)",
+   "about": "Ambient of nature (seasons, weather, sea, mountains) as in the today's clean digital",
+   "tags": [
+    "ambient",
+    "today",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "chiptune",
+   "name": "Chiptune and video-game music",
+   "about": "Chiptune and video-game music: its own look",
+   "tags": [
+    "chiptune"
+   ],
+   "layers": [
+    {
+     "pass": "palette",
+     "knobs": {
+      "palette": 0.0,
+      "size": 4.0
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.4,
+      "mask": 0.25,
+      "curve": 0.2
+     }
+    },
+    {
+     "pass": "bars",
+     "knobs": {
+      "count": 16.0,
+      "height": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "chiptune-80s",
+   "name": "Chiptune and video-game music, 80s neon and VHS",
+   "about": "Chiptune and video-game music as in the 80s neon and VHS",
+   "tags": [
+    "chiptune",
+    "80s"
+   ],
+   "layers": [
+    {
+     "pass": "palette",
+     "knobs": {
+      "palette": 0.0,
+      "size": 4.0
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.4,
+      "mask": 0.25,
+      "curve": 0.2
+     }
+    },
+    {
+     "pass": "bars",
+     "knobs": {
+      "count": 16.0,
+      "height": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "chiptune-humour",
+   "name": "Chiptune and video-game music, humour",
+   "about": "Chiptune and video-game music for a song of humour",
+   "tags": [
+    "chiptune",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "palette",
+     "knobs": {
+      "palette": 0.0,
+      "size": 4.0
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.4,
+      "mask": 0.25,
+      "curve": 0.2
+     }
+    },
+    {
+     "pass": "bars",
+     "knobs": {
+      "count": 16.0,
+      "height": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "chiptune-party",
+   "name": "Chiptune and video-game music, party",
+   "about": "Chiptune and video-game music for a song of party",
+   "tags": [
+    "chiptune",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "palette",
+     "knobs": {
+      "palette": 0.0,
+      "size": 4.0
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.4,
+      "mask": 0.25,
+      "curve": 0.2
+     }
+    },
+    {
+     "pass": "bars",
+     "knobs": {
+      "count": 16.0,
+      "height": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "chiptune-nostalgia",
+   "name": "Chiptune and video-game music, nostalgia and childhood",
+   "about": "Chiptune and video-game music for a song of nostalgia and childhood",
+   "tags": [
+    "chiptune",
+    "nostalgia"
+   ],
+   "layers": [
+    {
+     "pass": "palette",
+     "knobs": {
+      "palette": 0.0,
+      "size": 4.0
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.4,
+      "mask": 0.25,
+      "curve": 0.2
+     }
+    },
+    {
+     "pass": "bars",
+     "knobs": {
+      "count": 16.0,
+      "height": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.5,
+      "fade": 0.6,
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.06
+     }
+    }
+   ]
+  },
+  {
+   "id": "chiptune-80s-humour",
+   "name": "Chiptune and video-game music, 80s neon and VHS, humour",
+   "about": "Chiptune and video-game music of humour as in the 80s neon and VHS",
+   "tags": [
+    "chiptune",
+    "80s",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "palette",
+     "knobs": {
+      "palette": 0.0,
+      "size": 4.0
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.4,
+      "mask": 0.25,
+      "curve": 0.2
+     }
+    },
+    {
+     "pass": "bars",
+     "knobs": {
+      "count": 16.0,
+      "height": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    }
+   ]
+  }
+ ]
+}

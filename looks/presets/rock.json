@@ -1,0 +1,1782 @@
+{
+ "family": "rock",
+ "about": "Rock and metal: guitars, grit and stadium light.",
+ "looks": [
+  {
+   "id": "rock",
+   "name": "Rock",
+   "about": "Rock: its own look",
+   "tags": [
+    "rock"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.35
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "rock-70s",
+   "name": "Rock, 70s film stock",
+   "about": "Rock as in the 70s film stock",
+   "tags": [
+    "rock",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.35
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "rock-rebellion",
+   "name": "Rock, rebellion and protest",
+   "about": "Rock for a song of rebellion and protest",
+   "tags": [
+    "rock",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.35
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "rock-freedom",
+   "name": "Rock, freedom and road trips",
+   "about": "Rock for a song of freedom and road trips",
+   "tags": [
+    "rock",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.35
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.07
+     }
+    }
+   ]
+  },
+  {
+   "id": "rock-heartbreak",
+   "name": "Rock, heartbreak",
+   "about": "Rock for a song of heartbreak",
+   "tags": [
+    "rock",
+    "heartbreak"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.35
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "rock-70s-rebellion",
+   "name": "Rock, 70s film stock, rebellion and protest",
+   "about": "Rock of rebellion and protest as in the 70s film stock",
+   "tags": [
+    "rock",
+    "70s",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.35
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "punk",
+   "name": "Punk",
+   "about": "Punk: its own look",
+   "tags": [
+    "punk"
+   ],
+   "layers": [
+    {
+     "pass": "xerox",
+     "knobs": {
+      "threshold": 0.5,
+      "toner": 0.6
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.97,
+      "light": 0.15,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "punk-80s",
+   "name": "Punk, 80s neon and VHS",
+   "about": "Punk as in the 80s neon and VHS",
+   "tags": [
+    "punk",
+    "80s"
+   ],
+   "layers": [
+    {
+     "pass": "xerox",
+     "knobs": {
+      "threshold": 0.5,
+      "toner": 0.6
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.97,
+      "light": 0.15,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.35,
+      "mask": 0.2,
+      "curve": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "punk-rebellion",
+   "name": "Punk, rebellion and protest",
+   "about": "Punk for a song of rebellion and protest",
+   "tags": [
+    "punk",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "xerox",
+     "knobs": {
+      "threshold": 0.5,
+      "toner": 0.6
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.97,
+      "light": 0.15,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5,
+      "size": 1.8
+     }
+    }
+   ]
+  },
+  {
+   "id": "punk-party",
+   "name": "Punk, party",
+   "about": "Punk for a song of party",
+   "tags": [
+    "punk",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "xerox",
+     "knobs": {
+      "threshold": 0.5,
+      "toner": 0.6
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.97,
+      "light": 0.15,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "punk-humour",
+   "name": "Punk, humour",
+   "about": "Punk for a song of humour",
+   "tags": [
+    "punk",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "xerox",
+     "knobs": {
+      "threshold": 0.5,
+      "toner": 0.6
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.97,
+      "light": 0.15,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "punk-80s-rebellion",
+   "name": "Punk, 80s neon and VHS, rebellion and protest",
+   "about": "Punk of rebellion and protest as in the 80s neon and VHS",
+   "tags": [
+    "punk",
+    "80s",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "xerox",
+     "knobs": {
+      "threshold": 0.5,
+      "toner": 0.6
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.97,
+      "light": 0.15,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "grunge",
+   "name": "Grunge",
+   "about": "Grunge: its own look",
+   "tags": [
+    "grunge"
+   ],
+   "layers": [
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.55,
+      "size": 1.8
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "grunge-90s",
+   "name": "Grunge, 90s camcorder and MTV",
+   "about": "Grunge as in the 90s camcorder and MTV",
+   "tags": [
+    "grunge",
+    "90s"
+   ],
+   "layers": [
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.55,
+      "size": 1.8
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "grunge-grief",
+   "name": "Grunge, grief and death",
+   "about": "Grunge for a song of grief and death",
+   "tags": [
+    "grunge",
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.55,
+      "size": 1.8
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.35,
+      "low": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "grunge-rebellion",
+   "name": "Grunge, rebellion and protest",
+   "about": "Grunge for a song of rebellion and protest",
+   "tags": [
+    "grunge",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.55,
+      "size": 1.8
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "grunge-longing",
+   "name": "Grunge, longing",
+   "about": "Grunge for a song of longing",
+   "tags": [
+    "grunge",
+    "longing"
+   ],
+   "layers": [
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.55,
+      "size": 1.8
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "grunge-90s-grief",
+   "name": "Grunge, 90s camcorder and MTV, grief and death",
+   "about": "Grunge of grief and death as in the 90s camcorder and MTV",
+   "tags": [
+    "grunge",
+    "90s",
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.55,
+      "size": 1.8
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "doom-metal",
+   "name": "Doom metal",
+   "about": "Doom metal: its own look",
+   "tags": [
+    "doom-metal"
+   ],
+   "layers": [
+    {
+     "pass": "woodcut",
+     "knobs": {
+      "lines": 6.0,
+      "threshold": -0.1
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.07,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "doom-metal-1920s",
+   "name": "Doom metal, 1920s sepia and silent film",
+   "about": "Doom metal as in the 1920s sepia and silent film",
+   "tags": [
+    "doom-metal",
+    "1920s"
+   ],
+   "layers": [
+    {
+     "pass": "woodcut",
+     "knobs": {
+      "lines": 6.0,
+      "threshold": -0.1
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.07,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "doom-metal-grief",
+   "name": "Doom metal, grief and death",
+   "about": "Doom metal for a song of grief and death",
+   "tags": [
+    "doom-metal",
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "woodcut",
+     "knobs": {
+      "lines": 6.0,
+      "threshold": -0.1
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.07,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.35,
+      "low": 0.7
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "doom-metal-horror",
+   "name": "Doom metal, horror",
+   "about": "Doom metal for a song of horror",
+   "tags": [
+    "doom-metal",
+    "horror"
+   ],
+   "layers": [
+    {
+     "pass": "woodcut",
+     "knobs": {
+      "lines": 6.0,
+      "threshold": -0.1
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.07,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "negative",
+     "knobs": {
+      "amount": 0.25,
+      "xray": 0.9
+     }
+    }
+   ]
+  },
+  {
+   "id": "doom-metal-war",
+   "name": "Doom metal, war",
+   "about": "Doom metal for a song of war",
+   "tags": [
+    "doom-metal",
+    "war"
+   ],
+   "layers": [
+    {
+     "pass": "woodcut",
+     "knobs": {
+      "lines": 6.0,
+      "threshold": -0.1
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.07,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.8
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "doom-metal-1920s-grief",
+   "name": "Doom metal, 1920s sepia and silent film, grief and death",
+   "about": "Doom metal of grief and death as in the 1920s sepia and silent film",
+   "tags": [
+    "doom-metal",
+    "1920s",
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "woodcut",
+     "knobs": {
+      "lines": 6.0,
+      "threshold": -0.1
+     }
+    },
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.07,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "black-metal",
+   "name": "Black metal",
+   "about": "Black metal: its own look",
+   "tags": [
+    "black-metal"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.0
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.8,
+      "pivot": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.6,
+      "size": 1.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "black-metal-1920s",
+   "name": "Black metal, 1920s sepia and silent film",
+   "about": "Black metal as in the 1920s sepia and silent film",
+   "tags": [
+    "black-metal",
+    "1920s"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.0
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.8,
+      "pivot": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.6,
+      "size": 1.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "black-metal-winter",
+   "name": "Black metal, winter",
+   "about": "Black metal for a song of winter",
+   "tags": [
+    "black-metal",
+    "winter"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.0
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.8,
+      "pivot": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.6,
+      "size": 1.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "black-metal-horror",
+   "name": "Black metal, horror",
+   "about": "Black metal for a song of horror",
+   "tags": [
+    "black-metal",
+    "horror"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.0
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.8,
+      "pivot": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.6,
+      "size": 1.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "black-metal-nature",
+   "name": "Black metal, nature (seasons, weather, sea, mountains)",
+   "about": "Black metal for a song of nature (seasons, weather, sea, mountains)",
+   "tags": [
+    "black-metal",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.0
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.8,
+      "pivot": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.6,
+      "size": 1.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "black-metal-1920s-winter",
+   "name": "Black metal, 1920s sepia and silent film, winter",
+   "about": "Black metal of winter as in the 1920s sepia and silent film",
+   "tags": [
+    "black-metal",
+    "1920s",
+    "winter"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.0
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.8,
+      "pivot": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.6,
+      "size": 1.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "power-metal",
+   "name": "Power metal",
+   "about": "Power metal: its own look",
+   "tags": [
+    "power-metal"
+   ],
+   "layers": [
+    {
+     "pass": "emboss",
+     "knobs": {
+      "metal": 1.0,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "power-metal-today",
+   "name": "Power metal, today's clean digital",
+   "about": "Power metal as in the today's clean digital",
+   "tags": [
+    "power-metal",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "emboss",
+     "knobs": {
+      "metal": 1.0,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "power-metal-empowerment",
+   "name": "Power metal, empowerment",
+   "about": "Power metal for a song of empowerment",
+   "tags": [
+    "power-metal",
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "emboss",
+     "knobs": {
+      "metal": 1.0,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "power-metal-war",
+   "name": "Power metal, war",
+   "about": "Power metal for a song of war",
+   "tags": [
+    "power-metal",
+    "war"
+   ],
+   "layers": [
+    {
+     "pass": "emboss",
+     "knobs": {
+      "metal": 1.0,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "power-metal-freedom",
+   "name": "Power metal, freedom and road trips",
+   "about": "Power metal for a song of freedom and road trips",
+   "tags": [
+    "power-metal",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "emboss",
+     "knobs": {
+      "metal": 1.0,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "power-metal-today-empowerment",
+   "name": "Power metal, today's clean digital, empowerment",
+   "about": "Power metal of empowerment as in the today's clean digital",
+   "tags": [
+    "power-metal",
+    "today",
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "emboss",
+     "knobs": {
+      "metal": 1.0,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "shoegaze",
+   "name": "Indie and shoegaze",
+   "about": "Indie and shoegaze: its own look",
+   "tags": [
+    "shoegaze"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6,
+      "radius": 12.0
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.55
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "shoegaze-90s",
+   "name": "Indie and shoegaze, 90s camcorder and MTV",
+   "about": "Indie and shoegaze as in the 90s camcorder and MTV",
+   "tags": [
+    "shoegaze",
+    "90s"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6,
+      "radius": 12.0
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.55
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "shoegaze-dreams",
+   "name": "Indie and shoegaze, dreams and the surreal",
+   "about": "Indie and shoegaze for a song of dreams and the surreal",
+   "tags": [
+    "shoegaze",
+    "dreams"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6,
+      "radius": 12.0
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.55
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "shoegaze-longing",
+   "name": "Indie and shoegaze, longing",
+   "about": "Indie and shoegaze for a song of longing",
+   "tags": [
+    "shoegaze",
+    "longing"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6,
+      "radius": 12.0
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.55
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "shoegaze-love",
+   "name": "Indie and shoegaze, love",
+   "about": "Indie and shoegaze for a song of love",
+   "tags": [
+    "shoegaze",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6,
+      "radius": 12.0
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.55
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "shoegaze-90s-dreams",
+   "name": "Indie and shoegaze, 90s camcorder and MTV, dreams and the surreal",
+   "about": "Indie and shoegaze of dreams and the surreal as in the 90s camcorder and MTV",
+   "tags": [
+    "shoegaze",
+    "90s",
+    "dreams"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6,
+      "radius": 12.0
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.55
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  }
+ ]
+}

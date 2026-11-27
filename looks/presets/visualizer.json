@@ -1,0 +1,407 @@
+{
+ "family": "visualizer",
+ "about": "Visualizers: the music drawn, the frame fed back, alone or over the picture.",
+ "looks": [
+  {
+   "id": "tunnel-visualizer",
+   "name": "Tunnel visualizer",
+   "about": "the picture fed back into itself, zooming with the bass and turning on the snares, a spectrum ring round the middle",
+   "tags": [
+    "house",
+    "techno",
+    "trance",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.6,
+      "zoom": 0.35,
+      "scene": 0.8
+     }
+    },
+    {
+     "pass": "spectrum_ring",
+     "knobs": {
+      "radius": 0.22,
+      "length": 0.5
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-tunnel",
+   "name": "Tunnel",
+   "about": "the picture fed back into itself, zooming with the bass",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.75,
+      "zoom": 0.5,
+      "scene": 0.6
+     }
+    },
+    {
+     "pass": "spectrum_ring",
+     "knobs": {
+      "radius": 0.22,
+      "length": 0.6
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-scope-trails",
+   "name": "Scope trails",
+   "about": "an oscilloscope line leaving trails as the picture fades",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.8,
+      "zoom": 0.15,
+      "scene": 0.5
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.5,
+      "glow": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-lissajous-space",
+   "name": "Lissajous in space",
+   "about": "a Lissajous figure over stars, echoing",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.7,
+      "turn": 0.2,
+      "scene": 0.7
+     }
+    },
+    {
+     "pass": "lissajous",
+     "knobs": {
+      "size": 0.3,
+      "glow": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-beat-rings",
+   "name": "Beat rings",
+   "about": "rings sent out on every beat over a darkened picture",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "gain": -0.4,
+      "gamma": -0.3
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-spectrum-frame",
+   "name": "Spectrum frame",
+   "about": "the scene framed by a spectrum's bars and a faint trail",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.3,
+      "zoom": 0.05,
+      "scene": 0.95
+     }
+    },
+    {
+     "pass": "bars",
+     "knobs": {
+      "height": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-kaleido-feedback",
+   "name": "Kaleidoscope feedback",
+   "about": "the echoes folded into a kaleidoscope, turning with the bar",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.7,
+      "zoom": 0.3,
+      "swirl": 0.4,
+      "scene": 0.7
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "knobs": {
+      "segments": 8.0
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "speed": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-sparks-night",
+   "name": "Sparks at night",
+   "about": "sparks flying from every hit over a night picture",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "sparks",
+     "knobs": {
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-swirl-break",
+   "name": "Swirl in the breaks",
+   "about": "the picture as it is, swirling into a visualizer in the instrumental breaks",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.7,
+      "swirl": 0.6,
+      "zoom": 0.3,
+      "scene": 1.0
+     },
+     "drive": [
+      {
+       "knob": "scene",
+       "by": "instrumental",
+       "amount": -0.8
+      },
+      {
+       "knob": "swirl",
+       "by": "chorus",
+       "amount": 0.5
+      }
+     ]
+    },
+    {
+     "pass": "spectrum_ring",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.8
+      }
+     ],
+     "mix": 0.0
+    }
+   ]
+  },
+  {
+   "id": "viz-liquid-light",
+   "name": "Liquid light show",
+   "about": "a 60s liquid light show: flowing colour, echoing",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.5,
+      "speed": 0.3
+     }
+    },
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.6,
+      "flow": 0.6,
+      "scene": 0.8
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-neon-scope",
+   "name": "Neon scope",
+   "about": "neon edges and a scope line, the 80s club",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "neon_edges",
+     "knobs": {
+      "glow": 0.7,
+      "dark": 0.6
+     }
+    },
+    {
+     "pass": "scope",
+     "knobs": {
+      "height": 0.35,
+      "hue": 0.85
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-mirror-rings",
+   "name": "Mirror rings",
+   "about": "a mirrored picture with rings on the beat",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "mirror",
+     "knobs": {
+      "mode": 2.0
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.55
+     }
+    }
+   ]
+  },
+  {
+   "id": "viz-drop-rush",
+   "name": "Drop rush",
+   "about": "the camera lunging on the kicks, colours splitting on the snares",
+   "tags": [
+    "visualizer",
+    "instrumental breaks"
+   ],
+   "layers": [
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.4,
+      "zoom": 0.4,
+      "scene": 0.9
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,180 @@
+{
+ "family": "moods",
+ "about": "Moods of light: night, golden hour, noir, dreams.",
+ "looks": [
+  {
+   "id": "noir",
+   "name": "Noir",
+   "about": "black and white, hard contrast, deep vignette, grain: the 1940s detective's city",
+   "tags": [
+    "jazz",
+    "blues",
+    "chanson",
+    "night and city",
+    "1920s sepia and silent film"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.6,
+      "pivot": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5,
+      "size": 1.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.65,
+      "softness": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "dreamy",
+   "name": "Dreamy",
+   "about": "glow and lifted blacks, soft focus, pastel colour",
+   "tags": [
+    "indie or shoegaze",
+    "dreams and the surreal",
+    "longing",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.6,
+      "radius": 12
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.5,
+      "threshold": 0.55,
+      "tint": 0.3,
+      "hue": 0.9
+     }
+    },
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.5,
+      "gain": -0.1
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "golden-hour",
+   "name": "Golden hour",
+   "about": "the low sun: warm, soft, a light leak from the side, haze in the distance",
+   "tags": [
+    "country and Americana",
+    "summer",
+    "nostalgia and childhood",
+    "freedom and road trips"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.7,
+      "tint": 0.1
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.09
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.07,
+      "place": 0.0
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "night",
+   "name": "Night",
+   "about": "blue shift and low key, stars in the dark parts",
+   "tags": [
+    "ambient",
+    "night and city",
+    "space and stars",
+    "lullabies"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.8
+     }
+    },
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "gamma": -0.5,
+      "gain": -0.3
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  }
+ ]
+}

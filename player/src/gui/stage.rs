@@ -124,6 +124,8 @@ pub struct Stage {
     ups: Vec<super::particles::Spray>,
     /// The theme it was last drawn in ([`Stage::scene`]: the song's).
     theme: &'static crate::theme::Theme,
+    /// Whether a look draws over the backdrop ([`Song::outlined`]).
+    outlined: bool,
 }
 
 /// What the stage is made from, besides the picture.
@@ -144,6 +146,11 @@ pub struct Song<'a> {
     pub heard: Option<&'a super::backdrop::music::Song>,
     /// The game's theme ([`crate::theme`]).
     pub theme: &'static crate::theme::Theme,
+    /// Whether a look draws over the backdrop ([`crate::core::State::look`]):
+    /// the text set over it (the count-in, the lines set in the middle: the
+    /// song's title and artist, a note in a pause) then gets the lyrics'
+    /// dark outline too, so it reads over whatever the look does.
+    pub outlined: bool,
 }
 
 impl<'a> Song<'a> {
@@ -174,6 +181,7 @@ impl<'a> Song<'a> {
             demo: state.karaoke.demo.held(),
             heard,
             theme: state.theme(),
+            outlined: state.look().is_some(),
         }
     }
 
@@ -194,6 +202,7 @@ impl<'a> Song<'a> {
             demo: false,
             heard: None,
             theme: &crate::theme::CLASSIC,
+            outlined: false,
         }
     }
 }

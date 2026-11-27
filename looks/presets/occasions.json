@@ -1,0 +1,794 @@
+{
+ "family": "occasions",
+ "about": "Songs for children and for the year's days.",
+ "looks": [
+  {
+   "id": "childrens",
+   "name": "Children's songs",
+   "about": "Children's songs: its own look",
+   "tags": [
+    "childrens"
+   ],
+   "layers": [
+    {
+     "pass": "pastel",
+     "knobs": {
+      "amount": 0.85,
+      "tooth": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "childrens-today",
+   "name": "Children's songs, today's clean digital",
+   "about": "Children's songs as in the today's clean digital",
+   "tags": [
+    "childrens",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "pastel",
+     "knobs": {
+      "amount": 0.85,
+      "tooth": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "childrens-humour",
+   "name": "Children's songs, humour",
+   "about": "Children's songs for a song of humour",
+   "tags": [
+    "childrens",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "pastel",
+     "knobs": {
+      "amount": 0.85,
+      "tooth": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "childrens-nature",
+   "name": "Children's songs, nature (seasons, weather, sea, mountains)",
+   "about": "Children's songs for a song of nature (seasons, weather, sea, mountains)",
+   "tags": [
+    "childrens",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "pastel",
+     "knobs": {
+      "amount": 0.85,
+      "tooth": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "childrens-family",
+   "name": "Children's songs, family",
+   "about": "Children's songs for a song of family",
+   "tags": [
+    "childrens",
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "pastel",
+     "knobs": {
+      "amount": 0.85,
+      "tooth": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.35,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "childrens-today-humour",
+   "name": "Children's songs, today's clean digital, humour",
+   "about": "Children's songs of humour as in the today's clean digital",
+   "tags": [
+    "childrens",
+    "today",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "pastel",
+     "knobs": {
+      "amount": 0.85,
+      "tooth": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "christmas",
+   "name": "Christmas songs",
+   "about": "Christmas songs: its own look",
+   "tags": [
+    "christmas"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "christmas-1950s",
+   "name": "Christmas songs, 1950s Technicolor",
+   "about": "Christmas songs as in the 1950s Technicolor",
+   "tags": [
+    "christmas",
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "christmas-family",
+   "name": "Christmas songs, family",
+   "about": "Christmas songs for a song of family",
+   "tags": [
+    "christmas",
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.35,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "christmas-winter",
+   "name": "Christmas songs, winter",
+   "about": "Christmas songs for a song of winter",
+   "tags": [
+    "christmas",
+    "winter"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "christmas-faith",
+   "name": "Christmas songs, faith",
+   "about": "Christmas songs for a song of faith",
+   "tags": [
+    "christmas",
+    "faith"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.12,
+      "tint": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "christmas-1950s-family",
+   "name": "Christmas songs, 1950s Technicolor, family",
+   "about": "Christmas songs of family as in the 1950s Technicolor",
+   "tags": [
+    "christmas",
+    "1950s",
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.35,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "halloween",
+   "name": "Halloween songs",
+   "about": "Halloween songs: its own look",
+   "tags": [
+    "halloween"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.78,
+      "light": 0.3,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "halloween-1950s",
+   "name": "Halloween songs, 1950s Technicolor",
+   "about": "Halloween songs as in the 1950s Technicolor",
+   "tags": [
+    "halloween",
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.78,
+      "light": 0.3,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "halloween-horror",
+   "name": "Halloween songs, horror",
+   "about": "Halloween songs for a song of horror",
+   "tags": [
+    "halloween",
+    "horror"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.78,
+      "light": 0.3,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "negative",
+     "knobs": {
+      "amount": 0.25,
+      "xray": 0.9
+     }
+    }
+   ]
+  },
+  {
+   "id": "halloween-humour",
+   "name": "Halloween songs, humour",
+   "about": "Halloween songs for a song of humour",
+   "tags": [
+    "halloween",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.78,
+      "light": 0.3,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "halloween-party",
+   "name": "Halloween songs, party",
+   "about": "Halloween songs for a song of party",
+   "tags": [
+    "halloween",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.78,
+      "light": 0.3,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "halloween-1950s-horror",
+   "name": "Halloween songs, 1950s Technicolor, horror",
+   "about": "Halloween songs of horror as in the 1950s Technicolor",
+   "tags": [
+    "halloween",
+    "1950s",
+    "horror"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.78,
+      "light": 0.3,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  }
+ ]
+}

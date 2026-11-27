@@ -22,11 +22,11 @@ pub const HUE: Pass = Pass {
     about: "the colours turned round the wheel: shifted, cycling slowly, or a rainbow across the screen, the light kept (psychedelia, a new hue for each section)",
     knobs: &[
         knob("shift", "how far round the wheel", (0.0, 1.0, 0.0), "turns", (1.0, 0.03)),
-        knob("spread", "a rainbow across the screen", (0.0, 1.0, 0.0), "share", (0.3, 0.03)),
+        knob("spread", "a rainbow across the screen", (0.0, 1.0, 0.0), "share", (0.4, 0.03)),
         knob("speed", "cycling backwards (-) or forwards (+), a turn in ten seconds at the most", (-1.0, 1.0, 0.0), "share", (0.3, 0.03)),
         knob("amount", "how much of the turned colour", (0.0, 1.0, 1.0), "share", (0.3, 0.03)),
     ],
-    natural: &[natural("shift", Driver::Part, 1.0)],
+    natural: &[natural("shift", Driver::Part, 1.0), natural("spread", Driver::Bass, 0.5)],
     pairs: &["kaleidoscope", "liquid", "saturation"],
     wgsl: r"
 fn look_hue(uv: vec2<f32>) -> vec3<f32> {
@@ -67,7 +67,7 @@ pub const KALEIDOSCOPE: Pass = Pass {
         knob("zoom", "zoomed out (low) or in (high)", (0.5, 2.0, 1.0), "share", (0.4, 0.13)),
     ],
     relief: 0.5,
-    natural: &[natural("turn", Driver::BarPhase, 0.25), natural("zoom", Driver::Bass, 0.3)],
+    natural: &[natural("turn", Driver::BarPhase, 0.25), natural("zoom", Driver::Bass, 0.6)],
     pairs: &["hue", "feedback", "liquid"],
     wgsl: r"
 fn lk_mirror_repeat(x: f32) -> f32 { return 1.0 - abs(fract(x * 0.5) * 2.0 - 1.0); }
@@ -113,7 +113,7 @@ pub const MIRROR: Pass = Pass {
         knob("place", "where the mirror stands", (0.2, 0.8, 0.5), "share", (0.2, 0.05)),
     ],
     relief: 0.5,
-    natural: &[natural("place", Driver::Other, 0.2)],
+    natural: &[natural("place", Driver::Other, 0.6)],
     pairs: &["kaleidoscope", "hue", "feedback"],
     wgsl: r"
 fn look_mirror(uv: vec2<f32>) -> vec3<f32> {
@@ -143,11 +143,11 @@ pub const LIQUID: Pass = Pass {
     knobs: &[
         knob("amount", "how far it flows", (0.0, 1.0, 0.4), "share", (0.5, 0.01)),
         knob("scale", "the swirls' size: big (low) to small (high)", (0.5, 4.0, 1.5), "share", (0.5, 0.0)),
-        knob("speed", "how fast it flows", (0.0, 2.0, 0.5), "share", (0.5, 0.0)),
+        knob("speed", "how fast it flows", (0.0, 2.0, 0.5), "share", (0.6, 0.0)),
     ],
     cost: 1.2,
     relief: 0.5,
-    natural: &[natural("amount", Driver::Bass, 0.4)],
+    natural: &[natural("amount", Driver::Bass, 0.8), natural("speed", Driver::Energy, 0.5)],
     pairs: &["hue", "chromatic", "feedback"],
     wgsl: r"
 fn look_liquid(uv: vec2<f32>) -> vec3<f32> {

@@ -16,11 +16,14 @@ use std::sync::Arc;
 use jodel_looks::{Ctx, Driver, Pass, Signals};
 
 /// A look's passes for a frame, each with its numbers
-/// ([`jodel_looks::Checked::frame`]).
+/// ([`jodel_looks::Checked::frame`]), and the strength it draws at
+/// ([`jodel_looks::guard::strength`]).
 #[derive(Clone, Debug, Default)]
 pub struct LookFrame {
     /// The passes, in order.
     pub passes: Vec<(&'static Pass, Ctx)>,
+    /// Its strength.
+    pub strength: f32,
 }
 
 /// The textures' format.
@@ -321,25 +324,20 @@ impl Readout {
         frame: Option<&super::BackdropFrame>,
         now: std::time::Instant,
     ) -> Option<crate::core::shader_tab::Readout> {
-        use jodel_looks::{guard, render::Image};
+        use jodel_looks::guard;
         let checked = crate::core::shader_tab::look(&app.state).check();
         let art = app.art();
         let id = art.map_or(0, |a| a.id);
         if self.small.as_ref().is_none_or(|(i, _)| *i != id) {
-            let img = art.map_or_else(
-                || Image::flat(MEASURED.0, MEASURED.1, jodel_looks::math::s3(0.3)),
-                |a| {
-                    let (w, h) = a.image.dimensions();
-                    Image::from_rgb(w as usize, h as usize, a.image.as_raw())
-                        .resized(MEASURED.0, MEASURED.1)
-                },
-            );
-            self.small = Some((id, img));
+            self.small = Some((id, small_picture(art, MEASURED)));
         }
         let small = &self.small.as_ref()?.1;
         let (w, h) = (MEASURED.0 as f32, MEASURED.1 as f32);
         let mut contrast = guard::band_contrast(&small.px, small.w, (0.68, 0.86));
+        let mut exposure = guard::exposure(&small.px);
+        let mut strength = 1.0;
         if let Some(look) = frame.and_then(|f| f.look.as_ref()) {
+            strength = look.strength;
             let passes: Vec<(&'static Pass, Ctx)> = (look.passes.iter())
                 .map(|&(p, c)| {
                     let mut c = c;
@@ -349,6 +347,7 @@ impl Readout {
                 .collect();
             let out = jodel_looks::render::draw(&passes, small, None);
             self.lights.push_back((now, guard::light(&out.px)));
+            exposure = guard::exposure(&out.px);
             if let Some((_, c)) = passes.first() {
                 contrast =
                     guard::band_contrast(&out.px, out.w, (c.band[0] + 0.01, c.band[1] - 0.01));
@@ -373,6 +372,9 @@ impl Readout {
             contrast: (contrast * 10.0).round() / 10.0,
             cost: checked.cost(),
             dropped: checked.dropped,
+            clipped: (exposure.clipped * 100.0).round() / 100.0,
+            mean: (exposure.mean * 100.0).round() / 100.0,
+            strength,
         };
         (self.shown.as_ref() != Some(&r)).then(|| {
             self.shown = Some(r.clone());
@@ -436,7 +438,34 @@ pub struct LookCue {
 pub struct Looks {
     checked: Option<(jodel_looks::Look, Arc<jodel_looks::Checked>)>,
     curves: Option<(CurvesOf, Arc<jodel_looks::Curves>)>,
+    /// The look at the strength its frames over the song's picture keep
+    /// within the exposure guard, and what that was found for (the look,
+    /// the song's curves, the picture's id).
+    strong: Option<(StrongOf, Arc<jodel_looks::Checked>)>,
     last: Option<(String, f64)>,
+}
+
+/// What a look's strength is found for: the look made safe, the song's
+/// curves, the picture's id (0: none).
+type StrongOf = (usize, usize, u64);
+
+/// The size of the picture a look's strength is found over (its frames
+/// made small: what washes out or blacks out does so at any size).
+const STRONG_OVER: (usize, usize) = (40, 24);
+
+/// The song's picture made small, encoded colours (none: a mid grey).
+pub fn small_picture(
+    art: Option<&crate::work::art::Art>,
+    (w, h): (usize, usize),
+) -> jodel_looks::render::Image {
+    use jodel_looks::render::Image;
+    art.map_or_else(
+        || Image::flat(w, h, jodel_looks::math::s3(0.3)),
+        |a| {
+            let (aw, ah) = a.image.dimensions();
+            Image::from_rgb(aw as usize, ah as usize, a.image.as_raw()).resized(w, h)
+        },
+    )
 }
 
 /// What a song's curves are made from: the song heard (by its place) and
@@ -485,7 +514,7 @@ impl Looks {
     pub fn cue(
         &mut self,
         state: &crate::core::State,
-        song: Option<&super::music::Song>,
+        (song, art): (Option<&super::music::Song>, Option<&crate::work::art::Art>),
         heard: f64,
         size: (u32, u32),
     ) -> Option<LookCue> {
@@ -493,12 +522,30 @@ impl Looks {
         if self.checked.as_ref().is_none_or(|(l, _)| l != look) {
             self.checked = Some((look.clone(), Arc::new(look.check())));
         }
-        let checked = Arc::clone(&self.checked.as_ref()?.1);
+        let made = Arc::clone(&self.checked.as_ref()?.1);
         let singing = &state.karaoke.singing;
         let lines: Vec<(f64, f64)> = (singing.notes.lines.iter())
             .filter_map(|l| Some((l.notes.first()?.start, l.notes.last()?.end)))
             .collect();
         let curves = song.map(|s| self.curves_of(s, lines));
+        // The strength its frames keep within the exposure guard at, over
+        // this song's picture: found once for the look, the song and the
+        // picture.
+        let of: StrongOf = (
+            Arc::as_ptr(&made) as usize,
+            curves.as_ref().map_or(0, |c| Arc::as_ptr(c) as usize),
+            art.map_or(0, |a| a.id),
+        );
+        if self.strong.as_ref().is_none_or(|(was, _)| *was != of) {
+            let picture = small_picture(art, STRONG_OVER);
+            let strength = jodel_looks::guard::strength(&made, &picture, curves.as_deref());
+            let strong = jodel_looks::Checked {
+                strength,
+                ..(*made).clone()
+            };
+            self.strong = Some((of, Arc::new(strong)));
+        }
+        let checked = Arc::clone(&self.strong.as_ref()?.1);
         let mut signals = curves.as_ref().map_or(Signals::QUIET, |c| c.at(heard));
         live(state, heard, &mut signals);
         let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
@@ -562,6 +609,7 @@ impl Looks {
         };
         LookFrame {
             passes: cue.look.frame(&moment, &cue.signals, cue.curves.as_deref()),
+            strength: cue.look.strength,
         }
     }
 }

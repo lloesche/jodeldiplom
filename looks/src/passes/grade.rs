@@ -24,9 +24,10 @@ pub const LIFT_GAMMA_GAIN: Pass = Pass {
     about: "the classic three-way grade: the blacks raised or crushed, the middle brighter or darker, the whites brighter or dimmer",
     knobs: &[
         knob("lift", "raises the blacks (+, a faded film) or crushes them (-, deep shadows)", (-1.0, 1.0, 0.0), "share", (0.3, 0.3)),
-        knob("gamma", "the midtones brighter (+) or darker (-), the ends kept", (-1.0, 1.0, 0.0), "share", (0.3, 0.45)),
-        knob("gain", "the whites brighter (+) or dimmer (-)", (-1.0, 1.0, 0.0), "share", (0.3, 0.45)),
+        knob("gamma", "the midtones brighter (+) or darker (-), the ends kept", (-1.0, 1.0, 0.0), "share", (0.4, 0.45)),
+        knob("gain", "the whites brighter (+) or dimmer (-)", (-1.0, 1.0, 0.0), "share", (0.4, 0.45)),
     ],
+    natural: &[natural("gain", Driver::Kick, 0.8), natural("gamma", Driver::Energy, 0.5)],
     pairs: &["curve", "grain", "vignette"],
     wgsl: r"
 fn look_lift_gamma_gain(uv: vec2<f32>) -> vec3<f32> {
@@ -60,15 +61,19 @@ pub const WHITE_BALANCE: Pass = Pass {
             "warmer, orange (+), or cooler, blue (-)",
             (-1.0, 1.0, 0.0),
             "share",
-            (0.3, 0.02),
+            (0.6, 0.02),
         ),
         knob(
             "tint",
             "magenta (+) or green (-)",
             (-1.0, 1.0, 0.0),
             "share",
-            (0.3, 0.02),
+            (0.4, 0.02),
         ),
+    ],
+    natural: &[
+        natural("warmth", Driver::Part, 0.7),
+        natural("tint", Driver::Bass, 0.5),
     ],
     pairs: &["curve", "grain"],
     wgsl: r"
@@ -97,10 +102,10 @@ pub const SATURATION: Pass = Pass {
     family: G,
     about: "how vivid the colours are: saturation for all of them, vibrance for the dull ones only (skin and sky kept)",
     knobs: &[
-        knob("saturation", "0 grey, 1 as it is, 2 twice as vivid", (0.0, 2.0, 1.0), "share", (0.4, 0.05)),
-        knob("vibrance", "the dull colours more vivid (+) or duller (-), the vivid ones kept", (-1.0, 1.0, 0.0), "share", (0.4, 0.05)),
+        knob("saturation", "0 grey, 1 as it is, 2 twice as vivid", (0.0, 2.0, 1.0), "share", (0.6, 0.05)),
+        knob("vibrance", "the dull colours more vivid (+) or duller (-), the vivid ones kept", (-1.0, 1.0, 0.0), "share", (0.6, 0.05)),
     ],
-    natural: &[natural("saturation", Driver::Chorus, 0.4)],
+    natural: &[natural("saturation", Driver::Chorus, 0.6), natural("vibrance", Driver::Vocals, 0.7)],
     pairs: &["curve", "duotone"],
     wgsl: r"
 fn look_saturation(uv: vec2<f32>) -> vec3<f32> {
@@ -130,12 +135,12 @@ pub const DUOTONE: Pass = Pass {
     about: "the picture in two colours, dark to light (the cover's own, or two hues): posters, pop, moods",
     knobs: &[
         knob("dark", "the shadows' hue", (0.0, 1.0, 0.7), "turns", (0.1, 0.07)),
-        knob("light", "the lights' hue", (0.0, 1.0, 0.1), "turns", (0.1, 0.08)),
+        knob("light", "the lights' hue", (0.0, 1.0, 0.1), "turns", (0.15, 0.08)),
         knob("amount", "how much of the two colours", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
         knob("cover", "from the two hues (0) to the cover's own colours (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.3)),
-        knob("contrast", "flatter (-) or harder (+) from dark to light", (-1.0, 1.0, 0.0), "share", (0.3, 0.1)),
+        knob("contrast", "flatter (-) or harder (+) from dark to light", (-1.0, 1.0, 0.0), "share", (0.5, 0.1)),
     ],
-    natural: &[natural("light", Driver::Part, 0.6)],
+    natural: &[natural("light", Driver::Part, 0.7), natural("contrast", Driver::Kick, 0.7)],
     pairs: &["grain", "halftone", "curve"],
     wgsl: r"
 fn look_duotone(uv: vec2<f32>) -> vec3<f32> {
@@ -172,11 +177,11 @@ pub const TRITONE: Pass = Pass {
     about: "the picture in three colours, shadows, midtones and lights: screen prints, neon nights, sunsets",
     knobs: &[
         knob("dark", "the shadows' hue", (0.0, 1.0, 0.75), "turns", (0.1, 0.08)),
-        knob("middle", "the midtones' hue", (0.0, 1.0, 0.95), "turns", (0.1, 0.14)),
+        knob("middle", "the midtones' hue", (0.0, 1.0, 0.95), "turns", (0.15, 0.14)),
         knob("light", "the lights' hue", (0.0, 1.0, 0.12), "turns", (0.1, 0.08)),
         knob("amount", "how much of the three colours", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
     ],
-    natural: &[natural("middle", Driver::Part, 0.5)],
+    natural: &[natural("middle", Driver::Part, 0.8), natural("light", Driver::Vocals, 0.5)],
     pairs: &["grain", "halftone", "glow"],
     wgsl: r"
 fn look_tritone(uv: vec2<f32>) -> vec3<f32> {
@@ -228,15 +233,19 @@ pub const SPLIT_TONE: Pass = Pass {
             "how strongly tinted",
             (0.0, 1.0, 0.5),
             "share",
-            (0.3, 0.05),
+            (0.4, 0.05),
         ),
         knob(
             "balance",
             "where shadows end and lights begin: lower (-) or higher (+)",
             (-1.0, 1.0, 0.0),
             "share",
-            (0.3, 0.02),
+            (0.5, 0.02),
         ),
+    ],
+    natural: &[
+        natural("amount", Driver::Vocals, 0.7),
+        natural("balance", Driver::Bass, 0.6),
     ],
     pairs: &["curve", "grain", "halation"],
     wgsl: r"
@@ -282,7 +291,7 @@ pub const CURVE: Pass = Pass {
             "flatter (-) or punchier (+)",
             (-1.0, 1.0, 0.0),
             "share",
-            (0.3, 0.2),
+            (0.4, 0.2),
         ),
         knob(
             "pivot",
@@ -296,8 +305,12 @@ pub const CURVE: Pass = Pass {
             "the blacks lifted and the whites lowered, matte",
             (0.0, 1.0, 0.0),
             "share",
-            (0.3, 0.08),
+            (0.4, 0.08),
         ),
+    ],
+    natural: &[
+        natural("contrast", Driver::Kick, 0.7),
+        natural("fade", Driver::Quiet, 0.6),
     ],
     pairs: &["split_tone", "grain"],
     wgsl: r"
@@ -334,7 +347,8 @@ pub const GRADIENT_MAP: Pass = Pass {
     name: "gradient_map",
     family: G,
     about: "the tones mapped onto the cover's three colours, dark to light: a picture made the cover's palette",
-    knobs: &[knob("amount", "how much of the cover's palette", (0.0, 1.0, 0.7), "share", (0.3, 0.3))],
+    knobs: &[knob("amount", "how much of the cover's palette", (0.0, 1.0, 0.7), "share", (0.4, 0.3))],
+    natural: &[natural("amount", Driver::Energy, 0.6)],
     pairs: &["grain", "halftone"],
     wgsl: r"
 fn look_gradient_map(uv: vec2<f32>) -> vec3<f32> {
@@ -382,8 +396,12 @@ pub const TECHNICOLOR: Pass = Pass {
             "how far the dyes separate",
             (0.0, 1.0, 0.5),
             "share",
-            (0.3, 0.05),
+            (0.5, 0.05),
         ),
+    ],
+    natural: &[
+        natural("punch", Driver::Chorus, 0.8),
+        natural("amount", Driver::Vocals, 0.4),
     ],
     pairs: &["grain", "halation", "curve"],
     wgsl: r"
@@ -432,9 +450,10 @@ pub const BLEACH_BYPASS: Pass = Pass {
             "how harsh",
             (0.0, 1.0, 0.5),
             "share",
-            (0.3, 0.1),
+            (0.5, 0.1),
         ),
     ],
+    natural: &[natural("contrast", Driver::Drums, 0.7)],
     pairs: &["grain", "vignette"],
     wgsl: r"
 fn look_bleach_bypass(uv: vec2<f32>) -> vec3<f32> {
@@ -467,7 +486,8 @@ pub const CROSS_PROCESS: Pass = Pass {
     name: "cross_process",
     family: G,
     about: "slide film in the wrong chemistry: yellow-green lights, blue shadows, hard reds (90s indie, lo-fi)",
-    knobs: &[knob("amount", "how much of the look", (0.0, 1.0, 0.7), "share", (0.3, 0.1))],
+    knobs: &[knob("amount", "how much of the look", (0.0, 1.0, 0.7), "share", (0.4, 0.1))],
+    natural: &[natural("amount", Driver::Energy, 0.6)],
     pairs: &["grain", "vignette", "light_leak"],
     wgsl: r"
 fn look_cross_process(uv: vec2<f32>) -> vec3<f32> {
@@ -498,9 +518,10 @@ pub const INFRARED: Pass = Pass {
     family: G,
     about: "infrared film: greens turn pink and red, skies deep (or in black and white, foliage glowing white)",
     knobs: &[
-        knob("amount", "how much of the look", (0.0, 1.0, 0.8), "share", (0.3, 0.1)),
+        knob("amount", "how much of the look", (0.0, 1.0, 0.8), "share", (0.4, 0.1)),
         knob("mono", "colour infrared (0) or black-and-white infrared (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.1)),
     ],
+    natural: &[natural("amount", Driver::Vocals, 0.6)],
     pairs: &["glow", "grain"],
     wgsl: r"
 fn look_infrared(uv: vec2<f32>) -> vec3<f32> {
@@ -543,17 +564,20 @@ pub const SEPIA: Pass = Pass {
             "a daguerreotype's silver (-1) to warm sepia (+1)",
             (-1.0, 1.0, 1.0),
             "share",
-            (0.2, 0.02),
+            (0.4, 0.02),
         ),
         knob(
             "fade",
             "how faded with age",
             (0.0, 1.0, 0.3),
             "share",
-            (0.3, 0.08),
+            (0.4, 0.08),
         ),
     ],
-    natural: &[natural("fade", Driver::Progress, 0.5)],
+    natural: &[
+        natural("fade", Driver::Quiet, 0.6),
+        natural("tone", Driver::Part, 0.5),
+    ],
     pairs: &["film_damage", "vignette", "gate_weave"],
     wgsl: r"
 fn look_sepia(uv: vec2<f32>) -> vec3<f32> {

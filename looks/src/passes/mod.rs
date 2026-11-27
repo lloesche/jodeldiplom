@@ -2,8 +2,10 @@
 //! and its maths on the processor side by side.
 
 pub mod atmos;
+pub mod craft;
 pub mod film;
 pub mod grade;
+pub mod lens;
 pub mod medium;
 pub mod paint;
 pub mod print;
@@ -37,6 +39,8 @@ pub static PASSES: &[&Pass] = &[
     &film::VIGNETTE,
     &film::POLAROID,
     &film::FILM_DAMAGE,
+    &lens::LETTERBOX,
+    &lens::BOKEH,
     &print::HALFTONE,
     &print::HALFTONE_CMYK,
     &print::BEN_DAY,
@@ -53,6 +57,8 @@ pub static PASSES: &[&Pass] = &[
     &paint::CHARCOAL,
     &paint::PASTEL,
     &paint::MARKER,
+    &craft::PENCIL,
+    &craft::CHALKBOARD,
     &medium::STAINED_GLASS,
     &medium::MOSAIC,
     &medium::CROSS_STITCH,
@@ -63,6 +69,8 @@ pub static PASSES: &[&Pass] = &[
     &medium::SOLARIZE,
     &medium::NEON_EDGES,
     &medium::TELETEXT,
+    &craft::CUTOUT,
+    &craft::EMBOSS,
     &retro::CRT,
     &retro::VHS,
     &retro::PIXELATE,
@@ -84,10 +92,12 @@ pub static PASSES: &[&Pass] = &[
     &atmos::STARFIELD,
     &atmos::LENS_FLARE,
     &atmos::TILT_SHIFT,
+    &lens::CONFETTI,
     &psych::HUE,
     &psych::KALEIDOSCOPE,
     &psych::MIRROR,
     &psych::LIQUID,
+    &lens::ZOOM_BLUR,
     &visual::FEEDBACK,
     &visual::SCOPE,
     &visual::SPECTRUM_RING,
@@ -104,6 +114,7 @@ pub const SHARED: &[&str] = &[
     paint::SHARED,
     retro::SHARED,
     atmos::SHARED,
+    craft::SHARED,
 ];
 
 /// The pass named `name`.

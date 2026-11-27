@@ -74,8 +74,8 @@ pub const HALFTONE: Pass = Pass {
     family: P,
     about: "a halftone screen: the picture as dots on paper, black ink or the picture's own colours (newsprint, comics, posters)",
     knobs: &[
-        knob("dot", "the dots' spacing", (3.0, 30.0, 8.0), "px", (4.0, 0.08)),
-        knob("angle", "the screen's angle", (0.0, 1.0, 0.125), "turns", (0.05, 0.0)),
+        knob("dot", "the dots' spacing", (3.0, 30.0, 8.0), "px", (6.0, 0.08)),
+        knob("angle", "the screen's angle", (0.0, 1.0, 0.125), "turns", (0.1, 0.0)),
         knob("ink", "black ink (0) to the picture's colours (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.16)),
         knob("paper", "white (0) to yellowed (1) paper", (0.0, 1.0, 0.3), "share", (0.0, 0.02)),
         knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
@@ -83,7 +83,7 @@ pub const HALFTONE: Pass = Pass {
     cost: 1.5,
     relief: 0.5,
     cells: true,
-    natural: &[natural("dot", Driver::Drums, 0.5)],
+    natural: &[natural("dot", Driver::Drums, 0.8), natural("angle", Driver::Part, 0.5)],
     pairs: &["duotone", "posterize_ink", "curve"],
     wgsl: r"
 fn look_halftone(uv: vec2<f32>) -> vec3<f32> {
@@ -140,15 +140,15 @@ pub const HALFTONE_CMYK: Pass = Pass {
     family: P,
     about: "four-colour process print: cyan, magenta, yellow and black screens at their angles, slightly off register if wanted (comics, magazines, pop art)",
     knobs: &[
-        knob("dot", "the dots' spacing", (3.0, 24.0, 7.0), "px", (3.0, 0.03)),
+        knob("dot", "the dots' spacing", (3.0, 24.0, 7.0), "px", (4.0, 0.03)),
         knob("angle", "the screens turned together", (0.0, 1.0, 0.0), "turns", (0.05, 0.0)),
-        knob("registration", "how far the plates are off register (up to 4 pixels)", (0.0, 1.0, 0.2), "share", (0.4, 0.0)),
+        knob("registration", "how far the plates are off register (up to 4 pixels)", (0.0, 1.0, 0.2), "share", (0.6, 0.0)),
         knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
     ],
     cost: 2.5,
     relief: 0.5,
     cells: true,
-    natural: &[natural("registration", Driver::Snare, 0.5)],
+    natural: &[natural("registration", Driver::Snare, 0.9), natural("dot", Driver::Kick, 0.6)],
     pairs: &["posterize_ink", "saturation", "ben_day"],
     wgsl: r"
 fn look_halftone_cmyk(uv: vec2<f32>) -> vec3<f32> {
@@ -204,7 +204,7 @@ pub const BEN_DAY: Pass = Pass {
             "the dots' spacing",
             (4.0, 20.0, 10.0),
             "px",
-            (3.0, 0.02),
+            (5.0, 0.02),
         ),
         knob(
             "levels",
@@ -231,7 +231,10 @@ pub const BEN_DAY: Pass = Pass {
     cost: 2.0,
     relief: 0.5,
     cells: true,
-    natural: &[natural("dot", Driver::Kick, 0.4)],
+    natural: &[
+        natural("dot", Driver::Kick, 0.8),
+        natural("outline", Driver::Drums, 0.5),
+    ],
     pairs: &["halftone_cmyk", "saturation", "duotone"],
     wgsl: r"
 fn look_ben_day(uv: vec2<f32>) -> vec3<f32> {
@@ -272,12 +275,12 @@ pub const POSTERIZE_INK: Pass = Pass {
     knobs: &[
         knob("steps", "how many tones", (2.0, 8.0, 4.0), "steps", (0.0, 0.05)),
         knob("ink", "how dark the lines", (0.0, 1.0, 0.7), "share", (0.3, 0.05)),
-        knob("width", "how wide the lines", (0.5, 4.0, 1.5), "px", (1.0, 0.03)),
-        knob("vivid", "the colours' saturation", (0.0, 2.0, 1.2), "share", (0.3, 0.05)),
+        knob("width", "how wide the lines", (0.5, 4.0, 1.5), "px", (1.5, 0.03)),
+        knob("vivid", "the colours' saturation", (0.0, 2.0, 1.2), "share", (0.5, 0.05)),
     ],
     cost: 1.5,
     relief: 0.3,
-    natural: &[natural("width", Driver::Kick, 0.4)],
+    natural: &[natural("width", Driver::Kick, 0.8), natural("vivid", Driver::Chorus, 0.6)],
     pairs: &["halftone", "ben_day", "saturation"],
     wgsl: r"
 fn look_posterize_ink(uv: vec2<f32>) -> vec3<f32> {
@@ -317,13 +320,13 @@ pub const RISOGRAPH: Pass = Pass {
     knobs: &[
         knob("first", "the first ink's hue (fluorescent pink by default)", (0.0, 1.0, 0.93), "turns", (0.05, 0.22)),
         knob("second", "the second ink's hue (blue by default)", (0.0, 1.0, 0.6), "turns", (0.05, 0.18)),
-        knob("misregister", "how far the inks are apart (up to 6 pixels)", (0.0, 1.0, 0.35), "share", (0.4, 0.0)),
-        knob("grain", "how grainy the ink", (0.0, 1.0, 0.5), "share", (0.3, 0.02)),
+        knob("misregister", "how far the inks are apart (up to 6 pixels)", (0.0, 1.0, 0.35), "share", (0.6, 0.0)),
+        knob("grain", "how grainy the ink", (0.0, 1.0, 0.5), "share", (0.4, 0.02)),
         knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
     ],
     cost: 2.0,
     relief: 0.4,
-    natural: &[natural("misregister", Driver::BassNote, 0.4)],
+    natural: &[natural("misregister", Driver::BassNote, 0.9), natural("grain", Driver::Drums, 0.5)],
     pairs: &["grain", "halftone", "canvas"],
     wgsl: r"
 fn look_risograph(uv: vec2<f32>) -> vec3<f32> {
@@ -363,12 +366,12 @@ pub const XEROX: Pass = Pass {
     about: "a photocopy of a photocopy: hard black and white, toner speckle and streaks (punk flyers, zines, hardcore)",
     knobs: &[
         knob("threshold", "where black turns white: more black (+) or more white (-)", (0.2, 0.8, 0.5), "share", (0.1, 0.6)),
-        knob("toner", "how much speckle and streaking", (0.0, 1.0, 0.5), "share", (0.4, 0.05)),
+        knob("toner", "how much speckle and streaking", (0.0, 1.0, 0.5), "share", (0.5, 0.05)),
         knob("contrast", "soft grey (0) to hard black and white (1)", (0.0, 1.0, 0.7), "share", (0.2, 0.05)),
         knob("amount", "how much of the copy over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
     ],
     relief: 0.4,
-    natural: &[natural("toner", Driver::Snare, 0.5)],
+    natural: &[natural("toner", Driver::Snare, 0.9), natural("threshold", Driver::Bass, 0.4)],
     pairs: &["duotone", "film_damage", "glitch"],
     wgsl: r"
 fn look_xerox(uv: vec2<f32>) -> vec3<f32> {
@@ -411,15 +414,15 @@ pub const WOODCUT: Pass = Pass {
     family: P,
     about: "a woodcut or linocut: the picture carved in black lines that swell in the dark and follow the forms (folk, doom and black metal, protest posters)",
     knobs: &[
-        knob("lines", "the lines' spacing", (3.0, 20.0, 7.0), "px", (2.0, 0.02)),
+        knob("lines", "the lines' spacing", (3.0, 20.0, 7.0), "px", (3.0, 0.02)),
         knob("angle", "the lines' angle", (0.0, 1.0, 0.08), "turns", (0.05, 0.0)),
-        knob("threshold", "darker (-) or lighter (+) overall", (-1.0, 1.0, 0.0), "share", (0.3, 0.4)),
+        knob("threshold", "darker (-) or lighter (+) overall", (-1.0, 1.0, 0.0), "share", (0.4, 0.4)),
         knob("ink", "black ink (0) to the cover's colour, darkened (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.13)),
         knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
     ],
     cost: 1.0,
     relief: 0.4,
-    natural: &[natural("threshold", Driver::Bass, 0.3)],
+    natural: &[natural("threshold", Driver::Bass, 0.6), natural("lines", Driver::Kick, 0.5)],
     pairs: &["duotone", "canvas", "vignette"],
     wgsl: r"
 fn look_woodcut(uv: vec2<f32>) -> vec3<f32> {
@@ -468,13 +471,14 @@ pub const ENGRAVING: Pass = Pass {
     family: P,
     about: "an engraving: the tones in fine hatching, crossed in the darks (banknotes, old books, classical, folk)",
     knobs: &[
-        knob("spacing", "the lines' spacing", (2.0, 10.0, 4.0), "px", (1.0, 0.02)),
+        knob("spacing", "the lines' spacing", (2.0, 10.0, 4.0), "px", (2.0, 0.02)),
         knob("angle", "the first lines' angle", (0.0, 1.0, 0.125), "turns", (0.05, 0.0)),
         knob("layers", "how many directions of hatching", (1.0, 3.0, 2.0), "steps", (0.0, 0.1)),
         knob("amount", "how much of the engraving over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
     ],
     cost: 1.3,
     relief: 0.4,
+    natural: &[natural("spacing", Driver::Bass, 0.6)],
     pairs: &["sepia", "canvas", "vignette"],
     wgsl: r"
 fn look_engraving(uv: vec2<f32>) -> vec3<f32> {
@@ -523,13 +527,14 @@ pub const STIPPLE: Pass = Pass {
     family: P,
     about: "stippling: the picture in ink dots, denser where it is dark (pen-and-ink, old scientific plates)",
     knobs: &[
-        knob("dot", "the dots' size", (2.0, 10.0, 4.0), "px", (1.5, 0.08)),
+        knob("dot", "the dots' size", (2.0, 10.0, 4.0), "px", (2.5, 0.08)),
         knob("contrast", "how sharply dark and light part", (0.0, 1.0, 0.5), "share", (0.3, 0.1)),
         knob("amount", "how much of the stippling over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
     ],
     cost: 1.3,
     relief: 0.4,
     cells: true,
+    natural: &[natural("dot", Driver::Drums, 0.7)],
     pairs: &["sepia", "canvas"],
     wgsl: r"
 fn look_stipple(uv: vec2<f32>) -> vec3<f32> {

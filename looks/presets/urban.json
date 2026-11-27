@@ -1,0 +1,1682 @@
+{
+ "family": "urban",
+ "about": "Hip-hop, dub and the street: rhythm and print.",
+ "looks": [
+  {
+   "id": "boom-bap",
+   "name": "Hip-hop, boom bap",
+   "about": "Hip-hop, boom bap: its own look",
+   "tags": [
+    "boom-bap"
+   ],
+   "layers": [
+    {
+     "pass": "halftone",
+     "knobs": {
+      "dot": 7.0,
+      "ink": 0.4,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "boom-bap-90s",
+   "name": "Hip-hop, boom bap, 90s camcorder and MTV",
+   "about": "Hip-hop, boom bap as in the 90s camcorder and MTV",
+   "tags": [
+    "boom-bap",
+    "90s"
+   ],
+   "layers": [
+    {
+     "pass": "halftone",
+     "knobs": {
+      "dot": 7.0,
+      "ink": 0.4,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "boom-bap-hometown",
+   "name": "Hip-hop, boom bap, hometown",
+   "about": "Hip-hop, boom bap for a song of hometown",
+   "tags": [
+    "boom-bap",
+    "hometown"
+   ],
+   "layers": [
+    {
+     "pass": "halftone",
+     "knobs": {
+      "dot": 7.0,
+      "ink": 0.4,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "boom-bap-money",
+   "name": "Hip-hop, boom bap, money and hustle",
+   "about": "Hip-hop, boom bap for a song of money and hustle",
+   "tags": [
+    "boom-bap",
+    "money"
+   ],
+   "layers": [
+    {
+     "pass": "halftone",
+     "knobs": {
+      "dot": 7.0,
+      "ink": 0.4,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "boom-bap-rebellion",
+   "name": "Hip-hop, boom bap, rebellion and protest",
+   "about": "Hip-hop, boom bap for a song of rebellion and protest",
+   "tags": [
+    "boom-bap",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "halftone",
+     "knobs": {
+      "dot": 7.0,
+      "ink": 0.4,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "boom-bap-90s-hometown",
+   "name": "Hip-hop, boom bap, 90s camcorder and MTV, hometown",
+   "about": "Hip-hop, boom bap of hometown as in the 90s camcorder and MTV",
+   "tags": [
+    "boom-bap",
+    "90s",
+    "hometown"
+   ],
+   "layers": [
+    {
+     "pass": "halftone",
+     "knobs": {
+      "dot": 7.0,
+      "ink": 0.4,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "trap",
+   "name": "Hip-hop, trap",
+   "about": "Hip-hop, trap: its own look",
+   "tags": [
+    "trap"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.76,
+      "middle": 0.85,
+      "light": 0.5,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "trap-today",
+   "name": "Hip-hop, trap, today's clean digital",
+   "about": "Hip-hop, trap as in the today's clean digital",
+   "tags": [
+    "trap",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.76,
+      "middle": 0.85,
+      "light": 0.5,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "trap-money",
+   "name": "Hip-hop, trap, money and hustle",
+   "about": "Hip-hop, trap for a song of money and hustle",
+   "tags": [
+    "trap",
+    "money"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.76,
+      "middle": 0.85,
+      "light": 0.5,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "trap-night",
+   "name": "Hip-hop, trap, night and city",
+   "about": "Hip-hop, trap for a song of night and city",
+   "tags": [
+    "trap",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.76,
+      "middle": 0.85,
+      "light": 0.5,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "trap-drugs",
+   "name": "Hip-hop, trap, drugs and psychedelia",
+   "about": "Hip-hop, trap for a song of drugs and psychedelia",
+   "tags": [
+    "trap",
+    "drugs"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.76,
+      "middle": 0.85,
+      "light": 0.5,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.4,
+      "speed": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "trap-today-money",
+   "name": "Hip-hop, trap, today's clean digital, money and hustle",
+   "about": "Hip-hop, trap of money and hustle as in the today's clean digital",
+   "tags": [
+    "trap",
+    "today",
+    "money"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.76,
+      "middle": 0.85,
+      "light": 0.5,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "lo-fi",
+   "name": "Hip-hop, lo-fi",
+   "about": "Hip-hop, lo-fi: its own look",
+   "tags": [
+    "lo-fi"
+   ],
+   "layers": [
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "lo-fi-90s",
+   "name": "Hip-hop, lo-fi, 90s camcorder and MTV",
+   "about": "Hip-hop, lo-fi as in the 90s camcorder and MTV",
+   "tags": [
+    "lo-fi",
+    "90s"
+   ],
+   "layers": [
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "lo-fi-nostalgia",
+   "name": "Hip-hop, lo-fi, nostalgia and childhood",
+   "about": "Hip-hop, lo-fi for a song of nostalgia and childhood",
+   "tags": [
+    "lo-fi",
+    "nostalgia"
+   ],
+   "layers": [
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.5,
+      "fade": 0.6,
+      "warmth": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "lo-fi-night",
+   "name": "Hip-hop, lo-fi, night and city",
+   "about": "Hip-hop, lo-fi for a song of night and city",
+   "tags": [
+    "lo-fi",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "lo-fi-longing",
+   "name": "Hip-hop, lo-fi, longing",
+   "about": "Hip-hop, lo-fi for a song of longing",
+   "tags": [
+    "lo-fi",
+    "longing"
+   ],
+   "layers": [
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "lo-fi-90s-nostalgia",
+   "name": "Hip-hop, lo-fi, 90s camcorder and MTV, nostalgia and childhood",
+   "about": "Hip-hop, lo-fi of nostalgia and childhood as in the 90s camcorder and MTV",
+   "tags": [
+    "lo-fi",
+    "90s",
+    "nostalgia"
+   ],
+   "layers": [
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.5,
+      "fade": 0.6,
+      "warmth": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggae-dub",
+   "name": "Reggae and dub",
+   "about": "Reggae and dub: its own look",
+   "tags": [
+    "reggae-dub"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.6,
+      "zoom": 0.1,
+      "scene": 0.9
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggae-dub-70s",
+   "name": "Reggae and dub, 70s film stock",
+   "about": "Reggae and dub as in the 70s film stock",
+   "tags": [
+    "reggae-dub",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.6,
+      "zoom": 0.1,
+      "scene": 0.9
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggae-dub-freedom",
+   "name": "Reggae and dub, freedom and road trips",
+   "about": "Reggae and dub for a song of freedom and road trips",
+   "tags": [
+    "reggae-dub",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.6,
+      "zoom": 0.1,
+      "scene": 0.9
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.07
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggae-dub-drugs",
+   "name": "Reggae and dub, drugs and psychedelia",
+   "about": "Reggae and dub for a song of drugs and psychedelia",
+   "tags": [
+    "reggae-dub",
+    "drugs"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.6,
+      "zoom": 0.1,
+      "scene": 0.9
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.4,
+      "speed": 0.3
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.7
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    }
+   ]
+  },
+  {
+   "id": "reggae-dub-summer",
+   "name": "Reggae and dub, summer",
+   "about": "Reggae and dub for a song of summer",
+   "tags": [
+    "reggae-dub",
+    "summer"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.6,
+      "zoom": 0.1,
+      "scene": 0.9
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggae-dub-70s-freedom",
+   "name": "Reggae and dub, 70s film stock, freedom and road trips",
+   "about": "Reggae and dub of freedom and road trips as in the 70s film stock",
+   "tags": [
+    "reggae-dub",
+    "70s",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "feedback",
+     "knobs": {
+      "trail": 0.6,
+      "zoom": 0.1,
+      "scene": 0.9
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "afrobeat",
+   "name": "Afrobeat",
+   "about": "Afrobeat: its own look",
+   "tags": [
+    "afrobeat"
+   ],
+   "layers": [
+    {
+     "pass": "risograph",
+     "knobs": {
+      "first": 0.05,
+      "second": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.35
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "afrobeat-70s",
+   "name": "Afrobeat, 70s film stock",
+   "about": "Afrobeat as in the 70s film stock",
+   "tags": [
+    "afrobeat",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "risograph",
+     "knobs": {
+      "first": 0.05,
+      "second": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.35
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "afrobeat-party",
+   "name": "Afrobeat, party",
+   "about": "Afrobeat for a song of party",
+   "tags": [
+    "afrobeat",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "risograph",
+     "knobs": {
+      "first": 0.05,
+      "second": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.35
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "afrobeat-empowerment",
+   "name": "Afrobeat, empowerment",
+   "about": "Afrobeat for a song of empowerment",
+   "tags": [
+    "afrobeat",
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "risograph",
+     "knobs": {
+      "first": 0.05,
+      "second": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.35
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "afrobeat-summer",
+   "name": "Afrobeat, summer",
+   "about": "Afrobeat for a song of summer",
+   "tags": [
+    "afrobeat",
+    "summer"
+   ],
+   "layers": [
+    {
+     "pass": "risograph",
+     "knobs": {
+      "first": 0.05,
+      "second": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.35
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.6
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    }
+   ]
+  },
+  {
+   "id": "afrobeat-70s-party",
+   "name": "Afrobeat, 70s film stock, party",
+   "about": "Afrobeat of party as in the 70s film stock",
+   "tags": [
+    "afrobeat",
+    "70s",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "risograph",
+     "knobs": {
+      "first": 0.05,
+      "second": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.35
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggaeton",
+   "name": "Reggaeton",
+   "about": "Reggaeton: its own look",
+   "tags": [
+    "reggaeton"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.8,
+      "middle": 0.92,
+      "light": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggaeton-today",
+   "name": "Reggaeton, today's clean digital",
+   "about": "Reggaeton as in the today's clean digital",
+   "tags": [
+    "reggaeton",
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.8,
+      "middle": 0.92,
+      "light": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggaeton-party",
+   "name": "Reggaeton, party",
+   "about": "Reggaeton for a song of party",
+   "tags": [
+    "reggaeton",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.8,
+      "middle": 0.92,
+      "light": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggaeton-love",
+   "name": "Reggaeton, love",
+   "about": "Reggaeton for a song of love",
+   "tags": [
+    "reggaeton",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.8,
+      "middle": 0.92,
+      "light": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggaeton-summer",
+   "name": "Reggaeton, summer",
+   "about": "Reggaeton for a song of summer",
+   "tags": [
+    "reggaeton",
+    "summer"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.8,
+      "middle": 0.92,
+      "light": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.6
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    }
+   ]
+  },
+  {
+   "id": "reggaeton-today-party",
+   "name": "Reggaeton, today's clean digital, party",
+   "about": "Reggaeton of party as in the today's clean digital",
+   "tags": [
+    "reggaeton",
+    "today",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.8,
+      "middle": 0.92,
+      "light": 0.5,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "beat_rings",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "zoom_blur",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  }
+ ]
+}

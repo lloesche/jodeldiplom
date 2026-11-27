@@ -32,9 +32,9 @@ pub const HAZE: Pass = Pass {
         knob("amount", "how thick the haze", (0.0, 1.0, 0.4), "share", (0.3, 0.2)),
         knob("hue", "the air's colour", (0.0, 1.0, 0.58), "turns", (0.1, 0.02)),
         knob("horizon", "where the haze starts, up from the bottom", (0.0, 1.0, 0.6), "share", (0.1, 0.1)),
-        knob("height", "how far up it thickens", (0.1, 1.0, 0.5), "share", (0.1, 0.1)),
+        knob("height", "how far up it thickens", (0.1, 1.0, 0.5), "share", (0.2, 0.1)),
     ],
-    natural: &[natural("amount", Driver::Energy, -0.3)],
+    natural: &[natural("amount", Driver::Quiet, 0.6), natural("height", Driver::Vocals, 0.5)],
     pairs: &["god_rays", "split_tone", "glow"],
     wgsl: r"
 fn look_haze(uv: vec2<f32>) -> vec3<f32> {
@@ -73,10 +73,10 @@ pub const GOD_RAYS: Pass = Pass {
         knob("amount", "how bright the rays", (0.0, 1.0, 0.5), "share", (0.5, 0.15)),
         knob("x", "the light's place across", (0.0, 1.0, 0.5), "share", (0.1, 0.0)),
         knob("y", "the light's place down", (0.0, 1.0, 0.25), "share", (0.1, 0.0)),
-        knob("length", "how long the rays", (0.1, 1.0, 0.5), "share", (0.2, 0.05)),
+        knob("length", "how long the rays", (0.1, 1.0, 0.5), "share", (0.3, 0.05)),
     ],
     cost: 4.0,
-    natural: &[natural("amount", Driver::Chorus, 0.6)],
+    natural: &[natural("amount", Driver::Chorus, 0.7), natural("length", Driver::Bass, 0.6)],
     pairs: &["haze", "glow", "lens_flare"],
     wgsl: r"
 fn look_god_rays(uv: vec2<f32>) -> vec3<f32> {
@@ -116,12 +116,12 @@ pub const FOG: Pass = Pass {
     knobs: &[
         knob("amount", "how thick the fog", (0.0, 1.0, 0.4), "share", (0.3, 0.25)),
         knob("scale", "the banks' size: big (low) to small (high)", (0.5, 4.0, 1.5), "share", (0.5, 0.01)),
-        knob("speed", "how fast it drifts", (0.0, 2.0, 0.5), "share", (0.5, 0.0)),
+        knob("speed", "how fast it drifts", (0.0, 2.0, 0.5), "share", (0.8, 0.0)),
         knob("hue", "its colour", (0.0, 1.0, 0.6), "turns", (0.1, 0.01)),
         knob("low", "everywhere (0) to lying low (1)", (0.0, 1.0, 0.5), "share", (0.2, 0.1)),
     ],
     cost: 1.2,
-    natural: &[natural("amount", Driver::Bass, 0.3)],
+    natural: &[natural("amount", Driver::Bass, 0.6), natural("speed", Driver::Energy, 0.6)],
     pairs: &["vignette", "haze", "night_vision"],
     wgsl: r"
 fn look_fog(uv: vec2<f32>) -> vec3<f32> {
@@ -172,14 +172,14 @@ pub const RAIN: Pass = Pass {
     about: "rain falling in streaks, near and far, slanting with the wind (heartbreak, grief, the city at night, blues)",
     knobs: &[
         knob("amount", "how heavy the rain", (0.0, 1.0, 0.5), "share", (0.5, 0.06)),
-        knob("slant", "the wind's slant, left (-) or right (+)", (-1.0, 1.0, 0.2), "share", (0.3, 0.0)),
+        knob("slant", "the wind's slant, left (-) or right (+)", (-1.0, 1.0, 0.2), "share", (0.4, 0.0)),
         knob("length", "how long the streaks", (0.0, 1.0, 0.5), "share", (0.2, 0.02)),
         knob("speed", "how fast it falls", (0.5, 2.0, 1.0), "share", (0.3, 0.0)),
     ],
     cost: 1.5,
     relief: 0.5,
     cells: true,
-    natural: &[natural("amount", Driver::Chorus, 0.6)],
+    natural: &[natural("amount", Driver::Chorus, 0.8), natural("slant", Driver::Bass, 0.5)],
     pairs: &["fog", "split_tone", "glow"],
     wgsl: r"
 fn look_rain(uv: vec2<f32>) -> vec3<f32> {
@@ -217,7 +217,7 @@ fn look_rain(uv: vec2<f32>) -> vec3<f32> {
 /// where in its cell the pixel is from the thing's middle (pixels), the
 /// thing's seed and whether there is one (the share `amount`), nearest
 /// first.
-fn fall(
+pub(crate) fn fall(
     u: &Ctx,
     uv: V2,
     (cellpx, speed, wind): (f32, f32, f32),
@@ -292,13 +292,13 @@ pub const SNOW: Pass = Pass {
     knobs: &[
         knob("amount", "how heavy the snow", (0.0, 1.0, 0.5), "share", (0.5, 0.08)),
         knob("size", "the flakes' size", (0.5, 3.0, 1.0), "share", (0.5, 0.05)),
-        knob("wind", "blowing left (-) or right (+)", (-1.0, 1.0, 0.2), "share", (0.3, 0.0)),
+        knob("wind", "blowing left (-) or right (+)", (-1.0, 1.0, 0.2), "share", (0.5, 0.0)),
         knob("speed", "how fast it falls", (0.3, 2.0, 1.0), "share", (0.3, 0.0)),
     ],
     cost: 1.3,
     relief: 0.5,
     cells: true,
-    natural: &[natural("amount", Driver::Chorus, 0.6)],
+    natural: &[natural("amount", Driver::Chorus, 0.7), natural("wind", Driver::Bass, 0.5)],
     pairs: &["glow", "white_balance", "vignette"],
     wgsl: r"
 fn look_snow(uv: vec2<f32>) -> vec3<f32> {
@@ -346,12 +346,12 @@ pub const PETALS: Pass = Pass {
         knob("amount", "how many fall", (0.0, 1.0, 0.4), "share", (0.5, 0.06)),
         knob("kind", "pink blossom (0) to autumn leaves (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.02)),
         knob("size", "their size", (0.5, 3.0, 1.0), "share", (0.4, 0.05)),
-        knob("wind", "blowing left (-) or right (+)", (-1.0, 1.0, 0.3), "share", (0.3, 0.0)),
+        knob("wind", "blowing left (-) or right (+)", (-1.0, 1.0, 0.3), "share", (0.5, 0.0)),
     ],
     cost: 1.2,
     relief: 0.5,
     cells: true,
-    natural: &[natural("amount", Driver::Chorus, 0.5)],
+    natural: &[natural("amount", Driver::Chorus, 0.7), natural("wind", Driver::Other, 0.6)],
     pairs: &["glow", "diffusion", "split_tone"],
     wgsl: r"
 fn look_petals(uv: vec2<f32>) -> vec3<f32> {
@@ -398,13 +398,13 @@ pub const DUST: Pass = Pass {
     about: "dust motes floating slowly, glinting where the light is (old rooms, memories, folk, attics, quiet songs)",
     knobs: &[
         knob("amount", "how many motes", (0.0, 1.0, 0.4), "share", (0.5, 0.03)),
-        knob("size", "their size", (0.5, 3.0, 1.0), "share", (0.4, 0.02)),
+        knob("size", "their size", (0.5, 3.0, 1.0), "share", (0.6, 0.02)),
         knob("lit", "everywhere alike (0) to glinting only in the light (1)", (0.0, 1.0, 0.6), "share", (0.0, 0.02)),
     ],
     cost: 1.0,
     relief: 0.5,
     cells: true,
-    natural: &[natural("amount", Driver::Other, 0.5)],
+    natural: &[natural("amount", Driver::Other, 0.7), natural("size", Driver::Bass, 0.5)],
     pairs: &["god_rays", "sepia", "film_damage"],
     wgsl: r"
 fn look_dust(uv: vec2<f32>) -> vec3<f32> {
@@ -438,11 +438,11 @@ pub const HEAT_HAZE: Pass = Pass {
     family: W,
     about: "heat shimmering the picture, more near the ground (desert, summer, road trips, Americana, flamenco)",
     knobs: &[
-        knob("amount", "how strong the shimmer", (0.0, 1.0, 0.4), "share", (0.4, 0.0)),
+        knob("amount", "how strong the shimmer", (0.0, 1.0, 0.4), "share", (0.5, 0.0)),
         knob("scale", "the ripples' size", (0.5, 3.0, 1.0), "share", (0.3, 0.0)),
         knob("ground", "everywhere (0) to near the ground (1)", (0.0, 1.0, 0.6), "share", (0.0, 0.0)),
     ],
-    natural: &[natural("amount", Driver::Energy, 0.4)],
+    natural: &[natural("amount", Driver::Energy, 0.7)],
     pairs: &["haze", "white_balance", "grain"],
     wgsl: r"
 fn look_heat_haze(uv: vec2<f32>) -> vec3<f32> {
@@ -478,11 +478,11 @@ pub const UNDERWATER: Pass = Pass {
     about: "under water: the reds absorbed, the picture wavering, caustic light dancing from above (the sea, dreams, ambient, dub)",
     knobs: &[
         knob("amount", "how much under water", (0.0, 1.0, 0.7), "share", (0.3, 0.1)),
-        knob("caustics", "how bright the dancing light", (0.0, 1.0, 0.5), "share", (0.4, 0.08)),
-        knob("depth", "how deep: how much red is lost", (0.0, 1.0, 0.5), "share", (0.2, 0.1)),
+        knob("caustics", "how bright the dancing light", (0.0, 1.0, 0.5), "share", (0.5, 0.08)),
+        knob("depth", "how deep: how much red is lost", (0.0, 1.0, 0.5), "share", (0.3, 0.1)),
     ],
     cost: 1.3,
-    natural: &[natural("caustics", Driver::Other, 0.4)],
+    natural: &[natural("caustics", Driver::Other, 0.7), natural("depth", Driver::Bass, 0.5)],
     pairs: &["god_rays", "liquid", "glow"],
     wgsl: r"
 fn look_underwater(uv: vec2<f32>) -> vec3<f32> {
@@ -527,9 +527,9 @@ pub const CANDLE: Pass = Pass {
         knob("warmth", "pale gold (0) to deep orange (1)", (0.0, 1.0, 0.7), "share", (0.2, 0.02)),
         knob("x", "the candle's place across", (0.0, 1.0, 0.5), "share", (0.0, 0.0)),
         knob("y", "the candle's place down", (0.0, 1.0, 0.65), "share", (0.0, 0.0)),
-        knob("reach", "how far its light reaches", (0.2, 1.0, 0.6), "share", (0.2, 0.15)),
+        knob("reach", "how far its light reaches", (0.2, 1.0, 0.6), "share", (0.25, 0.15)),
     ],
-    natural: &[natural("reach", Driver::Vocals, 0.4)],
+    natural: &[natural("reach", Driver::Vocals, 0.6)],
     pairs: &["glow", "grain", "vignette"],
     wgsl: r"
 fn look_candle(uv: vec2<f32>) -> vec3<f32> {
@@ -577,10 +577,10 @@ pub const AURORA: Pass = Pass {
         knob("amount", "how bright the curtains", (0.0, 1.0, 0.5), "share", (0.5, 0.1)),
         knob("hue", "their colour (green by default)", (0.0, 1.0, 0.38), "turns", (0.2, 0.01)),
         knob("height", "how far down they reach", (0.0, 1.0, 0.35), "share", (0.2, 0.05)),
-        knob("speed", "how fast they ripple", (0.0, 2.0, 0.5), "share", (0.4, 0.0)),
+        knob("speed", "how fast they ripple", (0.0, 2.0, 0.5), "share", (0.6, 0.0)),
     ],
     cost: 1.2,
-    natural: &[natural("amount", Driver::Other, 0.5), natural("hue", Driver::Part, 0.5)],
+    natural: &[natural("amount", Driver::Other, 0.6), natural("hue", Driver::Part, 0.5), natural("speed", Driver::Energy, 0.6)],
     pairs: &["starfield", "glow", "white_balance"],
     wgsl: r"
 fn look_aurora(uv: vec2<f32>) -> vec3<f32> {
@@ -632,12 +632,12 @@ pub const STARFIELD: Pass = Pass {
     about: "stars twinkling slowly in the dark parts of the picture (space and stars, night, lullabies, dreams)",
     knobs: &[
         knob("amount", "how many stars", (0.0, 1.0, 0.5), "share", (0.4, 0.02)),
-        knob("twinkle", "how much they twinkle (slowly)", (0.0, 1.0, 0.5), "share", (0.3, 0.01)),
-        knob("size", "their size", (0.5, 3.0, 1.0), "share", (0.4, 0.02)),
+        knob("twinkle", "how much they twinkle (slowly)", (0.0, 1.0, 0.5), "share", (0.4, 0.01)),
+        knob("size", "their size", (0.5, 3.0, 1.0), "share", (0.6, 0.02)),
     ],
     relief: 0.5,
     cells: true,
-    natural: &[natural("twinkle", Driver::High, 0.5)],
+    natural: &[natural("twinkle", Driver::High, 0.8), natural("size", Driver::Bass, 0.5)],
     pairs: &["aurora", "glow", "night_vision"],
     wgsl: r"
 fn look_starfield(uv: vec2<f32>) -> vec3<f32> {
@@ -692,7 +692,7 @@ pub const LENS_FLARE: Pass = Pass {
         knob("y", "the light's place down", (0.0, 1.0, 0.25), "share", (0.1, 0.0)),
         knob("hue", "its colour", (0.0, 1.0, 0.08), "turns", (0.1, 0.0)),
     ],
-    natural: &[natural("amount", Driver::Downbeat, 0.4)],
+    natural: &[natural("amount", Driver::Downbeat, 0.7)],
     pairs: &["light_leak", "god_rays", "glow"],
     wgsl: r"
 fn look_lens_flare(uv: vec2<f32>) -> vec3<f32> {
@@ -738,11 +738,12 @@ pub const TILT_SHIFT: Pass = Pass {
     family: W,
     about: "a tilted lens: only a band in focus, above and below it blurred, the world looking like a model (city pop, childhood, toy-like whimsy)",
     knobs: &[
-        knob("focus", "where the sharp band is, down the frame", (0.0, 1.0, 0.55), "share", (0.1, 0.0)),
+        knob("focus", "where the sharp band is, down the frame", (0.0, 1.0, 0.55), "share", (0.15, 0.0)),
         knob("band", "how tall the sharp band", (0.05, 0.6, 0.2), "share", (0.1, 0.0)),
-        knob("blur", "how blurred the rest", (0.0, 1.0, 0.6), "share", (0.3, 0.02)),
+        knob("blur", "how blurred the rest", (0.0, 1.0, 0.6), "share", (0.4, 0.02)),
     ],
     cost: 2.5,
+    natural: &[natural("blur", Driver::Bass, 0.6), natural("focus", Driver::Vocals, 0.4)],
     pairs: &["saturation", "curve"],
     wgsl: r"
 fn look_tilt_shift(uv: vec2<f32>) -> vec3<f32> {

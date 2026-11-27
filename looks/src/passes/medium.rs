@@ -49,14 +49,14 @@ pub const STAINED_GLASS: Pass = Pass {
     family: M,
     about: "leaded glass: the picture in pieces of coloured glass between dark lead lines, lit from behind (ballads, folk, fantasy)",
     knobs: &[
-        knob("cell", "the pieces' size", (12.0, 80.0, 36.0), "px", (8.0, 0.02)),
+        knob("cell", "the pieces' size", (12.0, 80.0, 36.0), "px", (12.0, 0.02)),
         knob("lead", "the lead lines' width", (0.5, 6.0, 2.5), "px", (1.0, 0.08)),
-        knob("glow", "how much the light shines through each piece's middle", (0.0, 1.0, 0.5), "share", (0.3, 0.1)),
+        knob("glow", "how much the light shines through each piece's middle", (0.0, 1.0, 0.5), "share", (0.5, 0.1)),
     ],
     cost: 2.0,
     relief: 0.5,
     cells: true,
-    natural: &[natural("glow", Driver::Vocals, 0.5)],
+    natural: &[natural("glow", Driver::Vocals, 0.8), natural("cell", Driver::Bass, 0.5)],
     pairs: &["glow", "vignette"],
     wgsl: r"
 fn look_stained_glass(uv: vec2<f32>) -> vec3<f32> {
@@ -120,14 +120,14 @@ pub const MOSAIC: Pass = Pass {
     family: M,
     about: "a mosaic: the picture in square tiles of one colour each, grout between them (Mediterranean, ancient, summer)",
     knobs: &[
-        knob("tile", "the tiles' size", (6.0, 40.0, 14.0), "px", (4.0, 0.02)),
+        knob("tile", "the tiles' size", (6.0, 40.0, 14.0), "px", (6.0, 0.02)),
         knob("grout", "how wide and how visible the grout", (0.0, 1.0, 0.4), "share", (0.2, 0.1)),
         knob("variety", "how much each tile's shade varies", (0.0, 1.0, 0.3), "share", (0.2, 0.01)),
     ],
     cost: 1.0,
     relief: 0.5,
     cells: true,
-    natural: &[natural("tile", Driver::Kick, 0.3)],
+    natural: &[natural("tile", Driver::Kick, 0.7)],
     pairs: &["saturation", "vignette"],
     wgsl: r"
 fn look_mosaic(uv: vec2<f32>) -> vec3<f32> {
@@ -179,13 +179,14 @@ pub const CROSS_STITCH: Pass = Pass {
     family: M,
     about: "cross-stitch: the picture in little X stitches of a few thread colours on cloth (folk, family, cosy, Volksmusik)",
     knobs: &[
-        knob("stitch", "the stitches' size", (4.0, 20.0, 8.0), "px", (2.0, 0.09)),
+        knob("stitch", "the stitches' size", (4.0, 20.0, 8.0), "px", (3.0, 0.09)),
         knob("levels", "how many shades of red, of green and of blue the threads come in", (2.0, 5.0, 3.0), "steps", (0.0, 0.11)),
         knob("fabric", "how much bare cloth is left in the lights", (0.0, 1.0, 0.6), "share", (0.2, 0.1)),
     ],
     cost: 1.0,
     relief: 0.5,
     cells: true,
+    natural: &[natural("stitch", Driver::Kick, 0.6)],
     pairs: &["canvas", "vignette"],
     wgsl: r"
 fn look_cross_stitch(uv: vec2<f32>) -> vec3<f32> {
@@ -237,10 +238,11 @@ pub const CYANOTYPE: Pass = Pass {
     knobs: &[
         knob("plan", "a cyanotype print (0) to a blueprint's lines (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.3)),
         knob("amount", "how much of the medium over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
-        knob("grid", "how much of a blueprint's grid", (0.0, 1.0, 0.3), "share", (0.2, 0.03)),
+        knob("grid", "how much of a blueprint's grid", (0.0, 1.0, 0.3), "share", (0.4, 0.03)),
     ],
     cost: 1.6,
     relief: 0.3,
+    natural: &[natural("grid", Driver::Drums, 0.6)],
     pairs: &["canvas", "vignette"],
     wgsl: r"
 fn look_cyanotype(uv: vec2<f32>) -> vec3<f32> {
@@ -290,9 +292,9 @@ pub const THERMAL: Pass = Pass {
     knobs: &[
         knob("amount", "how much of the camera over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
         knob("palette", "iron, black to white-hot (0), to a rainbow (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.1)),
-        knob("noise", "the sensor's noise", (0.0, 1.0, 0.3), "share", (0.3, 0.01)),
+        knob("noise", "the sensor's noise", (0.0, 1.0, 0.3), "share", (0.5, 0.01)),
     ],
-    natural: &[natural("noise", Driver::High, 0.5)],
+    natural: &[natural("noise", Driver::High, 0.8)],
     pairs: &["crt", "glitch"],
     wgsl: r"
 fn lk_iron(h: f32) -> vec3<f32> {
@@ -335,10 +337,10 @@ pub const NIGHT_VISION: Pass = Pass {
     about: "night vision: a green phosphor picture, noisy and lined, in a round tube (night, war, spies, horror)",
     knobs: &[
         knob("amount", "how much of the goggles over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
-        knob("noise", "the tube's noise", (0.0, 1.0, 0.4), "share", (0.3, 0.02)),
+        knob("noise", "the tube's noise", (0.0, 1.0, 0.4), "share", (0.5, 0.02)),
         knob("lines", "how strong the scan lines", (0.0, 1.0, 0.3), "share", (0.2, 0.05)),
     ],
-    natural: &[natural("noise", Driver::Drums, 0.4)],
+    natural: &[natural("noise", Driver::Drums, 0.8)],
     pairs: &["vignette", "glitch"],
     wgsl: r"
 fn look_night_vision(uv: vec2<f32>) -> vec3<f32> {
@@ -389,7 +391,7 @@ pub const NEGATIVE: Pass = Pass {
             "a colour negative (0) to an X-ray (1)",
             (0.0, 1.0, 0.5),
             "share",
-            (0.0, 0.3),
+            (0.4, 0.3),
         ),
         knob(
             "contrast",
@@ -399,6 +401,7 @@ pub const NEGATIVE: Pass = Pass {
             (0.2, 0.1),
         ),
     ],
+    natural: &[natural("xray", Driver::Part, 0.6)],
     pairs: &["glow", "grain"],
     wgsl: r"
 fn look_negative(uv: vec2<f32>) -> vec3<f32> {
@@ -436,10 +439,11 @@ pub const SOLARIZE: Pass = Pass {
     family: M,
     about: "solarisation, the darkroom's turned tones, or liquid chrome's bands (psychedelia, Y2K chrome, glam)",
     knobs: &[
-        knob("threshold", "where the tones turn back", (0.3, 0.9, 0.55), "share", (0.1, 0.2)),
+        knob("threshold", "where the tones turn back", (0.3, 0.9, 0.55), "share", (0.15, 0.2)),
         knob("amount", "how much of the effect over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
         knob("chrome", "solarised (0) to chrome bands (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.2)),
     ],
+    natural: &[natural("threshold", Driver::Bass, 0.6)],
     pairs: &["hue", "glow"],
     wgsl: r"
 fn look_solarize(uv: vec2<f32>) -> vec3<f32> {
@@ -473,14 +477,14 @@ pub const NEON_EDGES: Pass = Pass {
     about: "the picture's edges as glowing neon tubes over a darkened picture (synthwave, the 80s, night and the city, club music)",
     knobs: &[
         knob("width", "the tubes' width", (0.5, 4.0, 1.5), "px", (1.0, 0.05)),
-        knob("hue", "the neon's colour", (0.0, 1.0, 0.85), "turns", (0.2, 0.02)),
-        knob("glow", "how far the glow spreads", (0.0, 1.0, 0.6), "share", (0.4, 0.06)),
+        knob("hue", "the neon's colour", (0.0, 1.0, 0.85), "turns", (0.3, 0.02)),
+        knob("glow", "how far the glow spreads", (0.0, 1.0, 0.6), "share", (0.5, 0.06)),
         knob("dark", "how dark the picture under the neon", (0.0, 1.0, 0.6), "share", (0.2, 0.45)),
         knob("cycle", "still (0) to a rainbow running through the colours (1)", (0.0, 1.0, 0.0), "share", (0.3, 0.01)),
     ],
     cost: 2.0,
     relief: 0.3,
-    natural: &[natural("glow", Driver::Kick, 0.5)],
+    natural: &[natural("glow", Driver::Kick, 0.8), natural("hue", Driver::Part, 0.6)],
     pairs: &["glow", "crt", "tritone"],
     wgsl: r"
 fn look_neon_edges(uv: vec2<f32>) -> vec3<f32> {
@@ -538,14 +542,14 @@ pub const TELETEXT: Pass = Pass {
     family: M,
     about: "teletext's block graphics: each character cell of six blocks lit or dark in one of eight bright colours on black (no letters: shapes only) (the 80s, chiptune, retro TV)",
     knobs: &[
-        knob("cell", "a cell's width", (6.0, 24.0, 12.0), "px", (3.0, 0.03)),
+        knob("cell", "a cell's width", (6.0, 24.0, 12.0), "px", (5.0, 0.03)),
         knob("cover", "teletext's eight colours (0) to the cover's colour (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.14)),
         knob("amount", "how much of the blocks over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
     ],
     cost: 2.0,
     relief: 0.5,
     cells: true,
-    natural: &[natural("cell", Driver::Kick, 0.3)],
+    natural: &[natural("cell", Driver::Kick, 0.6)],
     pairs: &["crt", "pixelate"],
     wgsl: r"
 fn look_teletext(uv: vec2<f32>) -> vec3<f32> {

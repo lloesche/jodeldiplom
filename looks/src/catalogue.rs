@@ -203,6 +203,65 @@ pub fn markdown() -> String {
         }
         out.push('\n');
     }
+    out.push_str(&matrix());
+    out
+}
+
+/// The eras, as the presets tag them.
+const ERAS: [&str; 8] = ["1920s", "1950s", "60s", "70s", "80s", "90s", "y2k", "today"];
+
+/// The genre × theme × era matrix, worked examples for the model: for
+/// each genre the presets made for it (tagged with its key first), by
+/// what was added to its own look: the era its music comes from, the
+/// themes its songs often sing of, and the two together.
+fn matrix() -> String {
+    let mut out = String::from(
+        "## The matrix: genre × theme × era\n\nEach genre's own look, and the same look in its era and for the themes its songs often sing of (the presets' ids; each a starting point to move the knobs from). Any genre takes any era's or theme's layers the same way: `eras` and `themes` above have them alone.\n\n| genre | its look | its era | its themes | era and theme |\n|---|---|---|---|---|\n",
+    );
+    let genres = [
+        "rock",
+        "pop",
+        "electronic",
+        "urban",
+        "roots",
+        "classical",
+        "world",
+        "occasions",
+    ];
+    for f in presets::families()
+        .iter()
+        .filter(|f| genres.contains(&f.family.as_str()))
+    {
+        let mut keys: Vec<&str> = Vec::new();
+        for l in &f.looks {
+            if let Some(k) = l.tags.first().filter(|k| l.id == **k) {
+                keys.push(k);
+            }
+        }
+        for key in keys {
+            let of: Vec<&crate::Look> = f
+                .looks
+                .iter()
+                .filter(|l| l.tags.first().is_some_and(|t| t == key))
+                .collect();
+            let ids = |pick: &dyn Fn(&crate::Look) -> bool| -> String {
+                let ids: Vec<String> = of
+                    .iter()
+                    .filter(|l| pick(l))
+                    .map(|l| format!("`{}`", l.id))
+                    .collect();
+                ids.join(", ")
+            };
+            let is_era = |t: &String| ERAS.contains(&t.as_str());
+            out.push_str(&format!(
+                "| {key} | `{key}` | {} | {} | {} |\n",
+                ids(&|l| l.tags.len() == 2 && is_era(&l.tags[1])),
+                ids(&|l| l.tags.len() == 2 && !is_era(&l.tags[1])),
+                ids(&|l| l.tags.len() == 3),
+            ));
+        }
+    }
+    out.push('\n');
     out
 }
 

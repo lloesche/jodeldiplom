@@ -129,17 +129,20 @@ fn the_shader_tab_is_in_the_tab_cycle_and_its_keys_edit_the_stack() {
 fn a_knob_s_driver_is_chosen_and_a_pass_added() {
     let mut state = shader_tab();
     let act = |s: &mut State, a| update(s, Action::Shader(a));
-    act(&mut state, ShaderAction::Pick(5));
+    let noir = (shader_tab::listed(&state).iter())
+        .position(|(_, l)| l.id == "noir")
+        .unwrap();
+    act(&mut state, ShaderAction::Pick(noir));
     assert_eq!(shader_tab::look(&state).id, "noir");
     act(&mut state, ShaderAction::Layer(2));
     let (_, layer, pass) = shader_tab::layer(&state).unwrap();
     assert_eq!(pass.name, "grain");
     let natural = shader_tab::drive(layer, pass, 0);
-    assert_eq!(natural, Some((Driver::Bass, 0.5)), "the pass's own");
+    assert_eq!(natural, Some((Driver::Bass, 0.8)), "the pass's own");
     act(&mut state, ShaderAction::Driver { knob: 0, by: 1 });
     let (_, layer, pass) = shader_tab::layer(&state).unwrap();
     let next = Driver::ALL[Driver::Bass as usize + 1];
-    assert_eq!(shader_tab::drive(layer, pass, 0), Some((next, 0.5)));
+    assert_eq!(shader_tab::drive(layer, pass, 0), Some((next, 0.8)));
     act(
         &mut state,
         ShaderAction::Amount {

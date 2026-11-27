@@ -10,6 +10,22 @@ from the passes themselves: [`looks-catalogue.md`](looks-catalogue.md)
 (`cargo run -p jodel-looks --example catalogue`, and a test holds it to
 the code).
 
+## First: a look dances
+
+A look must visibly dance to the song. A still filter over a cover is not
+a look. Every pass moves by itself with the music unless a look says
+otherwise (its natural drivers: grain and halation breathing with the
+bass, bloom following the voice, the halftone's dots growing with the
+drums, glitches and tape tracking hitting on the snares, colour and hue
+moving on to a new place each section, the weather thickening in the
+choruses, the vignette closing in the quiet parts), and every preset
+keeps them, often with a motion of its own on top (a colour split on the
+kicks, a warp on the bass, the film's weave on the bass notes). Motion is
+preferred over light: warps, offsets, scale, rotation, the feedback's
+zoom and turn, dot and grain size and the colours' split can move far
+without a flash, where brightness pulsing is held small by the flash
+guard.
+
 ## A look
 
 ```json
@@ -95,6 +111,20 @@ Held whatever a look asks (`Look::check`, `jodel_looks::guard`):
   the picture once is 1); a stack may cost 8 in at most 6 passes. Over it,
   the dearest pass not marked `keep` goes (the later of equals), always
   the same one.
+- **Washing out and blacking out.** Over a whole frame at most 15 % of the
+  pixels may be clipped (nearly white or nearly black) beyond what the
+  picture itself has, and its mean light stays between 0.08 and 0.75 (or
+  within a tenth of the picture's own). A look whose frames over the
+  song's picture would not, at 32 moments through the song, is drawn less
+  strongly (its passes' mixes scaled down in steps to the strongest that
+  keeps within), once for the look, the song and the picture: the same
+  strength the whole song. The feedback cannot run away: what it carries
+  over loses light every second and passes a soft knee (rising ever more
+  slowly toward 0.7, never to white), and the drawn shapes (scope, rings,
+  bars, sparks) add their light as a screen does, never past white.
+- **All the stage's text.** Where a look draws, the stage's text over it
+  (the count-in, the song's title and artist, the lines set in the
+  middle) gets the lyrics' dark outline too.
 - **Determinism.** Nothing is random but by a seed made of the look's id
   and the song; the same look, song and time give the same frame.
 
@@ -151,15 +181,46 @@ A look mixes the scene and the visualizer in any proportion: a faint trail
 over the picture, a ring framing it, or (the feedback's `scene` low, its
 `mix` driven by `instrumental`) the visualizer filling the breaks.
 
+## The presets
+
+Some 380 presets, from the genre × theme × era matrix: each genre's own
+look (from rock, punk, grunge, doom, black and power metal, shoegaze,
+pop, synth-pop, disco, funk, soul, K-pop and city pop, musicals and
+Schlager, through house, techno, trance, dubstep, drum and bass, ambient
+and chiptune, boom bap, trap, lo-fi, dub, Afrobeat and reggaeton, jazz,
+blues, country, folk, Celtic music, gospel and chanson, orchestral music and
+opera, salsa, flamenco and Bollywood, to children's, Christmas and
+Halloween songs), the same in its era and for the themes its songs
+often sing of; each era (1920s sepia and silent film, 1950s
+Technicolor, 60s psychedelia, 70s film stock, 80s neon and tape, 90s
+camcorder, Y2K chrome and glitch, today) alone and with themes; each
+theme (love, heartbreak, longing, party, protest, the road, nostalgia,
+family, grief, faith, nature, the sea, mountains, night and the city,
+space, dreams, psychedelia, money, war, home, summer, winter, horror,
+humour, empowerment, the seasons) alone and on film; moods, media and
+visualizers. One JSON file a family in `looks/presets/`. The matrix itself,
+genre by genre with each cell's preset, is in the catalogue (its last
+section), as worked examples for the model. A test draws every preset
+and every pass through a whole song, frame by frame, over a dark and a
+light picture, and holds it to every guard; another does the same over
+real songs' curves where the machine keeps analyses.
+
+Respectful by design: no sacred or ceremonial style is used as
+decoration (light from above is light, not a symbol; colours are chosen
+for the music, not for a people's flags or faiths).
+
 ## The Shader tab
 
 The seventh tab: the playing song's cover drawn as Karaoke mode draws it,
 through the tab's look, moved by the song as in the game (nothing
-playing: still). The presets by family on the left (`/` searches them);
+playing: still). On the left a browser of every look: the presets by
+family, then every pass as a look of its own under its pass family
+(`/` searches them all, `↑` `↓` steps through them);
 the stack in the middle: its passes (selected by a click or `[` `]`, moved
 by `,` `.`, taken out by `del`, added from the list under them), the
 selected pass's knobs on sliders with their ranges and meanings, and
 each knob's driver (`‹ ›`) with its amount; under the picture what the
 guards measure: flashes a second, the lyrics' contrast, the stack's cost
-against the budget. `C` copies the stack as JSON, `K` keeps it in the data
+against the budget, the frame's exposure (clipped, mean light) and the
+strength the look draws at. `C` copies the stack as JSON, `K` keeps it in the data
 folder (`looks/`) as a preset of your own, listed first from then on.

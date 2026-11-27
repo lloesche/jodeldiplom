@@ -1,0 +1,1744 @@
+{
+ "family": "eras",
+ "about": "The eras: how each decade looked on film, tape and screen.",
+ "looks": [
+  {
+   "id": "35mm-night-drive",
+   "name": "35mm night drive",
+   "about": "night film: teal shadows, warm lights glowing red round the edges, coarse grain breathing with the bass",
+   "tags": [
+    "synth-pop",
+    "rock",
+    "night and city",
+    "freedom and road trips",
+    "70s film stock"
+   ],
+   "layers": [
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.53,
+      "lights": 0.07,
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.35,
+      "fade": 0.2
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.6,
+      "radius": 16
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45,
+      "size": 1.4
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "psychedelic-60s",
+   "name": "Psychedelic 60s",
+   "about": "the colours turning round the wheel each section, the picture flowing, folded into a kaleidoscope in the breaks",
+   "tags": [
+    "rock",
+    "60s psychedelic",
+    "drugs and psychedelia",
+    "dreams and the surreal"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.5,
+      "vibrance": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.35,
+      "speed": 0.2
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "knobs": {
+      "segments": 6
+     },
+     "mix": 0.0,
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.8
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "camcorder-90s",
+   "name": "90s camcorder",
+   "about": "a home video tape: wobble, colour bleeding, bad tracking on the snares",
+   "tags": [
+    "grunge",
+    "indie",
+    "90s camcorder and MTV",
+    "nostalgia and childhood",
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.5,
+      "bleed": 0.6,
+      "noise": 0.35
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.3,
+      "mask": 0.15,
+      "curve": 0.1
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1920s",
+   "name": "1920s sepia and silent film",
+   "about": "the 1920s sepia and silent film look",
+   "tags": [
+    "1920s"
+   ],
+   "layers": [
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1920s-love",
+   "name": "1920s sepia and silent film, love",
+   "about": "a song of love in the 1920s sepia and silent film look",
+   "tags": [
+    "1920s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1920s-grief",
+   "name": "1920s sepia and silent film, grief and death",
+   "about": "a song of grief and death in the 1920s sepia and silent film look",
+   "tags": [
+    "1920s",
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.35,
+      "low": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1920s-humour",
+   "name": "1920s sepia and silent film, humour",
+   "about": "a song of humour in the 1920s sepia and silent film look",
+   "tags": [
+    "1920s",
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1920s-night",
+   "name": "1920s sepia and silent film, night and city",
+   "about": "a song of night and city in the 1920s sepia and silent film look",
+   "tags": [
+    "1920s",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.08
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1950s",
+   "name": "1950s Technicolor",
+   "about": "the 1950s Technicolor look",
+   "tags": [
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1950s-love",
+   "name": "1950s Technicolor, love",
+   "about": "a song of love in the 1950s Technicolor look",
+   "tags": [
+    "1950s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1950s-party",
+   "name": "1950s Technicolor, party",
+   "about": "a song of party in the 1950s Technicolor look",
+   "tags": [
+    "1950s",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1950s-family",
+   "name": "1950s Technicolor, family",
+   "about": "a song of family in the 1950s Technicolor look",
+   "tags": [
+    "1950s",
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.35,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-1950s-space",
+   "name": "1950s Technicolor, space and stars",
+   "about": "a song of space and stars in the 1950s Technicolor look",
+   "tags": [
+    "1950s",
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-60s",
+   "name": "60s psychedelic",
+   "about": "the 60s psychedelic look",
+   "tags": [
+    "60s"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.4,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.9
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-60s-drugs",
+   "name": "60s psychedelic, drugs and psychedelia",
+   "about": "a song of drugs and psychedelia in the 60s psychedelic look",
+   "tags": [
+    "60s",
+    "drugs"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.4,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.9
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.4,
+      "speed": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.7
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    }
+   ]
+  },
+  {
+   "id": "era-60s-love",
+   "name": "60s psychedelic, love",
+   "about": "a song of love in the 60s psychedelic look",
+   "tags": [
+    "60s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.4,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.9
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-60s-rebellion",
+   "name": "60s psychedelic, rebellion and protest",
+   "about": "a song of rebellion and protest in the 60s psychedelic look",
+   "tags": [
+    "60s",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.4,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.9
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-60s-summer",
+   "name": "60s psychedelic, summer",
+   "about": "a song of summer in the 60s psychedelic look",
+   "tags": [
+    "60s",
+    "summer"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.4,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.9
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.6
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-70s",
+   "name": "70s film stock",
+   "about": "the 70s film stock look",
+   "tags": [
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45,
+      "size": 1.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-70s-freedom",
+   "name": "70s film stock, freedom and road trips",
+   "about": "a song of freedom and road trips in the 70s film stock look",
+   "tags": [
+    "70s",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45,
+      "size": 1.6
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.07
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-70s-night",
+   "name": "70s film stock, night and city",
+   "about": "a song of night and city in the 70s film stock look",
+   "tags": [
+    "70s",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45,
+      "size": 1.6
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.08
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-70s-nostalgia",
+   "name": "70s film stock, nostalgia and childhood",
+   "about": "a song of nostalgia and childhood in the 70s film stock look",
+   "tags": [
+    "70s",
+    "nostalgia"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45,
+      "size": 1.6
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.5,
+      "fade": 0.6,
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.06
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-70s-love",
+   "name": "70s film stock, love",
+   "about": "a song of love in the 70s film stock look",
+   "tags": [
+    "70s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45,
+      "size": 1.6
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-80s",
+   "name": "80s neon and VHS",
+   "about": "the 80s neon and VHS look",
+   "tags": [
+    "80s"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.88,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.35,
+      "mask": 0.2,
+      "curve": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-80s-night",
+   "name": "80s neon and VHS, night and city",
+   "about": "a song of night and city in the 80s neon and VHS look",
+   "tags": [
+    "80s",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.88,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.35,
+      "mask": 0.2,
+      "curve": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-80s-party",
+   "name": "80s neon and VHS, party",
+   "about": "a song of party in the 80s neon and VHS look",
+   "tags": [
+    "80s",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.88,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.35,
+      "mask": 0.2,
+      "curve": 0.1
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-80s-space",
+   "name": "80s neon and VHS, space and stars",
+   "about": "a song of space and stars in the 80s neon and VHS look",
+   "tags": [
+    "80s",
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.88,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.35,
+      "mask": 0.2,
+      "curve": 0.1
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-80s-heartbreak",
+   "name": "80s neon and VHS, heartbreak",
+   "about": "a song of heartbreak in the 80s neon and VHS look",
+   "tags": [
+    "80s",
+    "heartbreak"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.3,
+      "bleed": 0.4,
+      "noise": 0.2
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.88,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "crt",
+     "knobs": {
+      "scanlines": 0.35,
+      "mask": 0.2,
+      "curve": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-90s",
+   "name": "90s camcorder and MTV",
+   "about": "the 90s camcorder and MTV look",
+   "tags": [
+    "90s"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-90s-nostalgia",
+   "name": "90s camcorder and MTV, nostalgia and childhood",
+   "about": "a song of nostalgia and childhood in the 90s camcorder and MTV look",
+   "tags": [
+    "90s",
+    "nostalgia"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.5,
+      "fade": 0.6,
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.06
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-90s-rebellion",
+   "name": "90s camcorder and MTV, rebellion and protest",
+   "about": "a song of rebellion and protest in the 90s camcorder and MTV look",
+   "tags": [
+    "90s",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5,
+      "size": 1.8
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-90s-party",
+   "name": "90s camcorder and MTV, party",
+   "about": "a song of party in the 90s camcorder and MTV look",
+   "tags": [
+    "90s",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-90s-hometown",
+   "name": "90s camcorder and MTV, hometown",
+   "about": "a song of hometown in the 90s camcorder and MTV look",
+   "tags": [
+    "90s",
+    "hometown"
+   ],
+   "layers": [
+    {
+     "pass": "vhs",
+     "knobs": {
+      "wobble": 0.4,
+      "bleed": 0.55,
+      "noise": 0.3
+     }
+    },
+    {
+     "pass": "cross_process",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-y2k",
+   "name": "Y2K chrome and glitch",
+   "about": "the Y2K chrome and glitch look",
+   "tags": [
+    "y2k"
+   ],
+   "layers": [
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "solarize",
+     "knobs": {
+      "chrome": 1.0,
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-y2k-party",
+   "name": "Y2K chrome and glitch, party",
+   "about": "a song of party in the Y2K chrome and glitch look",
+   "tags": [
+    "y2k",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "solarize",
+     "knobs": {
+      "chrome": 1.0,
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-y2k-dreams",
+   "name": "Y2K chrome and glitch, dreams and the surreal",
+   "about": "a song of dreams and the surreal in the Y2K chrome and glitch look",
+   "tags": [
+    "y2k",
+    "dreams"
+   ],
+   "layers": [
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "solarize",
+     "knobs": {
+      "chrome": 1.0,
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-y2k-money",
+   "name": "Y2K chrome and glitch, money and hustle",
+   "about": "a song of money and hustle in the Y2K chrome and glitch look",
+   "tags": [
+    "y2k",
+    "money"
+   ],
+   "layers": [
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "solarize",
+     "knobs": {
+      "chrome": 1.0,
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.5,
+      "hue": 0.12,
+      "tint": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-y2k-space",
+   "name": "Y2K chrome and glitch, space and stars",
+   "about": "a song of space and stars in the Y2K chrome and glitch look",
+   "tags": [
+    "y2k",
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "glitch",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "solarize",
+     "knobs": {
+      "chrome": 1.0,
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-today",
+   "name": "Today's clean digital",
+   "about": "the today's clean digital look",
+   "tags": [
+    "today"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-today-love",
+   "name": "Today's clean digital, love",
+   "about": "a song of love in the today's clean digital look",
+   "tags": [
+    "today",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-today-empowerment",
+   "name": "Today's clean digital, empowerment",
+   "about": "a song of empowerment in the today's clean digital look",
+   "tags": [
+    "today",
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-today-nature",
+   "name": "Today's clean digital, nature (seasons, weather, sea, mountains)",
+   "about": "a song of nature (seasons, weather, sea, mountains) in the today's clean digital look",
+   "tags": [
+    "today",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "era-today-winter",
+   "name": "Today's clean digital, winter",
+   "about": "a song of winter in the today's clean digital look",
+   "tags": [
+    "today",
+    "winter"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.1,
+      "vibrance": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.7
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  }
+ ]
+}

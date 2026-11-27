@@ -136,6 +136,14 @@ pub fn luma(c: V3) -> f32 {
     c.dot(v3(0.2126, 0.7152, 0.0722))
 }
 
+/// A colour's luminance in linear light (its encoded values to the power
+/// 2.2): what the eye's contrast against white is reckoned from.
+pub fn lum(c: V3) -> f32 {
+    c.max(1e-6)
+        .map(|v| v.powf(2.2))
+        .dot(v3(0.2126, 0.7152, 0.0722))
+}
+
 /// `c` as grey by `1 - s` (0: grey, 1: as it is, more: more vivid).
 pub fn saturate(c: V3, s: f32) -> V3 {
     mix3(s3(luma(c)), c, s)
@@ -211,6 +219,22 @@ pub fn hue_turn(c: V3, turns: f32) -> V3 {
     )
 }
 
+/// Light added to `c` as a screen adds it, `light` held under 0.85: a
+/// drawn shape over a bright picture lightens it, never to white.
+pub fn add_light(c: V3, light: V3) -> V3 {
+    screen(c.clamp(0.0, 1.0), light.clamp(0.0, 0.85))
+}
+
+/// A soft knee over 0.5: as it is below, then rising ever more slowly to
+/// 0.7 (an echo fed back piles up toward a grey, never to white).
+pub fn knee(x: f32) -> f32 {
+    if x > 0.5 {
+        0.5 + 0.2 * (1.0 - (-(x - 0.5) / 0.2).exp())
+    } else {
+        x
+    }
+}
+
 /// A whole turn, radians.
 pub const TAU: f32 = std::f32::consts::TAU;
 
@@ -230,6 +254,7 @@ pub const WGSL: &str = r"
 const LK_TAU: f32 = 6.2831853;
 fn lk_sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
 fn lk_luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
+fn lk_lum(c: vec3<f32>) -> f32 { return dot(pow(max(c, vec3<f32>(1e-6)), vec3<f32>(2.2)), vec3<f32>(0.2126, 0.7152, 0.0722)); }
 fn lk_saturate(c: vec3<f32>, s: f32) -> vec3<f32> { return mix(vec3<f32>(lk_luma(c)), c, s); }
 fn lk_mix32(x: u32) -> u32 {
     var h = x;
@@ -278,6 +303,12 @@ fn lk_hue_turn(c: vec3<f32>, turns: f32) -> vec3<f32> {
     return vec3<f32>(y + 0.956 * i2 + 0.621 * q2, y - 0.272 * i2 - 0.647 * q2, y - 1.106 * i2 + 1.703 * q2);
 }
 fn lk_screen(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> { return vec3<f32>(1.0) - (vec3<f32>(1.0) - a) * (vec3<f32>(1.0) - b); }
+fn lk_add_light(c: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
+    return lk_screen(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(light, vec3<f32>(0.0), vec3<f32>(0.85)));
+}
+fn lk_knee(x: vec3<f32>) -> vec3<f32> {
+    return select(x, 0.5 + 0.2 * (1.0 - exp(-(x - 0.5) / 0.2)), x > vec3<f32>(0.5));
+}
 fn lk_turn(p: vec2<f32>, a: f32) -> vec2<f32> {
     let s = sin(a);
     let c = cos(a);

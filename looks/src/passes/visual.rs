@@ -53,7 +53,8 @@ fn scope_data(feed: &Feed) -> [[f32; 4]; DATA] {
 
 /// The stems' spectrum: 32 bins, low to high, each 0 to 1 (the bass low,
 /// the voice in the middle, the rest broad, the drums' kicks low and
-/// their bright hits high), with a little life of its own.
+/// their bright hits high), with a little life of its own, saturating
+/// softly.
 fn spectrum_data(feed: &Feed) -> [[f32; 4]; DATA] {
     let s = feed.signals;
     let [bass, drums, other, vocals] = levels(feed, feed.t);
@@ -70,7 +71,10 @@ fn spectrum_data(feed: &Feed) -> [[f32; 4]; DATA] {
             * vnoise(v2(x * 0.7, feed.t as f32 * 4.0), 283)
             * (bass + drums + other + vocals)
             * 0.25;
-        *out = (b + vo + o + d * 0.6 + life).clamp(0.0, 1.0);
+        // Softly saturating: a loud chorus fills the bins most of the way,
+        // never all of them to the top.
+        let sum = (b + vo + o + d * 0.6) * 0.45 + life;
+        *out = (1.0 - (-1.6 * sum).exp()).clamp(0.0, 1.0);
     }
     pack(&v)
 }
@@ -153,7 +157,7 @@ fn feedback(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     );
     q = q + fl * (k[4] * 0.25 * dt);
     let puv = q / v2(u.size[0] / u.size[1], 1.0) + 0.5;
-    let echo = hue_turn(s.prev(puv), k[6] * 0.3 * dt).max(0.0);
+    let echo = hue_turn(s.prev(puv), k[6] * 0.3 * dt).max(0.0).map(knee);
     let keep = mix(0.01, 0.9, k[0]).powf(dt) * (1.0 - forget);
     let new = s.src(uv);
     (new * k[5]).vmax(echo * keep)
@@ -194,7 +198,7 @@ fn look_feedback(uv: vec2<f32>) -> vec3<f32> {
     let fl = vec2<f32>(lk_vnoise(p * 3.0 + vec2<f32>(t * 0.2), 271u) - 0.5, lk_vnoise(p * 3.0 + vec2<f32>(7.0 - t * 0.2), 272u) - 0.5);
     q = q + fl * (u.k1.x * 0.25 * dt);
     let puv = q / vec2<f32>(u.size.x / u.size.y, 1.0) + 0.5;
-    let echo = max(lk_hue_turn(lk_prev(puv), u.k1.z * 0.3 * dt), vec3<f32>(0.0));
+    let echo = lk_knee(max(lk_hue_turn(lk_prev(puv), u.k1.z * 0.3 * dt), vec3<f32>(0.0)));
     let keep = pow(mix(0.01, 0.9, u.k0.x), dt) * (1.0 - forget);
     let fresh = lk_src(uv);
     return max(fresh * u.k1.y, echo * keep);
@@ -223,7 +227,7 @@ fn scope(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let th = k[1] * u.scale();
     let core = 1.0 - smoothstep(th * 0.5, th * 0.5 + 1.0, dist);
     let g = (-dist / (th * 4.0)).exp() * k[3];
-    c + shape_colour(u, k[2], k[5]) * (core + g * 0.5)
+    add_light(c, shape_colour(u, k[2], k[5]) * (core * 0.75 + g * 0.35))
 }
 
 /// An oscilloscope's line.
@@ -257,7 +261,7 @@ fn look_scope(uv: vec2<f32>) -> vec3<f32> {
     let th = u.k0.y * lk_scale();
     let core = 1.0 - smoothstep(th * 0.5, th * 0.5 + 1.0, dist);
     let g = exp(-dist / (th * 4.0)) * u.k0.w;
-    return c + lk_shape_colour(u.k0.z, u.k1.y) * (core + g * 0.5);
+    return lk_add_light(c, lk_shape_colour(u.k0.z, u.k1.y) * (core * 0.75 + g * 0.35));
 }
 ",
     cpu: scope,
@@ -281,7 +285,10 @@ fn spectrum_ring(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let r1 = r0 + v * k[1] * 0.22 + 0.004;
     let inside = smoothstep(r0 - px, r0, r) * (1.0 - smoothstep(r1, r1 + px, r)) * bar;
     let g = (-(r - r0).abs() * 40.0).exp() * k[4] * 0.3;
-    c + hsv(k[2] + k[3] * m * 0.5, 0.7, 1.0) * (inside * 0.9 + g)
+    add_light(
+        c,
+        hsv(k[2] + k[3] * m * 0.5, 0.7, 1.0) * (inside * 0.6 + g * 0.6),
+    )
 }
 
 /// A ring of the spectrum.
@@ -316,7 +323,7 @@ fn look_spectrum_ring(uv: vec2<f32>) -> vec3<f32> {
     let r1 = r0 + v * u.k0.y * 0.22 + 0.004;
     let inside = smoothstep(r0 - px, r0, r) * (1.0 - smoothstep(r1, r1 + px, r)) * bar;
     let g = exp(-abs(r - r0) * 40.0) * u.k1.x * 0.3;
-    return c + lk_hsv(u.k0.z + u.k0.w * m * 0.5, 0.7, 1.0) * (inside * 0.9 + g);
+    return lk_add_light(c, lk_hsv(u.k0.z + u.k0.w * m * 0.5, 0.7, 1.0) * (inside * 0.6 + g * 0.6));
 }
 ",
     cpu: spectrum_ring,
@@ -338,7 +345,10 @@ fn bars(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let px = 1.5 * u.size[3];
     let inside = (1.0 - smoothstep(h, h + px, uv.y)) * bar * step(0.002, h);
     let shade = 0.6 + 0.4 * (1.0 - uv.y / h.max(1e-3)).max(0.0);
-    c + hsv(k[2] + k[3] * uv.x * 0.5, 0.75, 1.0) * (inside * shade * 0.85)
+    add_light(
+        c,
+        hsv(k[2] + k[3] * uv.x * 0.5, 0.75, 1.0) * (inside * shade * 0.65),
+    )
 }
 
 /// Spectrum bars from the top edge.
@@ -370,7 +380,7 @@ fn look_bars(uv: vec2<f32>) -> vec3<f32> {
     let px = 1.5 * u.size.w;
     let inside = (1.0 - smoothstep(h, h + px, uv.y)) * bar * step(0.002, h);
     let shade = 0.6 + 0.4 * max(1.0 - uv.y / max(h, 1e-3), 0.0);
-    return c + lk_hsv(u.k0.z + u.k0.w * uv.x * 0.5, 0.75, 1.0) * (inside * shade * 0.85);
+    return lk_add_light(c, lk_hsv(u.k0.z + u.k0.w * uv.x * 0.5, 0.75, 1.0) * (inside * shade * 0.65));
 }
 ",
     cpu: bars,
@@ -393,7 +403,7 @@ fn beat_rings(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
         let down = step((idx - (idx / u.d(2)).floor() * u.d(2)).abs(), 0.01);
         acc += ring * (-age * 0.8).exp() * (1.0 + down);
     }
-    c + hsv(k[2], 0.6, 1.0) * (acc * k[0] * 0.6)
+    add_light(c, hsv(k[2], 0.6, 1.0) * (acc * k[0] * 0.5))
 }
 
 /// Rings on the beat.
@@ -425,7 +435,7 @@ fn look_beat_rings(uv: vec2<f32>) -> vec3<f32> {
         let down = step(abs(idx - floor(idx / lk_d(2u)) * lk_d(2u)), 0.01);
         acc = acc + ring * exp(-age * 0.8) * (1.0 + down);
     }
-    return c + lk_hsv(u.k0.z, 0.6, 1.0) * (acc * u.k0.x * 0.6);
+    return lk_add_light(c, lk_hsv(u.k0.z, 0.6, 1.0) * (acc * u.k0.x * 0.5));
 }
 ",
     cpu: beat_rings,
@@ -461,7 +471,7 @@ fn sparks(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
         }
         acc = acc + col * (burst * fade);
     }
-    c + acc * k[0]
+    add_light(c, acc * (k[0] * 0.7))
 }
 
 /// Sparks flying from the hits.
@@ -502,7 +512,7 @@ fn look_sparks(uv: vec2<f32>) -> vec3<f32> {
         }
         acc = acc + col * (burst * fade);
     }
-    return c + acc * u.k0.x;
+    return lk_add_light(c, acc * (u.k0.x * 0.7));
 }
 ",
     cpu: sparks,
@@ -533,7 +543,7 @@ fn lissajous(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let th = k[1] * u.scale();
     let core = 1.0 - smoothstep(th * 0.5, th * 0.5 + 1.0, dpx);
     let g = (-dpx / (th * 5.0)).exp() * k[3];
-    c + hsv(k[2], 0.55, 1.0) * (core + g * 0.5)
+    add_light(c, hsv(k[2], 0.55, 1.0) * (core * 0.75 + g * 0.35))
 }
 
 /// A Lissajous curve.
@@ -577,7 +587,7 @@ fn look_lissajous(uv: vec2<f32>) -> vec3<f32> {
     let th = u.k0.y * lk_scale();
     let core = 1.0 - smoothstep(th * 0.5, th * 0.5 + 1.0, dpx);
     let g = exp(-dpx / (th * 5.0)) * u.k0.w;
-    return c + lk_hsv(u.k0.z, 0.55, 1.0) * (core + g * 0.5);
+    return lk_add_light(c, lk_hsv(u.k0.z, 0.55, 1.0) * (core * 0.75 + g * 0.35));
 }
 ",
     cpu: lissajous,

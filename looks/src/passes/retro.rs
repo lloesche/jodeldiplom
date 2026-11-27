@@ -51,11 +51,11 @@ pub const CRT: Pass = Pass {
         knob("scanlines", "how strong the scan lines", (0.0, 1.0, 0.5), "share", (0.3, 0.15)),
         knob("mask", "how strong the colour mask's stripes", (0.0, 1.0, 0.4), "share", (0.2, 0.15)),
         knob("curve", "how curved the glass", (0.0, 1.0, 0.3), "share", (0.0, 0.1)),
-        knob("glow", "how much the phosphor glows", (0.0, 1.0, 0.3), "share", (0.4, 0.1)),
+        knob("glow", "how much the phosphor glows", (0.0, 1.0, 0.3), "share", (0.5, 0.1)),
     ],
     cost: 2.0,
     relief: 0.3,
-    natural: &[natural("glow", Driver::Bass, 0.4)],
+    natural: &[natural("glow", Driver::Bass, 0.7), natural("scanlines", Driver::Drums, 0.5)],
     pairs: &["vhs", "pixelate", "palette", "teletext"],
     wgsl: r"
 fn look_crt(uv: vec2<f32>) -> vec3<f32> {
@@ -131,14 +131,14 @@ pub const VHS: Pass = Pass {
     family: R,
     about: "a worn video tape: lines wobbling, the colour bleeding sideways, noise and a band of bad tracking rolling up (the 80s and 90s, camcorder, lo-fi)",
     knobs: &[
-        knob("wobble", "how much the lines wobble", (0.0, 1.0, 0.4), "share", (0.4, 0.0)),
+        knob("wobble", "how much the lines wobble", (0.0, 1.0, 0.4), "share", (0.5, 0.0)),
         knob("bleed", "how far the colour bleeds", (0.0, 1.0, 0.5), "share", (0.3, 0.01)),
         knob("noise", "how much noise and snow", (0.0, 1.0, 0.3), "share", (0.3, 0.04)),
-        knob("tracking", "how bad the tracking band", (0.0, 1.0, 0.3), "share", (0.4, 0.04)),
+        knob("tracking", "how bad the tracking band", (0.0, 1.0, 0.3), "share", (0.5, 0.04)),
     ],
     cost: 1.8,
     relief: 0.3,
-    natural: &[natural("tracking", Driver::Snare, 0.5)],
+    natural: &[natural("tracking", Driver::Snare, 0.9), natural("wobble", Driver::Bass, 0.7)],
     pairs: &["crt", "cross_process", "grain"],
     wgsl: r"
 fn lk_yiq(c: vec3<f32>) -> vec3<f32> {
@@ -209,13 +209,13 @@ pub const PIXELATE: Pass = Pass {
     family: R,
     about: "big pixels in a few shades a channel, an ordered dither between them (8-bit and 16-bit games, chiptune)",
     knobs: &[
-        knob("size", "the pixels' size", (2.0, 24.0, 6.0), "px", (3.0, 0.04)),
+        knob("size", "the pixels' size", (2.0, 24.0, 6.0), "px", (5.0, 0.04)),
         knob("levels", "how many shades a channel", (2.0, 16.0, 6.0), "steps", (0.0, 0.14)),
         knob("dither", "none (0) to a full ordered dither (1)", (0.0, 1.0, 0.6), "share", (0.2, 0.02)),
     ],
     relief: 0.5,
     cells: true,
-    natural: &[natural("size", Driver::Kick, 0.3)],
+    natural: &[natural("size", Driver::Kick, 0.7)],
     pairs: &["crt", "palette", "glitch"],
     wgsl: r"
 fn look_pixelate(uv: vec2<f32>) -> vec3<f32> {
@@ -300,11 +300,12 @@ pub const PALETTE: Pass = Pass {
     about: "an old machine's few colours, dithered: a handheld's four greens, a home computer's black-cyan-magenta-white, an eight-colour micro's, or the cover's own four (chiptune, video-game music)",
     knobs: &[
         knob("palette", "handheld greens (0), cyan-magenta (1), eight colours (2), the cover's (3)", (0.0, 3.0, 0.0), "steps", (0.0, 0.45)),
-        knob("size", "the pixels' size", (2.0, 12.0, 4.0), "px", (2.0, 0.02)),
+        knob("size", "the pixels' size", (2.0, 12.0, 4.0), "px", (3.0, 0.02)),
         knob("dither", "none (0) to a full ordered dither (1)", (0.0, 1.0, 0.5), "share", (0.2, 0.03)),
     ],
     relief: 0.5,
     cells: true,
+    natural: &[natural("size", Driver::Kick, 0.6)],
     pairs: &["crt", "pixelate"],
     wgsl: r"
 fn lk_palette_colour(which: i32, i0: i32) -> vec3<f32> {
@@ -373,11 +374,11 @@ pub const GLITCH: Pass = Pass {
     knobs: &[
         knob("amount", "how many blocks tear", (0.0, 1.0, 0.3), "share", (0.6, 0.05)),
         knob("block", "the blocks' size", (8.0, 80.0, 32.0), "px", (16.0, 0.0)),
-        knob("split", "how far the colours split", (0.0, 1.0, 0.4), "share", (0.4, 0.01)),
+        knob("split", "how far the colours split", (0.0, 1.0, 0.4), "share", (0.5, 0.01)),
     ],
     cost: 1.5,
     relief: 0.6,
-    natural: &[natural("amount", Driver::Snare, 0.8)],
+    natural: &[natural("amount", Driver::Snare, 1.0), natural("split", Driver::Kick, 0.6)],
     pairs: &["vhs", "chromatic", "xerox"],
     wgsl: r"
 fn look_glitch(uv: vec2<f32>) -> vec3<f32> {
@@ -420,12 +421,12 @@ pub const ANAGLYPH: Pass = Pass {
     family: R,
     about: "a red-and-cyan 3D picture, the two eyes' views apart (the 50s cinema, B-movies, sci-fi, fun)",
     knobs: &[
-        knob("offset", "how far apart the eyes' views", (1.0, 20.0, 6.0), "px", (4.0, 0.01)),
+        knob("offset", "how far apart the eyes' views", (1.0, 20.0, 6.0), "px", (6.0, 0.01)),
         knob("amount", "how much of the 3D over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.05)),
         knob("depth", "how much brighter parts come forward", (0.0, 1.0, 0.5), "share", (0.2, 0.01)),
     ],
     relief: 0.4,
-    natural: &[natural("offset", Driver::Kick, 0.5)],
+    natural: &[natural("offset", Driver::Kick, 0.8)],
     pairs: &["grain", "technicolor"],
     wgsl: r"
 fn look_anaglyph(uv: vec2<f32>) -> vec3<f32> {
@@ -458,11 +459,11 @@ pub const CHROMATIC: Pass = Pass {
     family: R,
     about: "the colours split apart, red one way and blue the other, as a cheap lens or a shaken screen does (psychedelia, glitch, drops)",
     knobs: &[
-        knob("amount", "how far the colours split (up to 12 pixels)", (0.0, 1.0, 0.3), "share", (0.5, 0.01)),
+        knob("amount", "how far the colours split (up to 12 pixels)", (0.0, 1.0, 0.3), "share", (0.6, 0.01)),
         knob("radial", "the same way everywhere (0) to out from the middle (1)", (0.0, 1.0, 1.0), "share", (0.0, 0.0)),
         knob("angle", "the way they split, when not out from the middle", (0.0, 1.0, 0.0), "turns", (0.2, 0.0)),
     ],
-    natural: &[natural("amount", Driver::Kick, 0.6)],
+    natural: &[natural("amount", Driver::Kick, 0.9)],
     pairs: &["glitch", "hue", "liquid"],
     wgsl: r"
 fn look_chromatic(uv: vec2<f32>) -> vec3<f32> {

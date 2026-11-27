@@ -1,0 +1,1665 @@
+{
+ "family": "themes",
+ "about": "The lyrics' themes, each in a look of its own, over any genre.",
+ "looks": [
+  {
+   "id": "theme-love",
+   "name": "Love",
+   "about": "a song of love",
+   "tags": [
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-love-film",
+   "name": "Love, on film",
+   "about": "a song of love on film",
+   "tags": [
+    "love",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-heartbreak",
+   "name": "Heartbreak",
+   "about": "a song of heartbreak",
+   "tags": [
+    "heartbreak"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.6
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-heartbreak-film",
+   "name": "Heartbreak, on film",
+   "about": "a song of heartbreak on film",
+   "tags": [
+    "heartbreak",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.6
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-longing",
+   "name": "Longing",
+   "about": "a song of longing",
+   "tags": [
+    "longing"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-longing-film",
+   "name": "Longing, on film",
+   "about": "a song of longing on film",
+   "tags": [
+    "longing",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-party",
+   "name": "Party",
+   "about": "a song of party",
+   "tags": [
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-party-film",
+   "name": "Party, on film",
+   "about": "a song of party on film",
+   "tags": [
+    "party",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-rebellion",
+   "name": "Rebellion and protest",
+   "about": "a song of rebellion and protest",
+   "tags": [
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5,
+      "size": 1.8
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-rebellion-film",
+   "name": "Rebellion and protest, on film",
+   "about": "a song of rebellion and protest on film",
+   "tags": [
+    "rebellion",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5,
+      "size": 1.8
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-freedom",
+   "name": "Freedom and road trips",
+   "about": "a song of freedom and road trips",
+   "tags": [
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.07
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-freedom-film",
+   "name": "Freedom and road trips, on film",
+   "about": "a song of freedom and road trips on film",
+   "tags": [
+    "freedom",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.07
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-nostalgia",
+   "name": "Nostalgia and childhood",
+   "about": "a song of nostalgia and childhood",
+   "tags": [
+    "nostalgia"
+   ],
+   "layers": [
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.5,
+      "fade": 0.6,
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.06
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-nostalgia-film",
+   "name": "Nostalgia and childhood, on film",
+   "about": "a song of nostalgia and childhood on film",
+   "tags": [
+    "nostalgia",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.5,
+      "fade": 0.6,
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.06
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-family",
+   "name": "Family",
+   "about": "a song of family",
+   "tags": [
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.35,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-family-film",
+   "name": "Family, on film",
+   "about": "a song of family on film",
+   "tags": [
+    "family",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.35,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-grief",
+   "name": "Grief and death",
+   "about": "a song of grief and death",
+   "tags": [
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.35,
+      "low": 0.7
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-grief-film",
+   "name": "Grief and death, on film",
+   "about": "a song of grief and death on film",
+   "tags": [
+    "grief",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.35,
+      "low": 0.7
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-faith",
+   "name": "Faith",
+   "about": "a song of faith",
+   "tags": [
+    "faith"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.12,
+      "tint": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-faith-film",
+   "name": "Faith, on film",
+   "about": "a song of faith on film",
+   "tags": [
+    "faith",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.12,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-nature",
+   "name": "Nature (seasons, weather, sea, mountains)",
+   "about": "a song of nature (seasons, weather, sea, mountains)",
+   "tags": [
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-nature-film",
+   "name": "Nature (seasons, weather, sea, mountains), on film",
+   "about": "a song of nature (seasons, weather, sea, mountains) on film",
+   "tags": [
+    "nature",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-sea",
+   "name": "The sea",
+   "about": "a song of the sea",
+   "tags": [
+    "sea"
+   ],
+   "layers": [
+    {
+     "pass": "underwater",
+     "knobs": {
+      "amount": 0.5,
+      "caustics": 0.5,
+      "depth": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-sea-film",
+   "name": "The sea, on film",
+   "about": "a song of the sea on film",
+   "tags": [
+    "sea",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "underwater",
+     "knobs": {
+      "amount": 0.5,
+      "caustics": 0.5,
+      "depth": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-mountains",
+   "name": "Mountains",
+   "about": "a song of mountains",
+   "tags": [
+    "mountains"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.58,
+      "horizon": 0.55
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-mountains-film",
+   "name": "Mountains, on film",
+   "about": "a song of mountains on film",
+   "tags": [
+    "mountains",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.58,
+      "horizon": 0.55
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-night",
+   "name": "Night and city",
+   "about": "a song of night and city",
+   "tags": [
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-night-film",
+   "name": "Night and city, on film",
+   "about": "a song of night and city on film",
+   "tags": [
+    "night",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-space",
+   "name": "Space and stars",
+   "about": "a song of space and stars",
+   "tags": [
+    "space"
+   ],
+   "layers": [
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-space-film",
+   "name": "Space and stars, on film",
+   "about": "a song of space and stars on film",
+   "tags": [
+    "space",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "starfield",
+     "knobs": {
+      "amount": 0.6
+     }
+    },
+    {
+     "pass": "aurora",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.7
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-dreams",
+   "name": "Dreams and the surreal",
+   "about": "a song of dreams and the surreal",
+   "tags": [
+    "dreams"
+   ],
+   "layers": [
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-dreams-film",
+   "name": "Dreams and the surreal, on film",
+   "about": "a song of dreams and the surreal on film",
+   "tags": [
+    "dreams",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "diffusion",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.2
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-drugs",
+   "name": "Drugs and psychedelia",
+   "about": "a song of drugs and psychedelia",
+   "tags": [
+    "drugs"
+   ],
+   "layers": [
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.4,
+      "speed": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.7
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    }
+   ]
+  },
+  {
+   "id": "theme-drugs-film",
+   "name": "Drugs and psychedelia, on film",
+   "about": "a song of drugs and psychedelia on film",
+   "tags": [
+    "drugs",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "hue",
+     "knobs": {
+      "spread": 0.4,
+      "speed": 0.3
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "kaleidoscope",
+     "drive": [
+      {
+       "knob": "mix",
+       "by": "instrumental",
+       "amount": 0.7
+      },
+      {
+       "knob": "turn",
+       "by": "bar_phase",
+       "amount": 0.25
+      }
+     ],
+     "mix": 0.0
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-money",
+   "name": "Money and hustle",
+   "about": "a song of money and hustle",
+   "tags": [
+    "money"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.5,
+      "hue": 0.12,
+      "tint": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-money-film",
+   "name": "Money and hustle, on film",
+   "about": "a song of money and hustle on film",
+   "tags": [
+    "money",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "threshold": 0.5,
+      "hue": 0.12,
+      "tint": 0.6
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-war",
+   "name": "War",
+   "about": "a song of war",
+   "tags": [
+    "war"
+   ],
+   "layers": [
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.8
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-war-film",
+   "name": "War, on film",
+   "about": "a song of war on film",
+   "tags": [
+    "war",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "bleach_bypass",
+     "knobs": {
+      "amount": 0.8
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-hometown",
+   "name": "Hometown",
+   "about": "a song of hometown",
+   "tags": [
+    "hometown"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-hometown-film",
+   "name": "Hometown, on film",
+   "about": "a song of hometown on film",
+   "tags": [
+    "hometown",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-summer",
+   "name": "Summer",
+   "about": "a song of summer",
+   "tags": [
+    "summer"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.6
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-summer-film",
+   "name": "Summer, on film",
+   "about": "a song of summer on film",
+   "tags": [
+    "summer",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.6
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-winter",
+   "name": "Winter",
+   "about": "a song of winter",
+   "tags": [
+    "winter"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.7
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-winter-film",
+   "name": "Winter, on film",
+   "about": "a song of winter on film",
+   "tags": [
+    "winter",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.7
+     }
+    },
+    {
+     "pass": "snow",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-horror",
+   "name": "Horror",
+   "about": "a song of horror",
+   "tags": [
+    "horror"
+   ],
+   "layers": [
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "negative",
+     "knobs": {
+      "amount": 0.25,
+      "xray": 0.9
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-horror-film",
+   "name": "Horror, on film",
+   "about": "a song of horror on film",
+   "tags": [
+    "horror",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.45,
+      "hue": 0.33,
+      "low": 0.6
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.7
+     }
+    },
+    {
+     "pass": "negative",
+     "knobs": {
+      "amount": 0.25,
+      "xray": 0.9
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-humour",
+   "name": "Humour",
+   "about": "a song of humour",
+   "tags": [
+    "humour"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-humour-film",
+   "name": "Humour, on film",
+   "about": "a song of humour on film",
+   "tags": [
+    "humour",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "posterize_ink",
+     "knobs": {
+      "steps": 5,
+      "ink": 0.6,
+      "vivid": 1.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-empowerment",
+   "name": "Empowerment",
+   "about": "a song of empowerment",
+   "tags": [
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-empowerment-film",
+   "name": "Empowerment, on film",
+   "about": "a song of empowerment on film",
+   "tags": [
+    "empowerment",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.3
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-autumn",
+   "name": "Autumn",
+   "about": "a song of autumn",
+   "tags": [
+    "autumn"
+   ],
+   "layers": [
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.4,
+      "kind": 1.0
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-autumn-film",
+   "name": "Autumn, on film",
+   "about": "a song of autumn on film",
+   "tags": [
+    "autumn",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.4,
+      "kind": 1.0
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-spring",
+   "name": "Spring",
+   "about": "a song of spring",
+   "tags": [
+    "spring"
+   ],
+   "layers": [
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.4,
+      "kind": 0.0
+     }
+    },
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "theme-spring-film",
+   "name": "Spring, on film",
+   "about": "a song of spring on film",
+   "tags": [
+    "spring",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "petals",
+     "knobs": {
+      "amount": 0.4,
+      "kind": 0.0
+     }
+    },
+    {
+     "pass": "lift_gamma_gain",
+     "knobs": {
+      "lift": 0.25
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  }
+ ]
+}

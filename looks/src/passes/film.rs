@@ -38,11 +38,11 @@ pub const GRAIN: Pass = Pass {
     family: F,
     about: "film grain: fine to coarse, mono or coloured, strongest in the midtones, new every film frame",
     knobs: &[
-        knob("amount", "how much grain", (0.0, 1.0, 0.35), "share", (0.3, 0.02)),
-        knob("size", "the grains' size", (0.6, 3.0, 1.2), "px", (0.6, 0.0)),
+        knob("amount", "how much grain", (0.0, 1.0, 0.35), "share", (0.5, 0.02)),
+        knob("size", "the grains' size", (0.6, 3.0, 1.2), "px", (1.0, 0.0)),
         knob("chroma", "mono (0) to coloured grain (1)", (0.0, 1.0, 0.15), "share", (0.2, 0.0)),
     ],
-    natural: &[natural("amount", Driver::Bass, 0.5)],
+    natural: &[natural("amount", Driver::Bass, 0.8), natural("size", Driver::Drums, 0.6)],
     pairs: &["halation", "vignette", "curve", "gate_weave"],
     wgsl: r"
 fn look_grain(uv: vec2<f32>) -> vec3<f32> {
@@ -108,14 +108,14 @@ pub const HALATION: Pass = Pass {
             "how strong the glow",
             (0.0, 1.0, 0.5),
             "share",
-            (0.3, 0.06),
+            (0.5, 0.06),
         ),
         knob(
             "radius",
             "how far it spreads",
             (2.0, 40.0, 12.0),
             "px",
-            (6.0, 0.02),
+            (10.0, 0.02),
         ),
         knob(
             "warmth",
@@ -126,7 +126,10 @@ pub const HALATION: Pass = Pass {
         ),
     ],
     cost: 3.0,
-    natural: &[natural("amount", Driver::Bass, 0.4)],
+    natural: &[
+        natural("amount", Driver::Bass, 0.8),
+        natural("radius", Driver::Kick, 0.6),
+    ],
     pairs: &["grain", "split_tone", "vignette"],
     wgsl: r"
 fn look_halation(uv: vec2<f32>) -> vec3<f32> {
@@ -159,7 +162,7 @@ pub const GLOW: Pass = Pass {
             "how strong the glow",
             (0.0, 1.0, 0.4),
             "share",
-            (0.4, 0.1),
+            (0.5, 0.1),
         ),
         knob(
             "threshold",
@@ -173,7 +176,7 @@ pub const GLOW: Pass = Pass {
             "how far it spreads",
             (4.0, 60.0, 20.0),
             "px",
-            (10.0, 0.03),
+            (16.0, 0.03),
         ),
         knob(
             "hue",
@@ -191,7 +194,10 @@ pub const GLOW: Pass = Pass {
         ),
     ],
     cost: 3.0,
-    natural: &[natural("amount", Driver::Vocals, 0.6)],
+    natural: &[
+        natural("amount", Driver::Vocals, 0.8),
+        natural("radius", Driver::Bass, 0.6),
+    ],
     pairs: &["diffusion", "neon_edges", "lift_gamma_gain"],
     wgsl: r"
 fn look_glow(uv: vec2<f32>) -> vec3<f32> {
@@ -225,11 +231,11 @@ pub const DIFFUSION: Pass = Pass {
     family: F,
     about: "a diffusion filter: soft focus, lights blooming gently, blacks a little lifted (dreamy, romantic, 70s)",
     knobs: &[
-        knob("amount", "how soft", (0.0, 1.0, 0.4), "share", (0.3, 0.08)),
-        knob("radius", "how far the softness reaches", (2.0, 30.0, 8.0), "px", (4.0, 0.02)),
+        knob("amount", "how soft", (0.0, 1.0, 0.4), "share", (0.4, 0.08)),
+        knob("radius", "how far the softness reaches", (2.0, 30.0, 8.0), "px", (8.0, 0.02)),
     ],
     cost: 2.5,
-    natural: &[natural("amount", Driver::Vocals, 0.3)],
+    natural: &[natural("amount", Driver::Vocals, 0.7), natural("radius", Driver::Bass, 0.5)],
     pairs: &["glow", "curve", "grain"],
     wgsl: r"
 fn look_diffusion(uv: vec2<f32>) -> vec3<f32> {
@@ -271,7 +277,7 @@ pub const GATE_WEAVE: Pass = Pass {
             "how far it drifts (up to 2.5 pixels)",
             (0.0, 1.0, 0.4),
             "share",
-            (0.3, 0.0),
+            (0.6, 0.0),
         ),
         knob(
             "speed",
@@ -281,7 +287,7 @@ pub const GATE_WEAVE: Pass = Pass {
             (0.5, 0.0),
         ),
     ],
-    natural: &[natural("amount", Driver::BassNote, 0.3)],
+    natural: &[natural("amount", Driver::BassNote, 0.9)],
     pairs: &["grain", "film_damage", "sepia"],
     wgsl: r"
 fn look_gate_weave(uv: vec2<f32>) -> vec3<f32> {
@@ -326,10 +332,10 @@ pub const LIGHT_LEAK: Pass = Pass {
     knobs: &[
         knob("amount", "how bright the leak", (0.0, 1.0, 0.5), "share", (0.5, 0.15)),
         knob("hue", "its colour (orange, red, magenta ...)", (0.0, 1.0, 0.06), "turns", (0.1, 0.03)),
-        knob("place", "where round the frame it comes in", (0.0, 1.0, 0.15), "turns", (0.2, 0.0)),
+        knob("place", "where round the frame it comes in", (0.0, 1.0, 0.15), "turns", (0.3, 0.0)),
         knob("size", "how far into the frame it reaches", (0.0, 1.0, 0.5), "share", (0.3, 0.1)),
     ],
-    natural: &[natural("amount", Driver::Downbeat, 0.5)],
+    natural: &[natural("amount", Driver::Downbeat, 0.7), natural("place", Driver::Part, 0.6)],
     pairs: &["grain", "polaroid", "cross_process"],
     wgsl: r"
 fn look_light_leak(uv: vec2<f32>) -> vec3<f32> {
@@ -377,7 +383,7 @@ pub const VIGNETTE: Pass = Pass {
             "how far in the darkening starts",
             (0.0, 1.0, 0.5),
             "share",
-            (0.2, 0.2),
+            (0.3, 0.2),
         ),
         knob(
             "shape",
@@ -387,7 +393,10 @@ pub const VIGNETTE: Pass = Pass {
             (0.0, 0.1),
         ),
     ],
-    natural: &[natural("amount", Driver::Quiet, 0.6)],
+    natural: &[
+        natural("amount", Driver::Quiet, 0.8),
+        natural("softness", Driver::Kick, 0.6),
+    ],
     pairs: &["grain", "curve", "sepia"],
     wgsl: r"
 fn look_vignette(uv: vec2<f32>) -> vec3<f32> {
@@ -437,10 +446,11 @@ pub const POLAROID: Pass = Pass {
     about: "an instant photo: the picture in a white frame with a wide bottom, faded and warm (family, nostalgia, summer)",
     knobs: &[
         knob("frame", "how wide the white frame (0: none)", (0.0, 1.0, 0.6), "share", (0.0, 0.25)),
-        knob("fade", "how faded, lifted and teal in the shadows", (0.0, 1.0, 0.5), "share", (0.2, 0.08)),
-        knob("warmth", "cooler (-) or warmer (+)", (-1.0, 1.0, 0.3), "share", (0.2, 0.01)),
+        knob("fade", "how faded, lifted and teal in the shadows", (0.0, 1.0, 0.5), "share", (0.3, 0.08)),
+        knob("warmth", "cooler (-) or warmer (+)", (-1.0, 1.0, 0.3), "share", (0.5, 0.01)),
     ],
     cost: 1.2,
+    natural: &[natural("warmth", Driver::Part, 0.6), natural("fade", Driver::Quiet, 0.5)],
     pairs: &["light_leak", "grain", "vignette"],
     wgsl: r"
 fn look_polaroid(uv: vec2<f32>) -> vec3<f32> {
@@ -501,18 +511,21 @@ pub const FILM_DAMAGE: Pass = Pass {
             "how much dust",
             (0.0, 1.0, 0.4),
             "share",
-            (0.4, 0.01),
+            (0.5, 0.01),
         ),
         knob(
             "age",
             "how worn: scratches and darker dirt",
             (0.0, 1.0, 0.5),
             "share",
-            (0.2, 0.01),
+            (0.3, 0.01),
         ),
     ],
     cells: true,
-    natural: &[natural("amount", Driver::Snare, 0.4)],
+    natural: &[
+        natural("amount", Driver::Snare, 0.9),
+        natural("age", Driver::Bass, 0.5),
+    ],
     pairs: &["sepia", "gate_weave", "grain", "vignette"],
     wgsl: r"
 fn look_film_damage(uv: vec2<f32>) -> vec3<f32> {

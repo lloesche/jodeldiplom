@@ -1226,7 +1226,8 @@ really found, as its workers tell it: never a progress they did not tell.
   mode draws them, its stage over them, with the tab's look in force
   while it shows; elsewhere the look in force is the song's own, else
   the theme's (none in classic and spooky: their frames as before). Its
-  keys: `↑` `↓` the presets (drawn at once), `pgup` `pgdn` the families,
+  keys: `↑` `↓` the looks (drawn at once: every preset by family, then
+  every pass as a look of its own under its pass family), `pgup` `pgdn` the families,
   `/` searches them as it is typed (`enter` keeps the search, `esc`
   clears it), `[` `]` the stack's passes, `,` `.` move the selected one,
   `del` takes it out, `C` copies the stack as JSON, `K` keeps it.
@@ -1244,7 +1245,19 @@ really found, as its workers tell it: never a progress they did not tell.
   the fast and the slow drivers move under the flash limits, at most six
   passes within the budget (the dearest optional one dropped, always the
   same); what the guards measure on the frames drawn shows under the
-  picture (flashes a second, the lyrics' contrast, the cost).
+  picture (flashes a second, the lyrics' contrast, the cost, the
+  exposure and the strength). A look never washes the frame out or
+  blacks it out: over the song's picture it is drawn at the strongest
+  strength that keeps its frames within the exposure guard, found once
+  for the look, the song and the picture; the feedback's echoes pass a
+  soft knee, never piling up to white. Every preset and every pass keeps
+  every guard through a whole song, frame by frame; every preset over
+  real songs' curves too, where the machine keeps them. Where a look
+  draws, the stage's text over it (the count-in, the title and artist)
+  is outlined dark as the lyrics are.
+  - `every_look_keeps_the_guards_over_a_whole_song` (looks)
+  - `every_preset_keeps_the_guards_over_real_songs`
+  - `text_over_a_look_is_outlined` (`gui::stage::lyrics`)
   - `every_number_is_held_to_its_range` (looks)
   - `over_the_budget_the_dearest_optional_pass_goes` (looks)
   - `the_music_moves_the_light_only_so_far` (looks)
@@ -1261,7 +1274,10 @@ really found, as its workers tell it: never a progress they did not tell.
 - **L5.** The music is read at the song's time as heard, the same time
   the stage and the lyrics draw at: the song's curves worked out once
   before it plays, a moment's pulse peaking on it; the singing's live
-  signals on its own clock (the voice's lag taken off).
+  signals on its own clock (the voice's lag taken off). Every bar's first
+  beat and every kick peaks on the frame whose heard time is nearest it,
+  through a pause (the look holding still) and a seek.
+  - `the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause`
   - `a_pulse_peaks_on_its_moment` (looks)
   - `the_same_time_reads_the_same` (looks)
   - `the_curves_find_what_the_song_has` (looks)

@@ -1,0 +1,811 @@
+{
+ "family": "world",
+ "about": "Music from everywhere: colour, heat and dance.",
+ "looks": [
+  {
+   "id": "salsa",
+   "name": "Salsa",
+   "about": "Salsa: its own look",
+   "tags": [
+    "salsa"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.97,
+      "middle": 0.03,
+      "light": 0.12,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.08,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.05
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "salsa-70s",
+   "name": "Salsa, 70s film stock",
+   "about": "Salsa as in the 70s film stock",
+   "tags": [
+    "salsa",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.97,
+      "middle": 0.03,
+      "light": 0.12,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.08,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.05
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "salsa-party",
+   "name": "Salsa, party",
+   "about": "Salsa for a song of party",
+   "tags": [
+    "salsa",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.97,
+      "middle": 0.03,
+      "light": 0.12,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.08,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.05
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "salsa-love",
+   "name": "Salsa, love",
+   "about": "Salsa for a song of love",
+   "tags": [
+    "salsa",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.97,
+      "middle": 0.03,
+      "light": 0.12,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.08,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.05
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "salsa-summer",
+   "name": "Salsa, summer",
+   "about": "Salsa for a song of summer",
+   "tags": [
+    "salsa",
+    "summer"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.97,
+      "middle": 0.03,
+      "light": 0.12,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.08,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.05
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "salsa-70s-party",
+   "name": "Salsa, 70s film stock, party",
+   "about": "Salsa of party as in the 70s film stock",
+   "tags": [
+    "salsa",
+    "70s",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "tritone",
+     "knobs": {
+      "dark": 0.97,
+      "middle": 0.03,
+      "light": 0.12,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.08,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.05
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.2
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.1,
+      "fade": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "flamenco",
+   "name": "Flamenco",
+   "about": "Flamenco: its own look",
+   "tags": [
+    "flamenco"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    }
+   ]
+  },
+  {
+   "id": "flamenco-1950s",
+   "name": "Flamenco, 1950s Technicolor",
+   "about": "Flamenco as in the 1950s Technicolor",
+   "tags": [
+    "flamenco",
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    },
+    {
+     "pass": "halation",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "flamenco-love",
+   "name": "Flamenco, love",
+   "about": "Flamenco for a song of love",
+   "tags": [
+    "flamenco",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "flamenco-heartbreak",
+   "name": "Flamenco, heartbreak",
+   "about": "Flamenco for a song of heartbreak",
+   "tags": [
+    "flamenco",
+    "heartbreak"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.6
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "flamenco-summer",
+   "name": "Flamenco, summer",
+   "about": "Flamenco for a song of summer",
+   "tags": [
+    "flamenco",
+    "summer"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.6
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.5,
+      "hue": 0.08
+     }
+    }
+   ]
+  },
+  {
+   "id": "flamenco-1950s-love",
+   "name": "Flamenco, 1950s Technicolor, love",
+   "about": "Flamenco of love as in the 1950s Technicolor",
+   "tags": [
+    "flamenco",
+    "1950s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.0,
+      "light": 0.08,
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "heat_haze",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "chromatic",
+     "knobs": {
+      "amount": 0.1
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "bollywood",
+   "name": "Bollywood",
+   "about": "Bollywood: its own look",
+   "tags": [
+    "bollywood"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.45
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "bollywood-1950s",
+   "name": "Bollywood, 1950s Technicolor",
+   "about": "Bollywood as in the 1950s Technicolor",
+   "tags": [
+    "bollywood",
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.45
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "bollywood-love",
+   "name": "Bollywood, love",
+   "about": "Bollywood for a song of love",
+   "tags": [
+    "bollywood",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.45
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "bollywood-party",
+   "name": "Bollywood, party",
+   "about": "Bollywood for a song of party",
+   "tags": [
+    "bollywood",
+    "party"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.45
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "bollywood-family",
+   "name": "Bollywood, family",
+   "about": "Bollywood for a song of family",
+   "tags": [
+    "bollywood",
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.45
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.35,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "bollywood-1950s-love",
+   "name": "Bollywood, 1950s Technicolor, love",
+   "about": "Bollywood of love as in the 1950s Technicolor",
+   "tags": [
+    "bollywood",
+    "1950s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.45
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.12,
+      "tint": 0.5
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.1
+     }
+    },
+    {
+     "pass": "confetti",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -226,6 +226,7 @@ impl Look {
             layers,
             dropped,
             notes,
+            strength: 1.0,
         }
     }
 }
@@ -250,6 +251,10 @@ pub struct Checked {
     pub dropped: Vec<&'static str>,
     /// What was changed, for people.
     pub notes: Vec<String>,
+    /// How strongly it draws (its passes' mixes times it, 0 to 1): 1 as
+    /// it is made, less where its frames over a picture would be washed
+    /// out or blacked out ([`guard::strength`]).
+    pub strength: f32,
 }
 
 /// A pass as it draws in a checked look: the pass, its knobs (in its
@@ -307,6 +312,10 @@ pub struct Moment {
     pub palette: [[f32; 3]; 3],
 }
 
+/// A palette to measure a look with where no cover gives one: warm,
+/// cool and near black.
+pub const MEASURING_PALETTE: [[f32; 3]; 3] = [[0.9, 0.5, 0.2], [0.2, 0.4, 0.8], [0.1, 0.1, 0.12]];
+
 impl Checked {
     /// What it costs the GPU ([`Pass::cost`] added up).
     pub fn cost(&self) -> f32 {
@@ -362,7 +371,12 @@ impl Checked {
                     k,
                     band: [top, bottom, l.pass.relief, guard::CEILING],
                     pal,
-                    mix: [mix.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+                    mix: [
+                        mix.clamp(0.0, 1.0) * self.strength.clamp(0.0, 1.0),
+                        0.0,
+                        0.0,
+                        0.0,
+                    ],
                     data,
                 };
                 (l.pass, ctx)

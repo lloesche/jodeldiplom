@@ -280,7 +280,11 @@ fn every_look_pass_s_pipeline_compiles() {
         }
     }
     let fault = pollster::block_on(scope.pop());
-    assert!(fault.is_none(), "{fault:?}");
+    assert!(
+        fault.is_none(),
+        "{}",
+        fault.map(|f| f.to_string()).unwrap_or_default()
+    );
 }
 
 /// The music's uniform as the shaders read it, field by field by the

@@ -451,6 +451,24 @@ runs had single frames over the budgets, in steps that draw no fog
 (the lyrics scene's bursts and composite, a tier's bloom), as often in
 classic as in Spooky: the machine's.
 
+**Looks.** A song's look (`gui::backdrop::looks`, `docs/looks.md`) is
+not a screen pass: after the backdrop, each of its passes draws the
+whole window once (a pipeline a pass, made the first time it draws),
+each reading what the one before drew, in half floats; the stage is
+drawn over the last. With no look (Classic and Spooky) nothing more is
+drawn. A stack may cost 8 (a whole-window pass reading the picture once
+costs 1) in at most six passes; over it, its dearest pass not kept goes.
+`frame_cost --look heaviest` times the four presets that cost the most
+over the normal scene's singing: on the RTX 5080 at 3024 × 1964 (the
+machine shared with other agents' builds) the `look` step's median was
+0.65–0.85 ms, its worst 1.09–1.22 ms; the GPU's total median 1.89–2.05
+ms, its worst 2.92–3.62 ms; within the budgets (4 ms a frame, 2.5 ms a
+step). The look's passes' pipelines are made as it first draws (a new
+look's first frame), not as the window opens: 88 of them would add to
+every start. An M-series Mac's GPU is slower at whole-window passes:
+the budget there is to be measured (`frame_cost --look heaviest
+--budget 4 --step-budget 2.5`) before a look is given to a theme.
+
 **The diploma's paper, baked.** `frame_cost` on the M4 Max (Metal,
 3024 × 1964, two runs) had every scene within its budget but the
 diploma: 1016 frames, the GPU's total median 4.0 ms, mean 4.0, worst

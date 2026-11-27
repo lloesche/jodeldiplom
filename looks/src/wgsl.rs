@@ -10,7 +10,8 @@ use crate::passes::{self, PASSES};
 
 /// What a pass does at the end, on both sides: its mix over the picture
 /// under it, the lyric band given back its share of the picture and held
-/// under the ceiling (or what the picture had there), the light kept
+/// under the ceiling of light (luminance, linear: or what the picture had
+/// there), the light kept
 /// between none and four.
 pub const FINISH: &str = r"
 fn lk_band(y: f32) -> f32 {
@@ -21,24 +22,24 @@ fn lk_finish(c: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     var o = mix(s, c, u.mix.x);
     let w = lk_band(uv.y);
     o = mix(o, s, w * u.band.z);
-    let ceiling = max(u.band.w, lk_luma(s));
-    let l = lk_luma(o);
-    o = o * mix(1.0, min(1.0, ceiling / max(l, 1e-4)), w);
+    let ceiling = max(u.band.w, lk_lum(s));
+    let l = lk_lum(o);
+    o = o * mix(1.0, pow(min(1.0, ceiling / max(l, 1e-6)), 1.0 / 2.2), w);
     return clamp(o, vec3<f32>(0.0), vec3<f32>(4.0));
 }
 ";
 
 /// [`FINISH`] on the processor: `c` the pass's colour at `uv`.
 pub fn finish(u: &Ctx, s: &dyn Src, c: V3, uv: V2) -> V3 {
-    use crate::math::{luma, mix, mix3, smoothstep};
+    use crate::math::{lum, mix, mix3, smoothstep};
     let src = s.src(uv);
     let mut o = mix3(src, c, u.mix[0]);
     let w = smoothstep(u.band[0] - 0.04, u.band[0], uv.y)
         * (1.0 - smoothstep(u.band[1], u.band[1] + 0.04, uv.y));
     o = mix3(o, src, w * u.band[2]);
-    let ceiling = u.band[3].max(luma(src));
-    let l = luma(o);
-    o = o * mix(1.0, (ceiling / l.max(1e-4)).min(1.0), w);
+    let ceiling = u.band[3].max(lum(src));
+    let l = lum(o);
+    o = o * mix(1.0, (ceiling / l.max(1e-6)).min(1.0).powf(1.0 / 2.2), w);
     o.clamp(0.0, 4.0)
 }
 

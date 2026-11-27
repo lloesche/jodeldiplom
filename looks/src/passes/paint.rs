@@ -53,11 +53,11 @@ pub const KUWAHARA: Pass = Pass {
     family: A,
     about: "a painterly smear that keeps the edges: flat patches of colour like brushwork (oil, gouache, anime backgrounds)",
     knobs: &[
-        knob("radius", "the brush's size", (2.0, 10.0, 4.0), "px", (2.0, 0.02)),
+        knob("radius", "the brush's size", (2.0, 10.0, 4.0), "px", (3.0, 0.02)),
         knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.02)),
     ],
     cost: 4.0,
-    natural: &[natural("radius", Driver::Bass, 0.4)],
+    natural: &[natural("radius", Driver::Bass, 0.8)],
     pairs: &["canvas", "oil_paint", "saturation"],
     wgsl: r"
 fn look_kuwahara(uv: vec2<f32>) -> vec3<f32> {
@@ -118,14 +118,14 @@ pub const WATERCOLOR: Pass = Pass {
     family: A,
     about: "watercolour: soft washes that bleed at wobbly edges, pigment pooling darker there, the paper showing through (folk, childhood, gentle songs)",
     knobs: &[
-        knob("wash", "how far the colours wash together", (0.0, 1.0, 0.6), "share", (0.3, 0.02)),
-        knob("bleed", "how wobbly the edges and how dark they pool", (0.0, 1.0, 0.5), "share", (0.3, 0.04)),
+        knob("wash", "how far the colours wash together", (0.0, 1.0, 0.6), "share", (0.4, 0.02)),
+        knob("bleed", "how wobbly the edges and how dark they pool", (0.0, 1.0, 0.5), "share", (0.4, 0.04)),
         knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.15)),
         knob("granulation", "the pigment's grain in the darks", (0.0, 1.0, 0.4), "share", (0.2, 0.02)),
     ],
     cost: 2.5,
     relief: 0.2,
-    natural: &[natural("bleed", Driver::Vocals, 0.3)],
+    natural: &[natural("bleed", Driver::Vocals, 0.7), natural("wash", Driver::Bass, 0.5)],
     pairs: &["canvas", "lift_gamma_gain", "saturation"],
     wgsl: r"
 fn look_watercolor(uv: vec2<f32>) -> vec3<f32> {
@@ -185,13 +185,13 @@ pub const OIL_PAINT: Pass = Pass {
     about: "oil paint: the colour smeared in strokes that follow a flow, their impasto ridges lit from one side (classic, ballads, folk portraits)",
     knobs: &[
         knob("brush", "the strokes' size", (2.0, 12.0, 5.0), "px", (2.0, 0.02)),
-        knob("relief", "how much the ridges catch the light", (0.0, 1.0, 0.5), "share", (0.3, 0.03)),
-        knob("smear", "how long the strokes", (0.0, 1.0, 0.6), "share", (0.3, 0.02)),
+        knob("relief", "how much the ridges catch the light", (0.0, 1.0, 0.5), "share", (0.4, 0.03)),
+        knob("smear", "how long the strokes", (0.0, 1.0, 0.6), "share", (0.4, 0.02)),
         knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.03)),
     ],
     cost: 3.0,
     relief: 0.2,
-    natural: &[natural("relief", Driver::Bass, 0.4)],
+    natural: &[natural("relief", Driver::Bass, 0.8), natural("smear", Driver::Vocals, 0.6)],
     pairs: &["kuwahara", "canvas", "vignette"],
     wgsl: r"
 fn look_oil_paint(uv: vec2<f32>) -> vec3<f32> {
@@ -234,9 +234,10 @@ pub const CANVAS: Pass = Pass {
     about: "the ground showing through: canvas weave or paper fibre over the whole picture, the finish of every painted or drawn look",
     knobs: &[
         knob("kind", "canvas weave (0) to paper fibre (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.02)),
-        knob("amount", "how strongly the ground shows", (0.0, 1.0, 0.4), "share", (0.3, 0.04)),
+        knob("amount", "how strongly the ground shows", (0.0, 1.0, 0.4), "share", (0.4, 0.04)),
         knob("scale", "the weave's or fibre's size", (0.5, 3.0, 1.0), "share", (0.3, 0.01)),
     ],
+    natural: &[natural("amount", Driver::Drums, 0.6)],
     pairs: &["oil_paint", "watercolor", "charcoal", "woodcut"],
     wgsl: r"
 fn look_canvas(uv: vec2<f32>) -> vec3<f32> {
@@ -279,12 +280,13 @@ pub const CHARCOAL: Pass = Pass {
     about: "charcoal or chalk on paper: smudged darks in strokes, the paper's tooth catching the dust (blues, folk, grief, sketches)",
     knobs: &[
         knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.4)),
-        knob("smudge", "how smudged", (0.0, 1.0, 0.4), "share", (0.3, 0.02)),
+        knob("smudge", "how smudged", (0.0, 1.0, 0.4), "share", (0.4, 0.02)),
         knob("grain", "how much of the paper's tooth shows", (0.0, 1.0, 0.6), "share", (0.2, 0.03)),
         knob("contrast", "how dark the darks", (0.0, 1.0, 0.5), "share", (0.3, 0.25)),
     ],
     cost: 1.8,
     relief: 0.3,
+    natural: &[natural("smudge", Driver::Bass, 0.7)],
     pairs: &["canvas", "vignette", "sepia"],
     wgsl: r"
 fn look_charcoal(uv: vec2<f32>) -> vec3<f32> {
@@ -332,12 +334,13 @@ pub const PASTEL: Pass = Pass {
     about: "wax crayon or soft pastel: colour laid in strokes, the paper's tooth showing white through it (children's songs, childhood, sunny pop)",
     knobs: &[
         knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.25)),
-        knob("stroke", "the strokes' size", (2.0, 12.0, 6.0), "px", (2.0, 0.02)),
+        knob("stroke", "the strokes' size", (2.0, 12.0, 6.0), "px", (3.0, 0.02)),
         knob("tooth", "how much paper shows through", (0.0, 1.0, 0.5), "share", (0.3, 0.1)),
         knob("vivid", "the colours' saturation", (0.5, 1.5, 1.1), "share", (0.2, 0.03)),
     ],
     cost: 1.2,
     relief: 0.3,
+    natural: &[natural("stroke", Driver::Drums, 0.6)],
     pairs: &["canvas", "saturation", "marker"],
     wgsl: r"
 fn look_pastel(uv: vec2<f32>) -> vec3<f32> {
@@ -385,11 +388,11 @@ pub const MARKER: Pass = Pass {
         knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.1)),
         knob("steps", "how many tones each colour has", (2.0, 6.0, 3.0), "steps", (0.0, 0.08)),
         knob("stroke", "the strokes' width", (4.0, 20.0, 10.0), "px", (3.0, 0.02)),
-        knob("outline", "how dark the pen outline", (0.0, 1.0, 0.6), "share", (0.3, 0.05)),
+        knob("outline", "how dark the pen outline", (0.0, 1.0, 0.6), "share", (0.4, 0.05)),
     ],
     cost: 1.5,
     relief: 0.3,
-    natural: &[natural("outline", Driver::Kick, 0.3)],
+    natural: &[natural("outline", Driver::Kick, 0.7)],
     pairs: &["canvas", "pastel", "posterize_ink"],
     wgsl: r"
 fn look_marker(uv: vec2<f32>) -> vec3<f32> {

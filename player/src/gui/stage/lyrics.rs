@@ -318,7 +318,9 @@ impl Stage {
     /// `filled`, right of it in `rest`, into `out`: in runs of words no
     /// wider than [`RUN`] (one where it is narrower), on whole pixels where
     /// it is drawn at the size it is made at, so it is as crisp as its
-    /// glyphs.
+    /// glyphs; outlined dark where a look draws ([`Song::outlined`]).
+    ///
+    /// [`Song::outlined`]: super::Song::outlined
     pub(super) fn set_text(
         &mut self,
         out: &mut Vec<Instance>,
@@ -346,6 +348,10 @@ impl Stage {
         runs.push((run, from));
         for (run, from) in runs {
             let at = (snap(at.0 + from * scale), snap(at.1));
+            if self.outlined {
+                let rim = (super::Shade::OUTLINE, rest[3].max(filled[3]));
+                self.shade(out, (face, &run), (base, scale), (at, f32::INFINITY), rim);
+            }
             let colors = (rest, filled);
             self.text(out, face, &run, (base, scale), at, split, colors);
         }
@@ -638,6 +644,38 @@ mod tests {
         let only = (&mut info, &mut Vec::new(), &mut Vec::new());
         stage.lyrics(only, &p, (area, Which::Info));
         assert_eq!(info.len(), 1);
+    }
+
+    /// Where a look draws over the backdrop, the text set over it (a line
+    /// set in the middle, the count-in) gets the lyrics' dark outline:
+    /// its dark copies under it, none without a look.
+    #[test]
+    fn text_over_a_look_is_outlined() {
+        let white = [1.0; 4];
+        let drawn = |outlined: bool| {
+            let mut stage = Stage {
+                outlined,
+                ..Stage::default()
+            };
+            let mut out = Vec::new();
+            let text = (Face::LINE, "Kettcar");
+            stage.set_text(
+                &mut out,
+                text,
+                (80.0, 80.0),
+                (10.0, 20.0),
+                0.0,
+                (white, white),
+            );
+            out
+        };
+        let (plain, outlined) = (drawn(false), drawn(true));
+        assert_eq!(
+            outlined.len(),
+            plain.len() * 10,
+            "nine dark copies under each run"
+        );
+        assert!(outlined[..9].iter().all(|i| i.color[0] < 0.1));
     }
 
     /// A line wider than the atlas holds at once goes in word by word,

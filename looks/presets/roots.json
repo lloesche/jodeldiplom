@@ -1,0 +1,1829 @@
+{
+ "family": "roots",
+ "about": "Roots music: jazz, blues, country, folk.",
+ "looks": [
+  {
+   "id": "jazz",
+   "name": "Jazz",
+   "about": "Jazz: its own look",
+   "tags": [
+    "jazz"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.3
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.6,
+      "lights": 0.09,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.09
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "jazz-1950s",
+   "name": "Jazz, 1950s Technicolor",
+   "about": "Jazz as in the 1950s Technicolor",
+   "tags": [
+    "jazz",
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.3
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.6,
+      "lights": 0.09,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.09
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "jazz-night",
+   "name": "Jazz, night and city",
+   "about": "Jazz for a song of night and city",
+   "tags": [
+    "jazz",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.3
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.6,
+      "lights": 0.09,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.09
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "jazz-love",
+   "name": "Jazz, love",
+   "about": "Jazz for a song of love",
+   "tags": [
+    "jazz",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.3
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.6,
+      "lights": 0.09,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.09
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "jazz-longing",
+   "name": "Jazz, longing",
+   "about": "Jazz for a song of longing",
+   "tags": [
+    "jazz",
+    "longing"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.3
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.6,
+      "lights": 0.09,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.09
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "jazz-1950s-night",
+   "name": "Jazz, 1950s Technicolor, night and city",
+   "about": "Jazz of night and city as in the 1950s Technicolor",
+   "tags": [
+    "jazz",
+    "1950s",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.3
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.6,
+      "lights": 0.09,
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "bokeh",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.09
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "blues",
+   "name": "Blues",
+   "about": "Blues: its own look",
+   "tags": [
+    "blues"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.66,
+      "light": 0.58,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "blues-1920s",
+   "name": "Blues, 1920s sepia and silent film",
+   "about": "Blues as in the 1920s sepia and silent film",
+   "tags": [
+    "blues",
+    "1920s"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.66,
+      "light": 0.58,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    },
+    {
+     "pass": "film_damage",
+     "knobs": {
+      "amount": 0.5,
+      "age": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "blues-heartbreak",
+   "name": "Blues, heartbreak",
+   "about": "Blues for a song of heartbreak",
+   "tags": [
+    "blues",
+    "heartbreak"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.66,
+      "light": 0.58,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "blues-grief",
+   "name": "Blues, grief and death",
+   "about": "Blues for a song of grief and death",
+   "tags": [
+    "blues",
+    "grief"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.66,
+      "light": 0.58,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.35
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.35,
+      "low": 0.7
+     }
+    }
+   ]
+  },
+  {
+   "id": "blues-hometown",
+   "name": "Blues, hometown",
+   "about": "Blues for a song of hometown",
+   "tags": [
+    "blues",
+    "hometown"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.66,
+      "light": 0.58,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.4
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "blues-1920s-heartbreak",
+   "name": "Blues, 1920s sepia and silent film, heartbreak",
+   "about": "Blues of heartbreak as in the 1920s sepia and silent film",
+   "tags": [
+    "blues",
+    "1920s",
+    "heartbreak"
+   ],
+   "layers": [
+    {
+     "pass": "duotone",
+     "knobs": {
+      "dark": 0.66,
+      "light": 0.58,
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.45
+     }
+    },
+    {
+     "pass": "vignette",
+     "knobs": {
+      "amount": 0.5
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.25
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.6
+     }
+    },
+    {
+     "pass": "sepia",
+     "knobs": {
+      "amount": 0.9,
+      "fade": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "country",
+   "name": "Country and Americana",
+   "about": "Country and Americana: its own look",
+   "tags": [
+    "country"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "fade": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.07
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "country-70s",
+   "name": "Country and Americana, 70s film stock",
+   "about": "Country and Americana as in the 70s film stock",
+   "tags": [
+    "country",
+    "70s"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "fade": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.07
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.5,
+      "lights": 0.08,
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "country-freedom",
+   "name": "Country and Americana, freedom and road trips",
+   "about": "Country and Americana for a song of freedom and road trips",
+   "tags": [
+    "country",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "fade": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.07
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "country-hometown",
+   "name": "Country and Americana, hometown",
+   "about": "Country and Americana for a song of hometown",
+   "tags": [
+    "country",
+    "hometown"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "fade": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.07
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.3,
+      "fade": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "country-heartbreak",
+   "name": "Country and Americana, heartbreak",
+   "about": "Country and Americana for a song of heartbreak",
+   "tags": [
+    "country",
+    "heartbreak"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "fade": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.07
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "rain",
+     "knobs": {
+      "amount": 0.45
+     }
+    }
+   ]
+  },
+  {
+   "id": "country-70s-freedom",
+   "name": "Country and Americana, 70s film stock, freedom and road trips",
+   "about": "Country and Americana of freedom and road trips as in the 70s film stock",
+   "tags": [
+    "country",
+    "70s",
+    "freedom"
+   ],
+   "layers": [
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.5
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "fade": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.3,
+      "hue": 0.07
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "lens_flare",
+     "knobs": {
+      "amount": 0.45,
+      "x": 0.8,
+      "y": 0.2
+     }
+    }
+   ]
+  },
+  {
+   "id": "folk",
+   "name": "Folk",
+   "about": "Folk: its own look",
+   "tags": [
+    "folk"
+   ],
+   "layers": [
+    {
+     "pass": "watercolor",
+     "knobs": {
+      "wash": 0.5,
+      "bleed": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    }
+   ]
+  },
+  {
+   "id": "folk-60s",
+   "name": "Folk, 60s psychedelic",
+   "about": "Folk as in the 60s psychedelic",
+   "tags": [
+    "folk",
+    "60s"
+   ],
+   "layers": [
+    {
+     "pass": "watercolor",
+     "knobs": {
+      "wash": 0.5,
+      "bleed": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.4,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.9
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "folk-nature",
+   "name": "Folk, nature (seasons, weather, sea, mountains)",
+   "about": "Folk for a song of nature (seasons, weather, sea, mountains)",
+   "tags": [
+    "folk",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "watercolor",
+     "knobs": {
+      "wash": 0.5,
+      "bleed": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "dust",
+     "knobs": {
+      "amount": 0.25
+     }
+    }
+   ]
+  },
+  {
+   "id": "folk-family",
+   "name": "Folk, family",
+   "about": "Folk for a song of family",
+   "tags": [
+    "folk",
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "watercolor",
+     "knobs": {
+      "wash": 0.5,
+      "bleed": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "polaroid",
+     "knobs": {
+      "frame": 0.35,
+      "fade": 0.4,
+      "warmth": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "folk-rebellion",
+   "name": "Folk, rebellion and protest",
+   "about": "Folk for a song of rebellion and protest",
+   "tags": [
+    "folk",
+    "rebellion"
+   ],
+   "layers": [
+    {
+     "pass": "watercolor",
+     "knobs": {
+      "wash": 0.5,
+      "bleed": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "curve",
+     "knobs": {
+      "contrast": 0.45
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.5,
+      "size": 1.8
+     }
+    }
+   ]
+  },
+  {
+   "id": "folk-60s-nature",
+   "name": "Folk, 60s psychedelic, nature (seasons, weather, sea, mountains)",
+   "about": "Folk of nature (seasons, weather, sea, mountains) as in the 60s psychedelic",
+   "tags": [
+    "folk",
+    "60s",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "watercolor",
+     "knobs": {
+      "wash": 0.5,
+      "bleed": 0.4
+     }
+    },
+    {
+     "pass": "canvas",
+     "knobs": {
+      "kind": 1.0,
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "liquid",
+     "knobs": {
+      "amount": 0.15
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 1.4,
+      "vibrance": 0.3
+     }
+    },
+    {
+     "pass": "light_leak",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.9
+     }
+    }
+   ]
+  },
+  {
+   "id": "celtic",
+   "name": "Celtic",
+   "about": "Celtic: its own look",
+   "tags": [
+    "celtic"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.25,
+      "hue": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "celtic-1920s",
+   "name": "Celtic, 1920s sepia and silent film",
+   "about": "Celtic as in the 1920s sepia and silent film",
+   "tags": [
+    "celtic",
+    "1920s"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.25,
+      "hue": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "celtic-nature",
+   "name": "Celtic, nature (seasons, weather, sea, mountains)",
+   "about": "Celtic for a song of nature (seasons, weather, sea, mountains)",
+   "tags": [
+    "celtic",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.25,
+      "hue": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "celtic-mountains",
+   "name": "Celtic, mountains",
+   "about": "Celtic for a song of mountains",
+   "tags": [
+    "celtic",
+    "mountains"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.25,
+      "hue": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "celtic-longing",
+   "name": "Celtic, longing",
+   "about": "Celtic for a song of longing",
+   "tags": [
+    "celtic",
+    "longing"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.25,
+      "hue": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "celtic-1920s-nature",
+   "name": "Celtic, 1920s sepia and silent film, nature (seasons, weather, sea, mountains)",
+   "about": "Celtic of nature (seasons, weather, sea, mountains) as in the 1920s sepia and silent film",
+   "tags": [
+    "celtic",
+    "1920s",
+    "nature"
+   ],
+   "layers": [
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.35
+     }
+    },
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "fog",
+     "knobs": {
+      "amount": 0.25,
+      "hue": 0.35
+     }
+    }
+   ]
+  },
+  {
+   "id": "gospel",
+   "name": "Gospel",
+   "about": "Gospel: its own look",
+   "tags": [
+    "gospel"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.11,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "gospel-1950s",
+   "name": "Gospel, 1950s Technicolor",
+   "about": "Gospel as in the 1950s Technicolor",
+   "tags": [
+    "gospel",
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.11,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "gospel-faith",
+   "name": "Gospel, faith",
+   "about": "Gospel for a song of faith",
+   "tags": [
+    "gospel",
+    "faith"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.11,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "gospel-empowerment",
+   "name": "Gospel, empowerment",
+   "about": "Gospel for a song of empowerment",
+   "tags": [
+    "gospel",
+    "empowerment"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.11,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "gospel-family",
+   "name": "Gospel, family",
+   "about": "Gospel for a song of family",
+   "tags": [
+    "gospel",
+    "family"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.11,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "gospel-1950s-faith",
+   "name": "Gospel, 1950s Technicolor, faith",
+   "about": "Gospel of faith as in the 1950s Technicolor",
+   "tags": [
+    "gospel",
+    "1950s",
+    "faith"
+   ],
+   "layers": [
+    {
+     "pass": "god_rays",
+     "knobs": {
+      "amount": 0.55
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.11,
+      "tint": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": 0.3
+     }
+    }
+   ]
+  },
+  {
+   "id": "chanson",
+   "name": "Chanson",
+   "about": "Chanson: its own look",
+   "tags": [
+    "chanson"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.5
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.55,
+      "lights": 0.08,
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "chanson-1950s",
+   "name": "Chanson, 1950s Technicolor",
+   "about": "Chanson as in the 1950s Technicolor",
+   "tags": [
+    "chanson",
+    "1950s"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.5
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.55,
+      "lights": 0.08,
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "technicolor",
+     "knobs": {
+      "amount": 0.8,
+      "punch": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "chanson-love",
+   "name": "Chanson, love",
+   "about": "Chanson for a song of love",
+   "tags": [
+    "chanson",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.5
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.55,
+      "lights": 0.08,
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    }
+   ]
+  },
+  {
+   "id": "chanson-night",
+   "name": "Chanson, night and city",
+   "about": "Chanson for a song of night and city",
+   "tags": [
+    "chanson",
+    "night"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.5
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.55,
+      "lights": 0.08,
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "white_balance",
+     "knobs": {
+      "warmth": -0.5
+     }
+    }
+   ]
+  },
+  {
+   "id": "chanson-longing",
+   "name": "Chanson, longing",
+   "about": "Chanson for a song of longing",
+   "tags": [
+    "chanson",
+    "longing"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.5
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.55,
+      "lights": 0.08,
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "haze",
+     "knobs": {
+      "amount": 0.4,
+      "hue": 0.6
+     }
+    }
+   ]
+  },
+  {
+   "id": "chanson-1950s-love",
+   "name": "Chanson, 1950s Technicolor, love",
+   "about": "Chanson of love as in the 1950s Technicolor",
+   "tags": [
+    "chanson",
+    "1950s",
+    "love"
+   ],
+   "layers": [
+    {
+     "pass": "saturation",
+     "knobs": {
+      "saturation": 0.5
+     }
+    },
+    {
+     "pass": "split_tone",
+     "knobs": {
+      "shadows": 0.55,
+      "lights": 0.08,
+      "amount": 0.35
+     }
+    },
+    {
+     "pass": "candle",
+     "knobs": {
+      "amount": 0.3
+     }
+    },
+    {
+     "pass": "grain",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "gate_weave",
+     "knobs": {
+      "amount": 0.4
+     }
+    },
+    {
+     "pass": "glow",
+     "knobs": {
+      "amount": 0.35,
+      "hue": 0.95,
+      "tint": 0.4
+     }
+    }
+   ]
+  }
+ ]
+}

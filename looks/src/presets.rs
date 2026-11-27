@@ -20,7 +20,21 @@ pub struct Family {
 }
 
 /// Every family's file, built in.
-const FILES: &[&str] = &[include_str!("../presets/examples.json")];
+const FILES: &[&str] = &[
+    include_str!("../presets/rock.json"),
+    include_str!("../presets/pop.json"),
+    include_str!("../presets/electronic.json"),
+    include_str!("../presets/urban.json"),
+    include_str!("../presets/roots.json"),
+    include_str!("../presets/classical.json"),
+    include_str!("../presets/world.json"),
+    include_str!("../presets/occasions.json"),
+    include_str!("../presets/eras.json"),
+    include_str!("../presets/themes.json"),
+    include_str!("../presets/moods.json"),
+    include_str!("../presets/media.json"),
+    include_str!("../presets/visualizer.json"),
+];
 
 /// Every family, as its file has it (a file that does not read is a
 /// fault the tests find: none of its looks).
@@ -50,6 +64,28 @@ pub fn named(id: &str) -> Option<&'static Look> {
     all().iter().find(|l| l.id == id)
 }
 
+/// Every pass as a look of its own (its id the pass's name), at its
+/// knobs' defaults, moved as it moves itself, with the name of its
+/// family's group (`grade passes`, ...): what a browser of the looks lists
+/// after the presets.
+pub fn passes() -> &'static [(String, Look)] {
+    static ALL: OnceLock<Vec<(String, Look)>> = OnceLock::new();
+    ALL.get_or_init(|| {
+        (crate::passes::PASSES.iter())
+            .map(|p| {
+                let look = Look {
+                    id: p.name.to_owned(),
+                    name: p.name.replace('_', " "),
+                    about: p.about.to_owned(),
+                    tags: vec![p.family.name().to_owned()],
+                    layers: vec![crate::Layer::of(p.name)],
+                };
+                (format!("{} passes", p.family.name()), look)
+            })
+            .collect()
+    })
+}
+
 /// The family of the preset `id`.
 pub fn family_of(id: &str) -> Option<&'static Family> {
     families()
@@ -74,6 +110,10 @@ mod tests {
             let c = p.check();
             assert!(c.notes.is_empty(), "{}: {:?}", p.id, c.notes);
         }
-        assert!(all().len() >= 12, "{}", all().len());
+        assert!(all().len() >= 300, "{}", all().len());
+        for (_, p) in passes() {
+            assert!(named(&p.id).is_none(), "{}: a preset and a pass", p.id);
+            assert!(p.check().notes.is_empty(), "{}", p.id);
+        }
     }
 }
