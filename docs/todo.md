@@ -27,8 +27,9 @@ Work agreed on but not started, roughly in the order it was raised.
   era and mood: the art style from a wide list, palette, motifs, and the
   song's look shaders (a preset from the catalogue, knob tweaks within
   range, which music signal drives what, mood tags), its output held to
-  the catalogue's schema as it is written. One conversation, so the
-  storyboard is already in it when the look is chosen. SDXL-Lightning (Q8 looks as fp16) draws
+  the catalogue's schema as it is written. One answer: the look's fields
+  come last in the plan's JSON, so every scene is already written when
+  the model chooses it. SDXL-Lightning (Q8 looks as fp16) draws
   one whole picture per scene (characters from the lyrics, a portrait
   each as a face reference; the cover as a style reference only when it
   is striking, its lettering painted out first); no face redrawing
