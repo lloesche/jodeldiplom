@@ -160,10 +160,10 @@ fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid:
             for (var i = 0u; i < count; i++) {
                 best = max(best, step_s[i][lid]);
             }
-            let fade = exp(step_best[lid] - best);
+            let fade = exp_held(step_best[lid] - best);
             var total = step_total[lid] * fade;
             for (var i = 0u; i < count; i++) {
-                let e = exp(step_s[i][lid] - best);
+                let e = exp_held(step_s[i][lid] - best);
                 step_p[i][lid] = e;
                 total += e;
             }
@@ -224,7 +224,7 @@ fn join(@builtin(local_invocation_index) lid: u32) {
             let at = (lid * splits + c) * stride;
             var w = 0.0;
             if (src[at + 1u] > 0.0) {
-                w = exp(src[at] - best);
+                w = exp_held(src[at] - best);
             }
             join_weight[lid * splits + c] = w;
             total += w * src[at + 1u];
@@ -351,9 +351,9 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
         let mb = select(vec4<f32>(-1e30), sb, okb);
         let m4 = max(ma, mb);
         let next = max(best, max(max(m4.x, m4.y), max(m4.z, m4.w)));
-        let fade = exp(best - next);
-        let pa = select(vec4<f32>(0.0), exp(sa - next), oka);
-        let pb = select(vec4<f32>(0.0), exp(sb - next), okb);
+        let fade = exp_held(best - next);
+        let pa = select(vec4<f32>(0.0), exp_held4(sa - vec4<f32>(next)), oka);
+        let pb = select(vec4<f32>(0.0), exp_held4(sb - vec4<f32>(next)), okb);
         total = total * fade + dot(pa, vec4<f32>(1.0)) + dot(pb, vec4<f32>(1.0));
         best = next;
         workgroupBarrier();

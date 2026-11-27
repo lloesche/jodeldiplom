@@ -53,8 +53,8 @@ fn gemv_finish(lid: u32, group: u32, r0: u32, acc0: f32, acc1: f32) {
             dst[out + r0] = gelu_tanh(v0);
             dst[out + r0 + 1u] = gelu_tanh(v1);
         } else if ((flags & ARGMAX) != 0u) {
-            let c0 = tanh(v0 / LOGIT_CAP) * LOGIT_CAP;
-            let c1 = tanh(v1 / LOGIT_CAP) * LOGIT_CAP;
+            let c0 = tanh_held(v0 / LOGIT_CAP) * LOGIT_CAP;
+            let c1 = tanh_held(v1 / LOGIT_CAP) * LOGIT_CAP;
             dst[out + r0] = c0;
             dst[out + r0 + 1u] = c1;
             // The first of equals.
