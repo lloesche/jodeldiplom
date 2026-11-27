@@ -177,15 +177,34 @@ pub(crate) fn open<T>(
     label: &'static str,
     make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits) -> Result<T, String>,
 ) -> Result<(T, String), String> {
+    open_with(label, |_| wgpu::Features::empty(), make)
+}
+
+/// [`open`], with the features `wanted` picks from the adapter's too
+/// (wgpu's experimental ones allowed: cooperative matrices).
+pub(crate) fn open_with<T>(
+    label: &'static str,
+    wanted: impl FnOnce(&wgpu::Adapter) -> wgpu::Features,
+    make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits) -> Result<T, String>,
+) -> Result<(T, String), String> {
     let _turn = setting_up();
     let adapter = adapter()?;
     let info = adapter.get_info();
     let limits = adapter.limits();
+    let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wanted(&adapter));
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(label),
         // Stamps for profiles, where the adapter has them.
-        required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+        required_features: features,
         required_limits: limits.clone(),
+        // SAFETY: only asked for where `wanted` names an experimental
+        // feature (the picture models' cooperative matrices), whose
+        // kernels are checked against the f32 ones in their tests.
+        experimental_features: if features.intersects(wgpu::Features::all_experimental_mask()) {
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        },
         ..Default::default()
     }))
     .map_err(|e| format!("{}: {e}", info.name))?;

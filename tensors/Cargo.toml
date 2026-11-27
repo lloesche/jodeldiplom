@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-description = "The networks' numeric base: a .safetensors file's tensors as f32 (the checkpoints the speech, depth and matte models are read from), half floats, a small JSON reader, what the CPU kernels share"
+description = "The networks' numeric base: a .safetensors file's tensors as f32 or as stored (the checkpoints the speech, depth, matte and picture models are read from), half floats, a small JSON reader, what the CPU kernels share"
 
 [dependencies]

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.87"
 license = "MIT"
-description = "The player's networks on the GPU, through wgpu: the stem separator, the beat network, the speech models and the cover's depth and cut-out"
+description = "The player's networks on the GPU, through wgpu: the stem separator, the beat network, the speech models, the cover's depth and cut-out, and the story's picture model"
 
 [dependencies]
 # The packed language model's file: whole or not at all, made durable.
@@ -20,6 +20,8 @@ wgpu = { version = "30.0.2", default-features = false, features = ["std", "parki
 # Every file the tests and examples write: whole or not at all, made durable.
 durable = { path = "../durable" }
 hound = "3.5"
+# The picture example's PNGs (references in, pictures out).
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 # The recogniser's kernels checked through Metal's and DirectX's writers on any
 # machine (wgpu's own naga).
 naga = { version = "30.0.2", features = ["wgsl-in", "msl-out", "hlsl-out"] }

@@ -1,7 +1,8 @@
 //! The networks' numeric base, depending on nothing: a `.safetensors`
-//! file's tensors as f32 ([`SafeTensors`]), the checkpoints the speech
-//! models (`jodel-lyrics`) and the covers' depth and matte models
-//! (`jodel-gpu`) are read from, as published; half floats ([`half`]); a
+//! file's tensors as f32 or as stored ([`SafeTensors`]), the checkpoints
+//! the speech models (`jodel-lyrics`) and the covers' depth and matte
+//! models and the picture model (`jodel-gpu`) are read from, as published;
+//! half floats ([`half`]); a
 //! small JSON reader ([`json`]); and what the CPU kernels share
 //! ([`kernels`], [`fast!`]).
 //!
@@ -89,6 +90,19 @@ impl SafeTensors {
     /// Whether the file has a tensor `name`.
     pub fn has(&self, name: &str) -> bool {
         self.entries.contains_key(name)
+    }
+
+    /// Tensor `name` as stored: its type as the header names it (`F32`,
+    /// `BF16`, `F8_E4M3`, …), its shape and its bytes.
+    pub fn raw(&self, name: &str) -> Result<(&str, &[usize], &[u8]), String> {
+        let t = self.entries.get(name).ok_or(format!("no tensor {name}"))?;
+        let dtype = match &t.dtype {
+            DType::F32 => "F32",
+            DType::Bf16 => "BF16",
+            DType::F16 => "F16",
+            DType::Other(other) => other,
+        };
+        Ok((dtype, &t.shape, &self.bytes[t.bytes.clone()]))
     }
 
     /// Tensor `name` with `shape`, as f32 (stored as f32, bf16 or f16).
@@ -223,6 +237,25 @@ mod tests {
         assert!(t.get("a.weight", &[2]).is_err());
         assert!(t.get("d", &[2]).is_err());
         assert!(SafeTensors::parse(b"short".to_vec()).is_err());
+    }
+
+    #[test]
+    fn a_tensor_comes_back_as_stored() {
+        let t = SafeTensors::parse(file(&[
+            ("w", "F8_E4M3", &[2, 2], vec![0x38, 0xb8, 0x40, 0x00]),
+            ("s", "F32", &[], 0.5f32.to_le_bytes().to_vec()),
+        ]))
+        .unwrap();
+        let (dtype, shape, bytes) = t.raw("w").unwrap();
+        assert_eq!(
+            (dtype, shape, bytes),
+            ("F8_E4M3", &[2, 2][..], &[0x38, 0xb8, 0x40, 0x00][..])
+        );
+        let (dtype, shape, bytes) = t.raw("s").unwrap();
+        assert_eq!((dtype, shape.len(), bytes.len()), ("F32", 0, 4));
+        assert!(t.raw("x").is_err());
+        // Read as f32, the FP8 tensor is refused.
+        assert!(t.get("w", &[2, 2]).is_err());
     }
 
     /// A file whose header places a tensor at `offsets` (four bytes of

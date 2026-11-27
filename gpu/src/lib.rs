@@ -9,7 +9,10 @@
 //!   ([`GpuAsr`], `asr/`);
 //! - the cover's depth and cut-out ([`GpuDepth`], [`GpuMatte`], `vision/`);
 //! - the karaoke story mode's language model, Gemma 4 E4B's text decoder
-//!   ([`Gemma`], `llm/`).
+//!   ([`Gemma`], `llm/`);
+//! - the karaoke story's pictures, FLUX.2 [klein] 4B ([`image`]: its text
+//!   encoder and its transformer with the autoencoder, each loaded and
+//!   freed on its own).
 //!
 //! Each is a program of kernels on one bind group layout, its dispatches
 //! planned on the processor (every matrix multiply as the engine's `Mul`)
@@ -23,8 +26,8 @@
 //! networks' device) are set up again on their next use, and a setup that
 //! failed is tried again a while later; one the caller holds says so
 //! (`is_lost`: [`GpuSpeech::is_lost`], [`GpuAsr::is_lost`],
-//! [`GpuDepth::is_lost`], [`GpuMatte::is_lost`], [`Gemma::is_lost`]), and
-//! the caller makes it again.
+//! [`GpuDepth::is_lost`], [`GpuMatte::is_lost`], [`Gemma::is_lost`], the
+//! picture model's parts), and the caller makes it again.
 //!
 //! The GPU is chosen once a process ([`chosen`], `device.rs`): one `wgpu`
 //! instance, the adapters on every backend listed once, the best one kept
@@ -49,6 +52,7 @@ mod asr;
 mod device;
 mod diag;
 mod engine;
+pub mod image;
 pub mod llm;
 mod net;
 pub mod pace;

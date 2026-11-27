@@ -1558,6 +1558,7 @@ version = "0.1.0"
 dependencies = [
  "durable",
  "hound",
+ "image",
  "jodel-lyrics",
  "jodel-output",
  "jodel-playback",

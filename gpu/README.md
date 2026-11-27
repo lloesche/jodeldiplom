@@ -6,8 +6,9 @@ rounding: the stem separator and the beat network of
 [`jodel-rhythm`](../rhythm) (`GpuSeparator`, `GpuNetwork`), the speech
 model and the speech recogniser of [`jodel-lyrics`](../lyrics)
 (`GpuSpeech`, `GpuAsr`), the cover's depth and cut-out (`GpuDepth`,
-`GpuMatte`), and karaoke story mode's language model (`Gemma`, Gemma 4
-E4B's text decoder, to within rounding of its reference). Each is a program of kernels on one bind group layout, its
+`GpuMatte`), karaoke story mode's language model (`Gemma`, Gemma 4
+E4B's text decoder) and the story's pictures (FLUX.2 [klein] 4B:
+`image::TextEncoder`, `image::Painter`). Each is a program of kernels on one bind group layout, its
 dispatches planned on the processor and run in short submissions
 (`src/engine/`: the program, its buffers, parameters and bind groups;
 every matrix multiply as a `Mul`, what it reads and writes and what becomes
@@ -19,8 +20,9 @@ networks the process keeps (`GpuSeparator::shared()` and `background()`,
 `GpuNetwork::shared()`, the vision networks' device) are set up again on
 their next use, and a chunk or piece under way when it happened runs again
 on the new one; a setup that failed is tried again 30 s later. A network
-the caller holds (`GpuSpeech`, `GpuAsr`, `GpuDepth`, `GpuMatte`, `Gemma`) says so
-(`is_lost()`), and the player makes it again.
+the caller holds (`GpuSpeech`, `GpuAsr`, `GpuDepth`, `GpuMatte`, `Gemma`,
+the picture model's parts) says so (`is_lost()`), and the player makes it
+again.
 
 ## The stem separator
 
@@ -358,6 +360,89 @@ the processor on small shapes, and the tokeniser to its rules.
 `examples/gemma.rs` packs the checkpoint, writes after a prompt file (one
 user turn) with the timings and the memory held, or writes the logits after
 it.
+
+## The story's pictures
+
+`jodel_gpu::image` runs FLUX.2 [klein] 4B (Black Forest Labs, Apache-2.0)
+from the checkpoints as published, read through `jodel-tensors`: the text
+encoder Qwen3-4B from `Qwen/Qwen3-4B-FP8`, the transformer from
+`black-forest-labs/FLUX.2-klein-4b-fp8`, the autoencoder from
+`black-forest-labs/FLUX.2-klein-4B` (`vae/`). Its two parts load and free
+on their own, so a card of 8 GB takes them in turns and one of 16 GB keeps
+both:
+
+- `TextEncoder` (2.54 GB): the prompt in the model's chat template (Qwen's
+  byte-level BPE, `src/image/text.rs`), padded to 512 tokens; the first 27
+  of Qwen3-4B's 36 layers (the embeddings are the hidden states after
+  layers 9, 18 and 27, side by side), the token table kept on the
+  processor. 0.2 s a prompt.
+- `Painter` (3.95 GB, and 2.19 GB while it draws at 1344 × 768 with a
+  reference of 512 × 512): the reference pictures through the autoencoder's
+  encoder, then four steps of the transformer (5 double-stream and 20
+  single-stream blocks; the references' tokens after the picture's, as the
+  pipeline takes them) and the flow sampler (its shifted schedule, and the
+  starting noise drawn as PyTorch draws it on the processor:
+  `image::noise`, bit for bit), then the decoder. One plan of dispatches a
+  picture size, kept until `release()`; the autoencoder's buffers are the
+  transformer's, taken in turns.
+
+`footprint()` says what each takes before it is loaded (its weights, and
+its buffers for a picture size); `bytes()` what it takes now.
+
+The FP8 matrices stay FP8 on the GPU, four values a word, turned to
+numbers as the matrix multiply reads them, times the checkpoint's scales
+(one a matrix for BFL's, one per 128 × 128 block for Qwen's); the bf16 ones
+(the embedders, the modulations, the autoencoder) stay bf16. Activations
+are f32. Where the GPU has cooperative matrices (tensor cores) of 16 × 16 ×
+16 in f16 with f32 sums, subgroups of 32 and 44 KB of workgroup memory
+(Vulkan on NVIDIA), the matrix multiplies and the transformer's attention
+run on them (`Precision::Fast`; wgpu's experimental cooperative matrices),
+their inputs rounded to f16; elsewhere, and with `Precision::Full`, on f32
+multiply-adds. The kernels (`src/image/*.wgsl`):
+
+- the matrix multiply (`gemm.wgsl`, `gemm_coop.wgsl`, the shared tail in
+  `tail.wgsl`): tiles of 128 × 128, the next step of k read while this one
+  is multiplied, each multiply planned as the engine's `Mul`; its tail
+  fused: a bias, added to what is there, added times a gate per column
+  (the modulation's gates), or SwiGLU (the gate and up matrices packed in
+  pairs of 64 rows, so a tile holds both). A convolution is the same
+  multiply reading its patches where they lie, the group norm and SiLU
+  before it applied as it reads (doubled first for the decoder's
+  upsampling; zero-padded after for the encoder's strided downsampling);
+- flash attention (`attention.wgsl`, `attention_coop.wgsl`): an online
+  softmax over tiles of keys, the scores never stored. On tensor cores 128
+  queries a workgroup share each tile of 32 keys; the largest score is
+  moved (and the sums rescaled) only when a tile's is 8 above it, so the
+  exps fit f16;
+- RMSNorm, LayerNorm with the modulation's shift and scale, the heads'
+  norms and rotary positions (into a heads-first layout), the group norm's
+  statistics (Welford per chunk, merged), the latents' 2 × 2 patches and
+  the batch norm, a softmax and a transpose (the autoencoder's one-head
+  attention: two matrix multiplies around a softmax, 2048 queries at a
+  time).
+
+Held against the PyTorch reference (diffusers' pipeline with the same FP8
+weights) run in f32, on the bake-off's two scenes: the tokens and the noise
+are the same; the text encoder's hidden states are within 6e-6 of their
+spread (rms), the references' latents 4e-6, the transformer's first step
+3e-5, the decoder 1e-6, and the pictures 74 and 68 dB PSNR (f32 here;
+mean differences of 0.00 and 0.01 of 255); on tensor cores 52 and 45 dB
+(0.14 and 0.36 of 255). The bake-off's own pictures (PyTorch in bf16) are
+26.7 and 21.2 dB from the f32 reference: its rounding moves the picture
+far more than ours. `examples/klein.rs` makes a picture, renders the
+bake-off's scenes (`--bakeoff`: load times, seconds a picture, the GPU's
+memory at its peak, the pixel errors), or holds each part against the
+reference's dumps (`--check`); `cargo test -p jodel-gpu image` holds every
+kernel to the processor on small shapes, on both paths.
+
+On an RTX 5080 (Vulkan, tensor cores): a picture of 1344 × 768 with one
+reference in 4.7 s (PyTorch in bf16: 2.9 s; here in f32 without tensor
+cores: 11.8 s). Of its GPU time the matrix multiplies take 70 % (about 44
+TFLOPS: the transformer's and the decoder's 146 TFLOPs) and the attention
+28 % (about 29 TFLOPS); the rest is under 2 %. Loading takes 4.0 s for the
+encoder and 3.3 s for the painter (PyTorch: 4.8 and 3.4 s). The GPU's
+allocator holds 6.5 GB at its peak with the encoder freed first (PyTorch:
+7.3 GB), 9.0 GB with both kept.
 
 ## Stem playback
 
