@@ -17,6 +17,7 @@ use super::net::Net;
 use super::ops::{Img, Plan, Resize, ADD, GELU, RELU, RELU_IN};
 use super::prep::{self, Rgb};
 use super::{Named, Packer};
+use crate::Footprint;
 
 const C: usize = 384;
 const HEADS: usize = 6;
@@ -563,6 +564,23 @@ pub struct GpuDepth {
 const MOST: usize = 504;
 
 impl GpuDepth {
+    /// What the model takes on the GPU, from the shapes in its checkpoint
+    /// (`model.safetensors`'s bytes): its weights and their constants
+    /// while it is set up; while it runs, its largest plan's buffers and
+    /// read-back (a square at the longest side) and, on the run that sets
+    /// it up, its weights once more while they go up.
+    pub fn footprint(checkpoint: Vec<u8>) -> Result<Footprint, String> {
+        let weights = Weights::read(&SafeTensors::parse(checkpoint)?)?;
+        let base = weights.packer.data.len();
+        let mut tail = Packer::at(base);
+        let (plan, _, _) = plan(&weights, &mut tail, MOST, MOST);
+        let planned: usize = plan.sizes.iter().sum::<usize>() + MOST * MOST * 2;
+        Ok(Footprint {
+            resident: ((base + tail.data.len()) * 4) as u64,
+            working: ((planned + base) * 4) as u64,
+        })
+    }
+
     /// The model from its checkpoint (`model.safetensors`'s bytes), its
     /// weights on the GPU (planned when it first runs).
     pub fn new(checkpoint: Vec<u8>) -> Result<GpuDepth, String> {

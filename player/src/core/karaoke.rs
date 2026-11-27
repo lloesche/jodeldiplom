@@ -189,6 +189,11 @@ pub fn shown(state: &State) -> bool {
     state.showing(Side::Karaoke) || in_mode(state)
 }
 
+/// Whether a song is being sung: in the mode, playing or counting in.
+pub fn singing(state: &State) -> bool {
+    in_mode(state) && !waiting(state)
+}
+
 /// Whether nothing plays in the mode, so START shows.
 pub fn waiting(state: &State) -> bool {
     let k = &state.karaoke;

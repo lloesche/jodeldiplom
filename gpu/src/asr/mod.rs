@@ -38,9 +38,9 @@ use self::ops::Op;
 use self::pack::{pack, Layout};
 use self::shape::{longest, Room, Shape};
 use crate::engine::{
-    bytes, guarded, kernels_source, Access, Dispatch, Kernels, Program, PARAM_STRIDE,
+    bytes, guarded, kernels_source, Access, Dispatch, Kernels, OnDevice, Program, PARAM_STRIDE,
 };
-use crate::Turned;
+use crate::{Footprint, Turned};
 
 /// The longest part of a voice heard at once, in seconds.
 pub const MAX_SECONDS: usize = jodel_lyrics::asr::PART_SECONDS as usize;
@@ -231,7 +231,27 @@ pub struct GpuAsr {
     inner: Turned<Mutex<Inner>>,
 }
 
+impl OnDevice for GpuAsr {
+    fn lost(&self) -> bool {
+        self.is_lost()
+    }
+}
+
 impl GpuAsr {
+    /// What the recogniser takes on the GPU, from its shapes, its packed
+    /// file of `packed` bytes (its weights, at most): its weights and the
+    /// room for the pieces it hears together, the parameters and what it
+    /// reads back through, kept while it is set up; and its weights once
+    /// more while they go up.
+    pub fn footprint(packed: u64) -> Footprint {
+        let room = Room::new(MOST_AT_ONCE, MOST_CACHE, 0);
+        let floats: usize = room.buffers().map(|(_, n)| n).sum::<usize>() + 2 * room.staging;
+        Footprint {
+            resident: packed + floats as u64 * 4 + MAX_OPS as u64 * PARAM_STRIDE,
+            working: packed,
+        }
+    }
+
     /// The packed model on the best GPU.
     pub fn new(model: &PackedModel) -> Result<GpuAsr, String> {
         let (inner, name) = crate::device::open("jodel-gpu asr", |device, queue, limits| {

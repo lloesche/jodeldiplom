@@ -149,7 +149,7 @@ fn against_lrc(model: Wav2Vec2, run: AgainstLrc) {
     let voice = match run.voice_in {
         Some(path) => wav::read_wav(path).expect("the WAV file"),
         None => {
-            jodeldiplom::work::lyrics::timer::separate_16k(run.audio, false)
+            jodeldiplom::work::voice::separate_16k(run.audio, false)
                 .expect("the voice")
                 .0
         }
@@ -238,7 +238,7 @@ fn main() {
             continue;
         };
         let started = Instant::now();
-        let (voice, mix) = match jodeldiplom::work::lyrics::timer::separate_16k(path, true) {
+        let (voice, mix) = match jodeldiplom::work::voice::separate_16k(path, true) {
             Ok(v) => v,
             Err(e) => {
                 println!("{name}: {e}");

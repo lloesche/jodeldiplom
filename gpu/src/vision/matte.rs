@@ -26,6 +26,7 @@ use super::net::Net;
 use super::ops::{Act, Attend, Band, ConvW, Img, Plan, Resize, ADD, GELU, NORM_CHUNK, UP_IN};
 use super::prep::{self, Rgb};
 use super::{swin, Named};
+use crate::Footprint;
 
 const SIDE: usize = 1024;
 const D: usize = 128;
@@ -528,6 +529,21 @@ pub struct GpuMatte {
 }
 
 impl GpuMatte {
+    /// What the model takes on the GPU, from the shapes in its checkpoint
+    /// (`model.safetensors`'s bytes): its weights while it is set up;
+    /// while it runs, its plan's buffers and read-back and, on the run that
+    /// sets it up, its weights once more while they go up.
+    pub fn footprint(checkpoint: Vec<u8>) -> Result<Footprint, String> {
+        let w = read(&SafeTensors::parse(checkpoint)?)?;
+        let (plan, _, _) = plan(&w);
+        let base = w.packer.data.len();
+        let planned: usize = plan.sizes.iter().sum::<usize>() + SIDE * SIDE;
+        Ok(Footprint {
+            resident: (base * 4) as u64,
+            working: ((planned + base) * 4) as u64,
+        })
+    }
+
     /// The model from its checkpoint (`model.safetensors`'s bytes), its
     /// weights on the GPU (planned when it first runs).
     pub fn new(checkpoint: Vec<u8>) -> Result<GpuMatte, String> {

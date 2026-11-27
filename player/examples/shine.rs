@@ -447,7 +447,7 @@ fn take(folder: &Path, song: Option<PathBuf>, separate: bool, show: bool) {
     let singing = singing(lyrics, &melody);
     let (original, orate) = if separate {
         (
-            jodeldiplom::work::lyrics::timer::separate_16k(&path, false)
+            jodeldiplom::work::voice::separate_16k(&path, false)
                 .expect("separated")
                 .0,
             16_000,

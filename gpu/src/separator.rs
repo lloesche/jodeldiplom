@@ -12,7 +12,7 @@
 //! [`GpuSeparator::background`]), each set up when first needed and again
 //! when its device is lost (`engine::Kept`).
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use jodel_rhythm::nn::layers::HEAD;
 use jodel_rhythm::stems::{
@@ -21,11 +21,12 @@ use jodel_rhythm::stems::{
 };
 
 use crate::engine::{
-    self, guarded, kernels_source, params, rotary, spread, Access, After, Angles, Kept, Kernels,
-    Model, Mul, OnDevice, Program, SetUp,
+    self, buffers_footprint, guarded, kernels_source, params, rotary, spread, Access, After,
+    Angles, Kept, Kernels, Model, Mul, OnDevice, Program, SetUp,
 };
 use crate::pace::{self, Pieces};
 use crate::packer::Named;
+use crate::{Footprint, Resident};
 
 /// The most frames a chunk may have (6 s at 44.1 kHz, hop 512).
 pub(crate) const MAX_FRAMES: usize = stems::CHUNK / 512 + 1;
@@ -306,20 +307,69 @@ impl OnDevice for Inner {
 
 /// The separator network on the GPU.
 pub struct GpuSeparator {
-    kept: Kept<Inner>,
+    kept: Arc<Kept<Inner>>,
     /// What its runs cost, read without waiting for one (the same count
     /// across setups).
     counts: pace::Counts,
 }
 
 /// What sets the separator up on the best GPU, its runs paced as `pieces`
-/// say.
-fn set_up(pieces: Pieces) -> SetUp<Inner> {
+/// say, its device's memory taken as `blocks` say.
+fn set_up(pieces: Pieces, blocks: wgpu::MemoryHints) -> SetUp<Inner> {
     Box::new(move || {
-        crate::device::open("jodel-gpu", |device, queue, limits| {
-            Inner::new(device, queue, limits, pieces.clone())
+        let wanted = |_: &wgpu::Adapter| {
+            (
+                wgpu::Features::empty(),
+                wgpu::ExperimentalFeatures::disabled(),
+            )
+        };
+        crate::device::open_on("jodel-gpu", blocks.clone(), wanted, {
+            let pieces = pieces.clone();
+            move |device, queue, limits| Inner::new(device, queue, limits, pieces)
         })
     })
+}
+
+/// The floats of each of the separator's buffers, its weights `weights`
+/// of them.
+fn sizes(weights: usize) -> [(Buf, usize); 13] {
+    let tokens = (MAX_FRAMES + REGISTERS) * (BAND_BINS.len() + REGISTERS);
+    let widest = BAND_BINS.iter().copied().max().unwrap_or(0);
+    [
+        (Buf::Weights, weights),
+        (Buf::Table, (MAX_FRAMES + REGISTERS) * 32),
+        (Buf::Stft, MAX_FRAMES * FRAME),
+        (Buf::Band, MAX_FRAMES * 4 * widest),
+        (Buf::Grid, tokens * DIM),
+        (Buf::ByBand, tokens * DIM),
+        (Buf::Normed, tokens * DIM),
+        (Buf::Queries, tokens * DIM),
+        (Buf::KeysValues, tokens * DIM),
+        (Buf::Attended, tokens * DIM),
+        (Buf::Gate, tokens * HIDDEN),
+        (Buf::Final, MAX_FRAMES * DIM),
+        (Buf::Masks, STEMS * MAX_FRAMES * FRAME),
+    ]
+}
+
+/// The floats a chunk's masks are read back through.
+const READ: usize = STEMS * MAX_FRAMES * FRAME;
+
+/// How the memory of the track playing's separator is taken: in the
+/// allocator's large blocks. Measured on an RTX 5080 against the small
+/// ones every other network takes: set up in 1.0 s rather than 1.65 s, a
+/// chunk in 84 ms rather than 86 to 88 ms, and 0.84 GB on the card rather
+/// than 0.5 GB; no scheduler plans its memory.
+const PLAYING: wgpu::MemoryHints = wgpu::MemoryHints::Performance;
+
+/// What the separator takes on the GPU, from its shapes: every buffer it
+/// keeps while it is set up (its weights and a chunk's room) and the one
+/// it reads back through; and its weights once more while they go up.
+/// Its weights are counted as packed (built in: packed on the processor
+/// for this, once a process, as a scheduler first asks).
+fn footprint() -> Option<Footprint> {
+    let weights = pack().ok()?.take_values().len();
+    Some(buffers_footprint(&sizes(weights), READ, weights as u64 * 4))
 }
 
 impl GpuSeparator {
@@ -328,9 +378,20 @@ impl GpuSeparator {
     /// renderer does not count), or while setting it up fails (it is tried
     /// again a while later).
     pub fn shared() -> Option<&'static GpuSeparator> {
-        static GPU: OnceLock<GpuSeparator> = OnceLock::new();
-        let gpu = GPU.get_or_init(|| GpuSeparator::kept(Pieces::foreground()));
+        let gpu = GpuSeparator::shared_kept();
         gpu.kept.usable().then_some(gpu)
+    }
+
+    /// The shared separator, set up or not.
+    fn shared_kept() -> &'static GpuSeparator {
+        static GPU: OnceLock<GpuSeparator> = OnceLock::new();
+        GPU.get_or_init(|| GpuSeparator::kept(Pieces::foreground(), PLAYING))
+    }
+
+    /// Whether it is the shared separator (the track playing's), which no
+    /// scheduler lets go.
+    pub fn plays(&self) -> bool {
+        std::ptr::eq(self, GpuSeparator::shared_kept())
     }
 
     /// A separator of its own for background work (analyses, getting
@@ -338,12 +399,38 @@ impl GpuSeparator {
     /// of the track playing ([`GpuSeparator::shared`]'s); that one where a
     /// second does not fit on the GPU.
     pub fn background() -> Option<&'static GpuSeparator> {
-        static GPU: OnceLock<GpuSeparator> = OnceLock::new();
-        let gpu = GPU.get_or_init(|| GpuSeparator::kept(Pieces::resting()));
+        let gpu = GpuSeparator::background_kept();
         gpu.kept
             .usable()
             .then_some(gpu)
             .or_else(GpuSeparator::shared)
+    }
+
+    /// The background separator as a scheduler keeps it (never the track
+    /// playing's), set up or not.
+    pub fn background_resident() -> Arc<dyn Resident> {
+        GpuSeparator::background_kept().resident()
+    }
+
+    /// The separator as a scheduler keeps it: its footprint, and its
+    /// release.
+    pub fn resident(&self) -> Arc<dyn Resident> {
+        Arc::clone(&self.kept) as Arc<dyn Resident>
+    }
+
+    /// What the separators' GPU work cost so far, the background one's and
+    /// the track playing's together (background work goes to the latter
+    /// where the former does not fit: [`GpuSeparator::background`]),
+    /// without setting either up.
+    pub fn tally_all() -> pace::Tally {
+        let (background, shared) = (Self::background_kept(), Self::shared_kept());
+        background.tally().and(&shared.tally())
+    }
+
+    /// The background separator, set up or not.
+    fn background_kept() -> &'static GpuSeparator {
+        static GPU: OnceLock<GpuSeparator> = OnceLock::new();
+        GPU.get_or_init(|| GpuSeparator::kept(Pieces::resting(), wgpu::MemoryHints::MemoryUsage))
     }
 
     /// The separator for the calling thread's work: the background one
@@ -369,16 +456,16 @@ impl GpuSeparator {
         let pieces = Pieces::foreground();
         Ok(GpuSeparator {
             counts: pieces.counts(),
-            kept: Kept::set_up_now(set_up(pieces))?,
+            kept: Arc::new(Kept::set_up_now(footprint, set_up(pieces, PLAYING))?),
         })
     }
 
-    /// A separator whose runs are paced as `pieces` say, set up when first
-    /// used.
-    fn kept(pieces: Pieces) -> GpuSeparator {
+    /// A separator whose runs are paced as `pieces` say, its device's
+    /// memory taken as `blocks` say, set up when first used.
+    fn kept(pieces: Pieces, blocks: wgpu::MemoryHints) -> GpuSeparator {
         GpuSeparator {
             counts: pieces.counts(),
-            kept: Kept::new(set_up(pieces)),
+            kept: Arc::new(Kept::new(footprint, set_up(pieces, blocks))),
         }
     }
 
@@ -400,25 +487,8 @@ impl Inner {
     ) -> Result<Inner, String> {
         let mut weights = pack()?;
         let values = weights.take_values();
-        let tokens = (MAX_FRAMES + REGISTERS) * (BAND_BINS.len() + REGISTERS);
-        let widest = BAND_BINS.iter().copied().max().unwrap_or(0);
-        let sizes = [
-            (Buf::Weights, values.len()),
-            (Buf::Table, (MAX_FRAMES + REGISTERS) * 32),
-            (Buf::Stft, MAX_FRAMES * FRAME),
-            (Buf::Band, MAX_FRAMES * 4 * widest),
-            (Buf::Grid, tokens * DIM),
-            (Buf::ByBand, tokens * DIM),
-            (Buf::Normed, tokens * DIM),
-            (Buf::Queries, tokens * DIM),
-            (Buf::KeysValues, tokens * DIM),
-            (Buf::Attended, tokens * DIM),
-            (Buf::Gate, tokens * HIDDEN),
-            (Buf::Final, MAX_FRAMES * DIM),
-            (Buf::Masks, STEMS * MAX_FRAMES * FRAME),
-        ];
         let program = Program::new(device, queue, limits, "jodel-gpu", &kernels_source(&[]));
-        let model = Model::new(program, &sizes, STEMS * MAX_FRAMES * FRAME, pieces)?;
+        let model = Model::new(program, &sizes(values.len()), READ, pieces)?;
         model.write(Buf::Weights, &values);
         model.write(
             Buf::Table,

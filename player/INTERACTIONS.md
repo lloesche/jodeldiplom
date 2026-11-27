@@ -256,6 +256,43 @@ really found, as its workers tell it: never a progress they did not tell.
   down, none.
   - `a_found_result_sounds_only_with_no_music`
   - `every_sound_plays_and_is_named_apart` (`sfx::bench`)
+- **P6.** A song's work on the GPU goes by model (`work::stages`): each
+  model's jobs wait in a queue of their own, first in first out (the song
+  playing next goes before no other), one at a time, each on its worker's
+  thread; a job needing two models (an analysis's stems and beat network)
+  runs once it is its turn in both. Jobs start in the order they were
+  queued: once one waits for room on the card, none queued after it starts
+  before it. The models stay on the card while what is loaded, by their
+  footprints (worked out from their shapes before loading), fits its
+  budget less a margin; where the next would not fit, those not in use
+  make room (the one used longest ago first), never one at work or with a
+  job queued before: a model drains what was queued for it before another
+  takes its room, and a job queued meanwhile waits until then. One thread
+  plans, and lets models go with no lock held, before the jobs it starts.
+  A model whose footprint is not known yet (its files not there yet) runs
+  alone, as does one whose footprint panics; one whose release panics is
+  taken as let go: neither stops any work. A
+  minute with nothing to do lets every model go, on any card. While a
+  song is sung nothing new is loaded but for that song's own work (the
+  singer's phrases), and a job held back holds no queue. A job that
+  queues another inside its turn panics.
+  - `a_stage_runs_its_jobs_first_in_first_out_one_at_a_time`
+  - `a_job_needing_two_models_runs_once_both_are_its_turn`
+  - `on_a_small_card_a_model_drains_its_queue_before_the_next_takes_its_room`
+  - `a_song_queued_meanwhile_waits_until_the_models_queue_is_empty`
+  - `a_stage_asked_again_and_again_holds_no_other_off`
+  - `models_that_fit_stay_loaded_together`
+  - `the_models_not_in_use_make_room_the_oldest_first`
+  - `every_model_goes_after_a_minute_with_nothing_to_do`
+  - `singing_takes_the_gpu_first`
+  - `a_job_held_back_by_singing_holds_no_queue`
+  - `a_model_whose_footprint_is_not_known_runs_alone`
+  - `a_model_that_panics_stops_no_work`
+  - `while_a_song_is_sung_a_model_not_loaded_waits_for_its_end`
+  - `the_planner_lets_models_go_and_then_starts_the_jobs`
+  - `a_turn_inside_a_turn_panics`
+  - `the_models_register_themselves_where_they_are_made`
+  - `each_network_takes_about_what_its_shapes_say` (jodel-gpu)
 
 ## Karaoke
 

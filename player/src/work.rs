@@ -11,7 +11,10 @@
 //!   ([`shine`]) as the karaoke sings it, the files the setup fetches
 //!   ([`download`]), and the karaoke story's plan as the language model
 //!   writes it ([`story`], a unit of work for whoever runs the model).
-//!   Each keeps what it makes in the data folder.
+//!   Each keeps what it makes in the data folder. Their work on the GPU
+//!   goes by model, each model's jobs in a queue of its own ([`stages`]),
+//!   a song's voice taken from its kept stems or separated there
+//!   ([`voice`]).
 //! - What they are built of: a [`Queue`] of work their threads wait on,
 //!   the two [`Lanes`] a worker is asked in (wanted now, and to get ready
 //!   ahead), and a [`Job`] that runs once on a thread of its own, tells
@@ -28,10 +31,12 @@ pub mod picture;
 pub mod rhythm;
 pub mod scenes;
 pub mod shine;
+pub mod stages;
 pub mod story;
 pub mod story_models;
 #[cfg(test)]
 pub(crate) mod told;
+pub mod voice;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +44,11 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use outbox::Notify;
+
+/// A song's file name, for the trace.
+pub fn song_name(path: &std::path::Path) -> std::borrow::Cow<'_, str> {
+    path.file_name().unwrap_or_default().to_string_lossy()
+}
 
 /// Work for background threads to wait on: what is to be done (`W`), under
 /// a lock, and a stop. Every change wakes every thread waiting, and a stop
@@ -48,16 +58,6 @@ pub struct Queue<W> {
     work: Mutex<W>,
     ready: Condvar,
     stop: AtomicBool,
-}
-
-/// What [`Queue::next_within`] found.
-pub enum Next<T> {
-    /// Something to do.
-    Do(T),
-    /// Nothing, for as long as it waited.
-    Idle,
-    /// Stopped.
-    Stop,
 }
 
 impl<W> Queue<W> {
@@ -84,44 +84,19 @@ impl<W> Queue<W> {
 
     /// The next thing to do, as `take` takes it from the work, waited for;
     /// `None` once stopped.
-    pub fn next<T>(&self, take: impl FnMut(&mut W) -> Option<T>) -> Option<T> {
-        match self.next_within(Duration::MAX, take) {
-            Next::Do(found) => Some(found),
-            Next::Idle | Next::Stop => None,
-        }
-    }
-
-    /// [`Queue::next`], waiting at most `wait`.
-    pub fn next_within<T>(
-        &self,
-        wait: Duration,
-        mut take: impl FnMut(&mut W) -> Option<T>,
-    ) -> Next<T> {
-        let until = Instant::now().checked_add(wait);
+    pub fn next<T>(&self, mut take: impl FnMut(&mut W) -> Option<T>) -> Option<T> {
         let mut work = self.lock();
         loop {
             if self.stopped() {
-                return Next::Stop;
+                return None;
             }
             if let Some(found) = take(&mut work) {
-                return Next::Do(found);
+                return Some(found);
             }
-            work = match until {
-                None => self
-                    .ready
-                    .wait(work)
-                    .unwrap_or_else(PoisonError::into_inner),
-                Some(until) => {
-                    let left = until.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return Next::Idle;
-                    }
-                    self.ready
-                        .wait_timeout(work, left)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0
-                }
-            };
+            work = self
+                .ready
+                .wait(work)
+                .unwrap_or_else(PoisonError::into_inner);
         }
     }
 
@@ -328,22 +303,12 @@ mod tests {
     }
 
     #[test]
-    fn a_wait_within_a_while_comes_back_idle() {
-        let queue = Queue::new(None::<u32>);
-        assert!(matches!(
-            queue.next_within(Duration::from_millis(1), Option::take),
-            Next::Idle
-        ));
-        queue.change(|w| *w = Some(1));
-        assert!(matches!(
-            queue.next_within(Duration::from_millis(1), Option::take),
-            Next::Do(1)
-        ));
+    fn a_stop_ends_a_pause_and_what_is_there_is_taken_until_then() {
+        let queue = Queue::new(Some(1u32));
+        assert_eq!(queue.next(Option::take), Some(1));
+        queue.change(|w| *w = Some(2));
         queue.stop();
-        assert!(matches!(
-            queue.next_within(Duration::from_millis(1), Option::take),
-            Next::Stop
-        ));
+        assert_eq!(queue.next(Option::take), None);
         assert!(!queue.pause(Duration::from_secs(60)), "a stop ends a pause");
     }
 

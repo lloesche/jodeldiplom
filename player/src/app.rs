@@ -201,6 +201,9 @@ pub struct App {
     session: SessionKeeper,
     /// A move of the data folder, for the settings' row.
     moving: MoveView,
+    /// A song being sung, as the GPU's stages are told
+    /// ([`crate::work::stages::sing`]).
+    singing: Option<crate::work::stages::Singing<'static>>,
 }
 
 /// The steps of the player's start ([`App::start`]), in order, as the
@@ -383,6 +386,7 @@ impl App {
                 options.mover.clone(),
                 options.data.as_ref().map(|d| d.0.clone()),
             ),
+            singing: None,
         };
         app.state.data_dir = options.data.as_ref().map(|d| d.0.clone());
         // The delays kept, from beside the settings.
@@ -540,6 +544,11 @@ impl App {
     fn follow(&mut self) {
         self.session.note(&self.state, self.clock.now());
         self.mic_turn();
+        // Singing takes the GPU first.
+        let singing = core::karaoke::singing(&self.state);
+        if singing != self.singing.is_some() {
+            self.singing = singing.then(crate::work::stages::sing);
+        }
         // The delays changed: kept beside the settings at once.
         if std::mem::take(&mut self.state.karaoke.lag.changed) {
             let lag = &self.state.karaoke.lag;

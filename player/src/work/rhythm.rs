@@ -31,6 +31,7 @@ use jodel_rhythm::{Analysis, Analyzer, Evidence, Method, SAMPLE_RATE};
 
 use crate::core::{Action, Facts, Heard, Job, RhythmFacts, RhythmRecipe, Rhythmed};
 use crate::work::outbox::Outbox;
+use crate::work::stages::{self, Stage};
 use crate::work::{Lane as Ask, Lanes, Queue};
 
 mod report;
@@ -159,7 +160,44 @@ pub type Report = Arc<dyn Fn(Heard) + Send + Sync>;
 /// [`listen_keeping`], telling `report` of the key once the file is
 /// decoded, of the stems so far as each chunk is separated (where the
 /// file says how long it is) and once all are.
+///
+/// A recipe with work on the GPU is heard as one job of the GPU's stages
+/// ([`stages::run`]): the separator's ([`Stage::Stems`]) for its stems,
+/// the beat network's ([`Stage::Beats`]) for its network. The whole of it
+/// is the one job: the separator is fed as the file decodes and the
+/// network runs on what is decoded, so the GPU is at work from the first
+/// second decoded to the last.
 pub fn listen_reporting(
+    path: &Path,
+    recipe: &RhythmRecipe,
+    keep: Option<PathBuf>,
+    report: Option<Report>,
+) -> Result<Listened, String> {
+    let stems = recipe.stems.then_some(Stage::Stems);
+    let network = recipe
+        .methods
+        .contains(&Method::Network)
+        .then_some(Stage::Beats);
+    let needs: Vec<Stage> = stems.into_iter().chain(network).collect();
+    if needs.is_empty() {
+        return listen_now(path, recipe, keep, report);
+    }
+    let name = crate::work::song_name(path);
+    stages::run(&needs, &name, || listen_now(path, recipe, keep, report))
+}
+
+/// The background separator and the beat network, registered for their
+/// stages ([`Stage::Stems`], [`Stage::Beats`]) once.
+pub(crate) fn register_networks() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        stages::register(Stage::Stems, GpuSeparator::background_resident());
+        stages::register(Stage::Beats, jodel_gpu::GpuNetwork::shared_resident());
+    });
+}
+
+/// [`listen_reporting`], now.
+fn listen_now(
     path: &Path,
     recipe: &RhythmRecipe,
     keep: Option<PathBuf>,
@@ -210,6 +248,12 @@ pub fn listen_reporting(
     let separator_name = gpu.map(|g| g.name());
     let stems_before = gpu.map(|g| (g, g.tally()));
     let background = jodel_gpu::pace::is_background();
+    if background && gpu.is_some_and(GpuSeparator::plays) {
+        crate::trace::note(format_args!(
+            "beats: the background separator does not fit; {}'s stems on the track playing's, beside the GPU's stages",
+            path.display()
+        ));
+    }
     let stems_report = report.clone();
     let stems = gpu.map(|gpu| {
         let (tx, rx) = std::sync::mpsc::sync_channel::<(Vec<f32>, Vec<f32>)>(STEMS_BEHIND);
@@ -428,6 +472,7 @@ impl RhythmWorker {
     /// [`Action::Rhythm`] and are kept in `cache` (if any); each file whose
     /// analysis is in the cache (or failed) is told with [`Action::Ready`].
     pub fn new(outbox: Outbox, cache: Option<PathBuf>, grids: Option<PathBuf>) -> RhythmWorker {
+        register_networks();
         let queue = Arc::new(Queue::new(Wanted {
             load: Lanes::default(),
             analyse: Lanes::default(),
@@ -594,7 +639,7 @@ fn analyse(
     let result = match listen_reporting(path, recipe, keep, Some(report)) {
         Ok(listened) => {
             if let Some(e) = &listened.stems_failed {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let name = crate::work::song_name(path);
                 let note = format!("Stems failed for {name} ({e}): the mix's cues used");
                 if !outbox.send(Action::Failed(note)) {
                     return None;

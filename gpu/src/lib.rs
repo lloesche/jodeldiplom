@@ -36,7 +36,11 @@
 //! starts every GPU's driver, an unused integrated one's too, so the
 //! choice does not list them again for each model; a failed choice (no
 //! GPU) is kept too. Setups and teardowns take turns ([`setting_up`]).
-//! [`report`] says what the GPU side finds on this machine (`diag.rs`).
+//! [`report`] says what the GPU side finds on this machine (`diag.rs`),
+//! and [`memory::budget`] what the card's memory allows this process now.
+//! Each network the process keeps is a [`Resident`] ([`Kept`]): what it
+//! takes on the GPU is worked out from its shapes before it is set up
+//! (its [`Footprint`]), and the player's scheduler may let it go.
 //!
 //! ```no_run
 //! use jodel_gpu::GpuSeparator;
@@ -54,6 +58,7 @@ mod diag;
 mod engine;
 pub mod image;
 pub mod llm;
+pub mod memory;
 mod net;
 pub mod pace;
 mod packer;
@@ -67,6 +72,7 @@ pub mod vision;
 pub use asr::{GpuAsr, Hearing, MAX_NEW, MAX_SECONDS};
 pub use device::{card, chosen, gpu_name, setting_up, Chosen, Turn, Turned};
 pub use diag::report;
+pub use engine::{Kept, OnDevice, SetUp, UNKNOWN};
 pub use llm::Gemma;
 pub use net::GpuNetwork;
 pub use precision::Precision;

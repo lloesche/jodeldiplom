@@ -14,11 +14,12 @@ use jodel_lyrics::speech::{
 use jodel_lyrics::{Maker, VOCALS_RATE};
 
 use crate::engine::{
-    self, guarded, kernels_source, params, spread, Access, After, Kernels, Model, Mul, Program,
+    self, buffers_footprint, guarded, kernels_source, params, spread, Access, After, Kernels,
+    Model, Mul, OnDevice, Program,
 };
 use crate::pace::Pieces;
 use crate::packer::Named;
-use crate::Turned;
+use crate::{Footprint, Turned};
 
 const CHANNELS: usize = 512;
 const DIM: usize = 768;
@@ -380,6 +381,46 @@ impl GpuSpeech {
     }
 }
 
+impl OnDevice for GpuSpeech {
+    fn lost(&self) -> bool {
+        self.is_lost()
+    }
+}
+
+/// The floats of each of the model's buffers, its weights `weights` of
+/// them, and the floats read back.
+fn sizes(weights: usize) -> ([(Buf, usize); 12], usize) {
+    let samples = longest_piece();
+    let frames = conv_frames(samples);
+    let f = frames[6];
+    let sizes = [
+        (Buf::Weights, weights),
+        (Buf::Audio, samples),
+        (Buf::ConvA, frames[0] * CHANNELS),
+        (Buf::ConvB, frames[1] * CHANNELS),
+        (Buf::Stats, 2 * CHANNELS),
+        (Buf::Hidden, f * DIM),
+        (Buf::Qkv, f * QKV),
+        (Buf::Attended, f * DIM),
+        (Buf::Up, f * FF),
+        (Buf::Patches, f * POS),
+        (Buf::Pos, f * DIM),
+        (Buf::Logits, f * TOKENS),
+    ];
+    (sizes, f * TOKENS)
+}
+
+impl GpuSpeech {
+    /// What the model takes on the GPU, from its shapes, its checkpoint
+    /// of `checkpoint` bytes (its f32 weights, at most): every buffer it
+    /// keeps (its weights and a piece's room) and the one it reads back
+    /// through; and its weights once more while they go up.
+    pub fn footprint(checkpoint: u64) -> Footprint {
+        let (sizes, read) = sizes((checkpoint / 4) as usize);
+        buffers_footprint(&sizes, read, checkpoint)
+    }
+}
+
 impl Acoustic for GpuSpeech {
     fn maker(&self) -> Maker {
         jodel_lyrics::speech::maker()
@@ -400,23 +441,7 @@ impl Inner {
     ) -> Result<Inner, String> {
         let mut weights = pack(model);
         let values = weights.take_values();
-        let samples = longest_piece();
-        let frames = conv_frames(samples);
-        let f = frames[6];
-        let sizes = [
-            (Buf::Weights, values.len()),
-            (Buf::Audio, samples),
-            (Buf::ConvA, frames[0] * CHANNELS),
-            (Buf::ConvB, frames[1] * CHANNELS),
-            (Buf::Stats, 2 * CHANNELS),
-            (Buf::Hidden, f * DIM),
-            (Buf::Qkv, f * QKV),
-            (Buf::Attended, f * DIM),
-            (Buf::Up, f * FF),
-            (Buf::Patches, f * POS),
-            (Buf::Pos, f * DIM),
-            (Buf::Logits, f * TOKENS),
-        ];
+        let (sizes, read) = sizes(values.len());
         let program = Program::new(
             device,
             queue,
@@ -424,7 +449,7 @@ impl Inner {
             "jodel-gpu speech",
             &kernels_source(&[include_str!("speech.wgsl")]),
         );
-        let model = Model::new(program, &sizes, f * TOKENS, Pieces::resting())?;
+        let model = Model::new(program, &sizes, read, Pieces::resting())?;
         model.write(Buf::Weights, &values);
         Ok(Inner { model, weights })
     }

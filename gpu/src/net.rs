@@ -13,18 +13,19 @@
 //! `net.wgsl`. The process keeps one ([`GpuNetwork::shared`]), set up when
 //! first needed and again when its device is lost (`engine::Kept`).
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use jodel_rhythm::net::mel::BANDS;
 use jodel_rhythm::net::{NetRunner, Network, BLOCKS, DIM, LAYERS, PIECE_FRAMES, STEM};
 use jodel_rhythm::nn::layers::HEAD;
 
 use crate::engine::{
-    self, guarded, kernels_source, params, rotary, spread, Access, After, Angles, Kept, Kernels,
-    Model, Mul, OnDevice, Program, SetUp,
+    self, buffers_footprint, guarded, kernels_source, params, rotary, spread, Access, After,
+    Angles, Kept, Kernels, Model, Mul, OnDevice, Program, SetUp,
 };
 use crate::pace::{self, Pieces};
 use crate::packer::Named;
+use crate::{Footprint, Resident};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kernel {
@@ -356,7 +357,7 @@ impl OnDevice for Inner {
 
 /// The beat network on the GPU.
 pub struct GpuNetwork {
-    kept: Kept<Inner>,
+    kept: Arc<Kept<Inner>>,
     /// What its runs cost, read without waiting for one (the same count
     /// across setups).
     counts: pace::Counts,
@@ -372,20 +373,70 @@ fn set_up(pieces: Pieces) -> SetUp<Inner> {
     })
 }
 
+/// The floats of each of the network's buffers, its weights `weights` of
+/// them.
+fn sizes(weights: usize) -> [(Buf, usize); 12] {
+    let f = PIECE_FRAMES;
+    let wide = 4 * STEM * BANDS / 4 * f;
+    [
+        (Buf::Weights, weights),
+        (Buf::Table, f * 32),
+        (Buf::Spect, f * BANDS),
+        (Buf::X, wide / 4),
+        (Buf::Y, wide / 4),
+        (Buf::Normed, wide / 4),
+        (Buf::Qkv, 3 * wide / 4),
+        (Buf::Gates, BANDS / 4 * f),
+        (Buf::Attended, wide / 4),
+        (Buf::Hidden, wide),
+        (Buf::Patches, 3 * wide / 4),
+        (Buf::Logits, 2 * f),
+    ]
+}
+
+/// The floats a piece's logits are read back through.
+const READ: usize = 2 * PIECE_FRAMES;
+
+/// What the network takes on the GPU, from its shapes: every buffer it
+/// keeps while it is set up and the one it reads back through; and its
+/// weights once more while they go up. Its weights are counted as packed
+/// (built in: packed on the processor for this, once a process, as a
+/// scheduler first asks).
+fn footprint() -> Option<Footprint> {
+    let weights = pack().ok()?.take_values().len();
+    Some(buffers_footprint(&sizes(weights), READ, weights as u64 * 4))
+}
+
 impl GpuNetwork {
     /// The network on the best GPU, set up on first use (and again once
     /// its device is lost); `None` without a usable one, or while setting
     /// it up fails (it is tried again a while later).
     pub fn shared() -> Option<&'static GpuNetwork> {
+        let net = GpuNetwork::kept_shared();
+        net.kept.usable().then_some(net)
+    }
+
+    /// The shared network as a scheduler keeps it, set up or not.
+    pub fn shared_resident() -> Arc<dyn Resident> {
+        GpuNetwork::kept_shared().resident()
+    }
+
+    /// The network as a scheduler keeps it: its footprint, and its
+    /// release.
+    pub fn resident(&self) -> Arc<dyn Resident> {
+        Arc::clone(&self.kept) as Arc<dyn Resident>
+    }
+
+    /// The shared network, set up or not.
+    fn kept_shared() -> &'static GpuNetwork {
         static NET: OnceLock<GpuNetwork> = OnceLock::new();
-        let net = NET.get_or_init(|| {
+        NET.get_or_init(|| {
             let pieces = Pieces::resting();
             GpuNetwork {
                 counts: pieces.counts(),
-                kept: Kept::new(set_up(pieces)),
+                kept: Arc::new(Kept::new(footprint, set_up(pieces))),
             }
-        });
-        net.kept.usable().then_some(net)
+        })
     }
 
     /// What its GPU work cost so far ([`pace::Tally::since`] an earlier
@@ -399,7 +450,7 @@ impl GpuNetwork {
         let pieces = Pieces::resting();
         Ok(GpuNetwork {
             counts: pieces.counts(),
-            kept: Kept::set_up_now(set_up(pieces))?,
+            kept: Arc::new(Kept::set_up_now(footprint, set_up(pieces))?),
         })
     }
 }
@@ -462,21 +513,6 @@ impl Inner {
         let mut weights = pack()?;
         let values = weights.take_values();
         let f = PIECE_FRAMES;
-        let wide = 4 * STEM * BANDS / 4 * f;
-        let sizes = [
-            (Buf::Weights, values.len()),
-            (Buf::Table, f * 32),
-            (Buf::Spect, f * BANDS),
-            (Buf::X, wide / 4),
-            (Buf::Y, wide / 4),
-            (Buf::Normed, wide / 4),
-            (Buf::Qkv, 3 * wide / 4),
-            (Buf::Gates, BANDS / 4 * f),
-            (Buf::Attended, wide / 4),
-            (Buf::Hidden, wide),
-            (Buf::Patches, 3 * wide / 4),
-            (Buf::Logits, 2 * f),
-        ];
         let program = Program::new(
             device,
             queue,
@@ -484,7 +520,7 @@ impl Inner {
             "jodel-gpu network",
             &kernels_source(&[include_str!("net.wgsl")]),
         );
-        let model = Model::new(program, &sizes, 2 * f, pieces)?;
+        let model = Model::new(program, &sizes(values.len()), READ, pieces)?;
         model.write(Buf::Weights, &values);
         model.write(Buf::Table, &rotary(0..f, engine::HEAD_32, Angles::F32));
         Ok(Inner { model, weights })

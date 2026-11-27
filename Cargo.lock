@@ -1556,6 +1556,7 @@ version = "0.1.0"
 name = "jodel-gpu"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "durable",
  "hound",
  "image",
@@ -1565,8 +1566,10 @@ dependencies = [
  "jodel-rhythm",
  "jodel-tensors",
  "naga",
+ "objc2-metal",
  "pollster",
  "wgpu",
+ "windows",
 ]
 
 [[package]]

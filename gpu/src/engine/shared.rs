@@ -2,20 +2,22 @@
 //! their own memory on it ([`SharedDevice`]: the picture models'): set up
 //! when first asked for and kept (never torn down while it works), set up
 //! again on the next ask once it is lost (the parts on the lost one say
-//! so); a setup that failed stands for [`RETRY`], as a [`super::Kept`]
+//! so); a setup that failed stands a while ([`RETRY`] at first, doubled
+//! after each failure in a row up to half an hour), as a [`super::Kept`]
 //! network's does.
 
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use super::kept::RETRY;
+use super::kept::{stands, RETRY};
 use super::OnDevice;
 use crate::Turned;
 
-/// The device now, and when the last setup failed (and why).
+/// The device now, and when the last setup failed, why, and how long
+/// that stands.
 struct Slot<G> {
     on: Option<Arc<Turned<G>>>,
-    failed: Option<(Instant, String)>,
+    failed: Option<(Instant, String, Duration)>,
 }
 
 /// A device set up by `set_up` when first asked for, shared by every part
@@ -38,15 +40,15 @@ impl<G: OnDevice> SharedDevice<G> {
     }
 
     /// The device, set up now where it is not or was lost; why not where
-    /// it cannot be (a failed setup stands for [`RETRY`]).
+    /// it cannot be (a failed setup stands a while).
     pub(crate) fn get(&self) -> Result<Arc<Turned<G>>, String> {
         let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(on) = slot.on.as_ref().filter(|on| !on.lost()) {
             return Ok(Arc::clone(on));
         }
         slot.on = None;
-        if let Some((at, why)) = &slot.failed {
-            if at.elapsed() < RETRY {
+        if let Some((at, why, stands)) = &slot.failed {
+            if at.elapsed() < *stands {
                 return Err(why.clone());
             }
         }
@@ -60,7 +62,8 @@ impl<G: OnDevice> SharedDevice<G> {
                 Ok(on)
             }
             Err(why) => {
-                slot.failed = Some((Instant::now(), why.clone()));
+                let before = slot.failed.as_ref().map(|&(_, _, before)| before);
+                slot.failed = Some((Instant::now(), why.clone(), stands(before, RETRY)));
                 Err(why)
             }
         }

@@ -14,14 +14,16 @@ pub struct Footprint {
 impl Footprint {
     /// Both together: what a job needs at its peak.
     pub fn total(&self) -> u64 {
-        self.resident + self.working
+        self.resident.saturating_add(self.working)
     }
 }
 
 /// A model a scheduler may let go of: its footprint, known before it is
 /// loaded, and its release.
 pub trait Resident: Send + Sync {
-    /// What it needs, loaded or not.
+    /// What it needs, loaded or not; one not known yet (its files not
+    /// there yet) says the most there is ([`crate::UNKNOWN`]), so a
+    /// scheduler loads nothing beside it.
     fn footprint(&self) -> Footprint;
     /// Lets go of what it holds on the GPU; its next use loads it again.
     fn release(&self);

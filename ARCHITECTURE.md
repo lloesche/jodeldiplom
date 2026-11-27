@@ -98,7 +98,7 @@ side effects is outside it and driven by what it returns.
 | The game's data | `tiers`, `theme` | the tier table: everything a tier takes, looks like and sounds like, a row each; the themes that override its colours, the effects' looks and the sounds' patches by key. |
 | Presentation models | `view` | what each screen says, as plain data (rows, labels, tones, the Karaoke picture, the bubbles' fill). |
 | The running player | `app`, `desk_wiring`, `preview`, `sync`, `clock` | `App` holds the `State`, carries out the effects (`app::effects`), pumps the channels, answers the window's frames (`app::frame`); its subsystems own their parts: the microphone and the singing (`app::mic`), the cover heard (`work::art`), the spectrum (`spectrum`), the session kept (`store::session`), a data folder's move (`store::mover`); `desk_wiring` builds the desk and the engine on it; `preview` and `sync` play on it beside the engine. |
-| Workers | `work` (`work::rhythm`, `work::lyrics`, `work::cover`, `work::art`, `work::shine`, `work::loudness`, `work::download`), `browser` (details, search), `setup`, `store::mover`, `store::grids` | background threads, each with its queue (`work`: a `Queue` its threads wait on, the `Lanes` of what is wanted now and ahead, a `Job` that tells how it stands and waits for a retry); results come back as `Action`s through an `Outbox` (`work::outbox`). |
+| Workers | `work` (`work::rhythm`, `work::lyrics`, `work::cover`, `work::art`, `work::shine`, `work::loudness`, `work::download`), `browser` (details, search), `setup`, `store::mover`, `store::grids` | background threads, each with its queue (`work`: a `Queue` its threads wait on, the `Lanes` of what is wanted now and ahead, a `Job` that tells how it stands and waits for a retry); results come back as `Action`s through an `Outbox` (`work::outbox`). Their GPU work goes by model, a queue a model (`work::stages`). |
 | Stores | `store` (`store::cache`, `store::dirs`, `store::mover`, `store::session`, `store::grids`, `store::delays`, `store::scores`, `store::keep`, `store::patches`, `store::stems`), `config`; the workers keep their own (`work::rhythm`, `work::lyrics`, `work::cover`, `work::shine`, `work::loudness`) | what is kept on disk, where, and in which schema. |
 | Sounds | `sfx` | the game's moments as sounds: the conductor plans notes on the song's grid and key for the synth on the desk's effects input. |
 | The window | `gui` | the iced application (`gui::window`), its screens (`gui::screens`) built from the look's tokens and shared widgets (`gui::look`, `gui::widgets`), the Mixer tab (`gui::mixer`), the lanes (`gui::lanes`), and Karaoke mode on the GPU: the stage (`gui::stage`, its GPU side `gui::stage::gpu` and its shader's shapes `gui::stage::shapes`), the effects (`gui::fx`), the backdrop (`gui::backdrop`), the light (`gui::bloom`), the bursts (`gui::particles`). |
@@ -169,7 +169,13 @@ song playing first:
 
 Each answers with `Action::Rhythm`, `Action::Lyrics` or a job's state, and
 wakes the window. The GPU work of all three is background work: it gives
-way while the window draws something moving (`jodel_gpu::pace`).
+way while the window draws something moving (`jodel_gpu::pace`), and goes
+by model (`work::stages`): each model's jobs wait in a queue of their own,
+first in first out, and the models (each a `jodel_gpu::Resident`, its
+footprint worked out from its shapes) stay on the card as its memory
+budget allows (`jodel_gpu::memory`), taking turns where they do not fit
+together, every one let go after a minute with nothing to do; while a
+song is sung nothing new is loaded but for that song's own work.
 
 In Karaoke mode two more are asked for as a song is sung: the original
 singer's phrases measured from the vocal stem (`work::shine`, the shine's
@@ -242,7 +248,9 @@ Real-time rules, and what holds them:
   (`output/src/backend/priority.rs`).
 - The GPU has one queue for everything: the networks run in submissions
   of a few milliseconds, background work rests while the window animates,
-  and the playing track's stems go first (`gpu/src/pace.rs`). The window's
+  and the playing track's stems go first (`gpu/src/pace.rs`). Which
+  models are on the card is planned before loading, from their declared
+  footprints and the card's budget (`player/src/work/stages/`). The window's
   passes follow `PERFORMANCE.md`: one pipeline per group of shapes, screen
   passes only as strips, the frame budgets measured by `frame_cost`.
 

@@ -84,7 +84,7 @@ pub fn describe(
     decide: Duration,
     total: Duration,
 ) -> String {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let name = crate::work::song_name(path);
     let minutes = analysis.duration / 60.0;
     let mut s = format!(
         "at {at}\ntrack: {name} ({}:{:02})\n",

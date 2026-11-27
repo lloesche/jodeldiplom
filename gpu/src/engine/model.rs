@@ -8,6 +8,18 @@ use std::time::Duration;
 
 use super::{bytes, Kernels, Op, Program, Recorded};
 use crate::pace::Pieces;
+use crate::Footprint;
+
+/// What a network takes on the GPU, from its buffers' shapes: each of
+/// `sizes` (its f32s) and the `read` f32s it reads back through, kept while
+/// it is set up; and `upload` bytes on top while its weights go up.
+pub(crate) fn buffers_footprint<B>(sizes: &[(B, usize)], read: usize, upload: u64) -> Footprint {
+    let floats: usize = sizes.iter().map(|&(_, n)| n).sum::<usize>() + read;
+    Footprint {
+        resident: floats as u64 * 4,
+        working: upload,
+    }
+}
 
 /// The most plans a model keeps: one more, and the older all go first
 /// (inputs come in a few sizes: the last chunk or piece of a track is

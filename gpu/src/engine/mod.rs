@@ -30,8 +30,8 @@ mod shared;
 
 use std::hash::Hash;
 
-pub(crate) use kept::{Kept, OnDevice, SetUp};
-pub(crate) use model::Model;
+pub use kept::{Kept, OnDevice, SetUp, UNKNOWN};
+pub(crate) use model::{buffers_footprint, Model};
 pub(crate) use mul::{After, Matrix, Mul, ARGMAX, BIAS, MUL_NUMBERS, SWIGLU};
 pub(crate) use program::{Program, Recorded};
 pub(crate) use shared::SharedDevice;

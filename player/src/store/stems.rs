@@ -255,4 +255,32 @@ mod tests {
         drop(separating);
         assert!(waited.recv_timeout(GUARD).is_ok(), "done");
     }
+
+    /// A write that fails (its writer dropped, not finished) wakes what
+    /// waits for the file, which finds none (and separates the voice
+    /// itself).
+    #[test]
+    fn a_write_that_fails_wakes_what_waits_with_nothing_kept() {
+        use std::time::Duration;
+        const GUARD: Duration = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("jodel-stems-dropped-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let track = dir.join("dropped.flac");
+        fs::write(&track, b"a track").unwrap();
+        let to = file_for(&dir, &track).unwrap();
+        let keeping = Keeping::create(&to, &track, 44_100, "a test").expect("made");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (waiting_dir, waiting_track) = (dir.clone(), track.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(open_waiting(&waiting_dir, &waiting_track).is_some());
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "waits"
+        );
+        drop(keeping);
+        assert_eq!(rx.recv_timeout(GUARD), Ok(false), "woken, nothing kept");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

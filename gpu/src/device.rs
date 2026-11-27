@@ -170,7 +170,12 @@ fn adapter() -> Result<wgpu::Adapter, String> {
 }
 
 /// A device of its own on the chosen adapter ([`chosen`]), with all of
-/// the adapter's limits, labelled `label`, and what `make` sets up on it,
+/// the adapter's limits, its memory taken in small blocks (each model has
+/// a device of its own: the allocator's larger blocks would leave up to a
+/// quarter of a gigabyte a device unused, and what a model takes on the
+/// card would no longer be what its buffers take; as measured, setups take
+/// a little longer, and runs as long), labelled `label`, and what `make`
+/// sets up on it,
 /// all in one turn ([`setting_up`]) and inside error scopes (a failure on
 /// the device is an `Err`); with the GPU's name. Errors name the GPU.
 pub(crate) fn open<T>(
@@ -197,6 +202,16 @@ pub(crate) fn open_with<T>(
     wanted: impl FnOnce(&wgpu::Adapter) -> (wgpu::Features, wgpu::ExperimentalFeatures),
     make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits) -> Result<T, String>,
 ) -> Result<(T, String), String> {
+    open_on(label, wgpu::MemoryHints::MemoryUsage, wanted, make)
+}
+
+/// [`open_with`], its memory taken as `memory` says.
+pub(crate) fn open_on<T>(
+    label: &'static str,
+    memory: wgpu::MemoryHints,
+    wanted: impl FnOnce(&wgpu::Adapter) -> (wgpu::Features, wgpu::ExperimentalFeatures),
+    make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits) -> Result<T, String>,
+) -> Result<(T, String), String> {
     let _turn = setting_up();
     let adapter = adapter()?;
     let info = adapter.get_info();
@@ -208,6 +223,7 @@ pub(crate) fn open_with<T>(
         // Stamps for profiles, where the adapter has them.
         required_features: features,
         required_limits: limits.clone(),
+        memory_hints: memory,
         experimental_features,
         ..Default::default()
     }))

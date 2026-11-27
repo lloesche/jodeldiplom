@@ -6,9 +6,10 @@
 //! cover, its story scenes made ready with the same models
 //! ([`crate::work::scenes::story`], told as the cover's work while its
 //! models run, given up as soon as another song is wanted; held for the
-//! app: [`CoverWorker::story`]). Its GPU work gives way
-//! to the window's frames ([`jodel_gpu::pace`]); the models are set up on
-//! the first cover and let go when the work has been done for a while.
+//! app: [`CoverWorker::story`]). Its GPU work is a job of the GPU's
+//! stages ([`Stage::Cover`]: a cover, or a song's story scenes, each one
+//! turn) and gives way to the window's frames ([`jodel_gpu::pace`]); the
+//! models are set up on the first cover and let go as the stages plan.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use std::time::{Duration, Instant};
 use image::RgbImage;
 use jodel_gpu::vision::prep::Rgb;
 use jodel_gpu::vision::{Depth, Matte};
-use jodel_gpu::{GpuDepth, GpuMatte};
+use jodel_gpu::{Footprint, GpuDepth, GpuMatte, Kept, OnDevice, Resident};
 use jodel_playback::{Cover, Tags, TrackInfo};
 
 use super::store::{CoverStore, SongCover, Splitter};
@@ -28,147 +29,117 @@ use super::{
 use crate::core::{Action, Facts, Job};
 use crate::work::outbox::Outbox;
 use crate::work::scenes::{SceneNets, SceneStore, Story};
-use crate::work::{Next, Queue};
+use crate::work::stages::{self, Stage};
+use crate::work::Queue;
 
-/// How long the models stay set up after the last cover.
-const KEEP_MODELS: Duration = Duration::from_secs(30);
-/// The first wait before setting the models up again after the GPU
-/// failed; doubled each time, up to [`MOST_BACKOFF`].
-const FIRST_BACKOFF: Duration = Duration::from_secs(30);
-const MOST_BACKOFF: Duration = Duration::from_secs(30 * 60);
-
-/// The models, set up when first needed.
-enum Models {
-    NotYet,
-    Ready(Box<(GpuDepth, GpuMatte)>),
-    /// The weights cannot be read: for good (setup checked them, so this
-    /// is a file gone since).
-    NoWeights(String),
-    /// The GPU failed: tried again after `until`, the wait doubled.
-    Failed {
-        why: String,
-        until: Instant,
-        wait: Duration,
-    },
+/// The two models on the GPU.
+struct Vision {
+    depth: GpuDepth,
+    matte: GpuMatte,
 }
 
-/// The covers taken apart by the two models on the GPU.
+impl OnDevice for Vision {
+    fn lost(&self) -> bool {
+        self.depth.is_lost() || self.matte.is_lost()
+    }
+}
+
+/// The checkpoint at `path`'s bytes.
+fn read(path: &Path) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// What the two models take on the GPU, from their checkpoints' shapes
+/// (read for this, once a process, as the GPU's stages first ask): both
+/// weights while set up, and the larger of their working buffers while a
+/// picture is taken apart (one runs at a time, and lets its buffers go
+/// after); `None` while a checkpoint is not there (nothing read then).
+fn footprint(files: &CoverModels) -> Option<Footprint> {
+    if !files.depth.is_file() || !files.matte.is_file() {
+        return None;
+    }
+    let depth = GpuDepth::footprint(read(&files.depth).ok()?).ok()?;
+    let matte = GpuMatte::footprint(read(&files.matte).ok()?).ok()?;
+    Some(Footprint {
+        resident: depth.resident + matte.resident,
+        working: depth.working.max(matte.working),
+    })
+}
+
+/// The covers and the story scenes taken apart by the two models on the
+/// GPU.
 pub struct GpuSplitter {
-    files: CoverModels,
-    models: Mutex<Models>,
+    vision: Arc<Kept<Vision>>,
 }
 
 impl GpuSplitter {
     /// The splitter of the weights in `files`; its models are set up on the
-    /// first cover.
+    /// first picture, and registered for the cover's stage.
     pub fn new(files: CoverModels) -> GpuSplitter {
-        GpuSplitter {
-            files,
-            models: Mutex::new(Models::NotYet),
-        }
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Models> {
-        self.models.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// Sets the models up if they are not, as their state allows.
-    fn set_up(&self, models: &mut Models) -> Result<(), String> {
-        let wait = match &*models {
-            Models::Ready(_) => return Ok(()),
-            Models::NoWeights(why) => return Err(why.clone()),
-            Models::Failed { why, until, .. } if Instant::now() < *until => return Err(why.clone()),
-            Models::Failed { wait, .. } => (*wait * 2).min(MOST_BACKOFF),
-            Models::NotYet => FIRST_BACKOFF,
-        };
-        let read =
-            |path: &Path| std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()));
-        let (depth, matte) = match (read(&self.files.depth), read(&self.files.matte)) {
-            (Ok(d), Ok(m)) => (d, m),
-            (Err(e), _) | (_, Err(e)) => {
-                *models = Models::NoWeights(e.clone());
-                return Err(e);
-            }
-        };
-        let made = GpuDepth::new(depth).and_then(|d| Ok((d, GpuMatte::new(matte)?)));
-        *models = match made {
-            Ok(m) => Models::Ready(Box::new(m)),
-            Err(why) => Models::Failed {
-                why: why.clone(),
-                until: Instant::now() + wait,
-                wait,
-            },
-        };
-        match &*models {
-            Models::Failed { why, .. } => Err(why.clone()),
-            _ => Ok(()),
-        }
-    }
-
-    /// What `run` makes of the two models, setting them up first if need
-    /// be (and for the next picture again where their GPU was lost).
-    fn with_models<T>(
-        &self,
-        run: impl FnOnce(&GpuDepth, &GpuMatte) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let mut models = self.lock();
-        self.set_up(&mut models)?;
-        let Models::Ready(m) = &*models else {
-            unreachable!("set up");
-        };
-        let done = run(&m.0, &m.1);
-        let lost = m.0.is_lost() || m.1.is_lost();
-        if done.is_err() && lost {
-            *models = Models::NotYet;
-        }
-        done
+        let (plan, load) = (files.clone(), files);
+        let vision = Arc::new(Kept::new(
+            move || footprint(&plan),
+            Box::new(move || {
+                let depth = GpuDepth::new(read(&load.depth)?)?;
+                let matte = GpuMatte::new(read(&load.matte)?)?;
+                let name = depth.name();
+                Ok((Vision { depth, matte }, name))
+            }),
+        ));
+        stages::register(Stage::Cover, Arc::clone(&vision) as Arc<dyn Resident>);
+        GpuSplitter { vision }
     }
 
     /// What the models find in `image`: its depth, then its matte (one
-    /// model's working buffers held at a time); the lettering and the
-    /// faces found on the processor after them.
+    /// model's working buffers held at a time), in the cover's turn; the
+    /// lettering and the faces found on the processor after them.
     pub fn parts(&self, image: &RgbImage) -> Result<Parts, String> {
         let rgb = Rgb::new(
             image.width() as usize,
             image.height() as usize,
             image.as_raw().clone(),
         );
+        let (depth, matte) = stages::run(&[Stage::Cover], "a cover", || {
+            Ok::<_, String>((SceneNets::depth(self, &rgb)?, SceneNets::matte(self, &rgb)?))
+        })?;
         Ok(Parts {
-            depth: SceneNets::depth(self, &rgb)?,
-            matte: SceneNets::matte(self, &rgb)?,
+            depth,
+            matte,
             text: TextNet::built_in().find(image),
             faces: FaceNet::built_in().find(image),
         })
     }
 
-    /// The bytes the models keep on the GPU between covers (their
-    /// weights), and at most while a cover is taken apart (the weights and
-    /// the larger model's working buffers: one runs at a time).
+    /// The bytes the models keep on the GPU between pictures (their
+    /// weights), and at most while one is taken apart (the weights and
+    /// the larger model's working buffers: one runs at a time); none where
+    /// they are not set up (nothing is set up for this).
     pub fn gpu_bytes(&self) -> (u64, u64) {
-        match &*self.lock() {
-            Models::Ready(m) => {
-                let ((dw, dp), (mw, mp)) = (m.0.gpu_sizes(), m.1.gpu_sizes());
-                (dw + mw, dw + mw + dp.max(mp))
-            }
-            _ => (0, 0),
+        let sizes = (self.vision).with_set_up(|v| (v.depth.gpu_sizes(), v.matte.gpu_sizes()));
+        match sizes {
+            Some(((dw, dp), (mw, mp))) => (dw + mw, dw + mw + dp.max(mp)),
+            None => (0, 0),
         }
     }
 }
 
-/// Each model's working buffers let go once it has run (its weights stay).
+/// Each model's working buffers let go once it has run (its weights stay);
+/// set up first where they are not (and again where their GPU was lost).
+/// Only inside the cover's turn: a cover's ([`GpuSplitter::parts`]), or a
+/// song's story scenes' (the worker's).
 impl SceneNets for GpuSplitter {
     fn depth(&self, picture: &Rgb) -> Result<Depth, String> {
-        self.with_models(|depth, _| {
-            let found = depth.depth(picture);
-            depth.release();
+        self.vision.run(|v| {
+            let found = v.depth.depth(picture);
+            v.depth.release();
             found
         })
     }
 
     fn matte(&self, picture: &Rgb) -> Result<Matte, String> {
-        self.with_models(|_, matte| {
-            let cut = matte.matte(picture);
-            matte.release();
+        self.vision.run(|v| {
+            let cut = v.matte.matte(picture);
+            v.matte.release();
             cut
         })
     }
@@ -181,13 +152,6 @@ impl Splitter for GpuSplitter {
 
     fn nets(&self) -> Option<&dyn SceneNets> {
         Some(self)
-    }
-
-    fn rest(&self) {
-        let mut models = self.lock();
-        if matches!(*models, Models::Ready(_)) {
-            *models = Models::NotYet;
-        }
     }
 }
 
@@ -461,22 +425,13 @@ fn work(
     splitter: &dyn Splitter,
     outbox: &Outbox,
 ) {
-    let mut last_work: Option<Instant> = None;
     loop {
-        // Nothing to do: the models go after a while.
-        let rest = last_work.map_or(Duration::MAX, |at| KEEP_MODELS.saturating_sub(at.elapsed()));
-        let next = shared.queue.next_within(rest, |asked| {
+        let next = shared.queue.next(|asked| {
             (asked.wanted.take().map(|w| Ask::Playing(Box::new(w))))
                 .or_else(|| asked.prepare.pop_front().map(Ask::Prepare))
         });
-        let ask = match next {
-            Next::Do(ask) => ask,
-            Next::Idle => {
-                splitter.rest();
-                last_work = None;
-                continue;
-            }
-            Next::Stop => return,
+        let Some(ask) = next else {
+            return;
         };
         let (path, given, bytes) = match ask {
             Ask::Playing(w) => (w.path, Some((w.cover, w.tags)), w.bytes),
@@ -490,9 +445,6 @@ fn work(
             .as_ref()
             .map(|h| Arc::clone(&h.layers));
         let mut working = |on: bool| {
-            if on {
-                last_work = Some(Instant::now());
-            }
             outbox.send(Action::Working {
                 path: path.clone(),
                 job: Job::Cover,
@@ -510,7 +462,7 @@ fn work(
                 if let Some(took) = split {
                     crate::trace::note(format_args!(
                         "covers: {} taken apart in {:.1} s",
-                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        crate::work::song_name(&path),
                         took.as_secs_f64()
                     ));
                     // Taken apart now: its layers, as they were made.
@@ -550,7 +502,9 @@ fn work(
         // The song playing's story scenes, after its cover, with its
         // models (told as the cover's work while they run), given up as
         // soon as another song is wanted; held while it is still the song
-        // playing (under the queue's lock, as `want` lets go).
+        // playing (under the queue's lock, as `want` lets go). Where it has
+        // scenes, one job of the cover's stage, for the song sung (it loads
+        // its models while the song is sung).
         if playing {
             let still = || shared.queue.lock().wanted.is_none();
             let mut ran = false;
@@ -560,8 +514,15 @@ fn work(
                     working(true);
                 }
             };
-            let story =
-                crate::work::scenes::story(scenes, &path, splitter.nets(), (&still, &mut running));
+            let nets = splitter.nets();
+            let mut story =
+                || crate::work::scenes::story(scenes, &path, nets, (&still, &mut running));
+            let story = if nets.is_some() && scenes.scenes_of(&path).is_some() {
+                let name = crate::work::song_name(&path);
+                stages::run_for_the_song_sung(&[Stage::Cover], &name, story)
+            } else {
+                story()
+            };
             if ran {
                 working(false);
             }

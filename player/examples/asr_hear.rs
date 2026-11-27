@@ -134,7 +134,7 @@ fn voice(path: &Path, voices: Option<&Path>) -> Result<Vec<f32>, String> {
             .ok_or("not a 16-bit WAV file")?;
         return Ok(pcm.iter().map(|&s| f32::from(s) / 32768.0).collect());
     }
-    let (v, _) = jodeldiplom::work::lyrics::timer::separate_16k(path, false)?;
+    let (v, _) = jodeldiplom::work::voice::separate_16k(path, false)?;
     if let Some(file) = kept {
         let pcm: Vec<i16> = v
             .iter()

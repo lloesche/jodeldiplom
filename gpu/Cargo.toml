@@ -16,6 +16,22 @@ pollster = "1.0.1"
 # Native backends only: no WebGPU or GLES.
 wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 
+# The card's memory budget through Vulkan's own calls (`VK_EXT_memory_budget`;
+# Vulkan is not built on Apple's systems). The version is wgpu-hal's own: its
+# instance is called with these types, so a wgpu update moves this with it.
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+ash = "0.38.0"
+
+# The card's memory budget through DXGI's own calls. The version is
+# wgpu-hal's own (its adapter is queried with these types): moved with wgpu.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Graphics_Dxgi"] }
+
+# The card's memory budget through Metal's own calls. The version is
+# wgpu-hal's own (its device is queried with these types): moved with wgpu.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice"] }
+
 [dev-dependencies]
 # Every file the tests and examples write: whole or not at all, made durable.
 durable = { path = "../durable" }

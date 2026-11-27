@@ -37,8 +37,6 @@ use crate::work::picture::codec::{near_from, near_png, palette_from, palette_tex
 pub trait Splitter: Send + Sync {
     /// `image` taken apart.
     fn split(&self, image: &RgbImage) -> Result<CoverLayers, String>;
-    /// Nothing more to take apart for a while: what it holds may go.
-    fn rest(&self) {}
     /// Its models as a story's scenes are taken apart with (none: it has
     /// none; a song's scenes are only made ready where already kept).
     fn nets(&self) -> Option<&dyn crate::work::scenes::SceneNets> {

@@ -63,7 +63,7 @@ fn main() {
             out.join(format!("{id}-band.wav")),
         );
         let t = Instant::now();
-        match jodeldiplom::work::lyrics::timer::separate_16k(Path::new(path), true) {
+        match jodeldiplom::work::voice::separate_16k(Path::new(path), true) {
             Ok((voice, mix)) => {
                 let n = voice.len().min(mix.len());
                 let band: Vec<f32> = (0..n).map(|i| mix[i] - voice[i]).collect();

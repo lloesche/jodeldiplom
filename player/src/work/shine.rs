@@ -96,18 +96,15 @@ pub fn store(dir: &Path, key: &str, reference: &Reference) -> std::io::Result<()
     )
 }
 
-/// The voice of `path`, mono: the vocals of its stems kept in `stems` at
-/// their rate (once its analysis has them in their file, if it is
-/// separating them now: [`crate::store::stems::open_waiting`]), else
-/// separated now at 16 kHz; and its rate.
+/// The voice of `path`, mono ([`crate::work::voice::voice`]):
+/// the vocals of its stems kept in `stems` at their rate, else separated
+/// now at 16 kHz; and its rate.
 pub fn voice_of(stems: Option<&Path>, path: &Path) -> Result<(Vec<f32>, u32), String> {
+    use crate::work::voice::{voice, Voice};
     use jodel_playback::stems::{Stem, RATE};
-    let kept = stems.and_then(|dir| crate::store::stems::open_waiting(dir, path));
-    let Some(mut file) = kept else {
-        return Ok((
-            crate::work::lyrics::timer::separate_16k(path, false)?.0,
-            16_000,
-        ));
+    let mut file = match voice(stems, path)? {
+        Voice::Kept(file) => *file,
+        Voice::Separated(voice) => return Ok((voice, 16_000)),
     };
     let mut voice = Vec::with_capacity(file.frames() as usize);
     let mut at = 0;
@@ -216,8 +213,10 @@ impl ShineWorker {
         let (found, rx) = mpsc::channel();
         thread::spawn(move || {
             // Its GPU work (separating a song without kept stems) gives way
-            // to the window's frames.
+            // to the window's frames, and is for the song being sung: it
+            // loads its model while the song is sung.
             jodel_gpu::pace::background();
+            crate::work::stages::for_the_song_sung();
             while let Ok(mut want) = wants.recv() {
                 // Only the last asked for.
                 while let Ok(later) = wants.try_recv() {
@@ -273,9 +272,8 @@ fn work(folders: &Folders, made: Made) -> Found {
     let notes = Notes::new(&made.lyrics, melody);
     // A song without kept stems is separated on the background separator
     // (this thread does background work).
-    let separator = jodel_gpu::GpuSeparator::background()
-        .filter(|_| crate::trace::on())
-        .map(|g| (g, g.tally()));
+    let tally = jodel_gpu::GpuSeparator::tally_all;
+    let before = crate::trace::on().then(tally);
     let started = std::time::Instant::now();
     let reference = match reference_of(folders, &made.path, &notes, (&made.lyrics, &made.waveform))
     {
@@ -285,11 +283,11 @@ fn work(folders: &Folders, made: Made) -> Found {
                 r.shining(),
                 made.path.display(),
                 started.elapsed().as_secs_f64(),
-                separator
-                    .map(|(g, before)| g.tally().since(&before))
+                before
+                    .map(|before| tally().since(&before))
                     .filter(|t| t.submissions > 0)
                     .map_or_else(String::new, |t| format!(
-                        " (the separator, other work on it meanwhile included: {t})"
+                        " (the separators, other work on them meanwhile included: {t})"
                     ))
             ));
             Some(Arc::new(r))

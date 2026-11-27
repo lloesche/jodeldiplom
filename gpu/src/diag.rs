@@ -12,7 +12,8 @@ use crate::{device, net, setting_up, GpuSeparator};
 
 /// What the GPU side finds on this machine, as lines for a diagnostic
 /// report: every adapter `wgpu` sees on every backend with the limits the
-/// separator needs, the one it would use (or why none), whether it sets
+/// separator needs, the one it would use (or why none), the card's memory
+/// budget and what is used of it ([`crate::memory`]), whether it sets
 /// up (or the error), how long a 6 s chunk of silence takes on it, and
 /// how that time splits (its profile: each kernel on its own, the matrix
 /// multiplies by layer, the upload and the readback, whole chunks in a
@@ -21,6 +22,7 @@ use crate::{device, net, setting_up, GpuSeparator};
 pub fn report() -> Vec<String> {
     let _turn = setting_up();
     let mut lines = device::report();
+    lines.extend(crate::memory::report());
     lines.extend(separator_report());
     lines.extend(net::report());
     lines
