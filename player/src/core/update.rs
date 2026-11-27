@@ -17,6 +17,7 @@ use crate::core::karaoke;
 use crate::core::keymap::Op;
 use crate::core::lanes;
 use crate::core::preview;
+use crate::core::timeview::PanOf;
 use crate::core::transition::{draft, jump, tab, viewport};
 use crate::core::{
     help, queue, settings, work, Action, Effect, Gpu, NowTrack, Placing, Screen, Side, State,
@@ -76,14 +77,10 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
                 viewport::wheel_zoom(state, block, steps.signum() as isize, at);
             }
         }
-        Action::TransitionPanStart {
-            block,
-            at,
-            width,
-            overview,
-        } => viewport::pan_start(state, block, at, width, overview),
-        Action::TransitionPan(at) => viewport::pan_to(state, at),
-        Action::TransitionPanEnd => viewport::pan_end(state),
+        Action::Pan { of, input } => match of {
+            PanOf::Block { block, overview } => viewport::pan(state, block, overview, input),
+            PanOf::Lyrics => super::lyric_edit::pan(state, input),
+        },
         Action::KaraokeSlide { slider, share } => {
             state.karaoke.dragging = Some(slider);
             karaoke::slide_to(state, slider, share, &mut fx);
@@ -250,9 +247,7 @@ fn is_input(action: &Action) -> bool {
         | Action::TransitionPoint { .. }
         | Action::TransitionJump { .. }
         | Action::TransitionWheel { .. }
-        | Action::TransitionPanStart { .. }
-        | Action::TransitionPan(_)
-        | Action::TransitionPanEnd
+        | Action::Pan { .. }
         | Action::KaraokeSlide { .. }
         | Action::KaraokeSlideEnd
         | Action::KaraokeStep { .. }
@@ -334,7 +329,7 @@ fn move_by(state: &mut State, delta: i32) {
         Screen::Main => select_by(state, delta),
         Screen::Settings => settings::move_by(state, delta),
         Screen::Help => help::scroll(state, delta),
-        Screen::NowPlaying | Screen::Karaoke | Screen::Lyrics => {}
+        Screen::NowPlaying | Screen::Karaoke | Screen::Lyrics(_) => {}
     }
 }
 
@@ -353,11 +348,7 @@ fn shown_takes(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         return false;
     }
     match state.screen {
-        // With nothing to edit, the editor gives way to the main screen.
-        Screen::Lyrics => {
-            super::lyric_edit::screen::apply(state, op, fx)
-                || (state.screen == Screen::Main && shown_takes(state, op, fx))
-        }
+        Screen::Lyrics(_) => super::lyric_edit::screen::apply(state, op, fx),
         Screen::Karaoke => karaoke::apply_mode(state, op, fx),
         Screen::Main => match state.side {
             Side::Transition => tab::apply(state, op, fx),
@@ -525,7 +516,7 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         Op::LyricsEditor => {
             // From anywhere (the palette): the song karaoke is about.
             state.palette = None;
-            super::lyric_edit::act(state, super::lyric_edit::LyricsEdit::Open, fx);
+            super::lyric_edit::open(state);
         }
         // Another tab's or screen's own, from elsewhere: where it is done.
         _ => state.info(format!("That is for: {}", op.home().title())),
@@ -575,7 +566,7 @@ fn back(state: &mut State, fx: &mut Vec<Effect>) {
         Screen::Main => browse::back(state, fx),
         Screen::Settings => settings::back(state),
         Screen::Help => help::back(state),
-        Screen::NowPlaying | Screen::Karaoke | Screen::Lyrics => state.screen = Screen::Main,
+        Screen::NowPlaying | Screen::Karaoke | Screen::Lyrics(_) => state.screen = Screen::Main,
     }
 }
 

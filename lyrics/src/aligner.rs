@@ -48,7 +48,7 @@ pub fn aligner_maker(model: &Maker) -> Maker {
 /// The CTC aligner: a model's emissions, then [`crate::scaffold::align`].
 /// Without emissions, or with no path, the times come from
 /// [`spread::fallback`], but for the words set by hand
-/// ([`crate::Word::pinned`]), which keep theirs.
+/// ([`crate::WordEdit::pin`]), which keep theirs.
 pub struct CtcAligner<A> {
     /// The model.
     pub model: A,
@@ -75,7 +75,7 @@ impl<A: Acoustic> CtcAligner<A> {
     /// and its `glimpses`, none when it was not heard) pinning the words to
     /// where it heard them ([`crate::anchors`], [`crate::glimpses`]), and
     /// the words set by hand held to their times, the others fitted around
-    /// them ([`crate::Word::pinned`]). The result's [`crate::Timing::by`]
+    /// them ([`crate::WordEdit::pin`]). The result's [`crate::Timing::by`]
     /// names this aligner.
     pub fn align(
         &self,
@@ -93,17 +93,14 @@ impl<A: Acoustic> CtcAligner<A> {
             crate::scaffold::align(&e, lyrics, &self.model.vocab(), &self.settings, &hints)
         });
         match aligned {
-            Some((mut out, _)) => {
+            Some(mut out) => {
                 out.timing.by = Some(self.maker());
                 out
             }
             None => {
                 let mut out = spread::fallback(vocals_16k, lyrics);
-                let words = out.lines.iter_mut().flat_map(|l| &mut l.words);
-                for (w, given) in words.zip(lyrics.lines.iter().flat_map(|l| &l.words)) {
-                    if let Some((a, b)) = given.pin() {
-                        (w.start, w.end, w.confidence) = (Some(a), Some(b), crate::GIVEN);
-                    }
+                for w in out.lines.iter_mut().flat_map(|l| &mut l.words) {
+                    w.keep_pin();
                 }
                 out
             }
@@ -157,12 +154,12 @@ mod tests {
         // "two" moved by hand over where "three" is heard.
         let mut moved = free.clone();
         let two = &mut moved.lines[0].words[1];
-        (two.start, two.end, two.pinned) = (Some(140.0 * FS), Some(170.0 * FS), true);
+        two.pin_to(140.0 * FS, 170.0 * FS);
         for _ in 0..2 {
             let out = aligner.align(&[], &moved, &[], &[]);
             assert_eq!(at(&out, 1), (140.0 * FS, 170.0 * FS));
             let two = &out.lines[0].words[1];
-            assert!(two.pinned && two.confidence == crate::GIVEN);
+            assert!(two.edit.pin.is_some() && two.confidence == crate::GIVEN);
             assert_eq!(two.letters.len(), 3);
             assert!(two.letters.iter().all(|&t| (0.0..=0.6 + 1e-6).contains(&t)));
             assert_eq!(at(&out, 0), (20.0 * FS, one as f64 * FS));
@@ -186,7 +183,7 @@ mod tests {
         }
         let mut text = lyrics(&["one two three"]);
         let two = &mut text.lines[0].words[1];
-        (two.start, two.end, two.pinned) = (Some(3.0), Some(3.5), true);
+        two.pin_to(3.0, 3.5);
         let out = CtcAligner::new(Deaf).align(&[0.0; 16_000], &text, &[], &[]);
         let two = &out.lines[0].words[1];
         assert_eq!((two.start, two.end), (Some(3.0), Some(3.5)));

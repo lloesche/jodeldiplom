@@ -36,6 +36,22 @@ pub fn clock(seconds: f64) -> String {
     }
 }
 
+/// `t` seconds to the hundredth, as [`clock`] with them: `1:23.45`.
+pub fn clock_exact(t: f64) -> String {
+    let hundredths = ((t.max(0.0) * 100.0).round() as u64) % 100;
+    format!("{}.{hundredths:02}", clock(t + 1e-6))
+}
+
+/// `t` seconds as a time's marks `step` seconds apart say it: `1:23`, with
+/// tenths where the marks are less than a second apart (`1:23.4`).
+pub fn clock_mark(t: f64, step: f64) -> String {
+    if step >= 1.0 {
+        return clock(t + 1e-6);
+    }
+    let tenths = ((t * 10.0).round() as u64) % 10;
+    format!("{}.{tenths}", clock(t + 1e-6))
+}
+
 /// How a piece of text is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {

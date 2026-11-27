@@ -11,7 +11,7 @@
 //! so the lane sits where the view leaves room for it. Over the lane the
 //! view takes the pointer: a press on a word holds it
 //! ([`Grab::LyricWord`]), one off the words puts the playhead there, the
-//! secondary button drags the view ([`Grab::LyricView`]), the wheel zooms
+//! secondary button drags the view ([`Grab::Pan`]), the wheel zooms
 //! it round the time under the pointer.
 
 mod panel;
@@ -24,14 +24,14 @@ use iced::widget::{container, pin, stack, Space, Stack};
 use iced::{Background, Border, Element, Fill, Point, Rectangle, Size, Widget as _};
 
 use super::{page, Parts};
-use crate::core::lanes::WordLines;
-use crate::core::{Screen, State};
+use crate::core::lyric_edit::{editor, screen};
+use crate::core::State;
 use crate::gui::lanes::{LaneSpot, Part, Rows};
 use crate::gui::look::{self, radius, space};
 use crate::gui::metrics;
-use crate::gui::pixels::PixelRect;
+use crate::gui::pixels::Snap;
 use crate::gui::window::Message;
-use crate::view::lanes::{lane_color, WavePlot};
+use crate::view::lanes::{letters_across, WavePlot};
 use crate::view::lyrics::{wave, Editor};
 
 /// The header's row, in points.
@@ -64,9 +64,7 @@ impl Room {
     /// The screen's room while it shows, in a window of `size` (points),
     /// `scale` pixels a point: the window over the bottom bar.
     pub fn of(state: &State, size: Size, scale: f32) -> Option<Room> {
-        if state.screen != Screen::Lyrics || state.karaoke.editor.is_none() {
-            return None;
-        }
+        editor(state)?;
         let bar = metrics::EDGE + metrics::BAND;
         Some(Room {
             page: Rectangle::new(
@@ -77,32 +75,9 @@ impl Room {
         })
     }
 
-    /// `v` points on the window's pixels.
-    fn snap(&self, v: f32) -> f32 {
-        (v * self.scale).round() / self.scale
-    }
-
     /// `x`, `y`, `w`, `h` with its edges on the window's pixels.
     fn rect(&self, x: f32, y: f32, w: f32, h: f32) -> Rectangle {
-        let (x0, y0) = (self.snap(x), self.snap(y));
-        Rectangle::new(
-            Point::new(x0, y0),
-            Size::new(
-                (self.snap(x + w) - x0).max(0.0),
-                (self.snap(y + h) - y0).max(0.0),
-            ),
-        )
-    }
-
-    /// `rect` in the window's pixels.
-    fn pixels(&self, rect: Rectangle) -> PixelRect {
-        let px = |v: f32| (v * self.scale).round().max(0.0) as usize;
-        (
-            px(rect.x),
-            px(rect.y),
-            px(rect.x + rect.width) - px(rect.x),
-            px(rect.y + rect.height) - px(rect.y),
-        )
+        Snap(self.scale).rect(Rectangle::new(Point::new(x, y), Size::new(w, h)))
     }
 }
 
@@ -133,12 +108,7 @@ fn across(width: f32) -> f32 {
 /// `letter` points wide: what `z` fits its words to
 /// ([`crate::core::Fit::lyric_letters`]).
 pub fn lane_letters(width: f32, letter: f32) -> u16 {
-    if letter <= 0.0 {
-        return 0;
-    }
-    (across(width) / letter)
-        .floor()
-        .clamp(0.0, f32::from(u16::MAX)) as u16
+    letters_across(across(width), letter)
 }
 
 /// The screen in `room`: the header at the top, the keys at the foot, the
@@ -176,35 +146,15 @@ pub fn plan(room: &Room) -> Plan {
 /// pixels: the voice's waveform over the seconds in view, the bars' lines,
 /// the playhead. None before the song's waveform is in.
 pub fn spots(state: &State, room: &Room) -> Vec<LaneSpot> {
-    let (Some(wave), Some((start, end))) =
-        (wave(state), crate::core::lyric_edit::screen::window(state))
-    else {
+    let (Some(wave), Some((start, end))) = (wave(state), screen::window(state)) else {
         return Vec::new();
     };
     let lane = plan(room).lane;
-    let rect = room.pixels(lane);
+    let rect = Snap(room.scale).pixels(lane);
     let plot = WavePlot {
-        waveform: wave.waveform,
-        lane: wave.lane,
-        start,
-        end,
-        color: lane_color(wave.lane),
         downbeats: wave.downbeats,
-        unclear: Vec::new(),
-        selection: None,
-        shown: None,
-        playhead: crate::core::lyric_edit::screen::playhead(state),
-        cursor: None,
-        cue: None,
-        transition: None,
-        gain: Vec::new(),
-        edit: None,
-        lyrics: None,
-        text_scale: 1,
-        lines: WordLines::ONE,
-        follow: None,
-        deep: false,
-        key: None,
+        playhead: screen::playhead(state),
+        ..WavePlot::plain(wave.waveform, wave.lane, start, end)
     };
     vec![LaneSpot {
         rect,

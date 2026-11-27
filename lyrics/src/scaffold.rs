@@ -40,7 +40,7 @@
 //! time; where the recogniser's glimpses could tell, the source was right
 //! about as often as we were, so it is no authority line by line.
 
-use crate::ctc::{align_heard, CtcSettings, Emissions, FrameClock, Hints};
+use crate::ctc::{align_held, CtcSettings, Emissions, FrameClock, Hints};
 use crate::tokens::Vocab;
 use crate::words::{common, words, Compared};
 use crate::{Line, Lyrics, Synced};
@@ -321,14 +321,13 @@ fn heard_less(free: &Lyrics, held: &Lyrics) -> Vec<usize> {
         .collect()
 }
 
-/// `lyrics` aligned to `emissions` ([`align_heard`]), held to its
+/// `lyrics` aligned to `emissions` ([`align_held`]), held to its
 /// source's line times where they fit the recording: aligned once without
 /// them, checked ([`check`]), and aligned again in their windows
 /// ([`held`]) when they fit and `settings` cost anything outside them; the
 /// lines then heard less surely than before ([`HEARD_LESS`]) let go, and
-/// aligned once more (as without them when that finds no path). With the
-/// check's verdict (none when no line has a source's time). `None` when no
-/// path fits.
+/// aligned once more (as without them when that finds no path). `None`
+/// when no path fits.
 ///
 /// When no line is held, the song is not aligned again: held nowhere,
 /// nothing costs more than without the source's times, so the path, and
@@ -339,35 +338,34 @@ pub fn align(
     vocab: &Vocab,
     settings: &CtcSettings,
     hints: &Hints,
-) -> Option<(Lyrics, Option<Verdict>)> {
-    let (free, _) = align_heard(emissions, lyrics, vocab, settings, hints, &[])?;
-    let verdict = check(&free);
-    let Some(v) = verdict.filter(|v| v.trusted() && settings.scaffold > 0.0) else {
-        return Some((free, verdict));
+) -> Option<Lyrics> {
+    let free = align_held(emissions, lyrics, vocab, settings, hints, &[])?;
+    let Some(v) = check(&free).filter(|v| v.trusted() && settings.scaffold > 0.0) else {
+        return Some(free);
     };
     let mut lines = held(&free, &v, hints, emissions.clock());
     if lines.iter().all(Option::is_none) {
-        return Some((free, verdict));
+        return Some(free);
     }
-    let Some((first, _)) = align_heard(emissions, lyrics, vocab, settings, hints, &lines) else {
-        return Some((free, verdict));
+    let Some(first) = align_held(emissions, lyrics, vocab, settings, hints, &lines) else {
+        return Some(free);
     };
     let lost = heard_less(&free, &first);
     if lost.is_empty() {
-        return Some((first, verdict));
+        return Some(first);
     }
     for k in lost {
         lines[k] = None;
     }
-    let again = align_heard(emissions, lyrics, vocab, settings, hints, &lines);
-    Some((again.map_or(free, |(l, _)| l), verdict))
+    let again = align_held(emissions, lyrics, vocab, settings, hints, &lines);
+    Some(again.unwrap_or(free))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ctc::tests::{plant_at, planted, FS};
-    use crate::ctc::{align_emissions, align_heard, CtcSettings, Hints};
+    use crate::ctc::{align_emissions, align_held, align_path, heard, CtcSettings, Hints};
     use crate::tokens::WAV2VEC2_960H;
     use crate::{Line, Source, Timing};
 
@@ -604,9 +602,8 @@ mod tests {
         let free =
             align_emissions(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
         assert_eq!(free.lines[9].words[0].start, Some(1150.0 * FS));
-        let (kept, verdict) =
-            align(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
-        let verdict = verdict.unwrap();
+        let kept = align(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
+        let verdict = check(&free).unwrap();
         assert!(
             verdict.trusted() && verdict.offset.abs() < 0.1,
             "{verdict:?}"
@@ -621,7 +618,7 @@ mod tests {
             scaffold: 0.0,
             ..settings
         };
-        let (out, _) = align(&e, &lyrics, &WAV2VEC2_960H, &off, &Hints::default()).unwrap();
+        let out = align(&e, &lyrics, &WAV2VEC2_960H, &off, &Hints::default()).unwrap();
         assert_eq!(out, free);
     }
 
@@ -639,7 +636,7 @@ mod tests {
             align_emissions(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
         let v = check(&free).unwrap();
         let lines = windows(&free, &v, 25.0);
-        let (forced, _) = align_heard(
+        let forced = align_held(
             &e,
             &lyrics,
             &WAV2VEC2_960H,
@@ -655,7 +652,7 @@ mod tests {
         assert!(word.confidence < crate::CONFIDENT, "{word:?}");
         assert!((lo..hi).contains(&word.start.unwrap()), "{word:?}");
         assert_eq!(heard_less(&free, &forced), [9]);
-        let (out, _) = align(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
+        let out = align(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
         assert_eq!(out.lines[9].words[0].start, Some(1150.0 * FS));
     }
 
@@ -674,9 +671,8 @@ mod tests {
         let settings = CtcSettings::default();
         let free =
             align_emissions(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
-        let (out, verdict) =
-            align(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
-        assert!(!verdict.unwrap().trusted());
+        let out = align(&e, &lyrics, &WAV2VEC2_960H, &settings, &Hints::default()).unwrap();
+        assert!(!check(&free).unwrap().trusted());
         assert_eq!(out, free);
     }
 
@@ -702,8 +698,7 @@ mod tests {
             lines: 10,
         };
         let lines = windows(&lyrics, &verdict, 6.0);
-        let (kept, _) =
-            align_heard(&e, &lyrics, &WAV2VEC2_960H, &settings, &hints, &lines).unwrap();
+        let kept = align_held(&e, &lyrics, &WAV2VEC2_960H, &settings, &hints, &lines).unwrap();
         let word = &kept.lines[0].words[0];
         assert_eq!((word.start, word.end), (Some(10.0 * FS), Some(201.0 * FS)));
         assert_eq!(kept, free);
@@ -725,11 +720,12 @@ mod tests {
         };
         // Held nowhere, the alignment align skips is the one without the
         // source's times, to the bit.
-        let free = align_heard(&e, &lyrics, &WAV2VEC2_960H, &settings, &hints, &[]).unwrap();
+        let free = align_path(&e, &lyrics, &WAV2VEC2_960H, &settings, &hints, &[]).unwrap();
         let nowhere = vec![None; lyrics.lines.len()];
-        let again = align_heard(&e, &lyrics, &WAV2VEC2_960H, &settings, &hints, &nowhere).unwrap();
-        assert_eq!(again.0, free.0);
-        assert_eq!(again.1.to_bits(), free.1.to_bits());
+        let again = align_path(&e, &lyrics, &WAV2VEC2_960H, &settings, &hints, &nowhere).unwrap();
+        assert_eq!(again, free);
+        let heard = |path| heard(&e, &lyrics, &WAV2VEC2_960H, path).to_bits();
+        assert_eq!(heard(&again.1), heard(&free.1));
         // A source whose every line is synced too fast to be sung there
         // fits, holds no line, and leaves the song as without it.
         let mut squeezed = lyrics.clone();
@@ -740,13 +736,13 @@ mod tests {
                 s.end = Some(s.start + 0.01);
             }
         }
-        let (free, _) = align_heard(&e, &squeezed, &WAV2VEC2_960H, &settings, &hints, &[]).unwrap();
+        let free = align_held(&e, &squeezed, &WAV2VEC2_960H, &settings, &hints, &[]).unwrap();
         let v = check(&free).unwrap();
         assert!(v.trusted(), "{v:?}");
         assert!(held(&free, &v, &hints, e.clock())
             .iter()
             .all(Option::is_none));
-        let (out, verdict) = align(&e, &squeezed, &WAV2VEC2_960H, &settings, &hints).unwrap();
-        assert_eq!((out, verdict), (free, Some(v)));
+        let out = align(&e, &squeezed, &WAV2VEC2_960H, &settings, &hints).unwrap();
+        assert_eq!(out, free);
     }
 }

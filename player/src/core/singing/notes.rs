@@ -119,7 +119,7 @@ pub fn notes_of(line: &jodel_lyrics::Line, melody: &Melody) -> LineNotes {
         // the lead's. A lead word heard weakly is timed between its
         // neighbours, close enough for the melody sung there. Not a word
         // marked as not to be sung: the record sings it.
-        let lead = w.start.is_some() && w.end.is_some() && !w.backing && !w.not_sung;
+        let lead = w.start.is_some() && w.end.is_some() && !w.backing && !w.edit.not_sung;
         let (ws, we) = (w.start.unwrap_or(0.0), w.end.unwrap_or(0.0));
         let mut own: Vec<(Note, f64)> = Vec::new();
         if lead {

@@ -19,7 +19,7 @@
 
 use std::ops::Range;
 
-use crate::Lyrics;
+use crate::{Lyrics, WordAt};
 
 /// A model's tokens, by index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,10 +164,8 @@ pub fn normalize(word: &str) -> Option<String> {
 /// Where one word of the lyrics sits in the token sequence.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TokenWord {
-    /// Its line.
-    pub line: usize,
-    /// Its place in the line.
-    pub word: usize,
+    /// The word.
+    pub at: WordAt,
     /// Its tokens, or `None` when it cannot be spelt in the model's
     /// letters (then it is timed between its neighbours).
     pub tokens: Option<Range<usize>>,
@@ -181,7 +179,9 @@ pub struct TokenWord {
 pub struct Tokens {
     /// The token indices: the words' letters, joined by the word break.
     pub ids: Vec<u32>,
-    /// Every word of the lyrics, in order, and where its tokens are.
+    /// Every word of the lyrics, in order ([`Lyrics::words`]: a word's
+    /// index here is its index among all the words), and where its tokens
+    /// are.
     pub words: Vec<TokenWord>,
 }
 
@@ -190,28 +190,25 @@ pub fn tokenize(lyrics: &Lyrics, vocab: &Vocab) -> Tokens {
     let mut tokens = Tokens::default();
     // Whether each spelt word is a backing one, with its index in `words`.
     let mut spelt = Vec::new();
-    for (l, line) in lyrics.lines.iter().enumerate() {
-        for (w, word) in line.words.iter().enumerate() {
-            let ids: Option<Vec<u32>> =
-                normalize(&word.text).and_then(|text| text.chars().map(|c| vocab.id(c)).collect());
-            let range = ids.filter(|ids| !ids.is_empty()).map(|ids| {
-                if !tokens.ids.is_empty() {
-                    tokens.ids.push(vocab.separator);
-                }
-                let start = tokens.ids.len();
-                tokens.ids.extend(ids);
-                start..tokens.ids.len()
-            });
-            if range.is_some() {
-                spelt.push((tokens.words.len(), word.backing));
+    for (at, word) in lyrics.words() {
+        let ids: Option<Vec<u32>> =
+            normalize(&word.text).and_then(|text| text.chars().map(|c| vocab.id(c)).collect());
+        let range = ids.filter(|ids| !ids.is_empty()).map(|ids| {
+            if !tokens.ids.is_empty() {
+                tokens.ids.push(vocab.separator);
             }
-            tokens.words.push(TokenWord {
-                line: l,
-                word: w,
-                tokens: range,
-                skip: None,
-            });
+            let start = tokens.ids.len();
+            tokens.ids.extend(ids);
+            start..tokens.ids.len()
+        });
+        if range.is_some() {
+            spelt.push((tokens.words.len(), word.backing));
         }
+        tokens.words.push(TokenWord {
+            at,
+            tokens: range,
+            skip: None,
+        });
     }
     // A backing word leaves out the word break after it, so the words
     // either side still meet at one; at the end of the song (no sung word
@@ -304,8 +301,8 @@ mod tests {
                 Some(13..15)
             ]
         );
-        assert_eq!((t.words[1].line, t.words[1].word), (0, 1));
-        assert_eq!((t.words[4].line, t.words[4].word), (1, 1));
+        assert_eq!(t.words[1].at, WordAt { line: 0, word: 1 });
+        assert_eq!(t.words[4].at, WordAt { line: 1, word: 1 });
         // The backing word leaves out the break after it.
         assert_eq!(t.words[4].skip, Some(9..13));
         assert!(t

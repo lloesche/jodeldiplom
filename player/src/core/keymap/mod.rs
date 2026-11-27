@@ -162,6 +162,10 @@ pub enum Context {
     /// Everywhere, unless a more specific context binds the key, and not
     /// while typing (except keys with control).
     Global,
+    /// Everywhere as [`Context::Global`] is, and in the lyrics editor too,
+    /// which takes no other key from elsewhere: playing, the volume, the
+    /// stems, quitting.
+    Playback,
     /// The browser and queue list.
     List,
     /// The queue (before [`Context::List`]).
@@ -212,6 +216,7 @@ impl Context {
     pub fn title(self) -> &'static str {
         match self {
             Context::Global => "Anywhere",
+            Context::Playback => Context::Global.title(),
             Context::List => "Browser and queue",
             Context::Queue => "Queue",
             Context::Filter => "Filter (after /)",
@@ -233,6 +238,15 @@ impl Context {
             Context::Synth => "Synth tab",
             Context::Shader => "Shader tab",
             Context::ShaderSearch => "Shader tab, searching the presets (after /)",
+        }
+    }
+
+    /// The help's section its rows are in: anywhere's for playing's (it is
+    /// anywhere's, but for the lyrics editor taking its keys too).
+    pub fn help_section(self) -> Context {
+        match self {
+            Context::Playback => Context::Global,
+            context => context,
         }
     }
 
@@ -288,46 +302,52 @@ impl Binding {
     }
 }
 
+/// The contexts searched after a place's own: anywhere's, playing's.
+pub const ANYWHERE: [Context; 2] = [Context::Global, Context::Playback];
+
 /// The contexts in force, most specific first.
 pub fn contexts(state: &State) -> Vec<Context> {
     if state.palette.is_some() {
         return vec![Context::Palette];
     }
-    match state.screen {
+    // A place's own, then anywhere's.
+    let anywhere = |own: &[Context]| {
+        let mut all = own.to_vec();
+        all.extend(ANYWHERE);
+        all
+    };
+    match &state.screen {
         Screen::Main if state.browser.filter.as_ref().is_some_and(|f| f.editing) => {
             vec![Context::Filter]
         }
         Screen::Main => match state.side {
             Side::Transition if state.transition.draft.edit.is_some() => {
-                vec![Context::Fades, Context::Global]
+                anywhere(&[Context::Fades])
             }
-            Side::Transition => vec![Context::Transition, Context::Global],
-            Side::Karaoke if state.karaoke.sync.is_some() => vec![Context::Sync, Context::Global],
-            Side::Karaoke => vec![Context::Karaoke, Context::Global],
-            Side::Mixer => vec![Context::Desk, Context::Global],
-            Side::Synth => vec![Context::Synth, Context::Global],
+            Side::Transition => anywhere(&[Context::Transition]),
+            Side::Karaoke if state.karaoke.sync.is_some() => anywhere(&[Context::Sync]),
+            Side::Karaoke => anywhere(&[Context::Karaoke]),
+            Side::Mixer => anywhere(&[Context::Desk]),
+            Side::Synth => anywhere(&[Context::Synth]),
             Side::Shader if crate::core::shader_tab::searching(state) => {
                 vec![Context::ShaderSearch]
             }
-            Side::Shader => vec![Context::Shader, Context::Global],
-            Side::Queue => vec![Context::Queue, Context::List, Context::Global],
-            Side::Browser => vec![Context::List, Context::Global],
+            Side::Shader => anywhere(&[Context::Shader]),
+            Side::Queue => anywhere(&[Context::Queue, Context::List]),
+            Side::Browser => anywhere(&[Context::List]),
         },
-        Screen::NowPlaying => vec![Context::NowPlaying, Context::Global],
-        Screen::Settings if state.settings.folders.is_some() => {
-            vec![Context::FolderList, Context::Global]
-        }
-        Screen::Settings if state.settings.picking => vec![Context::DeviceList, Context::Global],
-        Screen::Settings => vec![Context::Settings, Context::Global],
+        Screen::NowPlaying => anywhere(&[Context::NowPlaying]),
+        Screen::Settings if state.settings.folders.is_some() => anywhere(&[Context::FolderList]),
+        Screen::Settings if state.settings.picking => anywhere(&[Context::DeviceList]),
+        Screen::Settings => anywhere(&[Context::Settings]),
         Screen::Help if state.help_search.as_ref().is_some_and(|s| s.editing) => {
             vec![Context::HelpSearch]
         }
-        Screen::Help => vec![Context::Help, Context::Global],
-        Screen::Karaoke => vec![Context::KaraokeMode, Context::Global],
-        Screen::Lyrics if crate::core::lyric_edit::screen::writing(state) => {
-            vec![Context::LyricsText]
-        }
-        Screen::Lyrics => vec![Context::LyricsEditor, Context::Global],
+        Screen::Help => anywhere(&[Context::Help]),
+        Screen::Karaoke => anywhere(&[Context::KaraokeMode]),
+        Screen::Lyrics(editor) if editor.screen.writing() => vec![Context::LyricsText],
+        // Its own keys, and playing's: nothing that leaves it.
+        Screen::Lyrics(_) => vec![Context::LyricsEditor, Context::Playback],
     }
 }
 
@@ -361,6 +381,11 @@ fn find(context: Context, key: Key) -> Option<Op> {
         .iter()
         .find(|binding| binding.context == context && binding.keys.contains(&key))
         .map(|binding| binding.op)
+}
+
+/// Whether a key of `context` does `op`.
+pub fn binds(context: Context, op: Op) -> bool {
+    KEYMAP.iter().any(|b| b.context == context && b.op == op)
 }
 
 /// Whether an unmodified `c` jumps to a name in the list (as typing does
@@ -429,7 +454,7 @@ pub fn lookup(state: &State, key: Key) -> Option<Meaning> {
     }
     if typing {
         if key.ctrl {
-            if let Some(op) = find(Context::Global, key) {
+            if let Some(op) = ANYWHERE.into_iter().find_map(|c| find(c, key)) {
                 return Some(Meaning::Op(op));
             }
         }

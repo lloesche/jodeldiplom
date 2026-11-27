@@ -139,7 +139,10 @@ impl App {
         let state = &self.state;
         state.seek_drag.is_some()
             || state.transition.slide.is_some()
-            || state.transition.pan.is_some()
+            || core::lanes::Block::BOTH.into_iter().any(|block| {
+                let of = core::timeview::PanOf::Block { block, overview: false };
+                core::timeview::panning(state, of)
+            })
             || state.karaoke.dragging.is_some()
             || state.desk.dragging.is_some()
             // Karaoke mode: the lyrics fill and the count-in's numbers
@@ -167,8 +170,8 @@ impl App {
             && state.side == core::Side::Transition
             && state.palette.is_none()
             && core::transition::tab::block(state, core::lanes::Block::Now)
-                .start
-                .is_none()
+                .view
+                .is_following()
             && state.transition.slide.is_none();
         playing && (core::karaoke::on_tab(state) || transition)
     }

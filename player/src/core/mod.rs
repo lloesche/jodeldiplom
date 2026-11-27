@@ -44,6 +44,7 @@ pub mod story;
 pub mod sync;
 pub mod synth_tab;
 pub mod text;
+pub mod timeview;
 pub mod transition;
 mod update;
 pub mod voice_curve;
@@ -118,6 +119,13 @@ impl Rhythmed {
     pub fn fixed(&self) -> bool {
         !Arc::ptr_eq(&self.analysis, &self.found)
     }
+
+    /// The track's length as its analysis and waveform know it, in seconds.
+    pub fn length(&self) -> f64 {
+        self.analysis
+            .duration
+            .max(self.waveform.as_ref().map_or(0.0, |w| w.duration()))
+    }
 }
 
 /// What a file's work found so far, as the queue's icons show it: each
@@ -164,7 +172,7 @@ pub const DOUBLE_CLICK_MS: u64 = 450;
 pub const SETTINGS_DELAY_MS: u64 = 400;
 
 /// Which screen fills the window.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Screen {
     /// The list pane, the right column and the bottom bar.
     Main,
@@ -178,9 +186,9 @@ pub enum Screen {
     /// Karaoke mode ([`karaoke`]): the lyrics over the cover, fullscreen in
     /// the window.
     Karaoke,
-    /// The lyrics editor ([`lyric_edit`]): a song's words over its voice's
-    /// waveform, the bottom bar under it.
-    Lyrics,
+    /// The lyrics editor ([`lyric_edit`]) on a song, while it is open: its
+    /// words over its voice's waveform, the bottom bar under it.
+    Lyrics(Box<lyric_edit::LyricEditor>),
 }
 
 /// What the list pane shows.

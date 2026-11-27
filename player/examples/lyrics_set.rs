@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 
 use jodel_lyrics::aligner::Acoustic;
 use jodel_lyrics::asr::Part;
-use jodel_lyrics::ctc::{align_heard, voice_pauses, CtcSettings, Hints};
+use jodel_lyrics::ctc::{align_emissions, voice_pauses, CtcSettings, Hints};
 use jodel_lyrics::speech::Wav2Vec2;
 use jodel_lyrics::{Lyrics, Source};
 
@@ -217,14 +217,9 @@ fn main() {
                     Vec::new()
                 },
             };
-            let Some((timed, _)) = align_heard(
-                &emissions,
-                &lyrics,
-                &model.vocab(),
-                &v.settings,
-                &hints,
-                &[],
-            ) else {
+            let Some(timed) =
+                align_emissions(&emissions, &lyrics, &model.vocab(), &v.settings, &hints)
+            else {
                 continue;
             };
             let mut tsv = String::new();

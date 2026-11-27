@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use jodel_lyrics::aligner::Acoustic;
-use jodel_lyrics::ctc::{align_heard, voice_pauses, CtcSettings, Hints};
+use jodel_lyrics::ctc::{align_path, heard, voice_pauses, CtcSettings, Hints};
 use jodel_lyrics::speech::Wav2Vec2;
 use jodel_lyrics::tokens::WAV2VEC2_960H;
 use jodel_lyrics::{Detail, Lyrics, Source};
@@ -65,7 +65,7 @@ fn line_errors(model: &Wav2Vec2, voice: &[f32], lyrics: &Lyrics) -> Option<Vec<f
     for line in &mut untimed.lines {
         line.time = None;
     }
-    let (aligned, heard) = align_heard(
+    let (aligned, path) = align_path(
         &emissions,
         &untimed,
         &WAV2VEC2_960H,
@@ -76,6 +76,7 @@ fn line_errors(model: &Wav2Vec2, voice: &[f32], lyrics: &Lyrics) -> Option<Vec<f
         },
         &[],
     )?;
+    let heard = heard(&emissions, &untimed, &WAV2VEC2_960H, &path);
     println!("  heard {heard:.3} (the letters' mean probability on the path)");
     Some(
         lyrics
@@ -173,7 +174,7 @@ fn against_lrc(model: Wav2Vec2, run: AgainstLrc) {
         pauses: voice_pauses(&voice, &emissions),
         ..Hints::default()
     };
-    let (aligned, heard) = align_heard(
+    let (aligned, path) = align_path(
         &emissions,
         &untimed,
         &WAV2VEC2_960H,
@@ -182,6 +183,7 @@ fn against_lrc(model: Wav2Vec2, run: AgainstLrc) {
         &[],
     )
     .expect("a path");
+    let heard = heard(&emissions, &untimed, &WAV2VEC2_960H, &path);
     let aligned_in = started.elapsed().as_secs_f64();
     println!("heard {heard:.3}");
     let timed: Vec<&jodel_lyrics::Line> = lyrics

@@ -4,11 +4,10 @@
 //!
 //! The edits are the whole text as edited (a word or a line replaced, put
 //! in or taken out: the edited text takes the place of the one found), and
-//! for each word what was set by hand: its start and end moved
-//! ([`jodel_lyrics::Word::pinned`]), marked as not to be sung
-//! ([`jodel_lyrics::Word::not_sung`]), the voice's level over it
-//! ([`jodel_lyrics::Word::voice_db`]). They are kept as a [`Lyrics`] with
-//! only those times ([`edits_of`]).
+//! for each word what was set by hand ([`jodel_lyrics::WordEdit`]): its
+//! start and end moved, marked as not to be sung, the voice's level over
+//! it. They are kept as a [`Lyrics`] with only those times
+//! ([`Lyrics::edits`]); here are their file and where it is kept.
 //!
 //! A file a song, named by a hash of its path and size (as the grids fixed
 //! by hand are: a file whose tags are saved again keeps its edits),
@@ -38,13 +37,14 @@
 //! set by hand held where they were set and the rest fitted around them;
 //! that timing is a cache (`{key}.edited.lrc` in the lyrics' cache,
 //! [`cache::LYRICS_EDITED`]), named by the edits it was made with
-//! ([`stamp`]), and made again by a new aligner as any timing is.
+//! ([`Lyrics::edits_stamp`]), and made again by a new aligner as any
+//! timing is.
 
 use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use jodel_lyrics::{Line, Lyrics, Source, Timing, Word, GIVEN};
+use jodel_lyrics::{Line, Lyrics, Source, Timing, Word};
 
 use crate::store::cache;
 
@@ -52,82 +52,6 @@ use crate::store::cache;
 fn key(path: &Path) -> Option<String> {
     let size = std::fs::metadata(path).ok()?.len();
     Some(format!("{} {size}", path.display()))
-}
-
-/// What is kept of `lyrics` (a song's lyrics as shown, edited): every line
-/// and word, each word with only what was set by hand (its times when it
-/// was moved, whether it is not to be sung, the voice's level over it).
-pub fn edits_of(lyrics: &Lyrics) -> Lyrics {
-    let mut out = Lyrics {
-        lines: Vec::with_capacity(lyrics.lines.len()),
-        source: lyrics.source.clone(),
-        timing: Timing::default(),
-    };
-    for line in &lyrics.lines {
-        let words = line
-            .words
-            .iter()
-            .map(|w| {
-                let mut kept = Word::new(w.text.clone());
-                if let Some((a, b)) = w.pin() {
-                    (kept.start, kept.end, kept.confidence) = (Some(a), Some(b), GIVEN);
-                    kept.pinned = true;
-                }
-                kept.not_sung = w.not_sung;
-                kept.voice_db = w.voice_db;
-                kept
-            })
-            .collect();
-        let mut kept = Line {
-            words,
-            is_break: line.is_break,
-            ..Line::default()
-        };
-        kept.mark_backing();
-        out.lines.push(kept);
-    }
-    out
-}
-
-/// What names the timing made with `edits`: a hash of their words and the
-/// times set by hand (not the marks, which do not change the timing).
-pub fn stamp(edits: &Lyrics) -> String {
-    let mut text = String::new();
-    for line in &edits.lines {
-        text.push(if line.is_break { 'b' } else { 'l' });
-        for w in &line.words {
-            let pin = w.pin().map(|(a, b)| (a.to_bits(), b.to_bits()));
-            let _ = write!(text, " {}|{pin:?}", w.text);
-        }
-        text.push('\n');
-    }
-    cache::name(&text)
-}
-
-/// `timed` (the song timed with `edits`, as kept) with what was set by
-/// hand on each word of `edits` put back on it: its times, its marks.
-/// `None` when the two are not the same words.
-pub fn marked(timed: &Lyrics, edits: &Lyrics) -> Option<Lyrics> {
-    let same = timed.lines.len() == edits.lines.len()
-        && timed.lines.iter().zip(&edits.lines).all(|(a, b)| {
-            a.words.len() == b.words.len()
-                && a.words.iter().zip(&b.words).all(|(x, y)| x.text == y.text)
-        });
-    if !same {
-        return None;
-    }
-    let mut out = timed.clone();
-    for (line, by) in out.lines.iter_mut().zip(&edits.lines) {
-        for (w, e) in line.words.iter_mut().zip(&by.words) {
-            if let Some((a, b)) = e.pin() {
-                (w.start, w.end, w.confidence) = (Some(a), Some(b), GIVEN);
-            }
-            w.pinned = e.pinned;
-            w.not_sung = e.not_sung;
-            w.voice_db = e.voice_db;
-        }
-    }
-    Some(out)
 }
 
 /// `edits` as the file for the song `key` names holds them, in
@@ -142,12 +66,12 @@ pub fn to_text(key: &str, edits: &Lyrics) -> String {
     for line in &edits.lines {
         s.push_str(if line.is_break { "break\n" } else { "line\n" });
         for w in &line.words {
-            let (start, end) = w.pin().map_or((None, None), |(a, b)| (Some(a), Some(b)));
+            let (start, end) = w.edit.pin.map_or((None, None), |(a, b)| (Some(a), Some(b)));
             let mut marks = Vec::new();
-            if w.not_sung {
+            if w.edit.not_sung {
                 marks.push("not-sung".to_owned());
             }
-            if let Some(db) = w.voice_db {
+            if let Some(db) = w.edit.voice_db {
                 marks.push(format!("voice:{db}"));
             }
             let marks = if marks.is_empty() {
@@ -203,12 +127,12 @@ pub fn from_text(key: &str, text: &str) -> Option<Lyrics> {
                     if !(a.is_finite() && b.is_finite() && a <= b) {
                         return None;
                     }
-                    (w.start, w.end, w.confidence, w.pinned) = (Some(a), Some(b), GIVEN, true);
+                    w.pin_to(a, b);
                 }
                 for mark in marks.split(',').filter(|m| *m != "-") {
                     match mark.split_once(':') {
-                        None if mark == "not-sung" => w.not_sung = true,
-                        Some(("voice", db)) => w.voice_db = Some(db.parse().ok()?),
+                        None if mark == "not-sung" => w.edit.not_sung = true,
+                        Some(("voice", db)) => w.edit.voice_db = Some(db.parse().ok()?),
                         _ => return None,
                     }
                 }
@@ -272,13 +196,12 @@ mod tests {
     /// one with the voice set over it, a break.
     fn sample() -> Lyrics {
         let mut l = Lyrics::parse_text("Hold me (close)\n♪\nNever let go\n", Source::Lrclib);
-        let w = &mut l.lines[0].words[1];
-        (w.start, w.end, w.pinned) = (Some(12.34), Some(12.9), true);
-        l.lines[0].words[2].not_sung = true;
+        l.lines[0].words[1].pin_to(12.34, 12.9);
+        l.lines[0].words[2].edit.not_sung = true;
         let w = &mut l.lines[2].words[0];
-        (w.start, w.end, w.pinned) = (Some(20.0), Some(20.5), true);
-        (w.not_sung, w.voice_db) = (true, Some(-3.0));
-        edits_of(&l)
+        w.pin_to(20.0, 20.5);
+        (w.edit.not_sung, w.edit.voice_db) = (true, Some(-3.0));
+        l.edits()
     }
 
     #[test]
@@ -290,42 +213,6 @@ mod tests {
         assert_eq!(from_text("/music/a.flac 1", &text), Some(edits.clone()));
         // Another song's file is not this one's.
         assert_eq!(from_text("/music/b.flac 1", &text), None);
-        // What is kept of edits is what they are.
-        assert_eq!(edits_of(&edits), edits);
-    }
-
-    #[test]
-    fn a_timing_is_named_by_the_words_and_their_times_not_the_marks() {
-        let edits = sample();
-        let mut marked_only = edits.clone();
-        marked_only.lines[2].words[1].not_sung = true;
-        assert_eq!(stamp(&edits), stamp(&marked_only));
-        let mut moved = edits.clone();
-        moved.lines[0].words[1].end = Some(13.0);
-        assert_ne!(stamp(&edits), stamp(&moved));
-        let mut reworded = edits.clone();
-        reworded.lines[2].words[2].text = "go!".into();
-        assert_ne!(stamp(&edits), stamp(&reworded));
-    }
-
-    #[test]
-    fn a_kept_timing_gets_the_marks_back_and_only_for_the_same_words() {
-        let edits = sample();
-        let mut timed = edits.clone();
-        for (k, w) in timed
-            .lines
-            .iter_mut()
-            .flat_map(|l| &mut l.words)
-            .enumerate()
-        {
-            (w.start, w.end) = (Some(k as f64), Some(k as f64 + 0.5));
-            (w.pinned, w.not_sung, w.voice_db) = (false, false, None);
-        }
-        let back = marked(&timed, &edits).unwrap();
-        assert_eq!(edits_of(&back), edits);
-        assert_eq!(back.lines[0].words[0].start, Some(0.0));
-        timed.lines[0].words.pop();
-        assert_eq!(marked(&timed, &edits), None);
     }
 
     /// Edits kept are found again, also while the data folder moves (where
@@ -357,7 +244,7 @@ mod tests {
         assert_eq!(store.load(&song), Some(edits.clone()));
         // New edits go where the folder is now; forgotten, gone.
         let mut more = edits.clone();
-        more.lines[0].words[0].not_sung = true;
+        more.lines[0].words[0].edit.not_sung = true;
         store.save(&song, Some(&more)).unwrap();
         assert_eq!(moved.load(&song), Some(more));
         store.save(&song, None).unwrap();

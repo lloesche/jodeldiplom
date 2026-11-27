@@ -6,6 +6,9 @@
 //! - The model: [`Lyrics`] is [`Line`]s of [`Word`]s, each word with an
 //!   optional start and end and a confidence, with a record of where the
 //!   text came from ([`Source`]) and who timed it ([`Timing`]).
+//! - [`edit`]: what was set on a word by hand ([`WordEdit`]: its times,
+//!   not to be sung, the voice's level over it), and a song's edits as
+//!   kept and put back on its timing.
 //! - [`lrc`]: plain text, LRC (line times) and Enhanced LRC (word times)
 //!   in, Enhanced LRC out. Section tags (`[Chorus]`, `Verse 2:`) are
 //!   dropped; breaks (`♪`, `[Instrumental]`, an empty timed line) are
@@ -57,12 +60,16 @@
 
 #![warn(missing_docs)]
 
+use std::ops::{Index, IndexMut};
 use std::path::PathBuf;
+
+pub use edit::WordEdit;
 
 pub mod aligner;
 pub mod anchors;
 pub mod asr;
 pub mod ctc;
+pub mod edit;
 pub mod fit;
 pub mod glimpses;
 pub mod lines;
@@ -127,16 +134,9 @@ pub struct Word {
     /// as punctuation, at the letter's before it); empty when not known
     /// (the word's times given or spread rather than heard).
     pub letters: Vec<f32>,
-    /// Whether its times were set by hand: the aligner keeps them, and
-    /// fits the other words around it ([`ctc`]).
-    pub pinned: bool,
-    /// Whether it is marked as not to be sung (a backing vocal, an ad-lib
-    /// the singer leaves to the record): shown, but given no notes, so the
-    /// game neither asks for it nor scores it.
-    pub not_sung: bool,
-    /// The voice stem's level over it as set by hand, in dB against the
-    /// voice as recorded; `None`: as the karaoke's voice level has it.
-    pub voice_db: Option<f32>,
+    /// What was set on it by hand ([`edit`]): its times, whether it is
+    /// sung, the voice's level over it.
+    pub edit: WordEdit,
 }
 
 impl Word {
@@ -149,15 +149,56 @@ impl Word {
             confidence: 0.0,
             backing: false,
             letters: Vec::new(),
-            pinned: false,
-            not_sung: false,
-            voice_db: None,
+            edit: WordEdit::default(),
         }
     }
 
-    /// Its times set by hand ([`Word::pinned`]), when it has them.
-    pub fn pin(&self) -> Option<(f64, f64)> {
-        self.start.zip(self.end).filter(|_| self.pinned)
+    /// Its times dropped: its start, end, confidence and letters. What was
+    /// set by hand stays ([`Word::edit`], a pin included): it is the user's,
+    /// not the timing's, and a timing gives a pinned word its times back
+    /// from it ([`Word::keep_pin`]).
+    pub fn clear_times(&mut self) {
+        self.start = None;
+        self.end = None;
+        self.confidence = 0.0;
+        self.letters.clear();
+    }
+
+    /// Its text made `text`; its letters' times dropped when that is
+    /// another text.
+    pub fn retext(&mut self, text: String) {
+        if self.text != text {
+            self.text = text;
+            self.letters.clear();
+        }
+    }
+
+    /// Its letters kept within its length.
+    pub fn clip_letters(&mut self) {
+        let most = self
+            .start
+            .zip(self.end)
+            .map_or(0.0, |(s, e)| (e - s).max(0.0)) as f32;
+        for t in &mut self.letters {
+            *t = t.min(most);
+        }
+    }
+
+    /// Its times set by hand to `a` to `b` seconds ([`WordEdit::pin`]),
+    /// and its times so ([`Word::keep_pin`]).
+    pub fn pin_to(&mut self, a: f64, b: f64) {
+        self.edit.pin = Some((a, b));
+        self.keep_pin();
+    }
+
+    /// Where its times were set by hand ([`WordEdit::pin`]): its times
+    /// those, given ([`GIVEN`]). Whether they were.
+    pub fn keep_pin(&mut self) -> bool {
+        let Some((a, b)) = self.edit.pin else {
+            return false;
+        };
+        (self.start, self.end, self.confidence) = (Some(a), Some(b), GIVEN);
+        true
     }
 
     /// When character `i` of the word is sung (seconds into the track):
@@ -178,6 +219,15 @@ impl Word {
     pub fn is_timed(&self) -> bool {
         self.start.is_some() && self.end.is_some()
     }
+}
+
+/// Where a word is in the lyrics: its line, and its place in the line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WordAt {
+    /// The line.
+    pub line: usize,
+    /// The word in it.
+    pub word: usize,
 }
 
 /// One line of the lyrics.
@@ -440,17 +490,15 @@ impl Lyrics {
     }
 
     /// Drops every time but the scaffold ([`Line::synced`]): the lines',
-    /// the words' (and their confidence), and the lines without words (a
-    /// break stays, marked).
+    /// the words' (and their confidence; what was set by hand stays:
+    /// [`Word::clear_times`]), and the lines without words (a break stays,
+    /// marked).
     pub fn drop_times(&mut self) {
         self.lines.retain(|l| !l.words.is_empty() || l.is_break);
         for line in &mut self.lines {
             line.time = None;
             for word in &mut line.words {
-                word.start = None;
-                word.end = None;
-                word.confidence = 0.0;
-                word.letters.clear();
+                word.clear_times();
             }
         }
         self.timing = Timing::default();
@@ -466,6 +514,20 @@ impl Lyrics {
         self.lines.iter().all(|l| l.words.is_empty())
     }
 
+    /// Every word, line after line, with its place. A word's index in it
+    /// is its index among all the words, as [`ctc::Hints::windows`] and
+    /// [`words::Compared::word`] count them.
+    pub fn words(&self) -> impl Iterator<Item = (WordAt, &Word)> {
+        (self.lines.iter().enumerate()).flat_map(|(line, l)| {
+            (l.words.iter().enumerate()).map(move |(word, w)| (WordAt { line, word }, w))
+        })
+    }
+
+    /// The word at `at`, if there is one.
+    pub fn word(&self, at: WordAt) -> Option<&Word> {
+        self.lines.get(at.line)?.words.get(at.word)
+    }
+
     /// How much is timed, from the lines and words themselves.
     pub fn detail_of_lines(lines: &[Line]) -> Detail {
         if lines.iter().flat_map(|l| &l.words).any(Word::is_timed) {
@@ -475,6 +537,21 @@ impl Lyrics {
         } else {
             Detail::None
         }
+    }
+}
+
+/// The word at a place in the lyrics (there must be one there).
+impl Index<WordAt> for Lyrics {
+    type Output = Word;
+
+    fn index(&self, at: WordAt) -> &Word {
+        &self.lines[at.line].words[at.word]
+    }
+}
+
+impl IndexMut<WordAt> for Lyrics {
+    fn index_mut(&mut self, at: WordAt) -> &mut Word {
+        &mut self.lines[at.line].words[at.word]
     }
 }
 

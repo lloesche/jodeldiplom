@@ -8,7 +8,7 @@
 //! the texts that did not fit (wrong song, wrong version, another
 //! language's words); texts that fit had a median of about three quarters.
 
-use crate::words::{common, lyrics_words, words};
+use crate::words::{common, words, Compared};
 use crate::Lyrics;
 
 /// A text fits when at least this share of its words were heard, in whole
@@ -38,7 +38,7 @@ pub fn fit(text: &[String], heard: &[String]) -> f32 {
 
 /// How well `lyrics` fit what was `heard` (the recogniser's text).
 pub fn lyrics_fit(lyrics: &Lyrics, heard: &str) -> f32 {
-    fit(&lyrics_words(lyrics), &words(heard))
+    fit(&Compared::of(lyrics).words, &words(heard))
 }
 
 #[cfg(test)]

@@ -35,12 +35,7 @@ pub fn lane_width(pane: f32) -> f32 {
 /// `letter` points wide, in a pane `pane` points wide: what fits the
 /// lyrics' words ([`crate::core::Fit::lane_letters`]).
 pub fn lane_letters(pane: f32, letter: f32) -> u16 {
-    if letter <= 0.0 {
-        return 0;
-    }
-    (lane_width(pane) / letter)
-        .floor()
-        .clamp(0.0, f32::from(u16::MAX)) as u16
+    super::lanes::letters_across(lane_width(pane), letter)
 }
 
 /// The lanes a block shows: every stem's where its track has them (or,
@@ -519,10 +514,10 @@ pub fn plots(state: &State, which: Block, heard: f64, follow: bool) -> Option<Pl
     // carries the whole track's bars, so a view moved is the same lane
     // moved.
     let follow = (which == Block::Now
-        && block.start.is_none()
+        && block.view.is_following()
         && viewport::slide(state).is_none()
         && follow)
-        .then_some(viewport::LEAD);
+        .then_some(crate::core::timeview::LEAD);
     let bars = a
         .downbeats
         .iter()
@@ -637,14 +632,13 @@ fn edit_keys() -> Vec<Hint> {
     ]
 }
 
-/// What `z` is called where it is named: the button here, the lyrics
-/// editor's foot.
-pub const FIT_LYRICS: &str = "fit lyrics";
-
-/// What the button that zooms to fit the lyrics says, and its key (from
-/// the keymap).
+/// What the button that zooms to fit the lyrics says
+/// ([`crate::core::timeview::FIT_LYRICS`]), and its key (from the keymap).
 pub fn fit_lyrics() -> Hint {
-    (keymap::hint(Context::Transition, Op::FitLyrics), FIT_LYRICS)
+    (
+        keymap::hint(Context::Transition, Op::FitLyrics),
+        crate::core::timeview::FIT_LYRICS,
+    )
 }
 
 impl Footer {

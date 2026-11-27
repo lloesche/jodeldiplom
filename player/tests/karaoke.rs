@@ -89,7 +89,7 @@ fn the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there() {
     // Esc stays on the tab and does nothing.
     let fx = op(&mut state, Op::Back);
     assert!(fx.is_empty(), "{fx:?}");
-    assert_eq!((state.screen, state.side), (Screen::Main, Side::Karaoke));
+    assert_eq!((&state.screen, state.side), (&Screen::Main, Side::Karaoke));
     assert!(!state.desk.stems_touched());
     // Leaving the tab puts the lane back at 1; coming back plays the voice
     // at its level again.
@@ -153,7 +153,7 @@ fn the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab() {
     // Esc: back to the tab, the voice still at its level (nothing sent),
     // songs run on.
     let fx = op(&mut state, Op::Back);
-    assert_eq!((state.screen, state.side), (Screen::Main, Side::Karaoke));
+    assert_eq!((&state.screen, state.side), (&Screen::Main, Side::Karaoke));
     assert!(engine(&fx).contains(&&Command::HoldAtEnd(false)));
     assert_eq!(voice_sent(&fx), None, "{fx:?}");
     assert!(!engine(&fx).iter().any(|c| matches!(c, Command::Stop)));

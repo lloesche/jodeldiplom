@@ -9,17 +9,21 @@
 use std::fmt;
 use std::sync::Arc;
 
-use jodel_lyrics::Line;
+use jodel_lyrics::{Line, WordAt};
 use jodel_playback::Stem;
 use jodel_rhythm::waveform::Waveform;
 
 use super::karaoke::Hint;
+use crate::core::desk::taper;
 use crate::core::karaoke::SongLyrics;
 use crate::core::keymap::{self, Context, Op};
 use crate::core::lanes::Lane;
-use crate::core::lyric_edit::screen::{self, Draft, Part};
-use crate::core::lyric_edit::{LyricEditor, WordAt};
-use crate::core::{sliders, text, voice_curve, Rhythm, State};
+use crate::core::lyric_edit::screen::{self, Draft};
+use crate::core::lyric_edit::{editor, LyricEditor, Part};
+use crate::core::text::{clock_exact, clock_mark};
+use crate::core::timeview::FIT_LYRICS;
+use crate::core::voice_curve::{self, VoiceLevel};
+use crate::core::{sliders, Rhythm, State};
 
 /// The button that closes the editor.
 pub const DONE: &str = "Done";
@@ -148,27 +152,25 @@ fn keys(writing: bool) -> Vec<Hint> {
     }
     vec![
         hint(&[Op::LyricsPrevious, Op::LyricsNext], "word"),
-        Hint::new(
-            format!(
-                "{} {}",
-                keymap::hint(Context::LyricsEditor, Op::LyricsStartEarlier),
-                keymap::hint(Context::LyricsEditor, Op::LyricsStartLater)
-            ),
+        hint(
+            &[
+                Op::LyricsNudge(Part::Start, -1),
+                Op::LyricsNudge(Part::Start, 1),
+            ],
             "start",
         ),
-        Hint::new(
-            format!(
-                "{} {}",
-                keymap::hint(Context::LyricsEditor, Op::LyricsEndEarlier),
-                keymap::hint(Context::LyricsEditor, Op::LyricsEndLater)
-            ),
+        hint(
+            &[
+                Op::LyricsNudge(Part::End, -1),
+                Op::LyricsNudge(Part::End, 1),
+            ],
             "end",
         ),
         hint(&[Op::LyricsPlay], "play"),
-        hint(&[Op::FitLyrics], super::transition::FIT_LYRICS),
+        hint(&[Op::FitLyrics], FIT_LYRICS),
         hint(&[Op::Follow], "follow"),
         hint(&[Op::LyricsNotSung], "not sung"),
-        hint(&[Op::LyricsLouder, Op::LyricsQuieter], "voice"),
+        hint(&[Op::LyricsLevel(1), Op::LyricsLevel(-1)], "voice"),
         hint(&[Op::LyricsWrite], "text"),
         hint(&[Op::LyricsUndo], "undo"),
         hint(&[Op::Back], "done"),
@@ -187,44 +189,28 @@ fn tick_step(span: f64) -> f64 {
         .unwrap_or(STEPS[0])
 }
 
-/// `t` seconds as the time's marks say it: `1:23`, with tenths where the
-/// marks are less than a second apart (`1:23.4`).
-fn tick_text(t: f64, step: f64) -> String {
-    if step >= 1.0 {
-        return text::clock(t + 1e-6);
-    }
-    let tenths = ((t * 10.0).round() as u64) % 10;
-    format!("{}.{tenths}", text::clock(t + 1e-6))
-}
-
-/// `t` seconds to the hundredth: `1:23.45`.
-fn exact(t: f64) -> String {
-    let hundredths = ((t.max(0.0) * 100.0).round() as u64) % 100;
-    format!("{}.{hundredths:02}", text::clock(t + 1e-6))
-}
-
 /// `db` as the editor writes a level: `−6 dB`, `+3 dB`, `off`.
 pub fn db_text(db: f64) -> String {
     if !db.is_finite() || db <= f64::from(screen::LEVEL_LEAST) {
         return "off".to_owned();
     }
-    let r = db.round() as i64;
-    match r.signum() {
-        1 => format!("+{r} dB"),
-        -1 => format!("−{} dB", r.unsigned_abs()),
-        _ => "0 dB".to_owned(),
+    format!("{} dB", taper::number(db, 0, true))
+}
+
+/// What the panel says of the voice's level over a word: `−6 dB, set here`.
+fn level_text(level: VoiceLevel) -> String {
+    let db = db_text(level.db());
+    match level {
+        VoiceLevel::Set(_) => format!("{db}, set here"),
+        VoiceLevel::Raised(_) => format!("{db}, raised: not sung"),
+        VoiceLevel::Slider(_) => format!("{db}, as the Voice slider"),
     }
 }
 
 /// Whether the editor's lyrics are edited by hand: a change made in it, a
 /// word set by hand or marked, or a text other than the one found.
 fn edited(state: &State, editor: &LyricEditor) -> bool {
-    let marked = editor
-        .lyrics
-        .lines
-        .iter()
-        .flat_map(|l| &l.words)
-        .any(|w| w.pinned || w.not_sung || w.voice_db.is_some());
+    let marked = editor.lyrics.words().any(|(_, w)| w.edit.is_set());
     let found = match state.karaoke.lyrics.get(&editor.path) {
         Some(SongLyrics::Found { lyrics, .. }) => {
             let texts = |l: &jodel_lyrics::Lyrics| -> Vec<String> {
@@ -244,7 +230,7 @@ fn edited(state: &State, editor: &LyricEditor) -> bool {
 /// The voice's waveform for the editor's song, where its analysis is in:
 /// its vocals' lane, else (no stems) the whole song's.
 pub fn wave(state: &State) -> Option<Wave> {
-    let editor = state.karaoke.editor.as_ref()?;
+    let editor = editor(state)?;
     let Some(Rhythm::Ready(r)) = state.rhythm.get(&editor.path) else {
         return None;
     };
@@ -270,59 +256,51 @@ pub fn wave(state: &State) -> Option<Wave> {
 impl Editor {
     /// The screen for `state`, while the editor is open.
     pub fn of(state: &State) -> Option<Editor> {
-        let editor = state.karaoke.editor.as_ref()?;
+        let editor = editor(state)?;
         let window = screen::window(state)?;
         let playhead = screen::playhead(state);
         let slider = sliders::voice_db(state.config.karaoke_voice);
         let s = &editor.screen;
         let held = s.held.as_ref().map(|h| h.part);
         let mut words = Vec::new();
-        for (line, l) in editor.lyrics.lines.iter().enumerate() {
-            for (word, w) in l.words.iter().enumerate() {
-                let (Some(start), Some(end)) = (w.start, w.end) else {
-                    continue;
-                };
-                if end < window.0 || start > window.1 {
-                    continue;
-                }
-                let at = WordAt { line, word };
-                let selected = editor.selected == Some(at);
-                let own = voice_curve::own_level(w, slider);
-                words.push(WordBox {
-                    at,
-                    text: w.text.clone(),
-                    start,
-                    end,
-                    selected,
-                    held: held.filter(|_| selected),
-                    pinned: w.pinned,
-                    not_sung: w.not_sung,
-                    heard: playhead.is_some_and(|p| p >= start && p < end),
-                    level: own.unwrap_or(slider),
-                    own: own.is_some(),
-                });
+        for (at, w) in editor.lyrics.words() {
+            let (Some(start), Some(end)) = (w.start, w.end) else {
+                continue;
+            };
+            if end < window.0 || start > window.1 {
+                continue;
             }
+            let selected = editor.selected == Some(at);
+            let level = voice_curve::voice_level(w, slider);
+            words.push(WordBox {
+                at,
+                text: w.text.clone(),
+                start,
+                end,
+                selected,
+                held: held.filter(|_| selected),
+                pinned: w.edit.pin.is_some(),
+                not_sung: w.edit.not_sung,
+                heard: playhead.is_some_and(|p| p >= start && p < end),
+                level: level.db(),
+                own: level.is_own(),
+            });
         }
         let selected = editor.word().map(|w| {
             let times = match (w.start, w.end) {
-                (Some(a), Some(b)) => format!("{} – {}  ·  {:.2} s", exact(a), exact(b), b - a),
+                (Some(a), Some(b)) => {
+                    format!("{} – {}  ·  {:.2} s", clock_exact(a), clock_exact(b), b - a)
+                }
                 _ => "not timed".to_owned(),
             };
-            let level = match (w.voice_db, w.not_sung) {
-                (Some(db), _) => format!("{}, set here", db_text(f64::from(db))),
-                (None, true) => format!(
-                    "{}, raised: not sung",
-                    db_text(voice_curve::own_level(w, slider).unwrap_or(slider))
-                ),
-                (None, false) => format!("{}, as the Voice slider", db_text(slider)),
-            };
+            let level = voice_curve::voice_level(w, slider);
             Selected {
                 text: w.text.clone(),
                 times,
-                pinned: w.pinned,
-                not_sung: w.not_sung,
-                level,
-                own_level: w.voice_db.is_some(),
+                pinned: w.edit.pin.is_some(),
+                not_sung: w.edit.not_sung,
+                level: level_text(level),
+                own_level: matches!(level, VoiceLevel::Set(_)),
             }
         });
         let line = editor
@@ -339,7 +317,7 @@ impl Editor {
                         },
                         text: w.text.clone(),
                         selected: word == at.word,
-                        not_sung: w.not_sung,
+                        not_sung: w.edit.not_sung,
                     })
                     .collect()
             })
@@ -349,7 +327,7 @@ impl Editor {
         let ticks = (first..)
             .map(|k| k as f64 * step)
             .take_while(|&t| t <= window.1)
-            .map(|t| (t, tick_text(t, step)))
+            .map(|t| (t, clock_mark(t, step)))
             .collect();
         let note = match wave(state) {
             None => Some("the voice's waveform comes once the song is analysed"),
@@ -405,9 +383,9 @@ impl fmt::Display for Editor {
             writeln!(f, "[ask] {ASK}")?;
         }
         let (a, b) = self.window;
-        writeln!(f, "[view] {} – {}", exact(a), exact(b))?;
+        writeln!(f, "[view] {} – {}", clock_exact(a), clock_exact(b))?;
         if let Some(p) = self.playhead {
-            writeln!(f, "[playhead] {}", exact(p))?;
+            writeln!(f, "[playhead] {}", clock_exact(p))?;
         }
         if let Some(note) = self.note {
             writeln!(f, "[note] {note}")?;
@@ -434,8 +412,8 @@ impl fmt::Display for Editor {
                 f,
                 "[{tone}] {} {}–{}{level}",
                 w.text,
-                exact(w.start),
-                exact(w.end)
+                clock_exact(w.start),
+                clock_exact(w.end)
             )?;
         }
         if let Some(s) = &self.selected {
@@ -472,11 +450,13 @@ mod tests {
         assert_eq!(tick_step(10.0), 1.0);
         assert_eq!(tick_step(3.0), 0.2);
         assert_eq!(tick_step(240.0), 30.0);
-        assert_eq!(tick_text(83.0, 1.0), "1:23");
-        assert_eq!(tick_text(83.4, 0.2), "1:23.4");
-        assert_eq!(exact(83.456), "1:23.46");
+        assert_eq!(clock_mark(83.0, 1.0), "1:23");
+        assert_eq!(clock_mark(83.4, 0.2), "1:23.4");
+        assert_eq!(clock_exact(83.456), "1:23.46");
         assert_eq!(db_text(-6.2), "−6 dB");
         assert_eq!(db_text(3.0), "+3 dB");
+        assert_eq!(db_text(0.0), "0 dB");
+        assert_eq!(db_text(-0.4), "0 dB");
         assert_eq!(db_text(f64::NEG_INFINITY), "off");
     }
 }

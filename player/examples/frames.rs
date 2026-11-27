@@ -26,6 +26,7 @@ use iced::Size;
 use jodel_output::SimClock;
 use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
+use jodeldiplom::core::timeview::TimeView;
 use jodeldiplom::core::{Action, Screen, Side, State};
 use jodeldiplom::gui::lanes::{Lanes, Metrics};
 use jodeldiplom::gui::{lane_spots, metrics};
@@ -82,7 +83,7 @@ fn main() {
             // The view stays where it is (its cursor moved); the playhead
             // goes across it.
             tab.transition.now.path = Some(tab.queue.paths[1].clone());
-            tab.transition.now.start = Some(tab.playing.position - 5.0);
+            tab.transition.now.view = TimeView::held(tab.playing.position - 5.0);
         }
         if screen == "karaoke tab" {
             tab.side = Side::Karaoke;

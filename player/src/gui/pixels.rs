@@ -27,6 +27,40 @@ pub fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
 /// A rect of pixels: x, y, width, height.
 pub type PixelRect = (usize, usize, usize, usize);
 
+/// A window's pixels as its points land on them: this many pixels a point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Snap(pub f32);
+
+impl Snap {
+    /// `v` points on the window's pixels.
+    pub fn snap(self, v: f32) -> f32 {
+        (v * self.0).round() / self.0
+    }
+
+    /// `rect` with its edges on the window's pixels (none less than empty).
+    pub fn rect(self, rect: iced::Rectangle) -> iced::Rectangle {
+        let (x, y) = (self.snap(rect.x), self.snap(rect.y));
+        iced::Rectangle::new(
+            iced::Point::new(x, y),
+            iced::Size::new(
+                (self.snap(rect.x + rect.width) - x).max(0.0),
+                (self.snap(rect.y + rect.height) - y).max(0.0),
+            ),
+        )
+    }
+
+    /// `rect` (in points) in the window's pixels.
+    pub fn pixels(self, rect: iced::Rectangle) -> PixelRect {
+        let px = |v: f32| (v * self.0).round().max(0.0) as usize;
+        (
+            px(rect.x),
+            px(rect.y),
+            px(rect.x + rect.width) - px(rect.x),
+            px(rect.y + rect.height) - px(rect.y),
+        )
+    }
+}
+
 /// The rect around `a` (if any) and `b`.
 pub fn union(a: Option<PixelRect>, b: PixelRect) -> PixelRect {
     match a {

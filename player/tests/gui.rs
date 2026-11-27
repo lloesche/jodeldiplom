@@ -14,6 +14,7 @@ use iced::Size;
 use image::{Rgb, RgbaImage};
 use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
+use jodeldiplom::core::timeview::TimeView;
 use jodeldiplom::core::{Screen, Side, State};
 use jodeldiplom::gui::lanes::{Lanes, Metrics, Offscreen as LaneOffscreen};
 use jodeldiplom::gui::widgets::cover::Covers;
@@ -642,7 +643,7 @@ fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
     let (size, mut state) = transition_window();
     // A view that starts between cells.
     state.transition.now.path = lanes::path(&state, Block::Now).cloned();
-    state.transition.now.start = Some(10.123);
+    state.transition.now.view = TimeView::held(10.123);
     state.drawn_heard = Some(0.0);
     let picture = lanes_picture(&mut Lanes::default(), &state, (1600, 1000, 1.0));
     let image = rgb_image(&picture, 1600, 1000);

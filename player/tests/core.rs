@@ -546,8 +546,8 @@ fn engine_events_drive_the_now_playing_state() {
     assert_eq!(state.playing.position, 12.5);
     assert!(
         jodeldiplom::core::transition::tab::block(&state, Block::Now)
-            .start
-            .is_none()
+            .view
+            .is_following()
     );
     assert!(engine(&update(
         &mut state,
@@ -1013,10 +1013,11 @@ fn help_and_palette_come_from_the_keymap() {
         assert!(palette.iter().any(|e| e.op == op), "{op:?}");
     }
     assert!(palette.iter().all(|e| e.op != Op::DeskNextStrip));
-    // No key means two things in one context.
+    // No key means two things in one context (anywhere's and playing's,
+    // searched together, as one).
     for (i, a) in KEYMAP.iter().enumerate() {
         for b in &KEYMAP[i + 1..] {
-            if a.context == b.context {
+            if a.context.help_section() == b.context.help_section() {
                 assert!(
                     a.keys.iter().all(|k| !b.keys.contains(k)),
                     "{a:?} and {b:?} share a key"
@@ -2598,7 +2599,10 @@ fn the_next_track_keeps_its_zoom_when_it_starts_playing() {
     hand_over(&mut state, 10.0);
     assert_eq!(state.playing.track.as_ref().unwrap().index, 2);
     assert_eq!(viewport::zoom_of(&state, Block::Now), own, "its zoom kept");
-    assert_eq!(tab::block(&state, Block::Now).start, None, "following");
+    assert!(
+        tab::block(&state, Block::Now).view.is_following(),
+        "following"
+    );
     assert_eq!(viewport::zoom_of(&state, Block::Next), tab);
 }
 #[test]
@@ -3617,9 +3621,8 @@ fn z_zooms_the_selected_track_to_fit_its_lyrics() {
     common::sung_every(&mut state, 1.2);
     // The playing track, following the playhead: it still follows.
     op(&mut state, Op::FitLyrics);
-    assert_eq!(
-        tab::block(&state, Block::Now).start,
-        None,
+    assert!(
+        tab::block(&state, Block::Now).view.is_following(),
         "still following"
     );
     let heard = state.heard();

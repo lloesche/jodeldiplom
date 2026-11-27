@@ -90,7 +90,7 @@ pub(super) fn view<'a>(shown: Shown<'a>, parts: &Parts<'a>) -> Element<'a, Messa
         Screen::NowPlaying => now::view(state, parts.covers),
         Screen::Settings => page(state, settings::view(state), parts),
         Screen::Help => page(state, help::view(state), parts),
-        Screen::Lyrics => lyrics::view(state, parts),
+        Screen::Lyrics(_) => lyrics::view(state, parts),
         Screen::Main => main(state, parts),
         Screen::Karaoke => karaoke::mode::view(state, parts.stage),
     };
@@ -318,7 +318,7 @@ pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
                 _ => None,
             }
         }
-        Screen::Settings | Screen::Help | Screen::Karaoke | Screen::Lyrics => None,
+        Screen::Settings | Screen::Help | Screen::Karaoke | Screen::Lyrics(_) => None,
     };
     place
         .filter(|p| p.width > 0.0 && p.height > 0.0)
@@ -357,7 +357,7 @@ pub fn lane_spots(
         spots = lyrics::spots(state, &room);
     }
     let m = metrics::main(size, state.side);
-    if let (Screen::Main, Some(v)) = (state.screen, m.voice) {
+    if let (Screen::Main, Some(v)) = (&state.screen, m.voice) {
         let px = |points: f32| (points * scale).round().max(0.0) as usize;
         let rect = (
             px(v.x),

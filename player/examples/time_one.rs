@@ -44,7 +44,8 @@ fn main() {
             .join(jodeldiplom::work::lyrics::models::ASR_FILE),
     );
     let timer = SpeechTimer::new(models, Some(data.join("stems")));
-    let timed = timer.time(song, &lyrics, &|| Vec::new()).unwrap();
+    let others = jodel_lyrics::prepare::Text::Found(&Vec::new);
+    let timed = timer.time(song, &lyrics, &others).unwrap();
     println!(
         "{} lines (text {}), fit {:?}",
         timed.lines.len(),

@@ -217,23 +217,14 @@ pub enum Action {
         /// zoom keeps it where it is.
         at: Option<f64>,
     },
-    /// The secondary button went down on a Transition block: a drag of its view
-    /// starts.
-    TransitionPanStart {
-        /// The block.
-        block: super::lanes::Block,
-        /// Where the pointer is across, in the window's units.
-        at: f32,
-        /// The width of the block's waveforms, in the same units.
-        width: f32,
-        /// Over the whole track (else the lanes).
-        overview: bool,
+    /// The secondary button drags a view: a Transition block's or the
+    /// lyrics editor's.
+    Pan {
+        /// The view.
+        of: super::timeview::PanOf,
+        /// Pressed, moved or let go of.
+        input: super::timeview::PanInput,
     },
-    /// The pointer moved to here across (in the units of the drag's start)
-    /// while dragging a Transition block's view.
-    TransitionPan(f32),
-    /// The drag of a Transition block's view ended.
-    TransitionPanEnd,
     /// A Karaoke slider was pressed or dragged to a share of its range.
     KaraokeSlide {
         /// The slider.

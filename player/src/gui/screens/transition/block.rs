@@ -15,6 +15,7 @@ use iced::{Alignment, Element, Point, Rectangle, Widget as _};
 use super::header::header;
 use super::Placed;
 use crate::core::lanes::{self, Block};
+use crate::core::timeview::PanOf;
 use crate::core::transition::viewport;
 use crate::core::{Action, State};
 use crate::gui::look;
@@ -83,9 +84,11 @@ pub(super) fn view<'a>(
             .on_press(move |bounds, at| Message::Grab(Grab::Lanes { block, bounds }, at))
             .on_right_press(move |bounds, at| {
                 let pan = Grab::Pan {
-                    block,
+                    of: PanOf::Block {
+                        block,
+                        overview: false,
+                    },
                     bounds,
-                    overview: false,
                 };
                 Message::Grab(pan, at)
             })
@@ -104,12 +107,7 @@ pub(super) fn view<'a>(
         put(lanes.boxed(), r);
     }
     if let Some(r) = placed.overview {
-        let duration = lanes::rhythmed(state, block).map_or(0.0, |r| {
-            r.waveform
-                .as_ref()
-                .map_or(0.0, |w| w.duration())
-                .max(r.analysis.duration)
-        });
+        let duration = lanes::rhythmed(state, block).map_or(0.0, |r| r.length());
         let whole = widgets::area()
             .id(id("overview", block))
             .on_press(move |bounds, at| {
@@ -120,9 +118,11 @@ pub(super) fn view<'a>(
             })
             .on_right_press(move |bounds, at| {
                 let pan = Grab::Pan {
-                    block,
+                    of: PanOf::Block {
+                        block,
+                        overview: true,
+                    },
                     bounds,
-                    overview: true,
                 };
                 Message::Grab(pan, at)
             })

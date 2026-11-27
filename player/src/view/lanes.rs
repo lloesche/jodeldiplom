@@ -50,6 +50,15 @@ pub fn faded(color: [u8; 3], gain: f32) -> [u8; 3] {
 /// A stem turned off (not heard), whatever its colour.
 pub const OFF: [u8; 3] = [78, 78, 86];
 
+/// How many letters `letter` points wide go across `width` points: what a
+/// lane's words are fitted to ([`crate::core::Fit`]).
+pub fn letters_across(width: f32, letter: f32) -> u16 {
+    if letter <= 0.0 {
+        return 0;
+    }
+    (width / letter).floor().clamp(0.0, f32::from(u16::MAX)) as u16
+}
+
 /// A lane's colour.
 pub fn lane_color(lane: Lane) -> [u8; 3] {
     match lane {
@@ -310,6 +319,35 @@ pub fn lane_labels(
 }
 
 impl WavePlot {
+    /// `lane` of `waveform` from `start` to `end` seconds, in the lane's
+    /// colour, with nothing over it: no bars, playhead, cursor, selection,
+    /// transition or words.
+    pub fn plain(waveform: Arc<Waveform>, lane: Lane, start: f64, end: f64) -> WavePlot {
+        WavePlot {
+            waveform,
+            lane,
+            start,
+            end,
+            color: lane_color(lane),
+            downbeats: Vec::new(),
+            unclear: Vec::new(),
+            selection: None,
+            shown: None,
+            playhead: None,
+            cursor: None,
+            cue: None,
+            transition: None,
+            gain: Vec::new(),
+            edit: None,
+            lyrics: None,
+            text_scale: 1,
+            lines: WordLines::ONE,
+            follow: None,
+            deep: false,
+            key: None,
+        }
+    }
+
     /// The lane's gain at `time` (1 outside the transition's curve).
     pub fn gain_at(&self, time: f64) -> f32 {
         let g = &self.gain;

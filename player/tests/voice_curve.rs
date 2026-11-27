@@ -69,7 +69,7 @@ fn the_voice_rises_over_a_word_not_to_be_sung() {
         let at = 0.25 + 0.5 * k as f64;
         (w.start, w.end) = (Some(at), Some(at + 0.35));
     }
-    song.lines[0].words[1].not_sung = true;
+    song.lines[0].words[1].edit.not_sung = true;
     let voice_db = -12.0;
     let points = on_frames(&levels(&song, voice_db), 0.0, f64::from(RATE));
     let (base, up) = (

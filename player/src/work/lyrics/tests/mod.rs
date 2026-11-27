@@ -1,5 +1,12 @@
+use std::sync::Mutex;
+use std::thread;
+
+use jodel_lyrics::prepare::Text;
+use jodel_lyrics::{Found, LyricsSource, Source};
+
+use super::store::{cache_key, Cache, Kept};
 use super::timer::asr_maker;
-use super::web::{retry_after, Response, BUSY_WAIT, LONGEST_WAIT, SPACING, USER_AGENT};
+use super::web::{retry_after, Lrclib, Response, BUSY_WAIT, LONGEST_WAIT, SPACING, USER_AGENT};
 use super::*;
 use jodel_lyrics::lines::transcript_lyrics;
 use jodel_lyrics::prepare::fitting;
@@ -36,7 +43,7 @@ impl WordTimer for Marker {
         Maker::new("marker", 1)
     }
 
-    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
+    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Text) -> Result<Lyrics, String> {
         Ok(timed_by(lyrics, "marker"))
     }
 }
@@ -53,7 +60,7 @@ impl WordTimer for Transcriber {
         Maker::new("marker", 1)
     }
 
-    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
+    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Text) -> Result<Lyrics, String> {
         Ok(timed_by(lyrics, "marker"))
     }
 
@@ -144,7 +151,7 @@ impl WordTimer for SlowFailing {
         Maker::new("marker", 1)
     }
 
-    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
+    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Text) -> Result<Lyrics, String> {
         Ok(timed_by(lyrics, "marker"))
     }
 
@@ -236,8 +243,8 @@ impl WordTimer for CountingHearer {
         Transcriber.maker()
     }
 
-    fn time(&self, path: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String> {
-        Transcriber.time(path, lyrics, others)
+    fn time(&self, path: &Path, lyrics: &Lyrics, text: &Text) -> Result<Lyrics, String> {
+        Transcriber.time(path, lyrics, text)
     }
 
     fn transcribe(&self, path: &Path) -> Result<(Lyrics, Lyrics), String> {
@@ -386,19 +393,12 @@ impl WordTimer for Keeper {
         Maker::new("marker", 1)
     }
 
-    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
-        self.0.lock().unwrap().push(false);
-        Ok(timed_by(lyrics, "marker"))
-    }
-
-    fn time_edited(&self, _: &Path, lyrics: &Lyrics) -> Result<Lyrics, String> {
-        self.0.lock().unwrap().push(true);
+    fn time(&self, _: &Path, lyrics: &Lyrics, text: &Text) -> Result<Lyrics, String> {
+        let edited = matches!(text, Text::Edited);
+        self.0.lock().unwrap().push(edited);
         let mut timed = timed_by(lyrics, "marker");
-        let given = lyrics.lines.iter().flat_map(|l| &l.words);
-        for (w, given) in timed.lines.iter_mut().flat_map(|l| &mut l.words).zip(given) {
-            if let Some((a, b)) = given.pin() {
-                (w.start, w.end) = (Some(a), Some(b));
-            }
+        for w in timed.lines.iter_mut().flat_map(|l| &mut l.words) {
+            w.keep_pin();
         }
         Ok(timed)
     }
@@ -453,11 +453,10 @@ fn a_song_edited_by_hand_is_timed_with_its_edits_and_found_so_again() {
     };
     // "line" moved, "Two" not to be sung, "here" written "there".
     let mut edited = timed.clone();
-    let line = &mut edited.lines[0].words[1];
-    (line.start, line.end, line.pinned) = (Some(2.2), Some(2.6), true);
-    edited.lines[1].words[0].not_sung = true;
+    edited.lines[0].words[1].pin_to(2.2, 2.6);
+    edited.lines[1].words[0].edit.not_sung = true;
     edited.lines[1].words[1].text = "there".into();
-    let edits = edits::edits_of(&edited);
+    let edits = edited.edits();
     worker.edited(song.clone(), Some(edits.clone()));
     let check = |answer: Answer| {
         let Answer::Found {
@@ -469,9 +468,9 @@ fn a_song_edited_by_hand_is_timed_with_its_edits_and_found_so_again() {
         };
         let texts: Vec<String> = lyrics.lines.iter().map(|l| l.text()).collect();
         assert_eq!(texts, ["One line", "Two there"]);
-        assert_eq!(edits::edits_of(&timed), edits);
-        assert_eq!(timed.lines[0].words[1].pin(), Some((2.2, 2.6)));
-        assert!(timed.lines[1].words[0].not_sung);
+        assert_eq!(timed.edits(), edits);
+        assert_eq!(timed.lines[0].words[1].edit.pin, Some((2.2, 2.6)));
+        assert!(timed.lines[1].words[0].edit.not_sung);
         assert!(timed.lines[1].words[1].is_timed());
     };
     check(rx.recv_timeout(wait).unwrap().1);
@@ -501,7 +500,7 @@ fn a_song_edited_by_hand_is_timed_with_its_edits_and_found_so_again() {
         .lines
         .iter()
         .flat_map(|l| &l.words)
-        .all(|w| !w.pinned && !w.not_sung));
+        .all(|w| !w.edit.is_set()));
     assert!(edits::EditStore::new(dir.join("edits"))
         .load(&song)
         .is_none());
@@ -526,7 +525,10 @@ impl WordTimer for Hearer {
         Maker::new("hearer", 1)
     }
 
-    fn time(&self, _: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String> {
+    fn time(&self, _: &Path, lyrics: &Lyrics, text: &Text) -> Result<Lyrics, String> {
+        let Text::Found(others) = text else {
+            return Ok(timed_by(lyrics, "hearer"));
+        };
         let (text, fit) = fitting(lyrics, HEARD, others);
         let mut timed = timed_by(&text, "hearer");
         timed.timing.fit = fit;
@@ -625,7 +627,7 @@ impl WordTimer for Repeater {
         Maker::new("repeater", 1)
     }
 
-    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
+    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Text) -> Result<Lyrics, String> {
         let mut text = lyrics.clone();
         let last = text.lines.last().cloned().unwrap();
         text.lines.push(jodel_lyrics::Line {

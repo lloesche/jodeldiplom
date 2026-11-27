@@ -72,10 +72,11 @@ pub fn syllables(word: &str) -> usize {
 }
 
 /// Gives the words of `lines` under `confident` (or without both times)
-/// times between their neighbours, by syllables. Words that cannot be
-/// bounded on either side are left as they are.
+/// times between their neighbours, by syllables; a word set by hand
+/// ([`crate::WordEdit::pin`]) keeps its own. Words that cannot be bounded
+/// on either side are left as they are.
 pub fn interpolate(lines: &mut [Line], confident: f32) {
-    let known = |w: &Word| w.is_timed() && w.confidence >= confident;
+    let known = |w: &Word| w.is_timed() && (w.edit.pin.is_some() || w.confidence >= confident);
     for l in 0..lines.len() {
         let count = lines[l].words.len();
         let mut i = 0;
@@ -148,14 +149,21 @@ pub fn interpolate(lines: &mut [Line], confident: f32) {
                 }
                 (None, None) => continue,
             };
-            let mut at = 0.0;
-            for (w, weight) in lines[l].words[a..b].iter_mut().zip(&weights) {
-                w.start = Some(start + length * at / total);
-                at += weight;
-                w.end = Some(start + length * at / total);
-                w.letters.clear();
-            }
+            across(&mut lines[l].words[a..b], start, length, &weights);
         }
+    }
+}
+
+/// `words` timed one after another from `start` for `length` seconds, each
+/// its share by `weights` (one a word); their letters' times dropped.
+pub fn across(words: &mut [Word], start: f64, length: f64, weights: &[f64]) {
+    let total = weights.iter().sum::<f64>().max(1.0);
+    let mut at = 0.0;
+    for (w, weight) in words.iter_mut().zip(weights) {
+        w.start = Some(start + length * at / total);
+        at += weight;
+        w.end = Some(start + length * at / total);
+        w.letters.clear();
     }
 }
 
@@ -210,10 +218,8 @@ pub fn spread_over(lyrics: &Lyrics, stretches: &[(f64, f64)]) -> Lyrics {
             if k_end != k {
                 start = stretches[k_end].0.min(end);
             }
-            w.start = Some(start);
-            w.end = Some(end);
-            w.confidence = 0.0;
-            w.letters.clear();
+            w.clear_times();
+            (w.start, w.end) = (Some(start), Some(end));
         }
         line.time = line.words.first().and_then(|w| w.start);
     }
@@ -231,7 +237,6 @@ pub fn spread_over(lyrics: &Lyrics, stretches: &[(f64, f64)]) -> Lyrics {
 /// and stretches under 0.25 s dropped.
 pub fn vocal_stretches(vocals_16k: &[f32]) -> Vec<(f64, f64)> {
     let size = VOCALS_RATE as usize / 50;
-    let frame_seconds = size as f64 / f64::from(VOCALS_RATE);
     let level: Vec<f64> = vocals_16k
         .chunks(size)
         .map(|c| {
@@ -247,12 +252,13 @@ pub fn vocal_stretches(vocals_16k: &[f32]) -> Vec<(f64, f64)> {
     sorted.sort_by(f64::total_cmp);
     let loud = sorted[((sorted.len() - 1) as f64 * 0.95) as usize];
     let floor = (loud - 30.0).max(-60.0);
+    let clock = FrameClock::of_rate(VOCALS_RATE, size, level.len());
     let mut stretches: Vec<(f64, f64)> = Vec::new();
     for (f, &db) in level.iter().enumerate() {
         if db <= floor {
             continue;
         }
-        let (s, e) = (f as f64 * frame_seconds, (f + 1) as f64 * frame_seconds);
+        let (s, e) = (clock.time(f), clock.time(f + 1));
         match stretches.last_mut() {
             Some(last) if s - last.1 < 0.4 => last.1 = e,
             _ => stretches.push((s, e)),

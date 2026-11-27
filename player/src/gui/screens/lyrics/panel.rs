@@ -9,8 +9,7 @@ use iced::widget::{column, container, row, text, Row, Space};
 use iced::{Alignment, Element, Fill, Padding, Widget as _};
 
 use crate::core::keymap::{self, Context, Op};
-use crate::core::lyric_edit::screen::Input;
-use crate::core::lyric_edit::{Edit, LyricsEdit};
+use crate::core::lyric_edit::{Edit, LyricsEdit, Selection};
 use crate::core::Action;
 use crate::gui::look::{self, size, space};
 use crate::gui::widgets::{self, button, Icon};
@@ -216,7 +215,7 @@ pub(super) fn panel<'a>(editor: &Editor) -> Element<'a, Message> {
         Element::from(not_sung),
         Space::new().width(space::M),
         name("Voice"),
-        Element::from(small("Quieter", Op::LyricsQuieter)),
+        Element::from(small("Quieter", Op::LyricsLevel(-1))),
         text(s.level.clone())
             .size(size::BODY)
             .font(look::font::numbers())
@@ -226,7 +225,7 @@ pub(super) fn panel<'a>(editor: &Editor) -> Element<'a, Message> {
                 look::TEXT
             })
             .wrapping(text::Wrapping::None),
-        Element::from(small("Louder", Op::LyricsLouder)),
+        Element::from(small("Louder", Op::LyricsLevel(1))),
         Element::from(reset),
         Space::new().width(Fill),
         Element::from(
@@ -245,7 +244,7 @@ pub(super) fn panel<'a>(editor: &Editor) -> Element<'a, Message> {
                 name(if draft.line { "Line" } else { "Word" }),
                 widgets::field(format!("{what}: none takes it out"), draft.text.clone())
                     .id(FIELD)
-                    .on_input(|t| edit(LyricsEdit::Screen(Input::Draft(t))))
+                    .on_input(|t| edit(LyricsEdit::Draft(t)))
                     .width(Fill),
                 Element::from(
                     widgets::primary("Keep")
@@ -255,7 +254,7 @@ pub(super) fn panel<'a>(editor: &Editor) -> Element<'a, Message> {
                 Element::from(
                     widgets::ghost("Leave")
                         .key(keymap::hint(Context::LyricsText, Op::Back))
-                        .on_press(edit(LyricsEdit::Screen(Input::Discard)))
+                        .on_press(edit(LyricsEdit::Discard))
                 ),
             ]
             .spacing(space::S)
@@ -271,7 +270,7 @@ pub(super) fn panel<'a>(editor: &Editor) -> Element<'a, Message> {
                         widgets::chip(w.text.clone())
                             .lit(w.selected.then_some(look::ACCENT))
                             .struck(w.not_sung)
-                            .on_press(edit(LyricsEdit::Edit(Edit::Select(at))))
+                            .on_press(edit(LyricsEdit::Edit(Edit::Select(Selection::Word(at)))))
                             .into(),
                     )
                 },

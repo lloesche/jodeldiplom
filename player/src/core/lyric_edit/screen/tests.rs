@@ -6,7 +6,9 @@ use jodel_lyrics::Source;
 use super::*;
 use crate::config::Config;
 use crate::core::karaoke::SongLyrics;
-use crate::core::{update, Action, Side, DOUBLE_CLICK_MS};
+use crate::core::keymap::{lookup, Key, Meaning};
+use crate::core::timeview::PanOf;
+use crate::core::{update, Action, Screen, Side, DOUBLE_CLICK_MS};
 
 /// A queue of one song, "one two three / four five" on it, each word a
 /// second from 10 s, half a second long; the Karaoke tab shown.
@@ -35,12 +37,22 @@ fn op(s: &mut State, op: Op) -> Vec<Effect> {
     update(s, Action::Op(op))
 }
 
-fn input(s: &mut State, input: Input) -> Vec<Effect> {
-    update(s, Action::LyricsEdit(LyricsEdit::Screen(input)))
+fn input(s: &mut State, what: LyricsEdit) -> Vec<Effect> {
+    update(s, Action::LyricsEdit(what))
+}
+
+fn pan(s: &mut State, input: PanInput) -> Vec<Effect> {
+    update(
+        s,
+        Action::Pan {
+            of: PanOf::Lyrics,
+            input,
+        },
+    )
 }
 
 fn editor(s: &State) -> &LyricEditor {
-    s.karaoke.editor.as_ref().expect("the editor is open")
+    super::editor(s).expect("the editor is open")
 }
 
 fn times(s: &State, line: usize, word: usize) -> (f64, f64) {
@@ -65,22 +77,20 @@ fn at(line: usize, word: usize) -> WordAt {
 fn the_editor_opens_on_its_screen_and_esc_closes_it() {
     let mut s = state();
     op(&mut s, Op::LyricsEditor);
-    assert_eq!(s.screen, Screen::Lyrics);
+    assert!(matches!(s.screen, Screen::Lyrics(_)));
     assert_eq!(editor(&s).selected, Some(at(0, 0)));
     let (a, b) = window(&s).unwrap();
     assert!((b - a - SPAN).abs() < 1e-9 && (10.0 - a - SPAN / 3.0).abs() < 1e-9);
     // The palette, the settings, the tabs: not from here.
     for o in [Op::Palette, Op::Settings, Op::ToggleSide, Op::Help] {
         op(&mut s, o);
-        assert_eq!(
-            (s.screen, s.palette.is_none()),
-            (Screen::Lyrics, true),
+        assert!(
+            matches!(s.screen, Screen::Lyrics(_)) && s.palette.is_none(),
             "{o:?}"
         );
     }
     op(&mut s, Op::Back);
-    assert_eq!((s.screen, s.side), (Screen::Main, Side::Karaoke));
-    assert!(s.karaoke.editor.is_none());
+    assert_eq!((&s.screen, s.side), (&Screen::Main, Side::Karaoke));
     // Without lyrics: it says so and stays shut.
     s.karaoke.lyrics.clear();
     op(&mut s, Op::LyricsEditor);
@@ -94,7 +104,7 @@ fn the_editor_opens_on_its_screen_and_esc_closes_it() {
 fn a_word_dragged_by_its_end_is_set_by_hand_in_one_step() {
     let mut s = state();
     op(&mut s, Op::LyricsEditor);
-    let hold = Input::Hold {
+    let hold = LyricsEdit::Hold {
         word: at(0, 1),
         part: Part::End,
         time: 11.5,
@@ -103,32 +113,32 @@ fn a_word_dragged_by_its_end_is_set_by_hand_in_one_step() {
     assert_eq!(saves(&input(&mut s, hold)), 0);
     assert_eq!(editor(&s).selected, Some(at(0, 1)));
     for t in [11.6, 11.7, 11.8] {
-        assert_eq!(saves(&input(&mut s, Input::Drag(t))), 0);
+        assert_eq!(saves(&input(&mut s, LyricsEdit::Drag(t))), 0);
     }
     assert!((times(&s, 0, 1).1 - 11.8).abs() < 1e-9);
-    let fx = input(&mut s, Input::Drop);
+    let fx = input(&mut s, LyricsEdit::Drop);
     assert_eq!(saves(&fx), 1);
     let w = &editor(&s).lyrics.lines[0].words[1];
-    assert!(w.pinned);
+    assert!(w.edit.pin.is_some());
     assert!(editor(&s).screen.held.is_none());
     // One step back: as it was.
     op(&mut s, Op::LyricsUndo);
     assert_eq!(times(&s, 0, 1), (11.0, 11.5));
-    assert!(!editor(&s).lyrics.lines[0].words[1].pinned);
+    assert!(!editor(&s).lyrics.lines[0].words[1].edit.pin.is_some());
     // Its middle moves all of it, its start only the start.
-    let hold = |part, time| Input::Hold {
+    let hold = |part, time| LyricsEdit::Hold {
         word: at(0, 1),
         part,
         time,
         slop: 0.01,
     };
     input(&mut s, hold(Part::Middle, 11.2));
-    input(&mut s, Input::Drag(11.0));
-    input(&mut s, Input::Drop);
+    input(&mut s, LyricsEdit::Drag(11.0));
+    input(&mut s, LyricsEdit::Drop);
     assert!(near(times(&s, 0, 1), (10.8, 11.3)));
     input(&mut s, hold(Part::Start, 10.8));
-    input(&mut s, Input::Drag(10.9));
-    input(&mut s, Input::Drop);
+    input(&mut s, LyricsEdit::Drag(10.9));
+    input(&mut s, LyricsEdit::Drop);
     assert!(near(times(&s, 0, 1), (10.9, 11.3)));
 }
 
@@ -147,18 +157,18 @@ fn a_click_selects_and_a_second_writes_the_word() {
         update(s, Action::Tick(now));
         input(
             s,
-            Input::Hold {
+            LyricsEdit::Hold {
                 word: at(1, 0),
                 part: Part::Middle,
                 time: 13.2,
                 slop: 0.05,
             },
         );
-        input(s, Input::Drag(13.22));
-        input(s, Input::Drop)
+        input(s, LyricsEdit::Drag(13.22));
+        input(s, LyricsEdit::Drop)
     };
     assert_eq!(saves(&click(&mut s, 1_000)), 0);
-    assert!(!editor(&s).lyrics.lines[1].words[0].pinned);
+    assert!(!editor(&s).lyrics.lines[1].words[0].edit.pin.is_some());
     assert!(!writing(&s));
     click(&mut s, 1_000 + DOUBLE_CLICK_MS / 2);
     assert!(writing(&s));
@@ -169,8 +179,8 @@ fn a_click_selects_and_a_second_writes_the_word() {
             text: "four".into()
         })
     );
-    input(&mut s, Input::Draft("for".into()));
-    let fx = input(&mut s, Input::Seek(12.0));
+    input(&mut s, LyricsEdit::Draft("for".into()));
+    let fx = input(&mut s, LyricsEdit::Seek(12.0));
     assert_eq!(saves(&fx), 1);
     assert!(!writing(&s));
     assert_eq!(editor(&s).lyrics.lines[1].words[0].text, "for");
@@ -191,37 +201,36 @@ fn the_keys_nudge_mark_level_write_and_undo() {
     op(&mut s, Op::Up);
     assert_eq!(editor(&s).selected, Some(at(0, 0)));
     op(&mut s, Op::LyricsNext);
-    op(&mut s, Op::LyricsStartLater);
-    op(&mut s, Op::LyricsEndEarlier);
+    op(&mut s, Op::LyricsNudge(Part::Start, 1));
+    op(&mut s, Op::LyricsNudge(Part::End, -1));
     assert!(near(times(&s, 0, 1), (11.0 + NUDGE, 11.5 - NUDGE)));
-    op(&mut s, Op::LyricsMoveLater);
+    op(&mut s, Op::LyricsNudge(Part::Middle, 1));
     assert!(near(times(&s, 0, 1), (11.0 + 2.0 * NUDGE, 11.5)));
-    assert!(editor(&s).word().unwrap().pinned);
+    assert!(editor(&s).word().unwrap().edit.pin.is_some());
     op(&mut s, Op::LyricsNotSung);
-    assert!(editor(&s).word().unwrap().not_sung);
+    assert!(editor(&s).word().unwrap().edit.not_sung);
     // Not sung, the voice at the slider's top (0 dB): raised 6 dB, then a
     // step louder from there is the most.
-    op(&mut s, Op::LyricsLouder);
-    assert_eq!(editor(&s).word().unwrap().voice_db, Some(LEVEL_MOST));
-    op(&mut s, Op::LyricsQuieter);
+    op(&mut s, Op::LyricsLevel(1));
+    assert_eq!(editor(&s).word().unwrap().edit.voice_db, Some(LEVEL_MOST));
+    op(&mut s, Op::LyricsLevel(-1));
     assert_eq!(
-        editor(&s).word().unwrap().voice_db,
+        editor(&s).word().unwrap().edit.voice_db,
         Some(LEVEL_MOST - LEVEL_STEP)
     );
     op(&mut s, Op::LyricsLevelReset);
-    assert_eq!(editor(&s).word().unwrap().voice_db, None);
+    assert_eq!(editor(&s).word().unwrap().edit.voice_db, None);
     // Written, then left: as it was; written again and kept.
     op(&mut s, Op::LyricsWrite);
-    input(&mut s, Input::Draft("too".into()));
+    input(&mut s, LyricsEdit::Draft("too".into()));
     op(&mut s, Op::Back);
     assert_eq!(editor(&s).word().unwrap().text, "two");
-    assert_eq!(
-        s.screen,
-        Screen::Lyrics,
+    assert!(
+        matches!(s.screen, Screen::Lyrics(_)),
         "esc left the text, not the editor"
     );
     op(&mut s, Op::LyricsWriteLine);
-    input(&mut s, Input::Draft("one too three".into()));
+    input(&mut s, LyricsEdit::Draft("one too three".into()));
     op(&mut s, Op::Accept);
     assert_eq!(editor(&s).lyrics.lines[0].text(), "one too three");
     op(&mut s, Op::LyricsUndo);
@@ -250,7 +259,7 @@ fn z_zooms_the_editor_to_fit_its_lyrics() {
     let cut = |s: &State| {
         let (a, b) = window(s).unwrap();
         let words = lanes::fitted_words(&editor(s).lyrics);
-        lanes::words_cut(&words, f64::from(LETTERS) / (b - a), BOX_PAD)
+        crate::core::timeview::words_cut(&words, f64::from(LETTERS) / (b - a), BOX_PAD)
     };
     let fitted = window(&s).unwrap();
     assert_eq!(cut(&s), 0, "{fitted:?}");
@@ -263,7 +272,7 @@ fn z_zooms_the_editor_to_fit_its_lyrics() {
     // A step of the wheel wider: a word cut short.
     input(
         &mut s,
-        Input::Zoom {
+        LyricsEdit::Zoom {
             steps: -1,
             at: 10.25,
         },
@@ -282,25 +291,46 @@ fn the_view_zooms_round_the_pointer_and_pans() {
     let mut s = state();
     op(&mut s, Op::LyricsEditor);
     let (a, b) = window(&s).unwrap();
-    input(&mut s, Input::Zoom { steps: 1, at: 12.0 });
+    input(&mut s, LyricsEdit::Zoom { steps: 1, at: 12.0 });
     let (c, d) = window(&s).unwrap();
     assert!(d - c < b - a);
     let share = |x: f64, (a, b): (f64, f64)| (x - a) / (b - a);
     assert!((share(12.0, (a, b)) - share(12.0, (c, d))).abs() < 1e-9);
     // Dragged left by a tenth of the lane: a tenth of the span later.
-    input(
+    pan(
         &mut s,
-        Input::PanStart {
+        PanInput::Start {
             at: 500.0,
             width: 1000.0,
         },
     );
-    input(&mut s, Input::Pan(400.0));
-    input(&mut s, Input::PanEnd);
+    pan(&mut s, PanInput::To(400.0));
+    pan(&mut s, PanInput::End);
     let (e, _) = window(&s).unwrap();
     assert!((e - (c + 0.1 * (d - c))).abs() < 1e-6);
     // Not played: no playhead, nothing to seek.
     assert_eq!(playhead(&s), None);
-    let fx = input(&mut s, Input::Seek(20.0));
+    let fx = input(&mut s, LyricsEdit::Seek(20.0));
     assert!(!fx.iter().any(|e| matches!(e, Effect::Engine(_))), "{fx:?}");
+}
+
+/// The editor's keys and playing's reach it; nothing else from anywhere
+/// does: `alt+3` (the vocals) is playing's, `,` (the settings) and `?`
+/// (the help) mean nothing there.
+#[test]
+fn only_its_own_keys_and_playings_reach_the_editor() {
+    let mut s = state();
+    op(&mut s, Op::LyricsEditor);
+    let meaning = |s: &State, key: Key| lookup(s, key);
+    assert_eq!(
+        meaning(&s, Key::alt('3')),
+        Some(Meaning::Op(Op::ToggleVocals))
+    );
+    assert_eq!(meaning(&s, Key::ch(' ')), Some(Meaning::Op(Op::LyricsPlay)));
+    assert_eq!(meaning(&s, Key::ch(',')), None);
+    assert_eq!(meaning(&s, Key::ch('?')), None);
+    // Playing's ops pass through the screen to be done as anywhere.
+    assert!(!apply(&mut s, Op::ToggleVocals, &mut Vec::new()));
+    assert!(apply(&mut s, Op::Settings, &mut Vec::new()));
+    assert!(matches!(s.screen, Screen::Lyrics(_)));
 }

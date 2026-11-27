@@ -168,7 +168,8 @@ fn main() {
             parts: parts.clone(),
             ..Transcript::default()
         };
-        let (lyrics, fit) = jodel_lyrics::prepare::text(&text, &heard, &Vec::new);
+        let others = jodel_lyrics::prepare::Text::Found(&Vec::new);
+        let (lyrics, fit) = jodel_lyrics::prepare::text(&text, Some(&heard), &others);
         let Some(emissions) = model.emissions(&voice) else {
             println!("{name}: no emissions");
             continue;
@@ -184,15 +185,22 @@ fn main() {
                 windows: jodel_lyrics::anchors::windows(&lyrics, &parts),
                 glimpses: glimpses.clone(),
             };
-            let Some((timed, verdict)) = jodel_lyrics::scaffold::align(
-                &emissions,
-                &lyrics,
-                &model.vocab(),
-                &v.settings,
-                &hints,
-            ) else {
+            let vocab = model.vocab();
+            let Some(timed) =
+                jodel_lyrics::scaffold::align(&emissions, &lyrics, &vocab, &v.settings, &hints)
+            else {
                 continue;
             };
+            // The check of the source's times, on the song aligned without them.
+            let verdict = jodel_lyrics::ctc::align_emissions(
+                &emissions,
+                &lyrics,
+                &vocab,
+                &v.settings,
+                &hints,
+            )
+            .as_ref()
+            .and_then(jodel_lyrics::scaffold::check);
             let trusted = match verdict {
                 None => String::from("-"),
                 Some(v) if v.trusted() => format!("{:+.2}/{:.2}/{}", v.offset, v.agree, v.lines),

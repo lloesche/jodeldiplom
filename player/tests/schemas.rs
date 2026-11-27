@@ -22,7 +22,7 @@ use jodel_rhythm::{Analysis, CandidateReport, Method, Region};
 use jodeldiplom::core::grid::Grid;
 use jodeldiplom::store::cache::{self, Schema};
 use jodeldiplom::store::grids;
-use jodeldiplom::work::lyrics::edits::{edits_of, from_text, to_text};
+use jodeldiplom::work::lyrics::edits::{from_text, to_text};
 use jodeldiplom::work::lyrics::store::{Cache, Kept};
 use jodeldiplom::work::rhythm;
 
@@ -206,13 +206,12 @@ fn lyrics_files_are_pinned() {
 /// one with the voice set over it, a break.
 fn edits() -> Lyrics {
     let mut l = Lyrics::parse_text("Hold me (close)\n♪\nNever let go\n", Source::Lrclib);
-    let w = &mut l.lines[0].words[1];
-    (w.start, w.end, w.pinned) = (Some(12.34), Some(12.9), true);
-    l.lines[0].words[2].not_sung = true;
+    l.lines[0].words[1].pin_to(12.34, 12.9);
+    l.lines[0].words[2].edit.not_sung = true;
     let w = &mut l.lines[2].words[0];
-    (w.start, w.end, w.pinned) = (Some(20.0), Some(20.5), true);
-    (w.not_sung, w.voice_db) = (true, Some(-3.5));
-    edits_of(&l)
+    w.pin_to(20.0, 20.5);
+    (w.edit.not_sung, w.edit.voice_db) = (true, Some(-3.5));
+    l.edits()
 }
 
 #[test]
@@ -238,7 +237,7 @@ fn edited_lyrics_timed_are_pinned() {
     let mut timed = edits.clone();
     let words = timed.lines.iter_mut().flat_map(|l| &mut l.words);
     for (k, w) in words.enumerate() {
-        if !w.pinned {
+        if w.edit.pin.is_none() {
             (w.start, w.end) = (Some(k as f64), Some(k as f64 + 0.25));
         }
     }
@@ -251,7 +250,7 @@ fn edited_lyrics_timed_are_pinned() {
     std::fs::write(&file, &kept).unwrap();
     let back = c.edited("e", &edits).unwrap();
     assert_eq!(back.to_lrc(), timed.to_lrc());
-    assert_eq!(edits_of(&back), edits);
+    assert_eq!(back.edits(), edits);
     assert_eq!(back.lines[2].words[1].letters.len(), 3);
     // Made with other edits: not theirs.
     let mut other = edits.clone();

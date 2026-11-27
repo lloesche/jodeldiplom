@@ -47,12 +47,27 @@ pub fn fitting(lyrics: &Lyrics, heard: &str, others: &Others) -> (Lyrics, Option
     }
 }
 
-/// The text to time against a voice in which the recogniser `heard` this:
-/// `lyrics`, or the best fitting of `others` when they do not fit
-/// ([`fitting`]); with the repeats it heard and the text leaves out put in
+/// What may be made of a text before it is timed ([`text`]).
+pub enum Text<'a> {
+    /// A text found by a source: the best fitting of the song's other
+    /// texts (`others`, asked for only when needed) in its place when it
+    /// does not fit, the repeats heard put in when it does.
+    Found(&'a Others<'a>),
+    /// A text edited by hand: timed as it is, never another in its place,
+    /// nor repeats put in.
+    Edited,
+}
+
+/// The text to time against a voice in which the recogniser `heard` this
+/// (`None`: it was not heard), as `policy` lets it be made: `lyrics`, or
+/// for a text found the best fitting of its others when it does not fit
+/// ([`fitting`]), with the repeats heard and the text leaves out put in
 /// when the text fits ([`repeats::with_repeats`]). And its fit, when
-/// judged.
-pub fn text(lyrics: &Lyrics, heard: &Transcript, others: &Others) -> (Lyrics, Option<Fit>) {
+/// judged (never for a text edited).
+pub fn text(lyrics: &Lyrics, heard: Option<&Transcript>, policy: &Text) -> (Lyrics, Option<Fit>) {
+    let (Some(heard), Text::Found(others)) = (heard, policy) else {
+        return (lyrics.clone(), None);
+    };
     let (lyrics, fit) = fitting(lyrics, &heard.text, others);
     if fit.is_some_and(|f| f.fits()) {
         (repeats::with_repeats(&lyrics, &heard.parts), fit)
@@ -102,5 +117,31 @@ mod tests {
             fitting(&wrong, "oh oh yeah", &others),
             (wrong.clone(), None)
         );
+    }
+
+    #[test]
+    fn a_text_edited_or_not_heard_is_timed_as_it_is() {
+        let text_of = |t: &str| Lyrics::parse_text(t, Source::Lrclib);
+        let right = text_of(
+            "You search through the years\nAnd you wipe away the tears\n\
+             You find a woman, not a girl\nBut a feeling like the beginning of the world",
+        );
+        let wrong = text_of("Hello there\nGeneral Kenobi\nYou are a bold one");
+        let heard = Transcript {
+            language: String::new(),
+            text: HEARD.into(),
+            ids: Vec::new(),
+            parts: Vec::new(),
+        };
+        let others = || vec![right.clone()];
+        let found = Text::Found(&others);
+        let (swapped, fit) = text(&wrong, Some(&heard), &found);
+        assert_eq!(swapped, right);
+        assert!(fit.unwrap().swapped);
+        assert_eq!(
+            text(&wrong, Some(&heard), &Text::Edited),
+            (wrong.clone(), None)
+        );
+        assert_eq!(text(&wrong, None, &found), (wrong.clone(), None));
     }
 }

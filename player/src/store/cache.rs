@@ -128,7 +128,7 @@ pub const LYRIC_EDITS: Schema = Schema {
 
 /// A song's lyrics as edited, timed word by word by us with the words set
 /// by hand held (`crate::work::lyrics::edits`): the edits' stamp
-/// (`crate::work::lyrics::edits::stamp`), then Enhanced LRC as
+/// (`jodel_lyrics::Lyrics::edits_stamp`), then Enhanced LRC as
 /// [`LYRICS_TIMED`] has it.
 pub const LYRICS_EDITED: Schema = Schema {
     name: "lyrics-edited",
@@ -343,9 +343,15 @@ pub fn hash(text: &str) -> u64 {
     jodel_dsp::fnv1a(text.as_bytes())
 }
 
-/// What `text` is named by in a cache: its [`hash`] in 16 hex figures.
+/// What `text` is named by in a cache: its [`hash`] in 16 hex figures
+/// ([`name_of`]).
 pub fn name(text: &str) -> String {
-    format!("{:016x}", hash(text))
+    name_of(hash(text))
+}
+
+/// What the hash `hash` names in a cache: 16 hex figures.
+pub fn name_of(hash: u64) -> String {
+    format!("{hash:016x}")
 }
 
 /// A file as the caches know it, `PATH SIZE NANOS`: its path, size and

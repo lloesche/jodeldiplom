@@ -202,24 +202,20 @@ impl Table {
     }
 }
 
-/// How a matrix's values lie.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Layout {
-    /// `[input][output]`, as the layers compute with them.
-    InputMajor,
-    /// `[output][input]`: a row an output.
-    OutputMajor,
-}
-
-/// What [`Qwen3Asr::visit_matrices_mut`] hands each matrix to: its values,
-/// its inputs and outputs, and how they lie.
-type MatrixVisitor<'a> = dyn FnMut(&mut [f32], usize, usize, Layout) + 'a;
-
 impl Qwen3Asr {
-    /// Hands each large weight matrix to `f` to change in place: every
-    /// linear layer, the convolutions after the first, the embeddings and
-    /// the head; with its inputs, its outputs and how its values lie.
-    fn visit_matrices_mut(&mut self, f: &mut MatrixVisitor) {
+    /// Rounds the large weights (every linear layer, the convolutions after
+    /// the first, the embeddings and the head) as a quantised copy would
+    /// hold them ([`quant::round_groups`]): groups of `group` along each
+    /// output's inputs, `bits` a weight, a scale a group, and a minimum too
+    /// unless `symmetric`. For measuring what quantising costs.
+    pub fn round_weights(&mut self, bits: u32, group: usize, symmetric: bool) {
+        // A matrix of `[input][output]`, as the layers compute with them,
+        // rounded along its outputs' rows.
+        let round_input_major = |w: &mut [f32], inputs: usize, outputs: usize| {
+            let mut rows = transposed(w, inputs, outputs);
+            quant::round_groups(&mut rows, bits, group, symmetric);
+            w.copy_from_slice(&transposed(&rows, outputs, inputs));
+        };
         let mut linears: Vec<&mut Linear> =
             vec![&mut self.conv_out, &mut self.proj1, &mut self.proj2];
         for l in &mut self.encoder {
@@ -244,28 +240,14 @@ impl Qwen3Asr {
             ]);
         }
         for l in linears {
-            f(&mut l.weight, l.inputs, l.outputs, Layout::InputMajor);
+            round_input_major(&mut l.weight, l.inputs, l.outputs);
         }
         for c in [&mut self.conv2, &mut self.conv3] {
-            f(&mut c.weight, 9 * c.inputs, c.outputs, Layout::InputMajor);
+            round_input_major(&mut c.weight, 9 * c.inputs, c.outputs);
         }
-        f(&mut self.embed, DIM, VOCAB, Layout::OutputMajor);
-        f(&mut self.head, DIM, VOCAB, Layout::OutputMajor);
-    }
-
-    /// Rounds the large weights (every linear layer, the convolutions after
-    /// the first, the embeddings and the head) as a quantised copy would
-    /// hold them ([`quant::round_groups`]): groups of `group` along each
-    /// output's inputs, `bits` a weight, a scale a group, and a minimum too
-    /// unless `symmetric`. For measuring what quantising costs.
-    pub fn round_weights(&mut self, bits: u32, group: usize, symmetric: bool) {
-        self.visit_matrices_mut(&mut |w, inputs, outputs, layout| match layout {
-            Layout::OutputMajor => quant::round_groups(w, bits, group, symmetric),
-            Layout::InputMajor => {
-                let mut rows = transposed(w, inputs, outputs);
-                quant::round_groups(&mut rows, bits, group, symmetric);
-                w.copy_from_slice(&transposed(&rows, outputs, inputs));
-            }
-        });
+        // `[output][input]`: a row an output already.
+        for w in [&mut self.embed, &mut self.head] {
+            quant::round_groups(w, bits, group, symmetric);
+        }
     }
 }

@@ -25,6 +25,7 @@ use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::lanes::Block;
 use jodeldiplom::core::sliders::Slider;
+use jodeldiplom::core::timeview::PanOf;
 use jodeldiplom::core::{lag, update, Action, Effect, Gpu, Screen, Side, State};
 use jodeldiplom::gui::metrics;
 use jodeldiplom::gui::pointer::{Grab, WheelOn};
@@ -1177,7 +1178,7 @@ fn dragging_across_the_lanes_selects_bars() {
 #[test]
 fn the_secondary_button_drags_a_transition_view() {
     let _gpu = gpu();
-    use jodeldiplom::core::transition::viewport;
+    use jodeldiplom::core::transition::{tab, viewport};
     let mut gui = window(common::transition_state(160, 42));
     let lanes = transition_area(&gui, "lanes", Block::Now);
     let heard = shown(&gui).heard();
@@ -1190,8 +1191,10 @@ fn the_secondary_button_drags_a_transition_view() {
             messages[..],
             [Message::Grab(
                 Grab::Pan {
-                    block: Block::Now,
-                    overview: false,
+                    of: PanOf::Block {
+                        block: Block::Now,
+                        overview: false,
+                    },
                     ..
                 },
                 _
@@ -1208,7 +1211,7 @@ fn the_secondary_button_drags_a_transition_view() {
     // Off the lanes, to the window's top.
     moved_to(&mut gui, Point::new(at.x - 40.0, 2.0));
     let_go(&mut gui, mouse::Button::Right);
-    assert!(shown(&gui).transition.pan.is_none());
+    assert!(!tab::block(shown(&gui), Block::Now).view.panning());
     let (kept, _) = viewport::window(shown(&gui), Block::Now, heard);
     assert!((kept - (start + 40.0 * per)).abs() < 1e-6);
     // Moved after it was let go of: it stays.
@@ -1254,7 +1257,7 @@ fn a_press_on_the_whole_track_seeks_and_the_wheel_there_scrolls() {
     assert_eq!(block, Block::Now);
     assert!((time - 0.25 * length).abs() < 1e-6);
     assert!((shown(&gui).playing.position - time).abs() < 1e-9);
-    assert!(tab::block(shown(&gui), Block::Now).start.is_none());
+    assert!(tab::block(shown(&gui), Block::Now).view.is_following());
     // The next track's: its view goes there, playback stays.
     let next = transition_area(&gui, "overview", Block::Next);
     let position = shown(&gui).playing.position;
@@ -1527,10 +1530,7 @@ fn press_held(gui: &mut Gui, key: Key, modifiers: iced::keyboard::Modifiers) {
 
 /// The lyrics editor's word at `line`, `word`.
 fn lyric_word(gui: &Gui, line: usize, word: usize) -> jodel_lyrics::Word {
-    shown(gui)
-        .karaoke
-        .editor
-        .as_ref()
+    jodeldiplom::core::lyric_edit::editor(shown(gui))
         .expect("the editor")
         .lyrics
         .lines[line]
@@ -1544,9 +1544,9 @@ fn lyric_part(
     gui: &Gui,
     line: usize,
     word: usize,
-    part: jodeldiplom::core::lyric_edit::screen::Part,
+    part: jodeldiplom::core::lyric_edit::Part,
 ) -> iced::Rectangle {
-    use jodeldiplom::core::lyric_edit::WordAt;
+    use jodel_lyrics::WordAt;
     let id = jodeldiplom::gui::lyrics::part_id(WordAt { line, word }, part);
     simulator(gui).find(Id::from(id)).unwrap().bounds()
 }
@@ -1565,7 +1565,7 @@ fn the_lyrics_editor_opens_from_the_karaoke_tab_and_closes() {
     );
     send(&mut gui, pressed);
     let _ = gui.update(Message::Frame(Instant::now()));
-    assert_eq!(shown(&gui).screen, Screen::Lyrics);
+    assert!(matches!(shown(&gui).screen, Screen::Lyrics(_)));
     // The words in view as boxes, the song's title over them.
     assert!(shows(&gui, "Mister") && shows(&gui, "rock"));
     assert!(shows(&gui, "Morning Light"));
@@ -1574,12 +1574,11 @@ fn the_lyrics_editor_opens_from_the_karaoke_tab_and_closes() {
         .is_ok());
     press(&mut gui, Key::Named(Named::Escape));
     assert_eq!(
-        (shown(&gui).screen, shown(&gui).side),
-        (Screen::Main, Side::Karaoke)
+        (&shown(&gui).screen, shown(&gui).side),
+        (&Screen::Main, Side::Karaoke)
     );
-    assert!(shown(&gui).karaoke.editor.is_none());
     press(&mut gui, Key::Character("e".into()));
-    assert_eq!(shown(&gui).screen, Screen::Lyrics);
+    assert!(matches!(shown(&gui).screen, Screen::Lyrics(_)));
     let done = click(&gui, "Done").unwrap();
     send(&mut gui, done);
     assert_eq!(shown(&gui).screen, Screen::Main);
@@ -1590,7 +1589,8 @@ fn the_lyrics_editor_opens_from_the_karaoke_tab_and_closes() {
 /// once let go of; a tremble on a press changes nothing.
 #[test]
 fn dragging_a_words_end_moves_it_and_sets_it_by_hand() {
-    use jodeldiplom::core::lyric_edit::screen::{window as shown_span, Part};
+    use jodeldiplom::core::lyric_edit::screen::window as shown_span;
+    use jodeldiplom::core::lyric_edit::Part;
     let _gpu = gpu();
     let mut gui = window(lyrics_state());
     press(&mut gui, Key::Character("e".into()));
@@ -1623,7 +1623,7 @@ fn dragging_a_words_end_moves_it_and_sets_it_by_hand() {
         Point::new(middle.center_x() + 1.0, middle.center_y()),
     );
     let_go(&mut gui, mouse::Button::Left);
-    let editor = shown(&gui).karaoke.editor.as_ref().unwrap();
+    let editor = jodeldiplom::core::lyric_edit::editor(shown(&gui)).unwrap();
     assert_eq!(editor.selected.map(|w| (w.line, w.word)), Some((0, 1)));
     assert_eq!(lyric_word(&gui, 0, 1), before);
     assert!(!editor.can_undo());
@@ -1637,8 +1637,10 @@ fn dragging_a_words_end_moves_it_and_sets_it_by_hand() {
     assert_eq!(moved.start, before.start);
     let_go(&mut gui, mouse::Button::Left);
     let after = lyric_word(&gui, 0, 1);
-    assert!(after.pinned);
-    assert!(shown(&gui).karaoke.editor.as_ref().unwrap().can_undo());
+    assert!(after.edit.pin.is_some());
+    assert!(jodeldiplom::core::lyric_edit::editor(shown(&gui))
+        .unwrap()
+        .can_undo());
     // Undone with ctrl+z, as it was.
     press_held(
         &mut gui,
@@ -1675,20 +1677,20 @@ fn the_lyrics_editors_keys_nudge_mark_and_undo() {
     let w = lyric_word(&gui, 0, 1);
     assert!((w.start.unwrap() - before.start.unwrap() - NUDGE).abs() < 1e-9);
     assert!((before.end.unwrap() - w.end.unwrap() - NUDGE).abs() < 1e-9);
-    assert!(w.pinned);
+    assert!(w.edit.pin.is_some());
     press(&mut gui, Key::Character("n".into()));
-    assert!(lyric_word(&gui, 0, 1).not_sung);
+    assert!(lyric_word(&gui, 0, 1).edit.not_sung);
     assert!(shows(&gui, "not sung"));
     press(&mut gui, Key::Character("+".into()));
-    assert!(lyric_word(&gui, 0, 1).voice_db.is_some());
+    assert!(lyric_word(&gui, 0, 1).edit.voice_db.is_some());
     press_held(&mut gui, Key::Character("z".into()), Modifiers::CTRL);
-    assert_eq!(lyric_word(&gui, 0, 1).voice_db, None);
+    assert_eq!(lyric_word(&gui, 0, 1).edit.voice_db, None);
     press_held(&mut gui, Key::Character("y".into()), Modifiers::CTRL);
-    assert!(lyric_word(&gui, 0, 1).voice_db.is_some());
+    assert!(lyric_word(&gui, 0, 1).edit.voice_db.is_some());
     // The buttons do what their keys do.
     let louder = acts(&click(&gui, "Louder").unwrap());
     assert!(
-        matches!(louder[..], [Action::Op(Op::LyricsLouder)]),
+        matches!(louder[..], [Action::Op(Op::LyricsLevel(1))]),
         "{louder:?}"
     );
 }
@@ -1714,7 +1716,7 @@ fn a_word_is_written_in_the_lyrics_editors_field() {
     send(&mut gui, typed);
     // `n` while writing types: the word is not marked.
     press(&mut gui, Key::Character("n".into()));
-    assert!(!lyric_word(&gui, 0, 1).not_sung);
+    assert!(!lyric_word(&gui, 0, 1).edit.not_sung);
     press(&mut gui, Key::Named(Named::Enter));
     assert_eq!(lyric_word(&gui, 0, 1).text, "rocks");
     // Written again and left with esc: as it was, the editor still open.
@@ -1723,14 +1725,12 @@ fn a_word_is_written_in_the_lyrics_editors_field() {
     send(
         &mut gui,
         vec![Message::Act(Action::LyricsEdit(
-            jodeldiplom::core::lyric_edit::LyricsEdit::Screen(
-                jodeldiplom::core::lyric_edit::screen::Input::Draft("roll".into()),
-            ),
+            jodeldiplom::core::lyric_edit::LyricsEdit::Draft("roll".into()),
         ))],
     );
     press(&mut gui, Key::Named(Named::Escape));
     assert_eq!(lyric_word(&gui, 0, 1).text, "rocks");
-    assert_eq!(shown(&gui).screen, Screen::Lyrics);
+    assert!(matches!(shown(&gui).screen, Screen::Lyrics(_)));
 }
 
 /// K27: space plays the song from just before the word selected, the view
@@ -1764,7 +1764,7 @@ fn space_plays_from_the_word_and_the_view_follows() {
 #[test]
 fn dot_follows_the_playhead_again_after_the_wheel() {
     use jodel_playback::PlayState;
-    use jodeldiplom::core::lyric_edit::screen::{window as shown_span, Input};
+    use jodeldiplom::core::lyric_edit::screen::window as shown_span;
     use jodeldiplom::core::lyric_edit::LyricsEdit;
     let mut state = lyrics_state();
     state.playing.state = PlayState::Paused;
@@ -1775,11 +1775,14 @@ fn dot_follows_the_playhead_again_after_the_wheel() {
         let (a, b) = shown_span(state).unwrap();
         (a..b).contains(&state.heard())
     };
-    let following = |state: &State| state.karaoke.editor.as_ref().unwrap().screen.follow;
+    let following = |state: &State| {
+        let editor = jodeldiplom::core::lyric_edit::editor(state).unwrap();
+        editor.screen.view.is_following()
+    };
     assert!(in_view(&state) && following(&state));
     let (a, b) = shown_span(&state).unwrap();
-    let zoom = Input::Zoom { steps: 1, at: b };
-    update(&mut state, Action::LyricsEdit(LyricsEdit::Screen(zoom)));
+    let zoom = LyricsEdit::Zoom { steps: 1, at: b };
+    update(&mut state, Action::LyricsEdit(zoom));
     assert!(!following(&state), "the wheel stops it");
     let span = b - a;
     state.drawn_heard = Some(state.heard() + 2.0 * span);

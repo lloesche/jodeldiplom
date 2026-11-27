@@ -1,11 +1,11 @@
-//! The lyrics editor's actions, without its screen: a song's words
-//! selected, moved, made longer or shorter, marked as not to be sung, the
-//! voice's level set over them, their text edited, and every change undone
-//! and redone. Pure: the editor ([`LyricEditor`]) holds the song's lyrics
-//! as edited, its selection and its history.
+//! The lyrics editor's actions: a song's words selected, moved, made
+//! longer or shorter, marked as not to be sung, the voice's level set over
+//! them, their text edited, and every change undone and redone. The
+//! editor ([`LyricEditor`]) holds the song's lyrics as edited, its
+//! selection, its history and its screen; it is pure.
 //!
 //! - **Times:** a word moved or made longer or shorter is set by hand
-//!   ([`jodel_lyrics::Word::pinned`]): never across a word set by hand
+//!   ([`jodel_lyrics::WordEdit::pin`]): never across a word set by hand
 //!   before it or after it, never shorter than [`SHORTEST`]; the words
 //!   not set by hand that it now covers make room at once (the aligner fits
 //!   them around it when it times the song again). Its letters keep their
@@ -21,10 +21,10 @@
 //! - **History:** each change is a step; undo goes back one, redo forward
 //!   again, until a new change.
 //!
-//! In the app ([`act`]): the editor opens on the song karaoke is about, on
-//! its screen ([`screen`], [`Screen::Lyrics`]), and each change is shown at
-//! once (the song's lyrics as shown are the editor's, so its bubbles' notes
-//! are read from the melody over the new times) and kept
+//! In the app ([`act`]): the editor opens on the song karaoke is about as
+//! its screen ([`Screen::Lyrics`], which holds it: [`screen`]), and each
+//! change is shown at once (the song's lyrics as shown are the editor's, so
+//! its bubbles' notes are read from the melody over the new times) and kept
 //! ([`Effect::SaveLyricEdits`]): the lyrics' worker keeps the edits and
 //! times the song again with them, and the song timed comes back as any
 //! lyrics do.
@@ -32,35 +32,44 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use jodel_lyrics::{Line, Lyrics, Word, GIVEN};
+use jodel_lyrics::{Line, Lyrics, Word, WordAt};
 
 use super::karaoke::{self, SongLyrics};
 use super::{Effect, Screen, State};
-use crate::work::lyrics::edits::edits_of;
+use crate::core::timeview::PanInput;
+use screen::{Ctx, Draft, Held};
 
 pub mod screen;
 
 /// The shortest a word can be made by hand, in seconds.
 pub const SHORTEST: f64 = 0.05;
 
-/// A word of the lyrics: its line, and its place in the line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WordAt {
-    /// The line.
-    pub line: usize,
-    /// The word in it.
-    pub word: usize,
+/// What a press on a word holds: its start, its middle (all of it) or its
+/// end; what a key nudges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Part {
+    /// Its start: dragged, its start moves.
+    Start,
+    /// All of it: dragged, it moves.
+    Middle,
+    /// Its end: dragged, its end moves.
+    End,
 }
 
-/// One action of the editor's on the word selected (or its line).
-#[derive(Clone, Debug, PartialEq)]
-pub enum Edit {
-    /// Selects a word.
-    Select(WordAt),
-    /// Selects the next word (over lines).
+/// Another word selected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Selection {
+    /// This one.
+    Word(WordAt),
+    /// The next word (over lines).
     Next,
-    /// Selects the word before.
+    /// The word before.
     Previous,
+}
+
+/// A change to the lyrics at the word selected (or its line).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Change {
     /// Moves its start by this many seconds (its end stays).
     NudgeStart(f64),
     /// Moves its end by this many seconds (its start stays).
@@ -98,6 +107,27 @@ pub enum Edit {
     },
     /// Takes its line out.
     DeleteLine,
+}
+
+impl Change {
+    /// The change that moves `part` of a word by `by` seconds: its start,
+    /// all of it, or its end.
+    pub fn nudge(part: Part, by: f64) -> Change {
+        match part {
+            Part::Start => Change::NudgeStart(by),
+            Part::Middle => Change::Move(by),
+            Part::End => Change::NudgeEnd(by),
+        }
+    }
+}
+
+/// One action of the editor's.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Edit {
+    /// Selects another word.
+    Select(Selection),
+    /// Changes the lyrics, one step of the history.
+    Change(Change),
     /// Goes back a change.
     Undo,
     /// Goes forward a change undone.
@@ -119,11 +149,9 @@ pub struct LyricEditor {
     redo: Vec<Lyrics>,
 }
 
-/// Every word of `lyrics`, in order.
-fn words_in(lyrics: &Lyrics) -> Vec<WordAt> {
-    (lyrics.lines.iter().enumerate())
-        .flat_map(|(line, l)| (0..l.words.len()).map(move |word| WordAt { line, word }))
-        .collect()
+/// The places of every word of `lyrics`, in order.
+fn places(lyrics: &Lyrics) -> Vec<WordAt> {
+    lyrics.words().map(|(at, _)| at).collect()
 }
 
 /// The words of `text`, as written, untimed.
@@ -135,12 +163,11 @@ impl LyricEditor {
     /// The editor on `lyrics` (the song at `path`'s, as shown), its first
     /// word selected.
     pub fn open(path: PathBuf, lyrics: &Lyrics) -> LyricEditor {
-        let selected = words_in(lyrics).first().copied();
-        let first = selected.and_then(|at| lyrics.lines[at.line].words[at.word].start);
+        let first = lyrics.words().next();
         LyricEditor {
             path,
-            selected,
-            screen: screen::EditorScreen::at(first),
+            selected: first.map(|(at, _)| at),
+            screen: screen::EditorScreen::at(first.and_then(|(_, w)| w.start)),
             lyrics: lyrics.clone(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -149,8 +176,7 @@ impl LyricEditor {
 
     /// The word selected.
     pub fn word(&self) -> Option<&Word> {
-        let at = self.selected?;
-        self.lyrics.lines.get(at.line)?.words.get(at.word)
+        self.lyrics.word(self.selected?)
     }
 
     /// Whether there is a change to undo.
@@ -167,7 +193,7 @@ impl LyricEditor {
     /// are kept as they were, the times the aligner fitted around them in
     /// place of those shown. Not when they are other edits (made since).
     pub fn timed_again(&mut self, timed: &Lyrics) -> bool {
-        if edits_of(timed) != edits_of(&self.lyrics) {
+        if timed.edits() != self.lyrics.edits() {
             return false;
         }
         self.lyrics = timed.clone();
@@ -177,30 +203,16 @@ impl LyricEditor {
     /// Carries out `edit`. Whether the lyrics changed (a selection does
     /// not change them).
     pub fn apply(&mut self, edit: Edit) -> bool {
-        let all = words_in(&self.lyrics);
-        let k = self.selected.and_then(|s| all.iter().position(|w| *w == s));
         match edit {
-            Edit::Select(at) => {
-                self.selected = all.contains(&at).then_some(at).or(self.selected);
-                false
-            }
-            Edit::Next => {
-                self.selected = k
-                    .map_or(all.first(), |k| all.get(k + 1).or(all.get(k)))
-                    .copied();
-                false
-            }
-            Edit::Previous => {
-                self.selected = k
-                    .map_or(all.first(), |k| all.get(k.saturating_sub(1)))
-                    .copied();
+            Edit::Select(selection) => {
+                self.select(selection);
                 false
             }
             Edit::Undo => self.step(true),
             Edit::Redo => self.step(false),
-            edit => {
+            Edit::Change(change) => {
                 let before = (self.lyrics.clone(), self.selected);
-                if self.change(edit) && self.lyrics != before.0 {
+                if self.change(change) && self.lyrics != before.0 {
                     self.undo.push(before.0);
                     self.redo.clear();
                     true
@@ -212,21 +224,33 @@ impl LyricEditor {
         }
     }
 
-    /// While a word is dragged: `edit` (a nudge or a move of the word
-    /// selected; `None`, no change yet) made to `from` (the lyrics as the
-    /// drag found them) in place of what is shown, out of the history until
-    /// the drag ends ([`LyricEditor::dragged`]). Whether it could be made.
-    pub fn drag(&mut self, from: &Lyrics, edit: Option<Edit>) -> bool {
-        let shown = std::mem::replace(&mut self.lyrics, from.clone());
-        let Some(edit) = edit else {
-            return true;
+    /// Selects another word.
+    fn select(&mut self, selection: Selection) {
+        let all = places(&self.lyrics);
+        let k = self.selected.and_then(|s| all.iter().position(|w| *w == s));
+        self.selected = match selection {
+            Selection::Word(at) => all.contains(&at).then_some(at).or(self.selected),
+            Selection::Next => k
+                .map_or(all.first(), |k| all.get(k + 1).or(all.get(k)))
+                .copied(),
+            Selection::Previous => k
+                .map_or(all.first(), |k| all.get(k.saturating_sub(1)))
+                .copied(),
         };
-        if self.change(edit) {
-            true
-        } else {
-            self.lyrics = shown;
-            false
+    }
+
+    /// While a word is dragged: `change` (a nudge or a move of the word
+    /// selected) made to `from` (the lyrics as the drag found them) in
+    /// place of what is shown, out of the history until the drag ends
+    /// ([`LyricEditor::dragged`]). Whether it could be made; where it could
+    /// not, the lyrics are `from`.
+    pub fn drag(&mut self, from: &Lyrics, change: Change) -> bool {
+        self.lyrics = from.clone();
+        let made = self.change(change);
+        if !made {
+            self.lyrics = from.clone();
         }
+        made
     }
 
     /// The drag that found the lyrics as `from` ended: what it changed one
@@ -251,7 +275,7 @@ impl LyricEditor {
             return false;
         };
         to.push(std::mem::replace(&mut self.lyrics, lyrics));
-        let all = words_in(&self.lyrics);
+        let all = places(&self.lyrics);
         if !self.selected.is_some_and(|s| all.contains(&s)) {
             self.selected = all.last().copied();
         }
@@ -260,47 +284,42 @@ impl LyricEditor {
 
     /// A change to the lyrics (not a step of the history): whether it could
     /// be made.
-    fn change(&mut self, edit: Edit) -> bool {
+    fn change(&mut self, change: Change) -> bool {
         let Some(at) = self.selected else {
             return false;
         };
-        match edit {
-            Edit::NudgeStart(by) => {
+        match change {
+            Change::NudgeStart(by) => {
                 self.retime(at, |a, b, lo, _| ((a + by).min(b - SHORTEST).max(lo), b))
             }
-            Edit::NudgeEnd(by) => {
+            Change::NudgeEnd(by) => {
                 self.retime(at, |a, b, _, hi| (a, (b + by).max(a + SHORTEST).min(hi)))
             }
-            Edit::Move(by) => self.retime(at, |a, b, lo, hi| {
+            Change::Move(by) => self.retime(at, |a, b, lo, hi| {
                 let by = by.min(hi - b).max(lo - a);
                 (a + by, b + by)
             }),
-            Edit::SetTimes(a, b) => self.retime(at, |_, _, lo, hi| (a.max(lo), b.min(hi))),
-            Edit::NotSung(on) => {
-                self.lyrics.lines[at.line].words[at.word].not_sung = on;
+            Change::SetTimes(a, b) => self.retime(at, |_, _, lo, hi| (a.max(lo), b.min(hi))),
+            Change::NotSung(on) => {
+                self.lyrics[at].edit.not_sung = on;
                 true
             }
-            Edit::Voice(db) => {
-                self.lyrics.lines[at.line].words[at.word].voice_db = db.filter(|d| d.is_finite());
+            Change::Voice(db) => {
+                self.lyrics[at].edit.voice_db = db.filter(|d| d.is_finite());
                 true
             }
-            Edit::ReplaceWord(text) => {
+            Change::ReplaceWord(text) => {
                 let mut new = words_of(&text);
                 if new.is_empty() {
-                    return self.change(Edit::DeleteWord);
+                    return self.change(Change::DeleteWord);
                 }
                 let line = &mut self.lyrics.lines[at.line];
-                let w = &mut line.words[at.word];
-                let first = new.remove(0);
-                if w.text != first.text {
-                    w.text = first.text;
-                    w.letters.clear();
-                }
+                line.words[at.word].retext(new.remove(0).text);
                 line.words.splice(at.word + 1..at.word + 1, new);
-                self.settle();
+                self.fill_untimed();
                 true
             }
-            Edit::InsertWord { after, text } => {
+            Change::InsertWord { after, text } => {
                 let new = words_of(&text);
                 if new.is_empty() {
                     return false;
@@ -308,48 +327,48 @@ impl LyricEditor {
                 let word = at.word + usize::from(after);
                 self.lyrics.lines[at.line].words.splice(word..word, new);
                 self.selected = Some(WordAt { word, ..at });
-                self.settle();
+                self.fill_untimed();
                 true
             }
-            Edit::DeleteWord => {
-                let k = words_in(&self.lyrics).iter().position(|w| *w == at);
+            Change::DeleteWord => {
+                let k = places(&self.lyrics).iter().position(|w| *w == at);
                 let line = &mut self.lyrics.lines[at.line];
                 line.words.remove(at.word);
                 if line.words.is_empty() {
                     self.lyrics.lines.remove(at.line);
                 }
-                let all = words_in(&self.lyrics);
+                let all = places(&self.lyrics);
                 self.selected = k.and_then(|k| all.get(k).or(all.last())).copied();
-                self.settle();
+                self.fill_untimed();
                 true
             }
-            Edit::ReplaceLine(text) => {
+            Change::ReplaceLine(text) => {
                 let mut new = words_of(&text);
                 if new.is_empty() {
-                    return self.change(Edit::DeleteLine);
+                    return self.change(Change::DeleteLine);
                 }
                 let line = &mut self.lyrics.lines[at.line];
                 if new.len() == line.words.len() {
                     for (w, n) in line.words.iter_mut().zip(new) {
-                        if w.text != n.text {
-                            w.text = n.text;
-                            w.letters.clear();
-                        }
+                        w.retext(n.text);
                     }
                 } else {
                     let start = line.words.iter().find_map(|w| w.start);
                     let end = line.words.iter().rev().find_map(|w| w.end);
                     if let (Some(a), Some(b)) = (start, end) {
-                        spread(&mut new, a, b);
+                        // By their letters.
+                        let weights: Vec<f64> =
+                            new.iter().map(|w| w.text.chars().count() as f64).collect();
+                        jodel_lyrics::spread::across(&mut new, a, b - a, &weights);
                     }
                     line.words = new;
                 }
                 line.is_break = false;
                 self.selected = Some(WordAt { word: 0, ..at });
-                self.settle();
+                self.fill_untimed();
                 true
             }
-            Edit::InsertLine { after, text } => {
+            Change::InsertLine { after, text } => {
                 let words = words_of(&text);
                 if words.is_empty() {
                     return false;
@@ -361,12 +380,12 @@ impl LyricEditor {
                 };
                 self.lyrics.lines.insert(line, new);
                 self.selected = Some(WordAt { line, word: 0 });
-                self.settle();
+                self.fill_untimed();
                 true
             }
-            Edit::DeleteLine => {
+            Change::DeleteLine => {
                 self.lyrics.lines.remove(at.line);
-                let all = words_in(&self.lyrics);
+                let all = places(&self.lyrics);
                 self.selected = all
                     .iter()
                     .find(|w| w.line >= at.line)
@@ -374,7 +393,6 @@ impl LyricEditor {
                     .copied();
                 true
             }
-            Edit::Select(_) | Edit::Next | Edit::Previous | Edit::Undo | Edit::Redo => false,
         }
     }
 
@@ -385,66 +403,62 @@ impl LyricEditor {
     /// hand under it making room. Not when it would be shorter than
     /// [`SHORTEST`].
     fn retime(&mut self, at: WordAt, to: impl FnOnce(f64, f64, f64, f64) -> (f64, f64)) -> bool {
-        let all = words_in(&self.lyrics);
+        let all = places(&self.lyrics);
         let k = all.iter().position(|w| *w == at).unwrap_or(0);
-        let word = |w: &WordAt| &self.lyrics.lines[w.line].words[w.word];
+        let word = |w: &WordAt| &self.lyrics[*w];
         let Some((a, b)) = word(&at).start.zip(word(&at).end) else {
             return false;
         };
         let lo = all[..k]
             .iter()
             .rev()
-            .find_map(|w| word(w).pin().map(|p| p.1))
+            .find_map(|w| word(w).edit.pin.map(|p| p.1))
             .unwrap_or(0.0);
         let hi = all[k + 1..]
             .iter()
-            .find_map(|w| word(w).pin().map(|p| p.0))
+            .find_map(|w| word(w).edit.pin.map(|p| p.0))
             .unwrap_or(f64::INFINITY);
         let (a2, b2) = to(a, b, lo, hi);
         let fits = a2 >= lo - 1e-9 && b2 <= hi + 1e-9 && b2 - a2 >= SHORTEST - 1e-9;
         if !(a2.is_finite() && b2.is_finite() && fits) {
             return false;
         }
-        let w = &mut self.lyrics.lines[at.line].words[at.word];
+        let w = &mut self.lyrics[at];
         let stretch = ((b2 - a2) / (b - a).max(1e-9)) as f32;
         for t in &mut w.letters {
             *t *= stretch;
         }
-        (w.start, w.end, w.confidence, w.pinned) = (Some(a2), Some(b2), GIVEN, true);
+        w.pin_to(a2, b2);
         make_room(&mut self.lyrics, &all, k, (a2, b2));
         true
     }
 
     /// After a change of the text: each line's backing words marked again,
     /// and the words without times timed between their neighbours.
-    fn settle(&mut self) {
+    fn fill_untimed(&mut self) {
         for line in &mut self.lyrics.lines {
             line.mark_backing();
         }
         jodel_lyrics::spread::interpolate(&mut self.lyrics.lines, 0.0);
     }
-}
 
-/// `words` spread from `a` to `b` seconds, by their letters.
-fn spread(words: &mut [Word], a: f64, b: f64) {
-    let total: usize = words.iter().map(|w| w.text.chars().count()).sum();
-    let mut at = 0;
-    for w in words {
-        let from = a + (b - a) * at as f64 / total.max(1) as f64;
-        at += w.text.chars().count();
-        let to = a + (b - a) * at as f64 / total.max(1) as f64;
-        (w.start, w.end) = (Some(from), Some(to));
+    /// The word selected brought into the screen's view where it is not in
+    /// it.
+    fn reveal(&mut self, ctx: &Ctx) {
+        if let Some(times) = self.word().and_then(|w| w.start.zip(w.end)) {
+            self.screen.reveal(ctx, times);
+        }
     }
 }
 
 /// The words not set by hand around word `k` of `all` (the words of
 /// `lyrics`, in order), now from `a` to `b` seconds, made to end by `a`
 /// (those before it) or start from `b` (those after), as far as they
-/// reach into it.
+/// reach into it; their letters kept where they were sung, within them.
 fn make_room(lyrics: &mut Lyrics, all: &[WordAt], k: usize, (a, b): (f64, f64)) {
     for at in all[..k].iter().rev() {
-        let w = &mut lyrics.lines[at.line].words[at.word];
-        let Some(end) = w.end.filter(|_| !w.pinned) else {
+        let w = &mut lyrics[*at];
+        let Some(end) = w.end.filter(|_| w.edit.pin.is_none()) else {
             continue;
         };
         if end <= a {
@@ -452,37 +466,31 @@ fn make_room(lyrics: &mut Lyrics, all: &[WordAt], k: usize, (a, b): (f64, f64)) 
         }
         let start = w.start.map(|s| s.min(a));
         (w.start, w.end) = (start, Some(a));
-        clip_letters(w);
+        w.clip_letters();
     }
     for at in &all[k + 1..] {
-        let w = &mut lyrics.lines[at.line].words[at.word];
-        let Some(start) = w.start.filter(|_| !w.pinned) else {
+        let w = &mut lyrics[*at];
+        let Some(start) = w.start.filter(|_| w.edit.pin.is_none()) else {
             continue;
         };
         if start >= b {
             break;
         }
+        // Its letters as far after its new start as they were after b.
+        let later = (b - start) as f32;
+        for t in &mut w.letters {
+            *t = (*t - later).max(0.0);
+        }
         let end = w.end.map(|e| e.max(b));
         (w.start, w.end) = (Some(b), end);
-        w.letters.clear();
+        w.clip_letters();
     }
 }
 
-/// A word's letters kept within its length.
-fn clip_letters(w: &mut Word) {
-    let most = w.start.zip(w.end).map_or(0.0, |(s, e)| (e - s).max(0.0)) as f32;
-    for t in &mut w.letters {
-        *t = t.min(most);
-    }
-}
-
-/// What the app does with the editor.
+/// What the app does with the editor open ([`open`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum LyricsEdit {
-    /// Opens it on the song karaoke is about (its lyrics found), on its
-    /// screen.
-    Open,
-    /// Closes it, back to the screen it was opened from.
+    /// Closes it, back to the main screen.
     Close,
     /// An action of the editor's.
     Edit(Edit),
@@ -492,91 +500,243 @@ pub enum LyricsEdit {
     /// Forgets every edit of the song: its text as found, timed again
     /// (the editor closes).
     Revert,
-    /// What the screen's pointer and text field do ([`screen::Input`]).
-    Screen(screen::Input),
+    /// A press on `word`'s `part`, `time` seconds into the song under the
+    /// pointer: it is selected and held; the pointer may go `slop` seconds
+    /// from there and change nothing.
+    Hold {
+        /// The word.
+        word: WordAt,
+        /// What of it.
+        part: Part,
+        /// Under the pointer.
+        time: f64,
+        /// How far it may tremble.
+        slop: f64,
+    },
+    /// The pointer holding a word is `time` seconds into the song.
+    Drag(f64),
+    /// It let go of it.
+    Drop,
+    /// A press on the waveform off the words: the playhead goes to `time`
+    /// seconds (the song playing, or paused).
+    Seek(f64),
+    /// Write the word selected's text, or its whole `line`'s.
+    Write {
+        /// Its line's.
+        line: bool,
+    },
+    /// The text as written now.
+    Draft(String),
+    /// What was written kept.
+    Keep,
+    /// What was written left, the text as it was.
+    Discard,
+    /// The wheel `steps` up (in) or down (out) over the lane, the time `at`
+    /// (seconds) under the pointer staying where it is.
+    Zoom {
+        /// Steps, in while positive.
+        steps: i32,
+        /// Under the pointer.
+        at: f64,
+    },
+}
+
+/// A change, as the app's action.
+impl From<Change> for LyricsEdit {
+    fn from(change: Change) -> LyricsEdit {
+        LyricsEdit::Edit(Edit::Change(change))
+    }
+}
+
+/// The lyrics editor, while it is open (its screen shows).
+pub fn editor(state: &State) -> Option<&LyricEditor> {
+    match &state.screen {
+        Screen::Lyrics(editor) => Some(editor),
+        _ => None,
+    }
+}
+
+/// The lyrics editor, to change, while it is open.
+fn editor_mut(state: &mut State) -> Option<&mut LyricEditor> {
+    match &mut state.screen {
+        Screen::Lyrics(editor) => Some(editor),
+        _ => None,
+    }
 }
 
 /// Carries out `what` for the app: a change shown at once on the song's
 /// lyrics and kept ([`Effect::SaveLyricEdits`]).
 pub(crate) fn act(state: &mut State, what: LyricsEdit, fx: &mut Vec<Effect>) {
+    let Some(ctx) = Ctx::of(state) else {
+        return;
+    };
+    // A press anywhere on the lane while a text is written keeps it.
+    let writing = editor(state).is_some_and(|e| e.screen.writing());
+    if writing && matches!(what, LyricsEdit::Hold { .. } | LyricsEdit::Seek(_)) {
+        return act(state, LyricsEdit::Keep, fx);
+    }
+    let Some(editor) = editor_mut(state) else {
+        return;
+    };
     // Anything else calls the question of forgetting every edit off.
     if !matches!(what, LyricsEdit::AskRevert(_) | LyricsEdit::Revert) {
-        if let Some(editor) = &mut state.karaoke.editor {
-            editor.screen.asking = false;
-        }
+        editor.screen.asking = false;
     }
     match what {
-        LyricsEdit::Open => {
-            let Some(path) = karaoke::song_index(state).and_then(|i| state.queue.paths.get(i))
-            else {
-                return state.info("No song to edit the lyrics of");
-            };
-            match state.karaoke.lyrics.get(path) {
-                Some(SongLyrics::Found { shown, .. }) => {
-                    state.karaoke.editor = Some(LyricEditor::open(path.clone(), shown));
-                    state.screen = Screen::Lyrics;
-                }
-                _ => {
-                    let title = super::shown_title(state, path);
-                    state.info(format!("No lyrics of {title} to edit yet"));
-                }
-            }
-        }
-        LyricsEdit::Close => close(state),
-        LyricsEdit::AskRevert(on) => {
-            if let Some(editor) = &mut state.karaoke.editor {
-                editor.screen.asking = on;
-            }
-        }
+        LyricsEdit::Close => state.screen = Screen::Main,
+        LyricsEdit::AskRevert(on) => editor.screen.asking = on,
         LyricsEdit::Revert => {
-            if let Some(editor) = state.karaoke.editor.take() {
-                fx.push(Effect::SaveLyricEdits(editor.path, None));
-                close(state);
-                state.info("Every edit forgotten: the lyrics as found, timed again");
-            }
+            fx.push(Effect::SaveLyricEdits(editor.path.clone(), None));
+            state.screen = Screen::Main;
+            state.info("Every edit forgotten: the lyrics as found, timed again");
         }
         LyricsEdit::Edit(edit) => {
-            let Some(editor) = &mut state.karaoke.editor else {
-                return;
-            };
             let changed = editor.apply(edit);
-            screen::reveal(state);
+            editor.reveal(&ctx);
             if changed {
                 kept(state, fx);
             }
         }
-        LyricsEdit::Screen(what) => screen::act(state, what, fx),
+        LyricsEdit::Hold {
+            word,
+            part,
+            time,
+            slop,
+        } => {
+            editor.screen.hold_view(&ctx);
+            editor.apply(Edit::Select(Selection::Word(word)));
+            if editor.selected == Some(word) {
+                editor.screen.held = Some(Held {
+                    part,
+                    from: editor.lyrics.clone(),
+                    time,
+                    slop,
+                    moved: false,
+                });
+            }
+        }
+        LyricsEdit::Drag(time) => {
+            let Some(held) = &mut editor.screen.held else {
+                return;
+            };
+            let by = time - held.time;
+            if !held.moved && by.abs() < held.slop {
+                return;
+            }
+            held.moved = true;
+            let (change, from) = (Change::nudge(held.part, by), held.from.clone());
+            // Where the pointer leads nowhere it may go (it is not timed),
+            // the drag changes nothing.
+            editor.drag(&from, change);
+        }
+        LyricsEdit::Drop => {
+            let Some(held) = editor.screen.held.take() else {
+                return;
+            };
+            if held.moved {
+                if editor.dragged(held.from) {
+                    kept(state, fx);
+                }
+                return;
+            }
+            // A click: a second one on the word soon after writes it.
+            let clicked = editor
+                .selected
+                .is_some_and(|w| editor.screen.clicked.press(w, ctx.now));
+            if clicked {
+                act(state, LyricsEdit::Write { line: false }, fx);
+            }
+        }
+        LyricsEdit::Seek(time) => {
+            if ctx.playhead.is_some() {
+                let t = time.max(0.0);
+                state.playing.position = t;
+                fx.push(Effect::Engine(jodel_playback::Command::Seek(t)));
+            }
+        }
+        LyricsEdit::Write { line } => {
+            let Some(at) = editor.selected else {
+                return;
+            };
+            let text = if line {
+                editor.lyrics.lines[at.line].text()
+            } else {
+                editor.lyrics[at].text.clone()
+            };
+            editor.screen.draft = Some(Draft { line, text });
+        }
+        LyricsEdit::Draft(text) => {
+            if let Some(draft) = &mut editor.screen.draft {
+                draft.text = text;
+            }
+        }
+        LyricsEdit::Keep => {
+            let Some(draft) = editor.screen.draft.take() else {
+                return;
+            };
+            let change = if draft.line {
+                Change::ReplaceLine(draft.text)
+            } else {
+                Change::ReplaceWord(draft.text)
+            };
+            act(state, change.into(), fx);
+        }
+        LyricsEdit::Discard => editor.screen.draft = None,
+        LyricsEdit::Zoom { steps, at } => editor.screen.zoom(&ctx, steps, at),
     }
 }
 
-/// The editor closed: its screen left for the one it was opened from.
-fn close(state: &mut State) {
-    state.karaoke.editor = None;
-    if state.screen == Screen::Lyrics {
-        state.screen = Screen::Main;
+/// What the secondary button does to the editor's view (open); as any
+/// action there, it calls the question of forgetting every edit off.
+pub(crate) fn pan(state: &mut State, input: PanInput) {
+    let Some(ctx) = Ctx::of(state) else {
+        return;
+    };
+    if let Some(editor) = editor_mut(state) {
+        editor.screen.asking = false;
+        editor.screen.pan(&ctx, input);
+    }
+}
+
+/// Opens the editor on the song karaoke is about, as the screen, where its
+/// lyrics are found.
+pub(crate) fn open(state: &mut State) {
+    let Some(path) = karaoke::song_index(state).and_then(|i| state.queue.paths.get(i)) else {
+        return state.info("No song to edit the lyrics of");
+    };
+    match state.karaoke.lyrics.get(path) {
+        Some(SongLyrics::Found { shown, .. }) => {
+            let editor = LyricEditor::open(path.clone(), shown);
+            state.screen = Screen::Lyrics(Box::new(editor));
+        }
+        _ => {
+            let title = super::shown_title(state, path);
+            state.info(format!("No lyrics of {title} to edit yet"));
+        }
     }
 }
 
 /// The editor's lyrics changed: shown at once as the song's, and kept.
 fn kept(state: &mut State, fx: &mut Vec<Effect>) {
-    let Some(editor) = &state.karaoke.editor else {
+    let Some(editor) = editor(state) else {
         return;
     };
     let (path, lyrics) = (editor.path.clone(), editor.lyrics.clone());
     if let Some(SongLyrics::Found { shown, .. }) = state.karaoke.lyrics.get_mut(&path) {
         *shown = Arc::new(lyrics.clone());
     }
-    fx.push(Effect::SaveLyricEdits(path, Some(edits_of(&lyrics))));
+    fx.push(Effect::SaveLyricEdits(path, Some(lyrics.edits())));
 }
 
 /// A song's lyrics arrived: the editor on it takes them when they are its
 /// edits timed again ([`LyricEditor::timed_again`]).
 pub(crate) fn arrived(state: &mut State, path: &std::path::Path) {
-    let Some(editor) = state.karaoke.editor.as_mut().filter(|e| e.path == path) else {
+    let Some(SongLyrics::Found { shown, .. }) = state.karaoke.lyrics.get(path) else {
         return;
     };
-    if let Some(SongLyrics::Found { shown, .. }) = state.karaoke.lyrics.get(path) {
-        editor.timed_again(shown);
+    let shown = Arc::clone(shown);
+    if let Some(editor) = editor_mut(state).filter(|e| e.path == path) {
+        editor.timed_again(&shown);
     }
 }
 

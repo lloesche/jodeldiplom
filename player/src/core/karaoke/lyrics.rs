@@ -105,12 +105,7 @@ pub fn lyrics_wanted(state: &State) -> Vec<PathBuf> {
         return paths;
     }
     // The lyrics editor's song first, its timing taken as it comes again.
-    let editing = state
-        .karaoke
-        .editor
-        .as_ref()
-        .filter(|_| state.screen == crate::core::Screen::Lyrics)
-        .map(|e| e.path.clone());
+    let editing = crate::core::lyric_edit::editor(state).map(|e| e.path.clone());
     if !(state.keys_on(Side::Karaoke) || in_mode(state) || editing.is_some()) {
         return Vec::new();
     }
@@ -186,6 +181,18 @@ pub fn lyrics_settled<'a>(state: &'a State, path: &Path) -> Option<&'a Arc<Lyric
             Some(shown)
         }
         _ => None,
+    }
+}
+
+/// Whether what was delivered of the lyrics of `path` is as it stays:
+/// lyrics settled ([`lyrics_settled`]: a timing kept), or an answer of no
+/// lyrics. What a job's being done falls back on before the worker tells it
+/// ([`crate::core::job_done`]).
+pub fn lyrics_answered(state: &State, path: &Path) -> bool {
+    match state.karaoke.lyrics.get(path) {
+        Some(SongLyrics::Found { .. }) => lyrics_settled(state, path).is_some(),
+        Some(SongLyrics::Pending) | None => false,
+        Some(_) => true,
     }
 }
 

@@ -55,8 +55,11 @@ pub use countdown::{
     COUNT_STEP, TITLE_FADE, TITLE_HOLD,
 };
 use countdown::{in_lead, note_heard};
+pub use lyrics::{
+    lyrics_answered, lyrics_of, lyrics_settled, lyrics_wanted, ModelState, SongLyrics,
+    HEARD_WARNING,
+};
 pub(crate) use lyrics::{lyrics_arrived, want_lyrics};
-pub use lyrics::{lyrics_of, lyrics_settled, lyrics_wanted, ModelState, SongLyrics, HEARD_WARNING};
 pub(crate) use story::want_stories;
 pub use story::{stories_wanted, StorySong};
 
@@ -173,8 +176,6 @@ pub struct KaraokeState {
     pub loudness: HashMap<PathBuf, Option<f64>>,
     /// The best scores sung, by song.
     pub bests: crate::store::scores::Bests,
-    /// The lyrics editor, while it is open on a song.
-    pub editor: Option<super::lyric_edit::LyricEditor>,
     /// Whether the best scores changed since they were last saved.
     pub bests_changed: bool,
     /// The song's own look over the backdrop (owned data, with its own

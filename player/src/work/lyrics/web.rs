@@ -203,10 +203,10 @@ impl Lrclib {
         let mut out: Vec<Lyrics> = Vec::new();
         for record in &records {
             if let Found::Lyrics(lyrics) = record.found() {
-                let words = jodel_lyrics::words::lyrics_words(&lyrics);
+                let words = jodel_lyrics::words::Compared::of(&lyrics).words;
                 if !out
                     .iter()
-                    .any(|o| jodel_lyrics::words::lyrics_words(o) == words)
+                    .any(|o| jodel_lyrics::words::Compared::of(o).words == words)
                 {
                     out.push(lyrics);
                 }

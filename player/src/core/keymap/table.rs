@@ -6,6 +6,7 @@
 
 use super::Context::*;
 use super::{Binding, Context, Key, KeyCode as K, Op};
+use crate::core::lyric_edit::Part;
 
 const fn b(context: Context, keys: &'static [Key], op: Op, help: &'static str) -> Binding {
     Binding {
@@ -71,32 +72,33 @@ const fn ch(c: char) -> Key {
 /// Every key binding, in help order.
 #[rustfmt::skip]
 pub const KEYMAP: &[Binding] = &[
-    // Anywhere.
-    b(Global, &[ch(' ')], Op::PlayPause, "play / pause"),
+    // Anywhere (playing, the volume, the stems and quitting: in the lyrics
+    // editor too).
+    b(Playback, &[ch(' ')], Op::PlayPause, "play / pause"),
     b(Global, &[LEFT], Op::SeekBack, "seek back 5 s"),
     b(Global, &[RIGHT], Op::SeekForward, "seek forward 5 s"),
-    b(Global, &[ch('N'), SHIFT_RIGHT], Op::Skip, "skip to the next track"),
-    b(Global, &[ch('P'), SHIFT_LEFT], Op::Previous, "previous track"),
+    b(Playback, &[ch('N'), SHIFT_RIGHT], Op::Skip, "skip to the next track"),
+    b(Playback, &[ch('P'), SHIFT_LEFT], Op::Previous, "previous track"),
     b(Global, &[ch('X')], Op::SkipMix, "what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings)"),
-    b(Global, &[ch('S')], Op::Stop, "stop"),
+    b(Playback, &[ch('S')], Op::Stop, "stop"),
     b(Global, &[TAB], Op::ToggleSide, "browser / queue / transition / karaoke / mixer / synth"),
     b(Global, &[ch('F')], Op::NowPlaying, "now playing, full screen"),
     b(Global, &[ch('T')], Op::GoTrack, "go to the playing track"),
     b(Global, &[ch('B')], Op::GoAlbum, "go to its album folder"),
     b(Global, &[ch('R')], Op::GoArtist, "go to its artist folder"),
     b(Global, &[ch('M')], Op::ToggleBpm, "tempo and beat pulse on / off"),
-    b(Global, &[Key::alt('1')], Op::ToggleDrums, "stems: drums on / off (any off: the stems are heard, not the file)"),
-    b(Global, &[Key::alt('2')], Op::ToggleBass, "stems: bass on / off"),
-    b(Global, &[Key::alt('3')], Op::ToggleVocals, "stems: vocals on / off"),
-    b(Global, &[Key::alt('4')], Op::ToggleOther, "stems: other on / off"),
-    b(Global, &[Key::alt('0')], Op::AllStems, "stems: all on, the file as it is"),
-    b(Global, &[ALT_UP], Op::VolumeUp, "device volume a step up (macOS: the system's keys do not reach it while played)"),
-    b(Global, &[ALT_DOWN], Op::VolumeDown, "device volume a step down"),
+    b(Playback, &[Key::alt('1')], Op::ToggleDrums, "stems: drums on / off (any off: the stems are heard, not the file)"),
+    b(Playback, &[Key::alt('2')], Op::ToggleBass, "stems: bass on / off"),
+    b(Playback, &[Key::alt('3')], Op::ToggleVocals, "stems: vocals on / off"),
+    b(Playback, &[Key::alt('4')], Op::ToggleOther, "stems: other on / off"),
+    b(Playback, &[Key::alt('0')], Op::AllStems, "stems: all on, the file as it is"),
+    b(Playback, &[ALT_UP], Op::VolumeUp, "device volume a step up (macOS: the system's keys do not reach it while played)"),
+    b(Playback, &[ALT_DOWN], Op::VolumeDown, "device volume a step down"),
     b(Global, &[ch(',')], Op::Settings, "settings"),
     b(Global, &[ch('/')], Op::Filter, "filter this folder"),
     b(Global, &[ch(':')], Op::Palette, "command palette"),
     b(Global, &[ch('?')], Op::Help, "this help"),
-    b(Global, &[ch('Q'), Key::ctrl('c')], Op::Quit, "quit"),
+    b(Playback, &[ch('Q'), Key::ctrl('c')], Op::Quit, "quit"),
     b(Global, &[Key::ctrl('s')], Op::QueueSave, "save the queue as a playlist (among the saved queues)"),
     b(Global, &[Key::ctrl('l')], Op::QueueOpenSaved, "the saved queues, in the browser (enter queues one, alt+enter plays it instead)"),
     // The list (the browser and the queue).
@@ -245,18 +247,18 @@ pub const KEYMAP: &[Binding] = &[
     b(LyricsEditor, &[RIGHT], Op::LyricsNext, "the next word"),
     b(LyricsEditor, &[UP], Op::Up, "the line above"),
     b(LyricsEditor, &[DOWN], Op::Down, "the line below"),
-    b(LyricsEditor, &[SHIFT_LEFT], Op::LyricsStartEarlier, "its start 20 ms earlier (or drag its left edge): set by hand, the words round it fitted to it"),
-    b(LyricsEditor, &[SHIFT_RIGHT], Op::LyricsStartLater, "its start 20 ms later"),
-    b(LyricsEditor, &[ALT_LEFT], Op::LyricsEndEarlier, "its end 20 ms earlier (or drag its right edge)"),
-    b(LyricsEditor, &[ALT_RIGHT], Op::LyricsEndLater, "its end 20 ms later"),
-    b(LyricsEditor, &[CTRL_LEFT], Op::LyricsMoveEarlier, "the whole word 20 ms earlier (or drag its middle)"),
-    b(LyricsEditor, &[CTRL_RIGHT], Op::LyricsMoveLater, "the whole word 20 ms later"),
+    b(LyricsEditor, &[SHIFT_LEFT], Op::LyricsNudge(Part::Start, -1), "its start 20 ms earlier (or drag its left edge): set by hand, the words round it fitted to it"),
+    b(LyricsEditor, &[SHIFT_RIGHT], Op::LyricsNudge(Part::Start, 1), "its start 20 ms later"),
+    b(LyricsEditor, &[ALT_LEFT], Op::LyricsNudge(Part::End, -1), "its end 20 ms earlier (or drag its right edge)"),
+    b(LyricsEditor, &[ALT_RIGHT], Op::LyricsNudge(Part::End, 1), "its end 20 ms later"),
+    b(LyricsEditor, &[CTRL_LEFT], Op::LyricsNudge(Part::Middle, -1), "the whole word 20 ms earlier (or drag its middle)"),
+    b(LyricsEditor, &[CTRL_RIGHT], Op::LyricsNudge(Part::Middle, 1), "the whole word 20 ms later"),
     b(LyricsEditor, &[ch(' ')], Op::LyricsPlay, "play the song from just before the word, the view following (again: pause)"),
     b(LyricsEditor, &[ch('z')], Op::FitLyrics, "zoom the song to fit its lyrics, round the word (or the playhead followed)"),
     b(LyricsEditor, &[ch('.')], Op::Follow, "follow the playhead again (moving the view by hand stops it)"),
     b(LyricsEditor, &[ch('n')], Op::LyricsNotSung, "not to be sung (a backing vocal: no bubble, the voice up over it in Karaoke mode), or to be sung again"),
-    b(LyricsEditor, &[ch('+'), ch('=')], Op::LyricsLouder, "the voice 3 dB louder over the word in Karaoke mode"),
-    b(LyricsEditor, &[ch('-')], Op::LyricsQuieter, "the voice 3 dB quieter over the word"),
+    b(LyricsEditor, &[ch('+'), ch('=')], Op::LyricsLevel(1), "the voice 3 dB louder over the word in Karaoke mode"),
+    b(LyricsEditor, &[ch('-')], Op::LyricsLevel(-1), "the voice 3 dB quieter over the word"),
     b(LyricsEditor, &[ch('0')], Op::LyricsLevelReset, "the voice over the word as the Voice slider has it"),
     b(LyricsEditor, &[ENTER], Op::LyricsWrite, "write the word (or double-click it): two words put one in after it, none takes it out"),
     b(LyricsEditor, &[SHIFT_ENTER], Op::LyricsWriteLine, "write its whole line"),

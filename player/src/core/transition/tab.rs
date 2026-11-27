@@ -17,6 +17,7 @@ use super::{draft, viewport};
 use crate::core::grid::Grid;
 use crate::core::keymap::{self, Context, Op};
 use crate::core::lanes::{path, rhythmed, Block};
+use crate::core::timeview::TimeView;
 use crate::core::transition::{self as tr, Draft, Edit, Status};
 use crate::core::{DoubleClick, Effect, Rhythm, Rhythmed, Side, State};
 use jodel_playback::stems::STEMS;
@@ -26,21 +27,6 @@ use jodel_playback::TempoMode;
 pub const PAGE_BARS: isize = 8;
 /// What a nudge moves the grid by, in seconds.
 pub const NUDGE: f64 = 0.005;
-
-/// A drag of a block's view with the secondary button.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Pan {
-    /// The block.
-    pub block: Block,
-    /// Seconds a unit across is worth, in the window's units (negative:
-    /// the view follows the pointer, as on the whole track; positive: the
-    /// waveform does).
-    pub per_unit: f64,
-    /// Where across it started.
-    pub at: f32,
-    /// The view's start then.
-    pub start: f64,
-}
 
 /// A transition's cue on a track: the bars it is to mix over there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,9 +49,9 @@ pub struct BlockState {
     pub cursor: Option<usize>,
     /// Where a selection started (a beat), while there is one.
     pub anchor: Option<usize>,
-    /// The time the view starts at; `None`: following (or, for the next
-    /// track, from its first bar).
-    pub start: Option<f64>,
+    /// Where the view is: held, or following (the next track's, with
+    /// nothing to follow, from its first bar).
+    pub view: TimeView,
     /// The bars a transition is to mix over on this track, once set
     /// (`enter`).
     pub cue: Option<Cue>,
@@ -96,8 +82,6 @@ pub struct TransitionTab {
     /// When ([`viewport::frame_ms`]) a transition handed over: the next
     /// track's block slides up into the playing track's place from then.
     pub slide: Option<u64>,
-    /// A drag of a view with the secondary button, under way.
-    pub pan: Option<Pan>,
 }
 
 impl Default for TransitionTab {
@@ -111,7 +95,6 @@ impl Default for TransitionTab {
             draft: Draft::default(),
             prev: BlockState::default(),
             slide: None,
-            pan: None,
         }
     }
 }
@@ -306,7 +289,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         }
         Op::Follow => {
             let b = block_mut(state, Block::Now);
-            b.start = None;
+            b.view.follow();
             b.cursor = None;
             b.anchor = None;
             state.transition.focus = Block::Now;

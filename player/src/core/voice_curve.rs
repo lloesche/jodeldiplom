@@ -3,7 +3,7 @@
 //! (a backing vocal, an ad-lib the singer leaves to the record) turned up
 //! [`NOT_SUNG_RAISE_DB`] (and to at least [`NOT_SUNG_LEAST_DB`], so it is
 //! heard with the voice all the way down), and over a word with a level of
-//! its own ([`jodel_lyrics::Word::voice_db`]) at that level; each change
+//! its own ([`jodel_lyrics::WordEdit::voice_db`]) at that level; each change
 //! smoothed over [`SMOOTH`] before the word starts and after it ends.
 //!
 //! On the mixer it is the vocals part's automation curve on the playing
@@ -41,14 +41,41 @@ pub const SMOOTH: f64 = 0.05;
 /// where the positions told now put them before it is timed again.
 const DRIFT: f64 = 0.005;
 
-/// The voice's level over `word` in the mode when it has one of its own (a
-/// level set over it, or raised over a word not to be sung), in dB against
-/// the voice as recorded; `voice_db` the slider's. `None`: the slider's.
-pub fn own_level(word: &Word, voice_db: f64) -> Option<f64> {
-    match (word.voice_db, word.not_sung) {
-        (Some(db), _) => Some(f64::from(db)),
-        (None, true) => Some((voice_db + NOT_SUNG_RAISE_DB).max(NOT_SUNG_LEAST_DB)),
-        (None, false) => None,
+/// The voice's level over a word in the mode, and why, in dB against the
+/// voice as recorded ([`voice_level`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VoiceLevel {
+    /// A level set over it.
+    Set(f64),
+    /// The slider's raised, as it is not to be sung.
+    Raised(f64),
+    /// The Voice slider's.
+    Slider(f64),
+}
+
+impl VoiceLevel {
+    /// The level.
+    pub fn db(self) -> f64 {
+        match self {
+            VoiceLevel::Set(db) | VoiceLevel::Raised(db) | VoiceLevel::Slider(db) => db,
+        }
+    }
+
+    /// Whether it is the word's own (set over it, or raised as it is not
+    /// sung), not the slider's.
+    pub fn is_own(self) -> bool {
+        !matches!(self, VoiceLevel::Slider(_))
+    }
+}
+
+/// The voice's level over `word` in the mode, `voice_db` the slider's:
+/// the level set over it, else raised over a word not to be sung, else the
+/// slider's.
+pub fn voice_level(word: &Word, voice_db: f64) -> VoiceLevel {
+    match (word.edit.voice_db, word.edit.not_sung) {
+        (Some(db), _) => VoiceLevel::Set(f64::from(db)),
+        (None, true) => VoiceLevel::Raised((voice_db + NOT_SUNG_RAISE_DB).max(NOT_SUNG_LEAST_DB)),
+        (None, false) => VoiceLevel::Slider(voice_db),
     }
 }
 
@@ -58,9 +85,11 @@ pub fn own_level(word: &Word, voice_db: f64) -> Option<f64> {
 pub fn spans(lyrics: &Lyrics, voice_db: f64) -> Vec<(f64, f64, f64)> {
     let mut out: Vec<(f64, f64, f64)> = Vec::new();
     for w in lyrics.lines.iter().flat_map(|l| &l.words) {
-        let Some(db) = own_level(w, voice_db) else {
+        let level = voice_level(w, voice_db);
+        if !level.is_own() {
             continue;
-        };
+        }
+        let db = level.db();
         let (Some(a), Some(b)) = (w.start, w.end) else {
             continue;
         };
@@ -158,8 +187,18 @@ pub struct VoiceSent {
     head: usize,
     index: usize,
     levels: u64,
-    /// The frame of 0 s, the speed, and the times the levels span.
-    mapped: Option<(f64, f64, f64, f64)>,
+    mapped: Option<Mapped>,
+}
+
+/// How a curve's levels were put on an output's stream frames.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Mapped {
+    /// The frame of 0 s into the track.
+    zero: f64,
+    /// Frames a second of the track.
+    speed: f64,
+    /// The first and last times the levels have, in seconds.
+    span: (f64, f64),
 }
 
 impl VoiceSent {
@@ -168,9 +207,9 @@ impl VoiceSent {
     fn same(&self, now: &VoiceSent) -> bool {
         let close = match (self.mapped, now.mapped) {
             (None, None) => true,
-            (Some((z0, s0, a, b)), Some((z1, s1, ..))) => [a, b]
-                .iter()
-                .all(|t| ((z1 + t * s1) - (z0 + t * s0)).abs() <= DRIFT * s1),
+            (Some(was), Some(is)) => [was.span.0, was.span.1].iter().all(|t| {
+                ((is.zero + t * is.speed) - (was.zero + t * was.speed)).abs() <= DRIFT * is.speed
+            }),
             _ => false,
         };
         (self.head, self.index, self.levels) == (now.head, now.index, now.levels) && close
@@ -229,16 +268,19 @@ pub(crate) fn follow(state: &mut State, fx: &mut Vec<Effect>) {
         }
         return;
     };
-    let hash = levels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, (t, g)| {
-        (h ^ t.to_bits().rotate_left(17) ^ g.to_bits()).wrapping_mul(0x0100_0000_01b3)
-    });
+    let mut hash = jodel_dsp::Fnv1a::new();
+    for (t, g) in &levels {
+        hash.write(&t.to_bits().to_le_bytes());
+        hash.write(&g.to_bits().to_le_bytes());
+    }
+    let hash = hash.finish();
     let anchor = state.playing.anchor.filter(|a| a.index == index);
     let span = (levels[0].0, levels[levels.len() - 1].0);
-    let mapped = state
-        .playing
-        .speed
-        .zip(anchor)
-        .map(|(speed, a)| (a.at.frame as f64 - a.seconds * speed, speed, span.0, span.1));
+    let mapped = state.playing.speed.zip(anchor).map(|(speed, a)| Mapped {
+        zero: a.at.frame as f64 - a.seconds * speed,
+        speed,
+        span,
+    });
     let now = VoiceSent {
         head,
         index,
@@ -252,7 +294,7 @@ pub(crate) fn follow(state: &mut State, fx: &mut Vec<Effect>) {
         fx.push(Effect::VoiceCurve(VoiceCurve::Clear { head: s.head }));
     }
     let points = match mapped {
-        Some((zero, speed, ..)) => on_frames(&levels, zero, speed),
+        Some(m) => on_frames(&levels, m.zero, m.speed),
         None => vec![(
             0,
             taper::gain(sliders::voice_db(state.config.karaoke_voice)),
@@ -279,7 +321,7 @@ mod tests {
     fn a_word_not_sung_turns_the_voice_up_smoothly() {
         let mut l = song();
         assert!(levels(&l, -12.0).is_empty());
-        l.lines[0].words[1].not_sung = true;
+        l.lines[0].words[1].edit.not_sung = true;
         let base = taper::gain(-12.0);
         let up = taper::gain(-6.0);
         let got = levels(&l, -12.0);
@@ -300,7 +342,7 @@ mod tests {
         );
         assert_eq!(spans(&l, -3.0), [(1.0, 1.5, 3.0)]);
         // A level of its own wins.
-        l.lines[0].words[1].voice_db = Some(-20.0);
+        l.lines[0].words[1].edit.voice_db = Some(-20.0);
         assert_eq!(spans(&l, -3.0), [(1.0, 1.5, -20.0)]);
     }
 
@@ -308,7 +350,7 @@ mod tests {
     fn words_close_together_go_from_one_level_to_the_next() {
         let mut l = song();
         let w = &mut l.lines[0].words;
-        (w[1].not_sung, w[2].voice_db) = (true, Some(0.0));
+        (w[1].edit.not_sung, w[2].edit.voice_db) = (true, Some(0.0));
         w[2].start = Some(1.52);
         let got = levels(&l, -12.0);
         let up = taper::gain(-6.0);

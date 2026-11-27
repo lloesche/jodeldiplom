@@ -13,13 +13,15 @@ use iced::{Point, Rectangle};
 use crate::app::App;
 use crate::core::desk::Channel;
 use crate::core::lanes::{self, Block};
-use crate::core::lyric_edit::screen::{self, Input, Part};
-use crate::core::lyric_edit::{LyricsEdit, WordAt};
+use crate::core::lyric_edit::screen;
+use crate::core::lyric_edit::{self, LyricsEdit, Part};
 use crate::core::shader_tab::ShaderAction;
 use crate::core::sliders::Slider;
 use crate::core::synth_tab::{self, SynthAction};
+use crate::core::timeview::{self, PanInput, PanOf};
 use crate::core::transition::viewport;
 use crate::core::{Action, State};
+use jodel_lyrics::WordAt;
 
 /// A mouse button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,16 +63,14 @@ pub enum Grab {
         /// Where its lanes are.
         bounds: Rectangle,
     },
-    /// A Transition block's view held with the secondary button over its
-    /// lanes, or over its whole track (`overview`), `bounds` wide: it moves
-    /// with the pointer.
+    /// A view held with the secondary button (a Transition block's, over
+    /// its lanes or its whole track; the lyrics editor's, over its lane),
+    /// `bounds` what it was pressed on: it moves with the pointer.
     Pan {
-        /// The block.
-        block: Block,
-        /// Where its lanes or its whole track are.
+        /// The view.
+        of: PanOf,
+        /// Where its lanes, its whole track or its lane are.
         bounds: Rectangle,
-        /// Over the whole track.
-        overview: bool,
     },
     /// A slider of the Karaoke tab or of Karaoke mode's controls, its
     /// track: set to the share across it under the pointer, as pressed and
@@ -88,9 +88,6 @@ pub enum Grab {
         /// Where the lane is.
         lane: Rectangle,
     },
-    /// The lyrics editor's view held with the secondary button over its
-    /// lane (`lane`): it moves with the pointer.
-    LyricView(Rectangle),
     /// A parameter's slider on the Synth tab (its place in the patch's
     /// parameters), its track: set to the share across it under the
     /// pointer, as pressed and as it moves.
@@ -116,7 +113,7 @@ impl Grab {
             | Grab::SynthKnob(..)
             | Grab::ShaderKnob(..)
             | Grab::Piano(_) => MouseButton::Left,
-            Grab::Pan { .. } | Grab::LyricView(_) => MouseButton::Right,
+            Grab::Pan { .. } => MouseButton::Right,
         }
     }
 
@@ -135,31 +132,24 @@ impl Grab {
                 time: lanes_time(state, block, bounds, at),
                 extend: false,
             }),
-            Grab::Pan {
-                block,
-                bounds,
-                overview,
-            } => Some(Action::TransitionPanStart {
-                block,
-                at: at.x,
-                width: bounds.width,
-                overview,
+            Grab::Pan { of, bounds } => Some(Action::Pan {
+                of,
+                input: PanInput::Start {
+                    at: at.x,
+                    width: bounds.width,
+                },
             }),
             Grab::LyricWord { word, part, lane } => {
                 let (start, end) = screen::window(state)?;
                 // A tremble of a few points is no drag.
                 let slop = f64::from(SLOP / lane.width.max(1.0)) * (end - start);
-                Some(lyrics(Input::Hold {
+                Some(lyrics(LyricsEdit::Hold {
                     word,
                     part,
                     time: lyric_time(state, lane, at)?,
                     slop,
                 }))
             }
-            Grab::LyricView(lane) => Some(lyrics(Input::PanStart {
-                at: at.x,
-                width: lane.width,
-            })),
         }
     }
 
@@ -186,13 +176,17 @@ impl Grab {
                     extend: true,
                 })
             }
-            Grab::Pan { .. } => Some(Action::TransitionPan(at.x)),
+            Grab::Pan { of, .. } => Some(Action::Pan {
+                of,
+                input: PanInput::To(at.x),
+            }),
             Grab::Slider(slider, track) => Some(Action::KaraokeSlide {
                 slider,
                 share: share_across(track, at),
             }),
-            Grab::LyricWord { lane, .. } => Some(lyrics(Input::Drag(lyric_time(state, lane, at)?))),
-            Grab::LyricView(_) => Some(lyrics(Input::Pan(at.x))),
+            Grab::LyricWord { lane, .. } => {
+                Some(lyrics(LyricsEdit::Drag(lyric_time(state, lane, at)?)))
+            }
             Grab::SynthKnob(knob, track) => Some(Action::Synth(SynthAction::Slide {
                 knob,
                 share: share_across(track, at) as f32,
@@ -219,10 +213,12 @@ impl Grab {
             Grab::Seek(track) => Some(Action::SeekTo(share_across(track, at))),
             Grab::QueueRow { .. } => Some(Action::QueueDragEnd),
             Grab::Lanes { .. } => None,
-            Grab::Pan { .. } => Some(Action::TransitionPanEnd),
+            Grab::Pan { of, .. } => Some(Action::Pan {
+                of,
+                input: PanInput::End,
+            }),
             Grab::Slider(..) => Some(Action::KaraokeSlideEnd),
-            Grab::LyricWord { .. } => Some(lyrics(Input::Drop)),
-            Grab::LyricView(_) => Some(lyrics(Input::PanEnd)),
+            Grab::LyricWord { .. } => Some(lyrics(LyricsEdit::Drop)),
             Grab::SynthKnob(..) => Some(Action::Synth(SynthAction::SlideEnd)),
             Grab::ShaderKnob(..) => Some(Action::Shader(ShaderAction::SlideEnd)),
             Grab::Piano(_) => Some(Action::Synth(SynthAction::Press(None))),
@@ -236,10 +232,9 @@ impl Grab {
             Grab::Seek(_) => state.seek_drag.is_some(),
             Grab::QueueRow { .. } => state.queue.dragging,
             Grab::Lanes { block, .. } => lanes::rhythmed(state, block).is_some(),
-            Grab::Pan { .. } => state.transition.pan.is_some(),
+            Grab::Pan { of, .. } => timeview::panning(state, of),
             Grab::Slider(..) => state.karaoke.dragging.is_some(),
             Grab::LyricWord { .. } => editing(state).is_some_and(|s| s.held.is_some()),
-            Grab::LyricView(_) => editing(state).is_some_and(|s| s.pan.is_some()),
             Grab::SynthKnob(..) => state.synth.dragging.is_some(),
             Grab::ShaderKnob(..) => state.shader.dragging.is_some(),
             Grab::Piano(_) => state.synth.mouse.is_some(),
@@ -251,14 +246,14 @@ impl Grab {
 /// change nothing.
 const SLOP: f32 = 3.0;
 
-/// `input` for the lyrics editor's screen, as the core's action.
-fn lyrics(input: Input) -> Action {
-    Action::LyricsEdit(LyricsEdit::Screen(input))
+/// `what` the lyrics editor does, as the core's action.
+fn lyrics(what: LyricsEdit) -> Action {
+    Action::LyricsEdit(what)
 }
 
 /// The lyrics editor's screen, while it is open.
 fn editing(state: &State) -> Option<&screen::EditorScreen> {
-    state.karaoke.editor.as_ref().map(|e| &e.screen)
+    lyric_edit::editor(state).map(|e| &e.screen)
 }
 
 /// The seconds into the lyrics editor's song under `at` across its lane

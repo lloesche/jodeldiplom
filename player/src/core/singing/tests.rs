@@ -238,7 +238,7 @@ fn a_word_asks_a_tenth_of_its_note_time() {
 fn a_word_not_to_be_sung_gets_no_bubble_and_no_score() {
     let (lyrics, m) = song();
     let mut marked = (*lyrics).clone();
-    marked.lines[0].words[1].not_sung = true;
+    marked.lines[0].words[1].edit.not_sung = true;
     let marked = Arc::new(marked);
     let mut s = Singing::default();
     s.prepare(Path::new("a"), &marked, &crate::core::singing::melodic(&m));

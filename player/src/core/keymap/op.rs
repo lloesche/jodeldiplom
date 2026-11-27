@@ -5,6 +5,7 @@
 use jodel_playback::Stem;
 
 use super::Context;
+use crate::core::lyric_edit::Part;
 
 /// A named operation: what keys, buttons and palette entries do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -229,26 +230,16 @@ pub enum Op {
     LyricsPrevious,
     /// Lyrics editor: the next word.
     LyricsNext,
-    /// Lyrics editor: the word's start a step earlier.
-    LyricsStartEarlier,
-    /// Lyrics editor: the word's start a step later.
-    LyricsStartLater,
-    /// Lyrics editor: the word's end a step earlier.
-    LyricsEndEarlier,
-    /// Lyrics editor: the word's end a step later.
-    LyricsEndLater,
-    /// Lyrics editor: the whole word a step earlier.
-    LyricsMoveEarlier,
-    /// Lyrics editor: the whole word a step later.
-    LyricsMoveLater,
+    /// Lyrics editor: the word's start, all of it or its end this many
+    /// steps later (negative: earlier).
+    LyricsNudge(Part, i8),
     /// Lyrics editor: the song played from the word, or paused.
     LyricsPlay,
     /// Lyrics editor: the word not to be sung, or to be sung again.
     LyricsNotSung,
-    /// Lyrics editor: the voice a step louder over the word.
-    LyricsLouder,
-    /// Lyrics editor: the voice a step quieter over the word.
-    LyricsQuieter,
+    /// Lyrics editor: the voice this many steps louder over the word
+    /// (negative: quieter).
+    LyricsLevel(i8),
     /// Lyrics editor: the voice over the word as the Voice slider has it.
     LyricsLevelReset,
     /// Lyrics editor: write the word's text.
@@ -348,8 +339,8 @@ impl Op {
             Op::TransitionSelectForward => "Transition: select on",
             Op::TransitionZoomIn => "Transition: zoom in",
             Op::TransitionZoomOut => "Transition: zoom out",
-            Op::FitLyrics => "Transition: zoom the track selected to fit its lyrics",
-            Op::Follow => "Transition: follow the playhead",
+            Op::FitLyrics => "View: zoom to fit the lyrics",
+            Op::Follow => "View: follow the playhead",
             Op::TransitionLyrics => "Transition: lyrics on the vocals lane on/off",
             Op::GridEarlier => "Grid: bars a beat earlier",
             Op::GridLater => "Grid: bars a beat later",
@@ -403,16 +394,18 @@ impl Op {
             }
             Op::LyricsPrevious => "Lyrics: the word before",
             Op::LyricsNext => "Lyrics: the next word",
-            Op::LyricsStartEarlier => "Lyrics: its start earlier",
-            Op::LyricsStartLater => "Lyrics: its start later",
-            Op::LyricsEndEarlier => "Lyrics: its end earlier",
-            Op::LyricsEndLater => "Lyrics: its end later",
-            Op::LyricsMoveEarlier => "Lyrics: the word earlier",
-            Op::LyricsMoveLater => "Lyrics: the word later",
+            Op::LyricsNudge(part, by) => match (part, by < 0) {
+                (Part::Start, true) => "Lyrics: its start earlier",
+                (Part::Start, false) => "Lyrics: its start later",
+                (Part::End, true) => "Lyrics: its end earlier",
+                (Part::End, false) => "Lyrics: its end later",
+                (Part::Middle, true) => "Lyrics: the word earlier",
+                (Part::Middle, false) => "Lyrics: the word later",
+            },
             Op::LyricsPlay => "Lyrics: play from the word",
             Op::LyricsNotSung => "Lyrics: not to be sung",
-            Op::LyricsLouder => "Lyrics: the voice louder over the word",
-            Op::LyricsQuieter => "Lyrics: the voice quieter over the word",
+            Op::LyricsLevel(by) if by < 0 => "Lyrics: the voice quieter over the word",
+            Op::LyricsLevel(_) => "Lyrics: the voice louder over the word",
             Op::LyricsLevelReset => "Lyrics: the voice over the word as the slider",
             Op::LyricsWrite => "Lyrics: write the word",
             Op::LyricsWriteLine => "Lyrics: write the line",
@@ -546,18 +539,10 @@ impl Op {
             Op::SyncKeep | Op::SyncAgain => (Sync, Key),
             Op::DeskPrevStrip | Op::DeskNextStrip => (Desk, Move),
             Op::DeskMute | Op::DeskSolo => (Desk, Command),
-            Op::LyricsPrevious
-            | Op::LyricsNext
-            | Op::LyricsStartEarlier
-            | Op::LyricsStartLater
-            | Op::LyricsEndEarlier
-            | Op::LyricsEndLater
-            | Op::LyricsMoveEarlier
-            | Op::LyricsMoveLater => (LyricsEditor, Move),
+            Op::LyricsPrevious | Op::LyricsNext | Op::LyricsNudge(..) => (LyricsEditor, Move),
             Op::LyricsPlay
             | Op::LyricsNotSung
-            | Op::LyricsLouder
-            | Op::LyricsQuieter
+            | Op::LyricsLevel(_)
             | Op::LyricsLevelReset
             | Op::LyricsWrite
             | Op::LyricsWriteLine

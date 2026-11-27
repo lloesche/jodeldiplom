@@ -313,15 +313,8 @@ pub fn job_done(state: &State, path: &Path, job: Job) -> bool {
                     Some(Rhythm::Ready(_) | Rhythm::Failed)
                 )
         }
-        Job::Lyrics => {
-            told || match state.karaoke.lyrics.get(path) {
-                Some(karaoke::SongLyrics::Found { .. }) => {
-                    karaoke::lyrics_settled(state, path).is_some()
-                }
-                Some(karaoke::SongLyrics::Pending) | None => false,
-                Some(_) => true,
-            }
-        }
+        // As the worker told it; else as what it delivered shows.
+        Job::Lyrics => told || karaoke::lyrics_answered(state, path),
         Job::Cover => told,
     }
 }

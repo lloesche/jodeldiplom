@@ -8,14 +8,16 @@
 //! A press on a box holds its start, its middle or its end
 //! ([`Grab::LyricWord`]); one on the waveform off the words puts the
 //! playhead there; the secondary button drags the view
-//! ([`Grab::LyricView`]); the wheel zooms round the time under the pointer.
+//! ([`Grab::Pan`]); the wheel zooms round the time under the pointer.
 
 use iced::mouse::{Interaction, ScrollDelta};
 use iced::widget::{column, container, pin, row, text, Space, Stack};
 use iced::{Background, Border, Color, Element, Fill, Point, Rectangle, Widget as _};
+use jodel_lyrics::WordAt;
 
-use crate::core::lyric_edit::screen::{Input, Part, LEVEL_LEAST, LEVEL_MOST};
-use crate::core::lyric_edit::{LyricsEdit, WordAt};
+use crate::core::lyric_edit::screen::{LEVEL_LEAST, LEVEL_MOST};
+use crate::core::lyric_edit::{LyricsEdit, Part};
+use crate::core::timeview::PanOf;
 use crate::core::Action;
 use crate::gui::look::{self, size, space};
 use crate::gui::pointer::{Grab, WheelOn};
@@ -156,10 +158,18 @@ pub(super) fn overlay<'a>(editor: &Editor, lane: Rectangle) -> Element<'a, Messa
         .id(LANE)
         .interaction(Interaction::Crosshair)
         .on_press(move |_, at| {
-            let seek = Input::Seek(time_at(window, lane, at));
-            Message::Act(Action::LyricsEdit(LyricsEdit::Screen(seek)))
+            let seek = LyricsEdit::Seek(time_at(window, lane, at));
+            Message::Act(Action::LyricsEdit(seek))
         })
-        .on_right_press(move |_, at| Message::Grab(Grab::LyricView(lane), at))
+        .on_right_press(move |_, at| {
+            Message::Grab(
+                Grab::Pan {
+                    of: PanOf::Lyrics,
+                    bounds: lane,
+                },
+                at,
+            )
+        })
         .on_scroll(move |_, at, delta| zoom(window, lane, at, delta));
     let mut layers: Vec<Element<'a, Message>> =
         vec![at(ground.boxed(), lane.x, lane.y, lane.width, lane.height)];
@@ -197,7 +207,7 @@ fn time_at((start, end): (f64, f64), lane: Rectangle, at: Point) -> f64 {
 /// zoomed round the time there, in while it turns up.
 fn zoom(window: (f64, f64), lane: Rectangle, at: Point, delta: ScrollDelta) -> Message {
     let time = time_at(window, lane, at);
-    let step = |steps| Action::LyricsEdit(LyricsEdit::Screen(Input::Zoom { steps, at: time }));
+    let step = |steps| Action::LyricsEdit(LyricsEdit::Zoom { steps, at: time });
     Message::Steps(WheelOn::Lyrics, delta, Box::new((step(1), step(-1))))
 }
 
@@ -309,7 +319,15 @@ fn word_box<'a>(
             .id(part_id(word, part))
             .interaction(interaction)
             .on_press(move |_, at| Message::Grab(Grab::LyricWord { word, part, lane }, at))
-            .on_right_press(move |_, at| Message::Grab(Grab::LyricView(lane), at))
+            .on_right_press(move |_, at| {
+                Message::Grab(
+                    Grab::Pan {
+                        of: PanOf::Lyrics,
+                        bounds: lane,
+                    },
+                    at,
+                )
+            })
             .on_scroll(move |_, at, delta| zoom(window, lane, at, delta))
             .boxed()
     };

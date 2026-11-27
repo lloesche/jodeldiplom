@@ -11,6 +11,7 @@ use super::tab::{block, block_mut, BlockState, Cue};
 use super::viewport::{bar_of, cursor, frame_ms, window};
 use crate::core::keymap::{self, Context, Op};
 use crate::core::lanes::{self, rhythmed, Block};
+use crate::core::timeview::TimeView;
 use crate::core::transition::{self as tr, Draft, Status};
 use crate::core::{Effect, State};
 
@@ -344,7 +345,7 @@ fn send(state: &mut State, fx: &mut Vec<Effect>, sent: tr::Sent) {
     ))));
     if state.transition.draft.status == Status::Draft {
         // Newly armed: the next track's view runs along with it.
-        block_mut(state, Block::Next).start = None;
+        block_mut(state, Block::Next).view.follow();
     }
     state.transition.draft.sent = Some(sent);
 }
@@ -506,7 +507,7 @@ pub(crate) fn transition_event(state: &mut State, event: TransitionState) {
 /// into its place ([`super::viewport::slide`]).
 pub(crate) fn track_started(state: &mut State, index: usize) {
     let carried = (lanes::index(state, Block::Next) == Some(index)).then(|| BlockState {
-        start: None,
+        view: TimeView::default(),
         cursor: None,
         anchor: None,
         cue: None,
@@ -529,12 +530,14 @@ fn hand_over(state: &mut State) {
     let heard = state.heard();
     let (start, _) = window(state, Block::Now, heard);
     state.transition.prev = BlockState {
-        start: Some(start),
+        view: TimeView::held(start),
         cursor: None,
         anchor: None,
         ..block(state, Block::Now)
     };
     state.transition.slide = Some(frame_ms(state));
     state.transition.focus = Block::Now;
-    state.transition.pan = None;
+    for which in Block::BOTH {
+        block_mut(state, which).view.end_pan();
+    }
 }

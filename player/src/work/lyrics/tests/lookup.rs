@@ -11,10 +11,10 @@ fn the_tag_then_the_sidecar_then_the_web() {
     let mut t = track(&file);
     t.tags = vec![("LYRICS".into(), "From the tag".into())];
     fs::write(dir.join("song.lrc"), "[00:01.00]From the sidecar\n").unwrap();
-    let answer = f.lookup(&t, 1000, &no_wait);
+    let answer = f.lookup(&t, 1000, &no_wait, &|_| {}).0;
     assert_eq!(lines(&answer), ["From the tag"]);
     t.tags.clear();
-    let answer = f.lookup(&t, 1000, &no_wait);
+    let answer = f.lookup(&t, 1000, &no_wait, &|_| {}).0;
     assert_eq!(lines(&answer), ["From the sidecar"]);
     // Its words, the sidecar's time kept only as the scaffold.
     let Answer::Found { lyrics, .. } = &answer else {
@@ -28,7 +28,7 @@ fn the_tag_then_the_sidecar_then_the_web() {
     assert_eq!(lyrics.lines[0].synced, Some(synced));
     assert!(web.asked().is_empty());
     fs::remove_file(dir.join("song.lrc")).unwrap();
-    let answer = f.lookup(&t, 1000, &no_wait);
+    let answer = f.lookup(&t, 1000, &no_wait, &|_| {}).0;
     assert_eq!(lines(&answer), ["Hello there", "General Kenobi"]);
     let Answer::Found { lyrics, timed } = &answer else {
         unreachable!()
@@ -56,7 +56,7 @@ fn the_tag_then_the_sidecar_then_the_web() {
              General Kenobi\n[#:synced 15.50 -]"
         )
     );
-    assert_eq!(f.lookup(&t, 2000, &no_wait), answer);
+    assert_eq!(f.lookup(&t, 2000, &no_wait, &|_| {}).0, answer);
     assert_eq!(web.asked().len(), 1);
     // A text kept by an older player (with the times it came with as its
     // lines' own, or without LRCLIB's synced times) is not read but kept
@@ -79,7 +79,7 @@ fn the_tag_then_the_sidecar_then_the_web() {
         assert!(kept_at.exists());
         assert_eq!(cache.timed(&key), None);
         assert!(!kept_at.with_extension("timed.lrc").exists());
-        assert_eq!(f.lookup(&t, 3000, &no_wait), answer);
+        assert_eq!(f.lookup(&t, 3000, &no_wait, &|_| {}).0, answer);
         assert_eq!(web.asked().len(), 2 + n);
         assert!(matches!(cache.text(&key), Kept::Current(_)));
     }
@@ -100,7 +100,7 @@ fn a_text_kept_by_an_older_player_waits_for_the_web() {
     fs::write(&kept_at, old).unwrap();
     f.online = false;
     assert_eq!(
-        f.lookup(&track(&file), 1, &no_wait),
+        f.lookup(&track(&file), 1, &no_wait, &|_| {}).0,
         Answer::Failed(OUTDATED.into())
     );
     assert_eq!(fs::read_to_string(&kept_at).unwrap(), old);
@@ -132,7 +132,7 @@ fn a_text_kept_by_an_older_player_waits_for_the_web() {
     // Online, it is fetched again and kept in this version.
     f.online = true;
     assert_eq!(
-        lines(&f.lookup(&track(&file), 2, &no_wait)),
+        lines(&f.lookup(&track(&file), 2, &no_wait, &|_| {}).0),
         ["Hello there", "General Kenobi"]
     );
     assert!(matches!(
@@ -154,7 +154,7 @@ impl WordTimer for Counting {
         Maker::new("counting", 1)
     }
 
-    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
+    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Text) -> Result<Lyrics, String> {
         Ok(timed_by(lyrics, "counting"))
     }
 
@@ -183,12 +183,18 @@ fn lrclib_is_asked_once_a_second_at_most() {
         true
     };
     let first = Instant::now();
-    assert_eq!(lines(&f.lookup(&track(&file), 1, &wait)).len(), 2);
+    assert_eq!(
+        lines(&f.lookup(&track(&file), 1, &wait, &|_| {}).0).len(),
+        2
+    );
     assert!(
         waits.lock().unwrap().is_empty(),
         "the first is asked at once"
     );
-    assert_eq!(lines(&g.lookup(&track(&file), 1, &wait)).len(), 2);
+    assert_eq!(
+        lines(&g.lookup(&track(&file), 1, &wait, &|_| {}).0).len(),
+        2
+    );
     // The second waits what is left of a second from the first: no more,
     // and no less than a second less the time since before the first.
     let waited = waits.lock().unwrap().clone();
@@ -199,7 +205,7 @@ fn lrclib_is_asked_once_a_second_at_most() {
     // Stopped while waiting (its turn a second after the second's, still
     // ahead): nothing asked.
     assert_eq!(
-        h.lookup(&track(&file), 1, &|_| false),
+        h.lookup(&track(&file), 1, &|_| false, &|_| {}).0,
         Answer::Failed("stopped".into())
     );
     assert_eq!(web.asked().len(), 2);
@@ -221,7 +227,7 @@ fn a_search_follows_when_get_finds_nothing() {
         }
     });
     let f = finder(&dir, web.clone());
-    let answer = f.lookup(&track(&file), 1000, &no_wait);
+    let answer = f.lookup(&track(&file), 1000, &no_wait, &|_| {}).0;
     assert_eq!(lines(&answer), ["Hello there", "General Kenobi"]);
     let asked = web.asked();
     assert_eq!(asked.len(), 2);
@@ -248,14 +254,17 @@ fn nothing_found_is_believed_for_thirty_days() {
     let f = finder(&dir, web.clone());
     let t = track(&file);
     let day = 24 * 60 * 60;
-    assert_eq!(f.lookup(&t, 1000, &no_wait), Answer::Instrumental);
     assert_eq!(
-        f.lookup(&t, 1000 + 29 * day, &no_wait),
+        f.lookup(&t, 1000, &no_wait, &|_| {}).0,
+        Answer::Instrumental
+    );
+    assert_eq!(
+        f.lookup(&t, 1000 + 29 * day, &no_wait, &|_| {}).0,
         Answer::Instrumental
     );
     assert_eq!(web.asked().len(), 1);
     assert_eq!(
-        f.lookup(&t, 1000 + 30 * day, &no_wait),
+        f.lookup(&t, 1000 + 30 * day, &no_wait, &|_| {}).0,
         Answer::Instrumental
     );
     assert_eq!(web.asked().len(), 2);
@@ -269,8 +278,14 @@ fn nothing_found_is_believed_for_thirty_days() {
         }
     });
     let f = finder(&dir2, empty.clone());
-    assert_eq!(f.lookup(&track(&file2), 5, &no_wait), Answer::NotFound);
-    assert_eq!(f.lookup(&track(&file2), 6, &no_wait), Answer::NotFound);
+    assert_eq!(
+        f.lookup(&track(&file2), 5, &no_wait, &|_| {}).0,
+        Answer::NotFound
+    );
+    assert_eq!(
+        f.lookup(&track(&file2), 6, &no_wait, &|_| {}).0,
+        Answer::NotFound
+    );
     assert_eq!(empty.asked().len(), 2, "get and search, once");
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&dir2);
@@ -294,7 +309,7 @@ fn a_busy_service_is_waited_out() {
         true
     };
     let f = finder(&dir, web.clone());
-    let answer = f.lookup(&track(&file), 1000, &wait);
+    let answer = f.lookup(&track(&file), 1000, &wait, &|_| {}).0;
     assert_eq!(lines(&answer).len(), 2);
     // The busy answers waited out, each try after them in its slot (a
     // second after the last; the waits here pass no time).
@@ -316,20 +331,20 @@ fn a_busy_service_is_waited_out() {
     });
     let f = finder(&dir2, web.clone());
     assert!(matches!(
-        f.lookup(&track(&file2), 1, &no_wait),
+        f.lookup(&track(&file2), 1, &no_wait, &|_| {}).0,
         Answer::Failed(_)
     ));
     let web = Stub::new(|_, _| status(429));
     let f = finder(&dir2, web.clone());
     assert_eq!(
-        f.lookup(&track(&file2), 1, &|_| false),
+        f.lookup(&track(&file2), 1, &|_| false, &|_| {}).0,
         Answer::Failed("stopped".into())
     );
     assert_eq!(web.asked().len(), 1);
     let web = Stub::new(|_, _| Err("no network".into()));
     let f = finder(&dir2, web.clone());
     assert_eq!(
-        f.lookup(&track(&file2), 1, &no_wait),
+        f.lookup(&track(&file2), 1, &no_wait, &|_| {}).0,
         Answer::Failed("no network".into())
     );
     assert!(!dir2.join("cache").exists());
@@ -343,13 +358,19 @@ fn offline_or_nameless_tracks_never_reach_the_web() {
     let web = Stub::new(|_, _| ok(RECORD));
     let mut f = finder(&dir, web.clone());
     f.online = false;
-    assert_eq!(f.lookup(&track(&file), 1, &no_wait), Answer::NotFound);
+    assert_eq!(
+        f.lookup(&track(&file), 1, &no_wait, &|_| {}).0,
+        Answer::NotFound
+    );
     f.online = true;
     let nameless = Track {
         title: None,
         ..track(&file)
     };
-    assert_eq!(f.lookup(&nameless, 1, &no_wait), Answer::NotFound);
+    assert_eq!(
+        f.lookup(&nameless, 1, &no_wait, &|_| {}).0,
+        Answer::NotFound
+    );
     assert!(web.asked().is_empty());
     assert!(!dir.join("cache").exists(), "nothing recorded");
     let _ = fs::remove_dir_all(&dir);
@@ -362,13 +383,13 @@ fn our_word_times_come_with_the_text_they_were_made_from() {
     let cache = f.cache.clone().unwrap();
     let key = cache_key(&file).unwrap();
     fs::write(dir.join("song.lrc"), "[00:01.00]Hi there\n").unwrap();
-    let Answer::Found { lyrics, timed } = f.lookup(&track(&file), 1, &no_wait) else {
+    let Answer::Found { lyrics, timed } = f.lookup(&track(&file), 1, &no_wait, &|_| {}).0 else {
         panic!("no sidecar");
     };
     assert_eq!(timed, None);
     let mut ours = timed_by(&lyrics, "test");
     cache.store_timed(&key, &ours).unwrap();
-    let Answer::Found { timed, .. } = f.lookup(&track(&file), 1, &no_wait) else {
+    let Answer::Found { timed, .. } = f.lookup(&track(&file), 1, &no_wait, &|_| {}).0 else {
         panic!("no sidecar");
     };
     let timed = timed.unwrap();
@@ -377,7 +398,7 @@ fn our_word_times_come_with_the_text_they_were_made_from() {
     // Made from another source's text: not given.
     ours.source = Source::Lrclib;
     cache.store_timed(&key, &ours).unwrap();
-    let Answer::Found { timed, .. } = f.lookup(&track(&file), 1, &no_wait) else {
+    let Answer::Found { timed, .. } = f.lookup(&track(&file), 1, &no_wait, &|_| {}).0 else {
         panic!("no sidecar");
     };
     assert_eq!(timed, None);

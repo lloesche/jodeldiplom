@@ -28,7 +28,7 @@ use crate::core::{Screen, Side, State};
 use crate::gui::lanes::{LaneSpot, Part, Rows};
 use crate::gui::look::{self, radius, space};
 use crate::gui::metrics;
-use crate::gui::pixels::PixelRect;
+use crate::gui::pixels::Snap;
 use crate::gui::window::Message;
 use crate::view::transition::{block_lanes, lane_width, plots, LABELS, PAD};
 
@@ -76,32 +76,9 @@ impl Room {
         })
     }
 
-    /// `v` points on the window's pixels.
-    fn snap(&self, v: f32) -> f32 {
-        (v * self.scale).round() / self.scale
-    }
-
-    /// `rect` with its edges on the window's pixels.
-    fn snapped(&self, rect: Rectangle) -> Rectangle {
-        let (x, y) = (self.snap(rect.x), self.snap(rect.y));
-        Rectangle::new(
-            Point::new(x, y),
-            Size::new(
-                self.snap(rect.x + rect.width) - x,
-                self.snap(rect.y + rect.height) - y,
-            ),
-        )
-    }
-
-    /// `rect` in the window's pixels.
-    fn pixels(&self, rect: Rectangle) -> PixelRect {
-        let px = |v: f32| (v * self.scale).round().max(0.0) as usize;
-        (
-            px(rect.x),
-            px(rect.y),
-            px(rect.x + rect.width) - px(rect.x),
-            px(rect.y + rect.height) - px(rect.y),
-        )
+    /// The window's pixels its points land on.
+    fn px(&self) -> Snap {
+        Snap(self.scale)
     }
 }
 
@@ -175,12 +152,12 @@ pub struct Plan {
 /// points, on its pixels.
 pub fn plan(state: &State, room: &Room) -> Plan {
     let p = room.pane;
-    let panel = room.snapped(p);
+    let panel = room.px().rect(p);
     let left = p.x + PAD;
     let width = (p.width - 2.0 * PAD).max(0.0);
     let lanes_x = left + LABELS;
     let lanes_w = lane_width(p.width);
-    let footer = room.snapped(Rectangle::new(
+    let footer = room.px().rect(Rectangle::new(
         Point::new(left, panel.y + panel.height - space::S - FOOTER),
         Size::new(width, FOOTER),
     ));
@@ -220,12 +197,14 @@ pub fn plan(state: &State, room: &Room) -> Plan {
     // playing one up into its place, the next one in under it.
     if let (Some(done), 2) = (viewport::slide(state), order.len()) {
         let pitch = need(block_lanes(state, Block::Prev).len(), h) + BLOCK_GAP;
-        y -= room.snap(done as f32 * pitch);
+        y -= room.px().snap(done as f32 * pitch);
         order.insert(0, Block::Prev);
     }
     let inside = |r: Rectangle| r.y >= top - 0.01 && r.y + r.height <= bottom + 0.01;
     let row = |y: f32, x: f32, w: f32, h: f32| {
-        let r = room.snapped(Rectangle::new(Point::new(x, y), Size::new(w, h)));
+        let r = room
+            .px()
+            .rect(Rectangle::new(Point::new(x, y), Size::new(w, h)));
         inside(r).then_some(r)
     };
     let mut blocks = Vec::new();
@@ -241,19 +220,19 @@ pub fn plan(state: &State, room: &Room) -> Plan {
         for &lane in block_lanes(state, block) {
             let (from, to) = (y.max(top), (y + h).min(bottom));
             if to > from {
-                let rect = room.snapped(Rectangle::new(
+                let rect = room.px().rect(Rectangle::new(
                     Point::new(lanes_x, from),
                     Size::new(lanes_w, to - from),
                 ));
                 let label = (rect.height >= LABEL).then(|| Rectangle {
-                    x: room.snap(left),
+                    x: room.px().snap(left),
                     width: LABELS - space::S,
                     ..rect
                 });
                 lanes.push(PlacedLane {
                     lane,
                     rect,
-                    above: room.snap(from - y),
+                    above: room.px().snap(from - y),
                     full: h,
                     label,
                 });
@@ -294,13 +273,13 @@ pub fn spots(state: &State, room: &Room, heard: f64) -> Vec<LaneSpot> {
         };
         if let Some(r) = placed.overview {
             out.push(LaneSpot {
-                rect: room.pixels(r),
+                rect: room.px().pixels(r),
                 part: Part::Wave(Box::new(plots.overview), rows(0.0, r.height)),
             });
         }
         if let Some(r) = placed.ruler {
             out.push(LaneSpot {
-                rect: room.pixels(r),
+                rect: room.px().pixels(r),
                 part: Part::Ruler(Box::new(plots.ruler)),
             });
         }
@@ -308,7 +287,7 @@ pub fn spots(state: &State, room: &Room, heard: f64) -> Vec<LaneSpot> {
             let Some(plot) = plots.lanes.iter().find(|p| p.lane == l.lane) else {
                 continue;
             };
-            let rect = room.pixels(l.rect);
+            let rect = room.px().pixels(l.rect);
             let rows = rows(l.above, l.full);
             out.push(LaneSpot {
                 rect,

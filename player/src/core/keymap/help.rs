@@ -15,13 +15,13 @@ pub fn keys_label(binding: &Binding) -> String {
 }
 
 /// The first key bound to `op` in `context`, else anywhere
-/// ([`Context::Global`], as [`super::lookup`] falls back to it), written as
+/// ([`super::ANYWHERE`], as [`super::lookup`] falls back to them), written as
 /// the help writes it (`←`, `enter`): for the keys a screen's foot or a
 /// tab's border names. Empty where it is bound to none.
 pub fn hint(context: Context, op: Op) -> String {
-    [context, Context::Global]
-        .iter()
-        .find_map(|&c| KEYMAP.iter().find(|b| b.context == c && b.op == op))
+    std::iter::once(context)
+        .chain(super::ANYWHERE)
+        .find_map(|c| KEYMAP.iter().find(|b| b.context == c && b.op == op))
         .and_then(|b| b.keys.first())
         .map_or_else(String::new, |k| k.label())
 }
@@ -89,12 +89,13 @@ pub fn help_sections() -> Vec<HelpSection> {
         let Some(line) = binding.help_line() else {
             continue;
         };
-        match sections.iter_mut().find(|(c, _)| *c == binding.context) {
+        let context = binding.context.help_section();
+        match sections.iter_mut().find(|(c, _)| *c == context) {
             Some((_, section)) => section.lines.push(line),
             None => sections.push((
-                binding.context,
+                context,
                 HelpSection {
-                    title: binding.context.title(),
+                    title: context.title(),
                     lines: vec![line],
                 },
             )),

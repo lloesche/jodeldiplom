@@ -14,8 +14,9 @@ use jodel_playback::Command;
 use jodel_rhythm::Analysis;
 
 use super::draft::{pairing, transition_into};
-use super::tab::{block, block_mut, Pan};
+use super::tab::{block, block_mut};
 use crate::core::lanes::{self, rhythmed, Block};
+use crate::core::timeview::{self, centred_start, Fitted, Floor, LyricsFit, PanInput};
 use crate::core::transition::Status;
 use crate::core::{Effect, State};
 
@@ -26,9 +27,6 @@ pub const ZOOMS: [usize; 8] = [1, 2, 4, 8, 16, 32, 64, 0];
 pub const DEFAULT_ZOOM: usize = 4;
 /// A bar's length where the playing track's is not known, in seconds.
 const FALLBACK_BAR: f64 = 2.0;
-/// The share of the span shown before the playhead while following, and
-/// before the cursor when it is brought into view.
-pub const LEAD: f64 = 1.0 / 3.0;
 
 /// How long the next track's block takes to slide up into the playing
 /// track's after a transition hands over, in milliseconds.
@@ -85,11 +83,7 @@ fn bar_seconds(a: &Analysis) -> Option<f64> {
 
 /// The length of a block's track, as far as known.
 fn duration(state: &State, which: Block) -> f64 {
-    rhythmed(state, which).map_or(0.0, |r| {
-        r.analysis
-            .duration
-            .max(r.waveform.as_ref().map_or(0.0, |w| w.duration()))
-    })
+    rhythmed(state, which).map_or(0.0, |r| r.length())
 }
 
 /// A block's zoom: its own (the wheel's), else the tab's.
@@ -141,18 +135,20 @@ pub fn window(state: &State, which: Block, heard: f64) -> (f64, f64) {
     if whole(state, which) {
         return (0.0, span);
     }
-    let b = block(state, which);
     let into = transition_into(state).map(|s| s.map.at(heard));
-    let start = match (b.start, which, into) {
-        (Some(start), _, _) => start,
-        (None, Block::Now, _) => heard - LEAD * span,
+    let playhead = match which {
+        Block::Now => Some(heard),
         // Mixed in (or about to be): it follows its own playhead, which
         // stays under the playing track's.
-        (None, Block::Next, Some(at)) => at - LEAD * span,
-        (None, Block::Next | Block::Prev, _) => {
-            rhythmed(state, which).map_or(0.0, |r| first_bar(&r.analysis) - 0.05 * span)
-        }
+        Block::Next => into,
+        Block::Prev => None,
     };
+    let start = block(state, which)
+        .view
+        .leading(span, playhead)
+        .unwrap_or_else(|| {
+            rhythmed(state, which).map_or(0.0, |r| first_bar(&r.analysis) - 0.05 * span)
+        });
     let start = start.max(0.0);
     (start, start + span)
 }
@@ -240,10 +236,10 @@ fn put_cursor(state: &mut State, which: Block, beat: usize, select: bool, heard:
     }
     b.cursor = Some(beat);
     if !whole && (time < start || time >= end) {
-        b.start = Some((time - LEAD * span).max(0.0));
-    } else if b.start.is_none() && following {
+        b.view.lead_to(time, span);
+    } else if b.view.is_following() && following {
         // The view stops following where it is.
-        b.start = Some(start);
+        b.view.hold(start);
     }
 }
 
@@ -290,8 +286,8 @@ fn set_zoom(state: &mut State, z: usize, heard: f64) {
         let span = span(state, which);
         let mid = 0.5 * (old[i].0 + old[i].1);
         let b = block_mut(state, which);
-        if b.start.is_some() {
-            b.start = Some((mid - 0.5 * span).max(0.0));
+        if !b.view.is_following() {
+            b.view.hold(centred_start(mid, span));
         }
     }
 }
@@ -302,40 +298,44 @@ fn set_zoom(state: &mut State, z: usize, heard: f64) {
 /// goes on following it; one moved by hand keeps its middle.
 pub(super) fn fit_lyrics(state: &mut State, heard: f64) {
     let which = state.transition.focus;
-    let width = state.fit.lane_letters;
-    if width == 0 {
-        return;
-    }
     let lyrics = lanes::lyrics(state, which);
     let words = lyrics
         .as_deref()
         .map(lanes::fitted_words)
         .unwrap_or_default();
-    if words.is_empty() {
-        state.info(lanes::NOTHING_TO_FIT);
-        return;
-    }
     let spans: Vec<f64> = (0..ZOOMS.len()).map(|z| span_at(state, z)).collect();
-    let left_out = |per| lanes::words_left_out(&words, per, 1);
-    let (z, fits) = lanes::widest_fit(&spans, width, lanes::LYRICS_MOST_PER, &left_out);
-    let from = zoom_of(state, which);
-    // A view following the playhead (or, the next track's, at its first
-    // bar) goes on doing so; one moved by hand stays around its middle.
-    let following = block(state, which).start.is_none();
-    zoom_block(state, which, z as isize - from as isize, None, heard);
-    if following {
-        block_mut(state, which).start = None;
-    }
-    let shown = match ZOOMS[z] {
+    let shown = |z: usize| match ZOOMS[z] {
         0 => "the whole track".to_owned(),
         1 => "1 bar".to_owned(),
         bars => format!("{bars} bars"),
     };
-    let track = match which {
-        Block::Next => "the next track",
-        _ => "the playing track",
+    let fit = LyricsFit {
+        what: match which {
+            Block::Next => "the next track",
+            _ => "the playing track",
+        },
+        words: &words,
+        letters: state.fit.lane_letters,
+        spans: &spans,
+        floor: Floor::PerSecond(lanes::LYRICS_MOST_PER),
+        cut: &|words, per| lanes::words_left_out(words, per, 1),
+        shown: &shown,
     };
-    state.info(lanes::fit_said(track, &shown, fits));
+    let Some(fitted) = timeview::fit_lyrics(&fit) else {
+        return;
+    };
+    if let Fitted::Zoom { index, .. } = fitted {
+        // A view following the playhead (or, the next track's, at its
+        // first bar) goes on doing so; one moved by hand stays around its
+        // middle.
+        let following = block(state, which).view.is_following();
+        let from = zoom_of(state, which);
+        zoom_block(state, which, index as isize - from as isize, None, heard);
+        if following {
+            block_mut(state, which).view.follow();
+        }
+    }
+    state.info(fitted.said());
 }
 
 /// Zooms one block (the wheel over it), keeping `at` (seconds into its
@@ -349,16 +349,11 @@ fn zoom_block(state: &mut State, which: Block, by: isize, at: Option<f64>, heard
         return;
     }
     let at = at.unwrap_or(0.5 * (start + end)).clamp(start, end);
-    // Where the time is across the view, 0 to 1.
-    let share = if end > start {
-        (at - start) / (end - start)
-    } else {
-        0.5
-    };
     block_mut(state, which).zoom = Some(z);
     let span = span(state, which);
     if !whole(state, which) {
-        block_mut(state, which).start = Some((at - share * span).max(0.0));
+        let left = timeview::zoomed_start((start, end), span, at, 0.5);
+        block_mut(state, which).view.hold(left);
     }
 }
 
@@ -408,7 +403,7 @@ pub(crate) fn seek(state: &mut State, fx: &mut Vec<Effect>, time: f64) {
     let seconds = time.clamp(0.0, duration);
     state.playing.position = seconds;
     fx.push(Effect::Engine(Command::Seek(seconds)));
-    block_mut(state, Block::Now).start = None;
+    block_mut(state, Block::Now).view.follow();
 }
 
 /// The next track's overview was clicked at `time`: its view goes there.
@@ -417,7 +412,7 @@ pub(crate) fn jump(state: &mut State, which: Block, time: f64) {
         return;
     }
     let span = span(state, which);
-    block_mut(state, which).start = Some((time - 0.5 * span).max(0.0));
+    block_mut(state, which).view.hold(centred_start(time, span));
 }
 
 /// The view scrolls by a share of the span (the wheel with shift).
@@ -428,47 +423,35 @@ pub(crate) fn scroll(state: &mut State, which: Block, share: f64) {
     let heard = state.heard();
     let (start, _) = window(state, which, heard);
     let span = span(state, which);
-    block_mut(state, which).start = Some((start + share * span).max(0.0));
+    block_mut(state, which)
+        .view
+        .hold((start + share * span).max(0.0));
 }
 
-/// The secondary button went down over a block (`overview`: over its
-/// whole track) at `at` across, of an area `width` wide (in the window's
-/// units): a drag of its view starts.
-pub(crate) fn pan_start(state: &mut State, which: Block, at: f32, width: f32, overview: bool) {
-    if whole(state, which) || width <= 0.0 || which == Block::Prev {
-        return;
+/// The secondary button on a block's view (`overview`: over its whole
+/// track): pressed `at` across an area `width` wide (in the window's units),
+/// a drag of the view starts; as the pointer moves, the view moves with it
+/// (dragged right, the waveform goes right, to earlier times; on the whole
+/// track, the span shown follows the pointer); let go of, it ends.
+pub(crate) fn pan(state: &mut State, which: Block, overview: bool, input: PanInput) {
+    match input {
+        PanInput::Start { at, width } => {
+            if whole(state, which) || width <= 0.0 || which == Block::Prev {
+                return;
+            }
+            let heard = state.heard();
+            let (start, end) = window(state, which, heard);
+            let per_unit = if overview {
+                -duration(state, which) / f64::from(width)
+            } else {
+                (end - start) / f64::from(width)
+            };
+            state.transition.focus = which;
+            block_mut(state, which).view.start_pan(at, start, per_unit);
+        }
+        PanInput::To(at) => block_mut(state, which).view.pan_to(at),
+        PanInput::End => block_mut(state, which).view.end_pan(),
     }
-    let heard = state.heard();
-    let (start, end) = window(state, which, heard);
-    let per_unit = if overview {
-        -duration(state, which) / f64::from(width)
-    } else {
-        (end - start) / f64::from(width)
-    };
-    state.transition.focus = which;
-    state.transition.pan = Some(Pan {
-        block: which,
-        per_unit,
-        at,
-        start,
-    });
-}
-
-/// The pointer is at `at` across with a drag of a view under way: the
-/// view moves with it (dragged right, the waveform goes right, to earlier
-/// times; on the whole track, the span shown follows the pointer).
-pub(crate) fn pan_to(state: &mut State, at: f32) {
-    let Some(pan) = state.transition.pan else {
-        return;
-    };
-    let moved = f64::from(at) - f64::from(pan.at);
-    let start = (pan.start - moved * pan.per_unit).max(0.0);
-    block_mut(state, pan.block).start = Some(start);
-}
-
-/// The drag of a view ends.
-pub(crate) fn pan_end(state: &mut State) {
-    state.transition.pan = None;
 }
 
 /// The wheel without shift over a block: that block zooms in (`by` < 0)

@@ -54,7 +54,7 @@ pub fn key(path: &Path, lyrics: &Lyrics, waveform: &Waveform) -> String {
                 w.backing,
                 w.letters.iter().map(|l| l.to_bits()).collect::<Vec<_>>()
             );
-            if w.not_sung {
+            if w.edit.not_sung {
                 text.push_str("not sung;");
             }
         }

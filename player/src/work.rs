@@ -184,6 +184,20 @@ impl<T> Lanes<T> {
         }
     }
 
+    /// `item`, waiting ahead, wanted now: moved to the end of what is
+    /// wanted, before what waits ahead. Nothing where it does not wait
+    /// ahead.
+    pub fn hurry(&mut self, item: &T)
+    where
+        T: PartialEq,
+    {
+        if let Some(k) = self.ahead.iter().position(|t| t == item) {
+            if let Some(t) = self.ahead.remove(k) {
+                self.now.push_back(t);
+            }
+        }
+    }
+
     /// The next thing to do: the first wanted, else the first ahead.
     pub fn pop(&mut self) -> Option<(T, Lane)> {
         let lane = if self.now.is_empty() {
@@ -323,6 +337,28 @@ mod tests {
         assert_eq!((lanes.asked(Lane::Now), lanes.asked(Lane::Ahead)), (1, 2));
         assert_eq!(lanes.pop(), Some((4, Lane::Ahead)));
         assert_eq!(lanes.pop(), None);
+    }
+
+    /// One waiting ahead, wanted now: on to the end of the wanted, before
+    /// what waits ahead; one that waits nowhere ahead stays as it is.
+    #[test]
+    fn one_hurried_goes_from_ahead_to_the_end_of_the_wanted() {
+        let mut lanes = Lanes::default();
+        lanes.prepare([1, 2, 3]);
+        lanes.want([4]);
+        lanes.hurry(&2);
+        lanes.hurry(&4);
+        lanes.hurry(&9);
+        let order: Vec<(i32, Lane)> = std::iter::from_fn(|| lanes.pop()).collect();
+        assert_eq!(
+            order,
+            [
+                (4, Lane::Now),
+                (2, Lane::Now),
+                (1, Lane::Ahead),
+                (3, Lane::Ahead)
+            ]
+        );
     }
 
     #[test]

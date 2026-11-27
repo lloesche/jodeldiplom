@@ -8,10 +8,10 @@ use std::time::{Duration, Instant};
 
 use jodel_gpu::{GpuAsr, GpuSpeech, Kept, Resident};
 use jodel_lyrics::aligner::{Acoustic, CtcAligner};
-use jodel_lyrics::asr::Transcript;
+use jodel_lyrics::asr::{Part, Transcript};
 use jodel_lyrics::ctc::Emissions;
 use jodel_lyrics::lines::transcript_lyrics;
-use jodel_lyrics::prepare::{self, Others};
+use jodel_lyrics::prepare::{self, Text};
 use jodel_lyrics::speech::Wav2Vec2;
 use jodel_lyrics::{Lyrics, Maker};
 
@@ -108,19 +108,23 @@ impl SpeechTimer {
         self.models.has_asr().then_some(&*self.asr)
     }
 
-    /// `f` given the speech recogniser `asr` (where it is there) on the GPU
-    /// where it sets up: in the recogniser's turn.
-    fn hearing<T>(
+    /// What the speech recogniser `asr` (where it is there) hears in the
+    /// `voice` of `path`, in the recogniser's turn ([`Steps::listen`]): its
+    /// transcript, checked by `enough`, and its glimpses.
+    fn heard(
         &self,
         path: &Path,
-        asr: Option<&Kept<GpuAsr>>,
-        f: impl FnOnce(Option<&Kept<GpuAsr>>) -> T,
-    ) -> T {
+        steps: &mut Steps,
+        (asr, voice): (Option<&Kept<GpuAsr>>, &[f32]),
+        enough: impl FnOnce(&Transcript) -> Result<(), String>,
+    ) -> Result<(Transcript, Vec<Part>), String> {
         let Some(asr) = asr else {
-            return f(None);
+            return steps.listen(None, voice, enough);
         };
         let name = crate::work::song_name(path);
-        stages::run(&[Stage::Hearing], &name, || f(asr.usable().then_some(asr)))
+        stages::run(&[Stage::Hearing], &name, || {
+            steps.listen(asr.usable().then_some(asr), voice, enough)
+        })
     }
 
     /// `f` given the speech model that times the words: in its turn.
@@ -168,23 +172,17 @@ impl WordTimer for SpeechTimer {
         jodel_lyrics::aligner::aligner_maker(&jodel_lyrics::speech::maker())
     }
 
-    fn time(&self, path: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String> {
+    fn time(&self, path: &Path, lyrics: &Lyrics, text: &Text) -> Result<Lyrics, String> {
         let mut steps = Steps::default();
         let voice = steps.voice(self.stems.as_deref(), path)?;
-        // Any text checked against what is sung (one from LRCLIB swapped
-        // for one of its others when it does not fit: `others` has none
-        // for the file's own); what was heard, in the transcript's parts
-        // and in glimpses, also pins the words to where it was.
-        let heard = self.hearing(path, self.recogniser(), |asr| {
-            steps.listen(asr, &voice, |_| Ok(()))
-        });
-        let (lyrics, fit, parts, glimpses) = match heard {
-            Ok((heard, glimpses)) => {
-                let (lyrics, fit) = prepare::text(lyrics, &heard, others);
-                (lyrics, fit, heard.parts, glimpses)
-            }
-            Err(_) => (lyrics.clone(), None, Vec::new(), Vec::new()),
-        };
+        // The text checked against what is sung, as `text` lets it be made
+        // (one from LRCLIB swapped for one of its others when it does not
+        // fit; one edited as it is); what was heard, in the transcript's
+        // parts and in glimpses, also pins the words to where it was.
+        let heard = self.heard(path, &mut steps, (self.recogniser(), &voice), |_| Ok(()));
+        let (lyrics, fit) = prepare::text(lyrics, heard.as_ref().ok().map(|(t, _)| t), text);
+        let (parts, glimpses) =
+            heard.map_or_else(|_| (Vec::new(), Vec::new()), |(t, g)| (t.parts, g));
         let mut timed = self.timing(path, |model| {
             steps.align(model, &voice, &lyrics, (&parts, &glimpses))
         })?;
@@ -193,35 +191,16 @@ impl WordTimer for SpeechTimer {
         Ok(timed)
     }
 
-    fn time_edited(&self, path: &Path, lyrics: &Lyrics) -> Result<Lyrics, String> {
-        let mut steps = Steps::default();
-        let voice = steps.voice(self.stems.as_deref(), path)?;
-        // The text stays as edited; what was heard still pins its words to
-        // where they were sung.
-        let (parts, glimpses) = self
-            .hearing(path, self.recogniser(), |asr| {
-                steps.listen(asr, &voice, |_| Ok(()))
-            })
-            .map_or_else(|_| (Vec::new(), Vec::new()), |(heard, g)| (heard.parts, g));
-        let timed = self.timing(path, |model| {
-            steps.align(model, &voice, lyrics, (&parts, &glimpses))
-        })?;
-        steps.note(path);
-        Ok(timed)
-    }
-
     fn transcribe(&self, path: &Path) -> Result<(Lyrics, Lyrics), String> {
         let asr = self.recogniser().ok_or("no speech recogniser here")?;
         let mut steps = Steps::default();
         let voice = steps.voice(self.stems.as_deref(), path)?;
-        let (heard, glimpses) = self.hearing(path, Some(asr), |asr| {
-            steps.listen(asr, &voice, |heard| {
-                if prepare::enough_heard(&heard.text) {
-                    Ok(())
-                } else {
-                    Err(TOO_LITTLE_HEARD.to_owned())
-                }
-            })
+        let (heard, glimpses) = self.heard(path, &mut steps, (Some(asr), &voice), |heard| {
+            if prepare::enough_heard(&heard.text) {
+                Ok(())
+            } else {
+                Err(TOO_LITTLE_HEARD.to_owned())
+            }
         })?;
         let text = transcript_lyrics(&heard, asr_maker());
         let timed = self.timing(path, |model| {
@@ -278,7 +257,7 @@ impl Steps {
         model: Arc<dyn Acoustic + Send + Sync>,
         voice: &[f32],
         lyrics: &Lyrics,
-        (parts, glimpses): (&[jodel_lyrics::asr::Part], &[jodel_lyrics::asr::Part]),
+        (parts, glimpses): (&[Part], &[Part]),
     ) -> Lyrics {
         let started = Instant::now();
         let timed = CtcAligner::new(model).align(voice, lyrics, parts, glimpses);
@@ -294,7 +273,7 @@ impl Steps {
         asr: Option<&Kept<GpuAsr>>,
         voice: &[f32],
         enough: impl FnOnce(&Transcript) -> Result<(), String>,
-    ) -> Result<(Transcript, Vec<jodel_lyrics::asr::Part>), String> {
+    ) -> Result<(Transcript, Vec<Part>), String> {
         let asr = asr.ok_or("the speech recogniser does not set up here")?;
         let heard = self.hear(asr, || asr.run(|a| a.transcribe(voice)), |s| &mut s.heard)?;
         enough(&heard)?;

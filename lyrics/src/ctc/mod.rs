@@ -38,9 +38,9 @@
 //! - **The source's line times** ([`CtcSettings::scaffold`]): where a
 //!   synced text's times fit the recording, each line's words cost to
 //!   start, and to be, outside the window around its time (the `lines`
-//!   [`align_heard`] is given, made by [`crate::scaffold`], which aligns
+//!   [`align_held`] is given, made by [`crate::scaffold`], which aligns
 //!   the song without them first to check them).
-//! - **Words set by hand** ([`crate::Word::pinned`]): a word moved by hand
+//! - **Words set by hand** ([`crate::WordEdit::pin`]): a word moved by hand
 //!   is held to its times, all but hard ([`PINNED`] a frame off them), and
 //!   nothing else may be sung there, so the words around it fit around
 //!   it; it keeps its times exactly, and its letters are read from the
@@ -50,21 +50,24 @@
 //! frames by 3,000 states) takes some tens of milliseconds and a byte of
 //! back-pointer a frame and state.
 //!
-//! [`align_heard`] puts it together: the tokens, the costs, the path, each
-//! word's times and confidence (the mean posterior of its frames), and the
-//! words under the confidence threshold timed between their neighbours;
-//! [`crate::aligner::CtcAligner`] runs it on a model's emissions.
+//! [`align_held`] puts it together: the tokens, the costs (one source a
+//! function, in `costs`), the path, each word's times and confidence (the
+//! mean posterior of its frames), and the words under the confidence
+//! threshold timed between their neighbours; [`crate::aligner::CtcAligner`]
+//! runs it on a model's emissions.
 
 use std::ops::Range;
 
 use crate::asr::Part;
 use crate::spread;
 use crate::tokens::{tokenize, TokenWord, Tokens, Vocab};
-use crate::{Detail, Lyrics, Timing, CONFIDENT, GIVEN};
+use crate::{Detail, Lyrics, Timing, CONFIDENT};
 
+mod costs;
 mod path;
 
 pub use path::{force_align, Costs, Emissions, FrameClock, Path, Skip, StayCost};
+use path::{state_count, states_of, token_at};
 
 /// How the CTC alignment goes.
 #[derive(Clone, Debug, PartialEq)]
@@ -111,7 +114,7 @@ pub struct CtcSettings {
     /// path has them, for it to be heard surely.
     pub island_heard: f32,
     /// The cost of a word of a line starting outside the window its
-    /// source's synced times hold it in ([`align_heard`]'s `lines`,
+    /// source's synced times hold it in ([`align_held`]'s `lines`,
     /// [`crate::scaffold`]), and of each second of the line (from its first
     /// letter to its last) outside it, in log-probability; 0 for none. A
     /// short line put far away pays for its words, a word held on past its
@@ -180,7 +183,7 @@ pub const ISLAND_HEARD: f32 = 0.5;
 pub const ISLAND_GAP: f64 = 2.0;
 
 /// What a frame costs off a word's times set by hand
-/// ([`crate::Word::pinned`]): its letters on a frame outside them, or
+/// ([`crate::WordEdit::pin`]): its letters on a frame outside them, or
 /// another word's on a frame inside them. Hard, in effect: a frame of the
 /// least likely letter costs some tens.
 pub const PINNED: f32 = 1000.0;
@@ -219,23 +222,34 @@ pub fn align_emissions(
     settings: &CtcSettings,
     hints: &Hints,
 ) -> Option<Lyrics> {
-    align_heard(emissions, lyrics, vocab, settings, hints, &[]).map(|(lyrics, _)| lyrics)
+    align_held(emissions, lyrics, vocab, settings, hints, &[])
 }
 
 /// [`align_emissions`], with each line's words held within `lines` (for
 /// each line of the lyrics, the seconds where its source's synced times
 /// say it is sung, [`crate::scaffold::held`]; empty for none:
-/// [`CtcSettings::scaffold`]), and how well the model heard the words: the
-/// mean probability of the letters on the frames the path has them (the
-/// blanks between are likely anywhere, so they tell nothing).
-pub fn align_heard(
+/// [`CtcSettings::scaffold`]).
+pub fn align_held(
     emissions: &Emissions,
     lyrics: &Lyrics,
     vocab: &Vocab,
     settings: &CtcSettings,
     hints: &Hints,
     lines: &[Option<(f64, f64)>],
-) -> Option<(Lyrics, f32)> {
+) -> Option<Lyrics> {
+    align_path(emissions, lyrics, vocab, settings, hints, lines).map(|(lyrics, _)| lyrics)
+}
+
+/// [`align_held`], and the path the words were read from (how well the
+/// model heard them on it: [`heard`]).
+pub fn align_path(
+    emissions: &Emissions,
+    lyrics: &Lyrics,
+    vocab: &Vocab,
+    settings: &CtcSettings,
+    hints: &Hints,
+    lines: &[Option<(f64, f64)>],
+) -> Option<(Lyrics, Path)> {
     let job = Job::new(emissions, lyrics, vocab, settings, hints);
     let mut costs = Costs {
         stay: Vec::new(),
@@ -243,25 +257,38 @@ pub fn align_heard(
     };
     // A frame's costs are added up in the order they are put in, and a sum
     // of floats depends on its order: keep this one.
-    pause_costs(&job, &mut costs);
-    pin_costs(&job, &mut costs);
-    unheard_costs(&job, &mut costs);
-    scaffold_costs(&job, &mut costs, lines);
-    pinned_costs(&job, &mut costs);
+    costs::pauses(&job, &mut costs);
+    costs::heard_windows(&job, &mut costs);
+    costs::unheard(&job, &mut costs);
+    costs::scaffold(&job, &mut costs, lines);
+    costs::pinned(&job, &mut costs);
     let skips = job.skips();
     let align = |costs: &Costs| force_align(emissions, &job.tokens.ids, vocab.blank, &skips, costs);
     let mut path = align(&costs)?;
     // Aligned again: with each line's start where the glimpses heard it,
     // near where this path put it, and the opening, up to the first island,
     // pulled together.
-    let near = glimpse_costs(&job, &mut costs, &path);
-    let pulled = opening_costs(&job, &mut costs, &path);
+    let near = costs::glimpsed(&job, &mut costs, &path);
+    let pulled = costs::opening(&job, &mut costs, &path);
     if near || pulled {
         if let Some(p) = align(&costs) {
             path = p;
         }
     }
-    Some(job.read(&path))
+    Some((job.read(&path), path))
+}
+
+/// How well the model heard the words of `lyrics` on `path` (through
+/// `emissions`, as [`align_path`] found it): the mean probability of the
+/// letters on the frames the path has them (the blanks between are likely
+/// anywhere, so they tell nothing).
+pub fn heard(emissions: &Emissions, lyrics: &Lyrics, vocab: &Vocab, path: &Path) -> f32 {
+    let ids = tokenize(lyrics, vocab).ids;
+    let (sum, count) = (path.states.iter().enumerate())
+        .filter_map(|(f, &s)| Some((f, token_at(s as usize)?)))
+        .map(|(f, k)| emissions.at(f, ids[k]).exp())
+        .fold((0.0f32, 0usize), |(sum, n), p| (sum + p, n + 1));
+    sum / count.max(1) as f32
 }
 
 /// What one alignment works with: the lyrics as tokens, and what is known
@@ -272,12 +299,12 @@ struct Job<'a> {
     vocab: &'a Vocab,
     settings: &'a CtcSettings,
     hints: &'a Hints,
+    /// The emissions' frames.
+    clock: FrameClock,
     tokens: Tokens,
-    /// Each line with spelt words: the line, its first token and its last
-    /// ([`line_tokens`]).
-    lines: Vec<(usize, usize, usize)>,
-    /// Each line's first word's index among all the lyrics' words.
-    flat_start: Vec<usize>,
+    /// Each line with spelt words: the line, and its tokens from its first
+    /// word's first to its last word's last ([`line_tokens`]).
+    lines: Vec<(usize, Range<usize>)>,
 }
 
 impl<'a> Job<'a> {
@@ -290,50 +317,26 @@ impl<'a> Job<'a> {
     ) -> Job<'a> {
         let tokens = tokenize(lyrics, vocab);
         let lines = line_tokens(&tokens);
-        let flat_start = lyrics
-            .lines
-            .iter()
-            .scan(0, |at, l| {
-                let here = *at;
-                *at += l.words.len();
-                Some(here)
-            })
-            .collect();
         Job {
             emissions,
             lyrics,
             vocab,
             settings,
             hints,
+            clock: emissions.clock(),
             tokens,
             lines,
-            flat_start,
         }
     }
 
-    fn fs(&self) -> f64 {
-        self.emissions.frame_seconds
-    }
-
     fn states(&self) -> usize {
-        2 * self.tokens.ids.len() + 1
+        state_count(self.tokens.ids.len())
     }
 
-    /// The frames from `a` to `b` seconds, rounded outward
-    /// ([`FrameClock::outward`]), and a frame after.
-    fn within(&self, a: f64, b: f64) -> Range<usize> {
-        let frames = self.emissions.clock().outward(a, b);
-        frames.start..frames.end + 1
-    }
-
-    /// Where a recogniser heard word `w` start, if it did
-    /// ([`Hints::windows`]).
-    fn heard_window(&self, w: &TokenWord) -> Option<(f64, f64)> {
-        self.hints
-            .windows
-            .get(self.flat_start[w.line] + w.word)
-            .copied()
-            .flatten()
+    /// Where a recogniser heard word `k` (among all the lyrics' words)
+    /// start, if it did ([`Hints::windows`]).
+    fn heard_window(&self, k: usize) -> Option<(f64, f64)> {
+        self.hints.windows.get(k).copied().flatten()
     }
 
     /// Where nothing with words was heard, what a frame on each state
@@ -342,17 +345,15 @@ impl<'a> Job<'a> {
     /// which is sung where no words are.
     fn spanned(&self, cost: f32) -> Vec<f32> {
         let mut out = vec![0.0; self.states()];
-        for &(l, a, b) in &self.lines {
-            if self.lyrics.lines[l]
+        for (l, tokens) in &self.lines {
+            if self.lyrics.lines[*l]
                 .words
                 .iter()
                 .all(|w| crate::glimpses::vocable(&w.text))
             {
                 continue;
             }
-            for c in &mut out[2 * a + 1..2 * b + 2] {
-                *c = cost;
-            }
+            out[states_of(tokens.clone())].fill(cost);
         }
         out
     }
@@ -364,11 +365,10 @@ impl<'a> Job<'a> {
     /// which starts outside the window a recogniser heard it in
     /// ([`Job::heard_window`]). `None` when there is no such run.
     fn first_island(&self, path: &Path) -> Option<(usize, usize)> {
-        let (emissions, settings) = (self.emissions, self.settings);
+        let (emissions, settings, clock) = (self.emissions, self.settings, self.clock);
         let ids = &self.tokens.ids;
         let sep = self.vocab.separator;
         let spans = path.token_frames(ids.len());
-        let fs = self.fs();
         let heard = |range: &Range<usize>| {
             let (mut sum, mut n) = (0.0f32, 0usize);
             for k in range.clone().filter(|&k| ids[k] != sep) {
@@ -385,14 +385,14 @@ impl<'a> Job<'a> {
         };
         let mut first = None;
         let (mut run, mut island, mut last_end) = (0, 0, f64::NEG_INFINITY);
-        for w in &self.tokens.words {
+        for (k, w) in self.tokens.words.iter().enumerate() {
             let Some(range) = &w.tokens else {
                 continue;
             };
             first.get_or_insert(range.start);
-            let start = spans[range.start].as_ref().map(|r| r.start as f64 * fs);
-            let end = spans[range.end - 1].as_ref().map(|r| r.end as f64 * fs);
-            let placed = match (start, self.heard_window(w)) {
+            let start = spans[range.start].as_ref().map(|r| clock.time(r.start));
+            let end = spans[range.end - 1].as_ref().map(|r| clock.time(r.end));
+            let placed = match (start, self.heard_window(k)) {
                 (None, _) => false,
                 (Some(t), Some((a, b))) => a <= t && t <= b,
                 (Some(_), None) => true,
@@ -418,9 +418,9 @@ impl<'a> Job<'a> {
     }
 
     /// The times word `w` was set to by hand, if it was
-    /// ([`crate::Word::pinned`]).
+    /// ([`crate::WordEdit::pin`]).
     fn pin(&self, w: &TokenWord) -> Option<(f64, f64)> {
-        self.lyrics.lines[w.line].words[w.word].pin()
+        self.lyrics.word(w.at).and_then(|word| word.edit.pin)
     }
 
     /// The backing words the path may leave out (not one set by hand).
@@ -437,66 +437,50 @@ impl<'a> Job<'a> {
             .collect()
     }
 
-    /// The lyrics timed by `path`, and how well the model heard them.
-    fn read(&self, path: &Path) -> (Lyrics, f32) {
-        let (emissions, tokens, vocab, fs) = (self.emissions, &self.tokens, self.vocab, self.fs());
+    /// The lyrics timed by `path`.
+    fn read(&self, path: &Path) -> Lyrics {
+        let (emissions, tokens, vocab, clock) =
+            (self.emissions, &self.tokens, self.vocab, self.clock);
         let spans = path.token_frames(tokens.ids.len());
         let mut out = self.lyrics.clone();
         for w in &tokens.words {
-            let word = &mut out.lines[w.line].words[w.word];
-            word.start = None;
-            word.end = None;
-            word.confidence = 0.0;
-            let Some(range) = &w.tokens else {
-                continue;
-            };
-            let (Some(first), Some(last)) = (&spans[range.start], &spans[range.end - 1]) else {
-                continue;
-            };
-            let frames = first.start..last.end;
-            let sum: f32 = frames
-                .clone()
-                .map(|f| {
-                    let s = path.states[f] as usize;
-                    let token = if s % 2 == 1 {
-                        tokens.ids[s / 2]
-                    } else {
-                        vocab.blank
-                    };
-                    emissions.at(f, token).exp()
-                })
-                .sum();
-            word.start = Some(frames.start as f64 * fs);
-            word.end = Some(frames.end as f64 * fs);
-            word.confidence = sum / frames.len() as f32;
-            // Set by hand: its own times, its letters read from there.
-            let pin = self.pin(w);
-            let first = pin.map_or(frames.start, |(a, _)| (a / fs).round() as usize);
-            word.letters = letter_times(
-                &word.text,
-                range.clone(),
-                &tokens.ids,
-                &spans,
-                vocab,
-                fs,
-                first,
-            );
-            if let Some((a, b)) = pin {
-                word.start = Some(a);
-                word.end = Some(b);
-                word.confidence = GIVEN;
-                let most = (b - a).max(0.0) as f32;
-                for t in &mut word.letters {
-                    *t = t.min(most);
-                }
+            let word = &mut out[w.at];
+            word.clear_times();
+            let on_path = w.tokens.as_ref().and_then(|range| {
+                let (first, last) = (spans[range.start].as_ref()?, spans[range.end - 1].as_ref()?);
+                Some((range, first.start..last.end))
+            });
+            if let Some((range, frames)) = on_path {
+                let sum: f32 = frames
+                    .clone()
+                    .map(|f| {
+                        let s = path.states[f] as usize;
+                        let token = token_at(s).map_or(vocab.blank, |k| tokens.ids[k]);
+                        emissions.at(f, token).exp()
+                    })
+                    .sum();
+                word.start = Some(clock.time(frames.start));
+                word.end = Some(clock.time(frames.end));
+                word.confidence = sum / frames.len() as f32;
+                // Set by hand: its letters read from its own start.
+                let first = word
+                    .edit
+                    .pin
+                    .map_or(frames.start, |(a, _)| clock.nearest(a));
+                word.letters = letter_times(
+                    &word.text,
+                    range.clone(),
+                    &tokens.ids,
+                    &spans,
+                    vocab,
+                    clock,
+                    first,
+                );
             }
-        }
-        // A word set by hand keeps its times where the path has none for
-        // it (unspelt, or left out).
-        for w in &tokens.words {
-            let word = &mut out.lines[w.line].words[w.word];
-            if let (Some((a, b)), None) = (self.pin(w), word.start) {
-                (word.start, word.end, word.confidence) = (Some(a), Some(b), GIVEN);
+            // Set by hand: its own times, whatever the path has for it
+            // (none where it is unspelt or left out), its letters in them.
+            if word.keep_pin() {
+                word.clip_letters();
             }
         }
         spread::interpolate(&mut out.lines, self.settings.confident);
@@ -505,231 +489,38 @@ impl<'a> Job<'a> {
             by: None,
             fit: None,
         };
-        let (sum, count) = path
-            .states
-            .iter()
-            .enumerate()
-            .filter(|&(_, &s)| s % 2 == 1)
-            .map(|(f, &s)| emissions.at(f, tokens.ids[s as usize / 2]).exp())
-            .fold((0.0f32, 0usize), |(sum, n), p| (sum + p, n + 1));
-        (out, sum / count.max(1) as f32)
+        out
     }
 }
 
-/// The blanks inside a word (state 2i between its letters i - 1 and i)
-/// cost where the voice pauses ([`CtcSettings::inside_word`]); nothing
-/// when the pauses are not known.
-fn pause_costs(job: &Job, costs: &mut Costs) {
-    if job.hints.pauses.is_empty() {
-        return;
-    }
-    let ids = &job.tokens.ids;
-    let sep = job.vocab.separator;
-    let inside = job.settings.inside_word * job.fs() as f32;
-    let by_state = (0..job.states())
-        .map(|s| {
-            let i = s / 2;
-            let between =
-                s % 2 == 0 && i > 0 && i < ids.len() && ids[i - 1] != sep && ids[i] != sep;
-            if between {
-                inside
-            } else {
-                0.0
-            }
-        })
-        .collect();
-    costs.stay.push(StayCost::Marked {
-        by_state,
-        frames: Some(job.hints.pauses.clone()),
-    });
-}
-
-/// Each word set by hand ([`crate::Word::pinned`]) holds the path: its
-/// letters cost [`PINNED`] a frame outside its times, and on its frames
-/// every state but its own and the word breaks either side of it costs as
-/// much (a break may fall on its first or last frame, so two words set end
-/// to end still fit).
-fn pinned_costs(job: &Job, costs: &mut Costs) {
-    let mut letters = vec![None; job.states()];
-    let mut holds = vec![None; job.emissions.frames()];
-    let mut any = false;
-    for w in &job.tokens.words {
-        let (Some(range), Some((a, b))) = (&w.tokens, job.pin(w)) else {
-            continue;
-        };
-        let within = job.emissions.clock().outward(a, b);
-        let own = 2 * range.start + 1..2 * range.end;
-        for slot in &mut letters[own.clone()] {
-            *slot = Some((within.clone(), PINNED));
-        }
-        let around = own.start.saturating_sub(2)..(own.end + 2).min(job.states());
-        for hold in &mut holds[within] {
-            *hold = Some((around.clone(), PINNED));
-        }
-        any = true;
-    }
-    if any {
-        costs.stay.push(StayCost::Outside(letters));
-        costs.stay.push(StayCost::Held(holds));
-    }
-}
-
-/// A word a recogniser heard costs to start outside where it heard it
-/// ([`CtcSettings::window_penalty`]).
-fn pin_costs(job: &Job, costs: &mut Costs) {
-    let penalty = job.settings.window_penalty;
-    if penalty <= 0.0 || job.hints.windows.is_empty() {
-        return;
-    }
-    for w in &job.tokens.words {
-        let (Some(range), Some((a, b))) = (&w.tokens, job.heard_window(w)) else {
-            continue;
-        };
-        costs.entry[2 * range.start + 1].push((job.within(a, b), penalty));
-    }
-}
-
-/// A line's words cost to start outside its window in `windows`, and its
-/// letters (and the blanks between them) to be there
-/// ([`CtcSettings::scaffold`]).
-fn scaffold_costs(job: &Job, costs: &mut Costs, windows: &[Option<(f64, f64)>]) {
-    let penalty = job.settings.scaffold;
-    if penalty <= 0.0 || windows.is_empty() {
-        return;
-    }
-    let line_window = |l: usize| {
-        let &(from, to) = windows.get(l)?.as_ref()?;
-        Some(job.within(from, to))
-    };
-    let per_frame = penalty * job.fs() as f32;
-    let mut outside = vec![None; job.states()];
-    for &(l, a, b) in &job.lines {
-        if let Some(within) = line_window(l) {
-            for c in &mut outside[2 * a + 1..2 * b + 2] {
-                *c = Some((within.clone(), per_frame));
-            }
-        }
-    }
-    costs.stay.push(StayCost::Outside(outside));
-    for w in &job.tokens.words {
-        if let (Some(range), Some(within)) = (&w.tokens, line_window(w.line)) {
-            costs.entry[2 * range.start + 1].push((within, penalty));
-        }
-    }
-}
-
-/// A line costs over a stretch where the glimpses heard no words
-/// ([`CtcSettings::unheard`]).
-fn unheard_costs(job: &Job, costs: &mut Costs) {
-    if job.settings.unheard <= 0.0 || job.hints.glimpses.is_empty() {
-        return;
-    }
-    let cost = job.settings.unheard * job.fs() as f32;
-    costs.stay.push(StayCost::Marked {
-        by_state: job.spanned(cost),
-        frames: Some(crate::glimpses::unheard(
-            &job.hints.glimpses,
-            job.emissions.clock(),
-        )),
-    });
-}
-
-/// Each line's first word costs to start outside where the glimpses near
-/// where `path` put it heard it start, within the part the transcript has
-/// it in when it has it ([`CtcSettings::glimpse_penalty`]). Whether any
-/// does.
-fn glimpse_costs(job: &Job, costs: &mut Costs, path: &Path) -> bool {
-    let penalty = job.settings.glimpse_penalty;
-    if penalty <= 0.0 || job.hints.glimpses.is_empty() {
-        return false;
-    }
-    let fs = job.fs();
-    let spans = path.token_frames(job.tokens.ids.len());
-    let mut first = vec![None; job.lyrics.lines.len()];
-    for &(l, a, _) in &job.lines {
-        first[l] = spans[a].as_ref().map(|r| r.start as f64 * fs);
-    }
-    let starts = crate::glimpses::line_starts(job.lyrics, &job.hints.glimpses, &first);
-    let mut any = false;
-    for w in job.tokens.words.iter().filter(|w| w.word == 0) {
-        let (Some(range), Some(start)) = (&w.tokens, starts[w.line]) else {
-            continue;
-        };
-        let (c, d) = job
-            .heard_window(w)
-            .unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
-        let (a, b) = (start.from.max(c), start.to.min(d));
-        if a < b {
-            costs.entry[2 * range.start + 1].push((job.within(a, b), penalty));
-            any = true;
-        }
-    }
-    any
-}
-
-/// The opening, from the first word to the first island `path` hears,
-/// pulled together: every frame off the letters between costs
-/// ([`CtcSettings::opening_pull`]). Whether there is one.
-fn opening_costs(job: &Job, costs: &mut Costs, path: &Path) -> bool {
-    if job.settings.opening_pull <= 0.0 {
-        return false;
-    }
-    let Some((first, island)) = job.first_island(path) else {
-        return false;
-    };
-    let ids = &job.tokens.ids;
-    let sep = job.vocab.separator;
-    let pull = job.settings.opening_pull * job.fs() as f32;
-    let by_state = (0..job.states())
-        .map(|s| {
-            let inside = s > 2 * first + 1 && s < 2 * island + 1;
-            if inside && !on_letter(ids, sep, s) {
-                pull
-            } else {
-                0.0
-            }
-        })
-        .collect();
-    costs.stay.push(StayCost::Marked {
-        by_state,
-        frames: None,
-    });
-    true
-}
-
-/// Each line with spelt words: the line, its first token and its last.
-fn line_tokens(tokens: &Tokens) -> Vec<(usize, usize, usize)> {
-    let mut out: Vec<(usize, usize, usize)> = Vec::new();
+/// Each line with spelt words: the line, and its tokens from its first
+/// word's first to its last word's last.
+fn line_tokens(tokens: &Tokens) -> Vec<(usize, Range<usize>)> {
+    let mut out: Vec<(usize, Range<usize>)> = Vec::new();
     for w in &tokens.words {
         let Some(range) = &w.tokens else {
             continue;
         };
         match out.last_mut() {
-            Some(last) if last.0 == w.line => last.2 = range.end - 1,
-            _ => out.push((w.line, range.start, range.end - 1)),
+            Some((line, spelt)) if *line == w.at.line => spelt.end = range.end,
+            _ => out.push((w.at.line, range.clone())),
         }
     }
     out
 }
 
-/// Whether state `s` of `ids` is on a letter (not a blank, nor a word
-/// break).
-fn on_letter(ids: &[u32], sep: u32, s: usize) -> bool {
-    s % 2 == 1 && ids[s / 2] != sep
-}
-
 /// When each character of `text` is sung, in seconds after the word's first
-/// frame `first`: a letter from the first frame the path has its token on
-/// (the word's tokens are `ids[range]`, in order, apostrophes and breaks
-/// among them); anything else (punctuation, a letter the path has no frame
-/// for) at the character's before. Never earlier than the one before.
+/// frame `first` of `clock`: a letter from the first frame the path has its
+/// token on (the word's tokens are `ids[range]`, in order, apostrophes and
+/// breaks among them); anything else (punctuation, a letter the path has no
+/// frame for) at the character's before. Never earlier than the one before.
 fn letter_times(
     text: &str,
     range: Range<usize>,
     ids: &[u32],
     spans: &[Option<Range<usize>>],
     vocab: &Vocab,
-    fs: f64,
+    clock: FrameClock,
     first: usize,
 ) -> Vec<f32> {
     let mut out = Vec::with_capacity(text.chars().count());
@@ -744,7 +535,7 @@ fn letter_times(
             let at = (next..range.end).find(|&k| ids[k] == id);
             if let Some(k) = at {
                 if let Some(span) = &spans[k] {
-                    let t = (span.start.saturating_sub(first)) as f64 * fs;
+                    let t = clock.time(span.start.saturating_sub(first));
                     last = last.max(t as f32);
                 }
                 next = (k + spelt.len()).min(range.end);

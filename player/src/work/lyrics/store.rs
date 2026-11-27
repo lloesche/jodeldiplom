@@ -8,7 +8,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use jodel_lyrics::sources::read_text;
 use jodel_lyrics::{Found, Lyrics, Source};
 
-use super::edits::{marked, stamp};
 use crate::store::cache;
 
 /// How long "nothing found" is believed before LRCLIB is asked again.
@@ -172,7 +171,7 @@ impl Cache {
 
     /// Our word times of the song edited as `edits` under `key`, when kept
     /// in this player's version and made with these edits (their
-    /// [`stamp`]), the edits' marks on its words ([`marked`]); one of
+    /// [`stamp`]), the edits' marks on its words ([`Lyrics::with_edits`]); one of
     /// another version is deleted (it is timed again).
     pub fn edited(&self, key: &str, edits: &Lyrics) -> Option<Lyrics> {
         let text = self.read(key, "edited.lrc")?;
@@ -198,7 +197,7 @@ impl Cache {
             });
         }
         timed.lines = lines;
-        marked(&timed, edits)
+        timed.with_edits(edits)
     }
 
     /// Keeps `timed` (the song edited as `edits`, timed by us) under `key`,
@@ -210,6 +209,13 @@ impl Cache {
             &cache::LYRICS_EDITED.wrap(&body),
         )
     }
+}
+
+/// What names the timing made with `edits` in the cache: their stamp
+/// ([`Lyrics::edits_stamp`]) in 16 hex figures, as the caches name things
+/// ([`cache::name_of`]).
+fn stamp(edits: &Lyrics) -> String {
+    cache::name_of(edits.edits_stamp())
 }
 
 /// `lyrics` without when their source synced the lines (the text keeps

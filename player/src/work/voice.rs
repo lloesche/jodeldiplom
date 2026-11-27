@@ -42,7 +42,8 @@ pub fn voice(stems: Option<&Path>, path: &Path) -> Result<Voice, String> {
 /// channels averaged and resampled. Nothing is separated.
 pub fn voice_16k(mut file: jodel_playback::StemFile) -> Result<Vec<f32>, String> {
     use jodel_playback::stems::Stem;
-    let mut r = jodel_playback::Resampler::new(jodel_playback::stems::RATE, 16_000, 1);
+    let mut r =
+        jodel_playback::Resampler::new(jodel_playback::stems::RATE, jodel_lyrics::VOCALS_RATE, 1);
     let (mut voice, mut out) = (Vec::new(), Vec::new());
     let mut at = 0;
     while at < file.frames() {
@@ -128,7 +129,11 @@ fn separate_now(path: &Path, mix: bool) -> Result<(Vec<f32>, Vec<f32>), String> 
     }
     splitter.finish(&mut take)?;
     let to_16k = |x: &[f64]| {
-        let mut r = jodel_playback::Resampler::new(jodel_playback::stems::RATE, 16_000, 1);
+        let mut r = jodel_playback::Resampler::new(
+            jodel_playback::stems::RATE,
+            jodel_lyrics::VOCALS_RATE,
+            1,
+        );
         let mut out = Vec::new();
         r.process_f64(x, &mut out);
         r.finish_f64(&mut out);

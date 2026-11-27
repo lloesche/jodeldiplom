@@ -43,6 +43,7 @@ use iced::{window, Size};
 use jodel_output::SimClock;
 use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
+use jodeldiplom::core::timeview::TimeView;
 use jodeldiplom::core::{Action, DeviceChoice, Effect, Screen, Side, State};
 use jodeldiplom::gui::window::{Gui, Message};
 
@@ -123,7 +124,7 @@ impl Shots {
             Some(s) if s.screen == Screen::Settings => settings::Settings::of(s).to_string(),
             Some(s) if s.screen == Screen::Help => help::Page::of(s).to_string(),
             Some(s) if s.screen == Screen::Main => main_outline(s, size),
-            Some(s) if s.screen == Screen::Lyrics => lyrics::Editor::of(s)
+            Some(s) if matches!(s.screen, Screen::Lyrics(_)) => lyrics::Editor::of(s)
                 .map(|e| e.to_string())
                 .unwrap_or_default(),
             _ => String::new(),
@@ -413,8 +414,8 @@ fn lyrics_song() -> State {
     state.playing.position = 63.1;
     state.drawn_heard = Some(63.1);
     jodeldiplom::core::update(&mut state, Action::Op(Op::LyricsEditor));
-    if let Some(editor) = state.karaoke.editor.as_mut() {
-        (editor.screen.start, editor.screen.span) = (61.4, 12.0);
+    if let Screen::Lyrics(editor) = &mut state.screen {
+        (editor.screen.view, editor.screen.span) = (TimeView::held(61.4), 12.0);
     }
     state
 }
@@ -424,8 +425,8 @@ fn lyrics_song() -> State {
 /// and its end being dragged later onto its voice (`lyrics-editor-drag`);
 /// the second line being written (`lyrics-editor-write`).
 fn lyrics_shots() -> Vec<(&'static str, State)> {
-    use jodeldiplom::core::lyric_edit::screen::{Input, Part};
-    use jodeldiplom::core::lyric_edit::{Edit, LyricsEdit, WordAt};
+    use jodel_lyrics::WordAt;
+    use jodeldiplom::core::lyric_edit::{Change, Edit, LyricsEdit, Part, Selection};
     let act = |s: &mut State, what: LyricsEdit| {
         jodeldiplom::core::update(s, Action::LyricsEdit(what));
     };
@@ -433,49 +434,53 @@ fn lyrics_shots() -> Vec<(&'static str, State)> {
     for (line, word) in [(1, 0), (1, 1)] {
         act(
             &mut base,
-            LyricsEdit::Edit(Edit::Select(WordAt { line, word })),
+            LyricsEdit::Edit(Edit::Select(Selection::Word(WordAt { line, word }))),
         );
-        act(&mut base, LyricsEdit::Edit(Edit::NotSung(true)));
+        act(
+            &mut base,
+            LyricsEdit::Edit(Edit::Change(Change::NotSung(true))),
+        );
     }
-    act(&mut base, LyricsEdit::Edit(Edit::Voice(Some(-3.0))));
     act(
         &mut base,
-        LyricsEdit::Edit(Edit::Select(WordAt { line: 0, word: 6 })),
+        LyricsEdit::Edit(Edit::Change(Change::Voice(Some(-3.0)))),
     );
-    act(&mut base, LyricsEdit::Edit(Edit::Move(0.04)));
     act(
         &mut base,
-        LyricsEdit::Edit(Edit::Select(WordAt { line: 0, word: 3 })),
+        LyricsEdit::Edit(Edit::Select(Selection::Word(WordAt { line: 0, word: 6 }))),
+    );
+    act(
+        &mut base,
+        LyricsEdit::Edit(Edit::Change(Change::Move(0.04))),
+    );
+    act(
+        &mut base,
+        LyricsEdit::Edit(Edit::Select(Selection::Word(WordAt { line: 0, word: 3 }))),
     );
     let mut drag = base.clone();
-    let end = drag
-        .karaoke
-        .editor
-        .as_ref()
+    let end = jodeldiplom::core::lyric_edit::editor(&drag)
         .and_then(|e| e.word())
         .and_then(|w| w.end)
         .unwrap_or(0.0);
     act(
         &mut drag,
-        LyricsEdit::Screen(Input::Hold {
+        LyricsEdit::Hold {
             word: WordAt { line: 0, word: 3 },
             part: Part::End,
             time: end,
             slop: 0.01,
-        }),
+        },
     );
-    act(&mut drag, LyricsEdit::Screen(Input::Drag(end + 0.16)));
+    act(&mut drag, LyricsEdit::Drag(end + 0.16));
     let mut write = base.clone();
     act(
         &mut write,
-        LyricsEdit::Edit(Edit::Select(WordAt { line: 1, word: 3 })),
+        LyricsEdit::Edit(Edit::Select(Selection::Word(WordAt { line: 1, word: 3 }))),
     );
-    act(&mut write, LyricsEdit::Screen(Input::Write { line: true }));
+    act(&mut write, LyricsEdit::Write { line: true });
     act(
         &mut write,
-        LyricsEdit::Screen(Input::Draft(
-            "(oh yeah) the lights are low along the river bend".into(),
-        )),
+        LyricsEdit::Draft("(oh yeah) the lights are low along the river bend".into()),
     );
     vec![
         ("lyrics-editor", base),

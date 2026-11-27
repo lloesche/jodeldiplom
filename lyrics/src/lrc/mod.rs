@@ -166,9 +166,7 @@ impl Placed {
                 if repeated {
                     // Word times belong to one place in the song.
                     for w in &mut copy.words {
-                        w.start = None;
-                        w.end = None;
-                        w.confidence = 0.0;
+                        w.clear_times();
                     }
                 }
                 self.lines.push((t, copy));

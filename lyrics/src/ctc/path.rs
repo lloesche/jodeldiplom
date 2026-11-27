@@ -36,8 +36,8 @@ impl Emissions {
 }
 
 /// Frames of a stretch of voice, from 0 s: seconds turned into frames, each
-/// way of rounding named. A time before 0 is frame 0, and none is past the
-/// last.
+/// way of rounding named, and frames back into seconds. A time before 0 is
+/// frame 0, and none is past the last.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameClock {
     /// Seconds a frame.
@@ -47,9 +47,35 @@ pub struct FrameClock {
 }
 
 impl FrameClock {
+    /// `frames` frames of `hop` samples of a voice at `rate` Hz.
+    pub fn of_rate(rate: u32, hop: usize, frames: usize) -> FrameClock {
+        FrameClock {
+            frame_seconds: hop as f64 / f64::from(rate),
+            frames,
+        }
+    }
+
     /// How long the frames last, in seconds.
     pub fn seconds(&self) -> f64 {
-        self.frames as f64 * self.frame_seconds
+        self.time(self.frames)
+    }
+
+    /// When frame `frame` starts, in seconds (the end of the one before).
+    pub fn time(&self, frame: usize) -> f64 {
+        frame as f64 * self.frame_seconds
+    }
+
+    /// The frame starting nearest to `t` seconds.
+    pub fn nearest(&self, t: f64) -> usize {
+        ((t / self.frame_seconds).round() as usize).min(self.frames)
+    }
+
+    /// The frames a state may be entered on to start from `a` to `b`
+    /// seconds: those rounded outward ([`FrameClock::outward`]), and the
+    /// frame after, on which a start at `b` is entered.
+    pub fn entry_window(&self, a: f64, b: f64) -> Range<usize> {
+        let frames = self.outward(a, b);
+        frames.start..frames.end + 1
     }
 
     /// The frames from `a` to `b` seconds, rounded outward: every frame
@@ -96,8 +122,8 @@ impl Path {
     pub fn token_frames(&self, count: usize) -> Vec<Option<Range<usize>>> {
         let mut spans: Vec<Option<Range<usize>>> = vec![None; count];
         for (f, &s) in self.states.iter().enumerate() {
-            if s % 2 == 1 {
-                let span = &mut spans[(s / 2) as usize];
+            if let Some(k) = token_at(s as usize) {
+                let span = &mut spans[k];
                 match span {
                     Some(r) => r.end = f + 1,
                     None => *span = Some(f..f + 1),
@@ -106,6 +132,38 @@ impl Path {
         }
         spans
     }
+}
+
+/// The states of a path through `tokens` tokens: a blank before each, each
+/// token, and a blank after the last.
+pub(crate) fn state_count(tokens: usize) -> usize {
+    2 * tokens + 1
+}
+
+/// Token `k`'s state.
+pub(crate) fn token_state(k: usize) -> usize {
+    2 * k + 1
+}
+
+/// The blank before token `k` (after the last, for `k` their count).
+pub(crate) fn blank_state(k: usize) -> usize {
+    2 * k
+}
+
+/// The token state `s` is on; `None` for a blank.
+pub(crate) fn token_at(s: usize) -> Option<usize> {
+    (s % 2 == 1).then_some(s / 2)
+}
+
+/// The token blank state `s` is before; `None` for a token's state.
+pub(crate) fn blank_before(s: usize) -> Option<usize> {
+    (s % 2 == 0).then_some(s / 2)
+}
+
+/// The states of `tokens` and of the blanks between them: from the first's
+/// to the last's.
+pub(crate) fn states_of(tokens: Range<usize>) -> Range<usize> {
+    token_state(tokens.start)..blank_state(tokens.end)
 }
 
 /// How a predecessor reaches a state, as a back-pointer byte: from itself,
@@ -202,11 +260,11 @@ pub fn force_align(
 ) -> Option<Path> {
     let frames = emissions.frames();
     let n = ids.len();
-    let states = 2 * n + 1;
+    let states = state_count(n);
     if frames == 0 {
         return None;
     }
-    let token_of = |s: usize| if s % 2 == 1 { ids[s / 2] } else { blank };
+    let token_of = |s: usize| token_at(s).map_or(blank, |k| ids[k]);
     let cost = |f: usize, s: usize| costs.stay(f, s);
     // The skips' extra edges, by the state they land on: (from, cost).
     let mut extra: Vec<Vec<(usize, f32)>> = vec![Vec::new(); states];
@@ -215,13 +273,13 @@ pub fn force_align(
         if a >= b || b > n {
             continue;
         }
-        let from = [Some(2 * a), (a > 0).then(|| 2 * a - 1)];
-        let to = [Some(2 * b), (b < n).then(|| 2 * b + 1)];
+        let from = [Some(blank_state(a)), (a > 0).then(|| token_state(a - 1))];
+        let to = [Some(blank_state(b)), (b < n).then(|| token_state(b))];
         for f in from.into_iter().flatten() {
             for t in to.into_iter().flatten() {
                 // Two tokens in a row that are the same need a blank
                 // between them.
-                if f % 2 == 1 && t % 2 == 1 && ids[f / 2] == ids[t / 2] {
+                if matches!((token_at(f), token_at(t)), (Some(x), Some(y)) if ids[x] == ids[y]) {
                     continue;
                 }
                 if extra[t].len() < usize::from(u8::MAX - EXTRA) {
@@ -248,7 +306,9 @@ pub fn force_align(
                 best = score[s - 1] - entry;
                 how = STEP;
             }
-            if s >= 3 && s % 2 == 1 && ids[s / 2] != ids[s / 2 - 1] && score[s - 2] - entry > best {
+            // Over the blank between two different tokens.
+            let past_blank = token_at(s).is_some_and(|k| k >= 1 && ids[k] != ids[k - 1]);
+            if past_blank && score[s - 2] - entry > best {
                 best = score[s - 2] - entry;
                 how = JUMP;
             }
@@ -292,4 +352,42 @@ pub fn force_align(
         states: path,
         score: best,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Seconds to frames and back, each rounding as named, nothing past
+    /// the last frame.
+    #[test]
+    fn the_clock_turns_seconds_into_frames_and_back() {
+        let clock = FrameClock::of_rate(16_000, 320, 100);
+        assert_eq!(clock.frame_seconds, 0.02);
+        assert_eq!(clock.time(50), 1.0);
+        assert_eq!(clock.seconds(), 2.0);
+        assert_eq!(clock.nearest(0.509), 25);
+        assert_eq!(clock.nearest(0.511), 26);
+        assert_eq!(clock.nearest(-1.0), 0);
+        assert_eq!(clock.nearest(9.0), 100, "clamped to the frames");
+        assert_eq!(clock.outward(0.51, 0.59), 25..30);
+        assert_eq!(clock.entry_window(0.51, 0.59), 25..31);
+        assert_eq!(clock.inward(0.51, 0.69, 0.0), 26..34);
+    }
+
+    /// A token's state and the blanks either side, there and back.
+    #[test]
+    fn the_states_are_a_blank_before_each_token_and_one_after() {
+        assert_eq!(state_count(3), 7);
+        for k in 0..3 {
+            assert_eq!(token_at(token_state(k)), Some(k));
+            assert_eq!(blank_before(blank_state(k)), Some(k));
+            assert_eq!(token_at(blank_state(k)), None);
+            assert_eq!(blank_before(token_state(k)), None);
+        }
+        assert_eq!(blank_before(blank_state(3)), Some(3));
+        // Tokens 1 and 2 and the blank between them.
+        assert_eq!(states_of(1..3), 3..6);
+        assert_eq!(states_of(0..1), 1..2);
+    }
 }

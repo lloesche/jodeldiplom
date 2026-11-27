@@ -108,11 +108,6 @@ impl Compared {
     }
 }
 
-/// The words of `lyrics`, in order ([`Compared`]).
-pub fn lyrics_words(lyrics: &Lyrics) -> Vec<String> {
-    Compared::of(lyrics).words
-}
-
 /// The pairs `(i, j)` of a longest common subsequence of `a` and `b`: the
 /// most of their words in common, in order, not necessarily together.
 pub fn common<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
@@ -203,7 +198,6 @@ mod tests {
         );
         assert_eq!(c.of_line(0), ["five", "thirty", "go"]);
         assert!(c.of_line(1).is_empty());
-        assert_eq!(lyrics_words(&lyrics), c.words);
     }
 
     #[test]
