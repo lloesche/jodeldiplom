@@ -200,7 +200,10 @@ impl<K: Kernels> Program<K> {
                     layout: Some(&pipeline_layout),
                     module: &module,
                     entry_point: Some(k.entry()),
-                    compilation_options: Default::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        zero_initialize_workgroup_memory: K::ZERO_WORKGROUP_MEMORY,
+                        ..Default::default()
+                    },
                     cache: None,
                 });
                 (k, pipeline)
