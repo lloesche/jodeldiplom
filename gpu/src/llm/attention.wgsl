@@ -74,12 +74,15 @@ fn prep(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: v
 // decoder's own back to the window (all of them where there is none).
 // The window is 0 for none; the queries are in src; the splits are
 // written from dst's start.
+// What the four heads' invocations write each for its own head is in
+// f32s, never one lane of a shared vec4: on Apple's GPUs a lane's store
+// to workgroup memory may write the whole vector back, over the others'.
 var<workgroup> step_q: array<vec4<f32>, 512>;
 var<workgroup> step_s: array<vec4<f32>, 256>;
-var<workgroup> step_p: array<vec4<f32>, 64>;
-var<workgroup> step_best: vec4<f32>;
-var<workgroup> step_total: vec4<f32>;
-var<workgroup> step_fade: vec4<f32>;
+var<workgroup> step_p: array<f32, 256>;
+var<workgroup> step_best: array<f32, 4>;
+var<workgroup> step_total: array<f32, 4>;
+var<workgroup> step_fade: array<f32, 4>;
 var<workgroup> step_pos: u32;
 
 // The four heads' weighted sums of value `e` over the chunk's `count`
@@ -92,12 +95,22 @@ fn step_values(v: u32, d: u32, count: u32) -> vec4<f32> {
         let b = src[v + (j + 1u) * d];
         let c = src[v + (j + 2u) * d];
         let e = src[v + (j + 3u) * d];
-        o += step_p[j] * a + step_p[j + 1u] * b + step_p[j + 2u] * c + step_p[j + 3u] * e;
+        o += step_p4(j) * a + step_p4(j + 1u) * b + step_p4(j + 2u) * c + step_p4(j + 3u) * e;
     }
     for (; j < count; j++) {
-        o += step_p[j] * src[v + j * d];
+        o += step_p4(j) * src[v + j * d];
     }
     return o;
+}
+
+// Position `j`'s weights of the four heads.
+fn step_p4(j: u32) -> vec4<f32> {
+    return vec4<f32>(step_p[4u * j], step_p[4u * j + 1u], step_p[4u * j + 2u], step_p[4u * j + 3u]);
+}
+
+// The four heads' fades.
+fn step_fade4() -> vec4<f32> {
+    return vec4<f32>(step_fade[0], step_fade[1], step_fade[2], step_fade[3]);
 }
 
 @compute @workgroup_size(256)
@@ -110,8 +123,10 @@ fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid:
     let g = wid.y;
     if (lid == 0u) {
         step_pos = ints[0];
-        step_best = vec4<f32>(-1e30);
-        step_total = vec4<f32>(0.0);
+    }
+    if (lid < 4u) {
+        step_best[lid] = -1e30;
+        step_total[lid] = 0.0;
     }
     // The same in every invocation: the chunks' loop is uniform.
     let pos = workgroupUniformLoad(&step_pos);
@@ -164,7 +179,7 @@ fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid:
             var total = step_total[lid] * fade;
             for (var i = 0u; i < count; i++) {
                 let e = exp_held(step_s[i][lid] - best);
-                step_p[i][lid] = e;
+                step_p[4u * i + lid] = e;
                 total += e;
             }
             step_best[lid] = best;
@@ -173,11 +188,12 @@ fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid:
         }
         workgroupBarrier();
         let v = attend_values() + (g * positions + first) * d;
+        let fade = step_fade4();
         if (lid < d) {
-            oa = oa * step_fade + step_values(v + lid, d, count);
+            oa = oa * fade + step_values(v + lid, d, count);
         }
         if (lid + 256u < d) {
-            ob = ob * step_fade + step_values(v + lid + 256u, d, count);
+            ob = ob * fade + step_values(v + lid + 256u, d, count);
         }
     }
     workgroupBarrier();
@@ -257,20 +273,29 @@ fn join(@builtin(local_invocation_index) lid: u32) {
 // position's and those before it, back to the window (0: none). The
 // queries are in src; `group` is the query heads a key/value head; the
 // output is written from dst's start, a row's heads side by side.
-var<workgroup> flash_tile: array<vec4<f32>, 1024>;
+// The tile in f32s, written a value an invocation and read four at a time
+// ([`flash4`]): never one lane of a shared vec4 written (on Apple's GPUs
+// that may write the whole vector back, over its neighbours' values).
+var<workgroup> flash_tile: array<f32, 4096>;
 var<workgroup> flash_part: array<f32, 256>;
+
+// The tile's vector `i` (values 4i to 4i + 3).
+fn flash4(i: u32) -> vec4<f32> {
+    let b = 4u * i;
+    return vec4<f32>(flash_tile[b], flash_tile[b + 1u], flash_tile[b + 2u], flash_tile[b + 3u]);
+}
 
 // Σ over the tile's 8 keys of p (pa: the first four, pb: the rest) times
 // the tile's vector `at` of key 0 (keys `d4` vectors apart).
 fn tile_mix(at: u32, d4: u32, pa: vec4<f32>, pb: vec4<f32>) -> vec4<f32> {
-    var o = pa.x * flash_tile[at];
-    o += pa.y * flash_tile[at + d4];
-    o += pa.z * flash_tile[at + 2u * d4];
-    o += pa.w * flash_tile[at + 3u * d4];
-    o += pb.x * flash_tile[at + 4u * d4];
-    o += pb.y * flash_tile[at + 5u * d4];
-    o += pb.z * flash_tile[at + 6u * d4];
-    o += pb.w * flash_tile[at + 7u * d4];
+    var o = pa.x * flash4(at);
+    o += pa.y * flash4(at + d4);
+    o += pa.z * flash4(at + 2u * d4);
+    o += pa.w * flash4(at + 3u * d4);
+    o += pb.x * flash4(at + 4u * d4);
+    o += pb.y * flash4(at + 5u * d4);
+    o += pb.z * flash4(at + 6u * d4);
+    o += pb.w * flash4(at + 7u * d4);
     return o;
 }
 
@@ -314,7 +339,7 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
             if (k0 + j <= block_last) {
                 v = src[keys + e * positions + k0 + j];
             }
-            flash_tile[(j * d + e) / 4u][(j * d + e) % 4u] = v;
+            flash_tile[j * d + e] = v;
         }
         workgroupBarrier();
         // Each invocation a key's score over 128 of the values.
@@ -326,7 +351,7 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
             let t = (j * d + part * 128u) / 4u;
             for (var i = 0u; i < 32u; i++) {
                 let qv = vec4<f32>(src[q + 4u * i], src[q + 4u * i + 1u], src[q + 4u * i + 2u], src[q + 4u * i + 3u]);
-                s += dot(qv, flash_tile[t + i]);
+                s += dot(qv, flash4(t + i));
             }
         }
         flash_part[lid] = s;
@@ -364,7 +389,7 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
             if (k0 + jj <= block_last) {
                 v = src[values + (k0 + jj) * d + i % d];
             }
-            flash_tile[i / 4u][i % 4u] = v;
+            flash_tile[i] = v;
         }
         workgroupBarrier();
         let at = lane * 4u;
