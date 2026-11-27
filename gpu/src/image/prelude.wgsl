@@ -69,6 +69,9 @@ fn bf16x2(w: u32) -> vec2<f32> {
     return vec2<f32>(bitcast<f32>(w << 16u), bitcast<f32>(w & 0xffff0000u));
 }
 
+// SiLU, its exp held below overflow (Metal's fast exp gives garbage past
+// it, not infinity): exp(87) is 6e37, and x / (1 + 6e37) is 0 in f32 for
+// any x that far down anyway.
 fn silu(x: f32) -> f32 {
-    return x / (1.0 + exp(-x));
+    return x / (1.0 + exp(min(-x, 87.0)));
 }

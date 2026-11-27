@@ -264,7 +264,7 @@ fn softmax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
     let top = red256[0];
     var total = 0.0;
     for (var i = li; i < p.n1; i += 256u) {
-        let e = exp(dst_at(at + i) * scale - top);
+        let e = exp_held(dst_at(at + i) * scale - top);
         dst_put(at + i, e);
         total += e;
     }

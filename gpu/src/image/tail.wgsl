@@ -99,7 +99,7 @@ fn mm_a4(row: u32, k0: u32) -> vec4<f32> {
         let b = vec4<f32>(small[gn_bias() + ci], small[gn_bias() + ci + 1u], small[gn_bias() + ci + 2u], small[gn_bias() + ci + 3u]);
         v = (v - mean) * rstd * w + b;
         if ((gn_flags() & GN_SILU) != 0u) {
-            v = v / (1.0 + exp(-v));
+            v = v / (1.0 + exp(min(-v, vec4<f32>(87.0))));
         }
     }
     return v;

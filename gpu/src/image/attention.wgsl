@@ -82,13 +82,13 @@ fn attention_f32(wg: vec3<u32>, li: u32) {
                 top = max(top, fa_s[mine + j] + fa_s[other + j]);
             }
         }
-        let fade = exp(best - top);
+        let fade = exp_held(best - top);
         o = h64_scale(o, fade);
         total *= fade;
         best = top;
         for (var j = 0u; j < 16u; j++) {
             if (fa_sees(query, t * 16u + j)) {
-                let e = exp(fa_s[mine + j] + fa_s[other + j] - best);
+                let e = exp_held(fa_s[mine + j] + fa_s[other + j] - best);
                 total += e;
                 o = h64_add(o, e, fa_vh(j * 32u + half * 16u));
             }

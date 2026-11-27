@@ -41,26 +41,6 @@ fn first_position(stated: u32, first: u32) -> u32 {
     return first;
 }
 
-// tanh of `x` held to ±10 first: Metal's fast tanh goes through exp(2x)
-// and gives NaN (inf / inf) for large `x`; past ±9.1 tanh is ±1 in f32
-// anyway, so elsewhere nothing changes.
-fn tanh_held(x: f32) -> f32 {
-    return tanh(clamp(x, -10.0, 10.0));
-}
-
-// exp of `x` held to -87 first: Metal's fast exp makes an integer of the
-// exponent's whole part, which overflows (and gives garbage, not 0) for a
-// score against the -1e30 that stands for none; exp(-87) is 1.6e-38, so
-// what it weighs is gone either way.
-fn exp_held(x: f32) -> f32 {
-    return exp(max(x, -87.0));
-}
-
-// [`exp_held`] of four.
-fn exp_held4(x: vec4<f32>) -> vec4<f32> {
-    return exp(max(x, vec4<f32>(-87.0)));
-}
-
 // GELU with tanh (PyTorch's `approximate="tanh"`).
 fn gelu_tanh(x: f32) -> f32 {
     let inner = 0.7978845608028654 * (x + 0.044715 * x * x * x);

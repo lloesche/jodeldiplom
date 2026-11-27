@@ -59,11 +59,12 @@ the 5080.
    and its `tanh` goes through `exp(2x)` (∞ / ∞ = NaN for a large `x`).
    The -1e30 that stands for "no score" in an online softmax made
    `exp(best − next)` such an argument on the first chunk; GELU's tanh
-   took `x³`. Use the held forms in `llm/prelude.wgsl`: `exp_held`
-   (`exp_held4` for a vec4; held to -87 first, exp(-87) = 1.6e-38, so
-   what it weighs is gone either way) and `tanh_held` (held to ±10, tanh
-   is ±1 in f32 past ±9.1). On Vulkan both give the same numbers as
-   before, bit for bit.
+   took `x³`. Use the held forms in `common.wgsl` (every program has
+   them): `exp_held` (`exp_held4` for a vec4; held to -87 first,
+   exp(-87) = 1.6e-38, so what it weighs is gone either way) and
+   `tanh_held` (held to ±10, tanh is ±1 in f32 past ±9.1); an `exp` that
+   can grow (SiLU's `exp(-x)`) is held below 87. On Vulkan they give the
+   same numbers as before.
 3. **A change to a kernel is tested on the Mac before it lands.** The
    kernel tests (`cargo test --release -p jodel-gpu --lib`) hold every
    kernel to a processor reference on whatever GPU runs them; on Windows
@@ -85,6 +86,18 @@ the 5080.
    what an Apple user runs. An optimisation made only to the fast
    (tensor-core, int8) paths does nothing for them, and one that breaks
    the plain paths breaks the Mac while the 5080's tests stay green.
+6. **Workgroup memory is not zeroed for Gemma and klein: write it before
+   reading it.** WGSL zeroes a kernel's workgroup memory at each dispatch's
+   start by default, and on Metal that cost a fixed ~0.3 ms a dispatch
+   for a kernel holding a large array (Gemma's 16 KB `staged`: its
+   residual, quant and join took three quarters of the GPU's time, and
+   the Mac decoded at 10 tokens a second; without the zeroing, 48). A
+   program says so with `Kernels::ZERO_WORKGROUP_MEMORY`; Gemma's and
+   klein's say `false`, so every kernel of theirs writes every place of
+   its workgroup memory that it reads (a tile's places past the edge as
+   0, not left alone). The profile (`JODEL_GEMMA_PROFILE=1` with
+   `--example gemma`) shows a kernel that is slow out of proportion to
+   its work: compare its time a call on the Mac with the 5080's.
 
 ## The stem separator
 

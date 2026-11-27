@@ -195,7 +195,7 @@ fn attention16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         top = max(top, fc_part[li ^ 16u]);
         var fade = 1.0;
         if (top > best + 8.0) {
-            fade = exp(best - top);
+            fade = exp_held(best - top);
             best = top;
             if (total > 0.0) {
                 fc_flag = 1u;
@@ -205,7 +205,7 @@ fn attention16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         for (var j = 0u; j < 16u; j++) {
             var e = 0.0;
             if (fa_sees(query, k0 + j)) {
-                e = exp(fc_s[at + j] - best);
+                e = exp_held(fc_s[at + j] - best);
             }
             total += e;
             fc_p[at + j] = f16(e);
