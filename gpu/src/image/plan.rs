@@ -276,7 +276,9 @@ impl Plan {
 
     /// The bytes its slots take.
     pub(crate) fn bytes(&self) -> u64 {
-        self.slots.iter().map(|&n| (n.max(1) * 4) as u64).sum()
+        (self.slots.iter())
+            .map(|&n| (super::gpu::whole_vectors(n).max(1) * 4) as u64)
+            .sum()
     }
 
     fn push(&mut self, kernel: Kernel, bufs: [Buf; 5], values: &[usize], groups: [u32; 3]) {

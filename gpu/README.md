@@ -71,7 +71,15 @@ the 5080.
    end checks there (`--example gemma`, a story), before saying a GPU
    change works. A plan that is token for token the same as before on
    Windows is not evidence about the Mac.
-4. **The Mac runs the plain paths.** Metal through `wgpu` has no
+4. **A buffer read as vectors holds whole vectors.** A binding of
+   `array<vec4<f32>>` is as long as the whole vectors in it, so a buffer
+   of 777 f32s is 194 vectors and value 776 lies past its end. `wgpu`
+   clamps an index past the end to the last element on Metal (value 776
+   read as value 772 there), where Vulkan happened to read the value.
+   klein's buffers are rounded up to whole vectors (`whole_vectors`), and
+   their sizes are counted so too; a network that reads its buffers as
+   vectors does the same.
+5. **The Mac runs the plain paths.** Metal through `wgpu` has no
    cooperative matrices and Gemma picks its f32 path there (`Full`), so
    the plain multiply, the plain attention and the f32 matrix paths are
    what an Apple user runs. An optimisation made only to the fast

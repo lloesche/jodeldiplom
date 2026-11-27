@@ -105,9 +105,11 @@ impl Gpu {
         })
     }
 
-    /// A storage buffer of `bytes` (a multiple of 4).
+    /// A storage buffer of `bytes` (a multiple of 4), in whole vectors
+    /// ([`whole_vectors`]).
     pub(crate) fn buffer(&self, label: &str, bytes: u64) -> Result<wgpu::Buffer, String> {
-        self.program.storage(label, (bytes / 4) as usize)
+        self.program
+            .storage(label, whole_vectors((bytes / 4) as usize))
     }
 
     /// The bytes the device has taken from the GPU's memory now (its
@@ -118,6 +120,15 @@ impl Gpu {
             .generate_allocator_report()
             .map(|r| r.total_reserved_bytes)
     }
+}
+
+/// `len` f32s rounded up to whole vectors of four: the kernels read their
+/// buffers as `vec4`s, and a binding holds only whole ones, so a buffer of
+/// 777 values is 194 vectors and value 776 lies past its end. Metal reads
+/// such an index as the last vector's (`wgpu` clamps it there), Vulkan
+/// happened to read the value; with the last vector whole, both read it.
+pub(crate) fn whole_vectors(len: usize) -> usize {
+    len.next_multiple_of(4)
 }
 
 /// A part's weights on the GPU: its matrices (a few buffers of words) and
@@ -165,7 +176,7 @@ impl Made {
                 .slots
                 .iter()
                 .enumerate()
-                .map(|(i, &len)| program.storage(&format!("image slot {i}"), len))
+                .map(|(i, &len)| program.storage(&format!("image slot {i}"), whole_vectors(len)))
                 .collect::<Result<Vec<_>, String>>()?;
             let staging = program.staging(read);
             let recorded = program.record(&plan.ops, |bufs: [Buf; 5]| {

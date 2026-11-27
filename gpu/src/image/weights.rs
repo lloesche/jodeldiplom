@@ -341,7 +341,11 @@ impl<'a> Packing<'a> {
     /// The bytes it takes on the GPU: its buffers of matrices and its f32
     /// tensors ([`Loaded::bytes`] once uploaded).
     pub(crate) fn bytes(&self) -> u64 {
-        self.buffers.iter().map(|b| b.0).sum::<u64>() + (self.small.len().max(1) * 4) as u64
+        let whole = |floats: usize| (super::gpu::whole_vectors(floats).max(1) * 4) as u64;
+        (self.buffers.iter())
+            .map(|b| whole((b.0 / 4) as usize))
+            .sum::<u64>()
+            + whole(self.small.len())
     }
 
     /// Everything on the GPU (writes sent a few hundred MB at a time); an
