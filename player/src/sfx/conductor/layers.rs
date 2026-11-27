@@ -38,6 +38,25 @@ pub enum Streak {
     Call,
 }
 
+impl Streak {
+    /// Its name, as the Synth tab shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Streak::Glint => "glint",
+            Streak::Octave => "octave",
+            Streak::Register => "register",
+            Streak::Clinks => "clinks",
+            Streak::Reels => "reels",
+            Streak::Brass => "brass",
+            Streak::Riser => "riser",
+            Streak::Shimmer => "shimmer",
+            Streak::Glitter => "glitter",
+            Streak::Payout => "payout",
+            Streak::Call => "call",
+        }
+    }
+}
+
 /// A layer of a phrase's chime reaching a tier (and of the diploma's
 /// points at it), over the bells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +74,19 @@ pub enum Chime {
     /// slam lands, with the jackpot: [`super::call`]); a phrase's only,
     /// not the diploma's points' (no slam there).
     Call,
+}
+
+impl Chime {
+    /// Its name, as the Synth tab shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Chime::Plucks => "plucks",
+            Chime::BrassHit => "brass hit",
+            Chime::TaDaa => "ta-daa",
+            Chime::Choir => "choir",
+            Chime::Call => "call",
+        }
+    }
 }
 
 /// A brass chord of a chime's layer ([`Chime::brass`]): where it starts

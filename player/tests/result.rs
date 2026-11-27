@@ -711,7 +711,7 @@ fn a_song_the_demo_sang_shows_its_result_and_sets_no_best() {
 #[test]
 fn the_demo_key_is_held_in_the_mode_only() {
     use iced::keyboard::Key as IcedKey;
-    use jodeldiplom::gui::keys::lets_go_of_demo;
+    use jodeldiplom::gui::keys::released;
     let mut state = tab();
     let notes = state.config.karaoke_notes;
     demo_key(&mut state);
@@ -720,11 +720,15 @@ fn the_demo_key_is_held_in_the_mode_only() {
     demo_key(&mut state);
     demo_key(&mut state);
     assert!(state.karaoke.demo.held());
-    assert!(!lets_go_of_demo(&state, &IcedKey::Character("x".into())));
-    assert!(lets_go_of_demo(&state, &IcedKey::Character("p".into())));
-    update(&mut state, Action::DemoLetGo);
+    assert!(!released(&IcedKey::Character("x".into())).contains(&Op::KaraokeDemo));
+    let p = released(&IcedKey::Character("p".into()));
+    assert!(p.contains(&Op::KaraokeDemo), "{p:?}");
+    for op in p {
+        update(&mut state, Action::Released(op));
+    }
     assert!(!state.karaoke.demo.held());
-    assert!(!lets_go_of_demo(&state, &IcedKey::Character("p".into())));
+    update(&mut state, Action::Released(Op::KaraokeDemo));
+    assert!(!state.karaoke.demo.held());
     demo_key(&mut state);
     op(&mut state, Op::Back);
     assert!(!state.karaoke.demo.held(), "the mode left");

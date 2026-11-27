@@ -14,9 +14,9 @@
 
 use jodel_rhythm::grid::When;
 use jodel_rhythm::{Analysis, Region};
-use jodel_synth::{Command, Commands, PatchId, Synth, Tag};
+use jodel_synth::{Command, Commands, Cue, PatchId, Synth, Tag};
 
-use super::palette::{Atom, BRASS, COINS, PADS};
+use super::palette::{Atom, BRASS, COINS};
 use super::*;
 use crate::core::karaoke::result::{Medal, SIGNING, STAMP_DOWN, UNROLL};
 use crate::tiers::Tier;
@@ -34,9 +34,13 @@ struct Sent(Vec<Command>);
 
 impl Commands for Sent {
     fn send(&mut self, c: Command) -> bool {
-        self.0.push(c);
-        true
+        self.0.send(c)
     }
+}
+
+/// `atom`'s patch in Classic's (the theme the tests' conductors play).
+fn pid(atom: Atom) -> PatchId {
+    palette::id(0, atom)
 }
 
 impl Sent {
@@ -45,12 +49,10 @@ impl Sent {
         self.0
             .iter()
             .filter_map(|c| match *c {
-                Command::Note {
+                Command::At {
                     frame,
-                    patch,
-                    note,
                     tag,
-                    ..
+                    cue: Cue::Note { patch, note, .. },
                 } => Some((frame, patch, note.note, tag)),
                 _ => None,
             })
@@ -73,18 +75,12 @@ struct Lossy<'a>(&'a mut Synth);
 impl Commands for Lossy<'_> {
     fn send(&mut self, c: Command) -> bool {
         match c {
-            Command::Release { .. } | Command::Cancel { .. } => false,
+            Command::At {
+                cue: Cue::Release, ..
+            }
+            | Command::Cancel { .. } => false,
             c => self.0.command(c),
         }
-    }
-}
-
-/// A queue that is full: it takes nothing.
-struct Full;
-
-impl Commands for Full {
-    fn send(&mut self, _: Command) -> bool {
-        false
     }
 }
 
@@ -124,7 +120,7 @@ fn a_minor() -> jodel_rhythm::key::Key {
 fn conductor() -> (Conductor, Sent) {
     let (mut c, _) = Conductor::new(RATE, &crate::theme::CLASSIC);
     let mut out = Sent::default();
-    c.set_clock(&mut out, grid(NONE));
+    c.time_by(grid(NONE));
     c.set_key(Some(&a_minor()), 0);
     out.0.clear();
     (c, out)
@@ -132,8 +128,8 @@ fn conductor() -> (Conductor, Sent) {
 
 /// The same, playing on its synth.
 fn playing() -> (Conductor, Synth) {
-    let (mut c, mut s) = Conductor::new(RATE, &crate::theme::CLASSIC);
-    c.set_clock(&mut s, grid(NONE));
+    let (mut c, s) = Conductor::new(RATE, &crate::theme::CLASSIC);
+    c.time_by(grid(NONE));
     c.set_key(Some(&a_minor()), 0);
     (c, s)
 }
@@ -216,7 +212,7 @@ fn the_ladder_climbs_and_lands_on_the_tonic_at_every_rung() {
     for streak in 1..=first {
         c.event(&mut out, u64::from(streak), word(streak));
     }
-    let pop = c.palette[Atom::Pop];
+    let pop = pid(Atom::Pop);
     let pops: Vec<f32> = out
         .notes()
         .iter()
@@ -246,7 +242,7 @@ fn a_lower_step_keeps_the_rung_only_the_streak_lost_lets_it_go() {
     assert_eq!(c.rung, 1);
     let called_off = out.0.iter().any(|c| matches!(c, Command::Cancel { .. }));
     assert!(!called_off, "{:?}", out.0);
-    let plucks = out.on(c.palette[Atom::Pluck]);
+    let plucks = out.on(pid(Atom::Pluck));
     assert!(plucks.is_empty(), "no stinger again: {plucks:?}");
     c.event(&mut out, 40_000, Event::Lost(Tier::ALL[0]));
     assert_eq!(c.rung, 0);
@@ -256,7 +252,7 @@ fn a_lower_step_keeps_the_rung_only_the_streak_lost_lets_it_go() {
 fn a_stinger_picks_up_now_and_hits_on_the_beat_and_a_jump_misses_none() {
     let (mut c, mut out) = conductor();
     assert_eq!(c.event(&mut out, 15_000, word(rung(1))), BEAT);
-    let plucks = out.on(c.palette[Atom::Pluck]);
+    let plucks = out.on(pid(Atom::Pluck));
     assert_eq!(plucks[0], 15_000, "the pickup at once");
     assert!(plucks.contains(&BEAT), "the hit on the beat");
     assert!(
@@ -268,45 +264,42 @@ fn a_stinger_picks_up_now_and_hits_on_the_beat_and_a_jump_misses_none() {
     // The hit under 80 ms away: no pickup.
     let (mut c, mut out) = conductor();
     c.event(&mut out, BEAT - 2_000, word(rung(1)));
-    assert_eq!(out.on(c.palette[Atom::Pluck])[0], BEAT);
+    assert_eq!(out.on(pid(Atom::Pluck))[0], BEAT);
     // Unsure: the hit at once.
     let (mut c, mut out) = conductor();
-    c.set_clock(&mut out, unsure(NONE));
+    c.time_by(unsure(NONE));
     assert_eq!(c.event(&mut out, 15_000, word(rung(1))), 15_000);
     // A run that jumps past two rungs: the higher one's stinger.
     let (mut c, mut out) = conductor();
     c.event(&mut out, 1_000, word(rung(1) - 1));
-    assert!(out.on(c.palette[Atom::Chime]).is_empty());
+    assert!(out.on(pid(Atom::Chime)).is_empty());
     c.event(&mut out, 15_000, word(rung(2) + 1));
     assert_eq!(c.rung, 2);
-    assert!(
-        out.on(c.palette[Atom::Chime]).contains(&BEAT),
-        "rung 2's bell"
-    );
+    assert!(out.on(pid(Atom::Chime)).contains(&BEAT), "rung 2's bell");
 }
 
 #[test]
 fn the_payout_and_the_jackpot_land_with_room_their_whole_length() {
     let (mut c, mut out) = conductor();
-    c.set_clock(&mut out, grid([line(0, 7), line(14, 30), None, None]));
+    c.time_by(grid([line(0, 7), line(14, 30), None, None]));
     let d = c.event(&mut out, BEAT / 2, Event::Jackpot);
     assert_eq!(
         d,
         8 * BEAT,
         "three beats of room from the downbeat in the gap"
     );
-    assert!(out.on(c.palette[Atom::SlamKick]).contains(&d));
+    assert!(out.on(pid(Atom::SlamKick)).contains(&d));
     // The payout after the top rung's stinger: its lead would be sung
     // over, so none; the rest of it all in the gap after the lines.
     let lines = [line(0, 3), line(5, 7), line(14, 40), None];
     let (mut c, mut out) = conductor();
-    c.set_clock(&mut out, grid(lines));
+    c.time_by(grid(lines));
     c.event(&mut out, BEAT / 2, word(rung(5)));
-    assert!(out.on(c.palette[Atom::Whoosh]).is_empty());
+    assert!(out.on(pid(Atom::Whoosh)).is_empty());
     let payout: Vec<u64> = out
         .notes()
         .iter()
-        .filter(|n| n.3 == sounds::PAYOUT)
+        .filter(|n| n.3 == super::tags::PAYOUT)
         .map(|n| n.0)
         .collect();
     assert!(!payout.is_empty());
@@ -314,14 +307,14 @@ fn the_payout_and_the_jackpot_land_with_room_their_whole_length() {
     assert!(payout.iter().all(|&f| !sung(f) && f >= 40 * BEAT));
     // With the beat before it clear: led into by the whoosh.
     let (mut c, mut out) = conductor();
-    c.set_clock(&mut out, grid([line(0, 3), line(5, 7), line(14, 30), None]));
+    c.time_by(grid([line(0, 3), line(5, 7), line(14, 30), None]));
     c.event(&mut out, BEAT / 2, word(rung(5)));
-    assert_eq!(out.on(c.palette[Atom::Whoosh]), [32 * BEAT - BEAT]);
+    assert_eq!(out.on(pid(Atom::Whoosh)), [32 * BEAT - BEAT]);
 }
 
 /// The voices of `atoms` sounding in `s`.
-fn sounding(c: &Conductor, s: &Synth, atoms: &[Atom]) -> usize {
-    let patches: Vec<PatchId> = atoms.iter().map(|&a| c.palette[a]).collect();
+fn sounding(s: &Synth, atoms: &[Atom]) -> usize {
+    let patches: Vec<PatchId> = atoms.iter().map(|&a| pid(a)).collect();
     s.voices().filter(|v| patches.contains(&v.patch)).count()
 }
 
@@ -333,23 +326,23 @@ fn render(s: &mut Synth, frames: usize) {
 
 #[test]
 fn a_streak_lost_lets_the_held_sounds_go_and_calls_off_the_payout() {
-    let held = [Atom::Riser, PADS[0], PADS[1]];
+    let held = [Atom::Riser, Atom::Pad];
     let (mut c, mut s) = playing();
     c.event(&mut s, 1_000, word(rung(4)));
     c.event(&mut s, 2_000, word(rung(5) - 1));
     render(&mut s, 24_000);
-    assert_eq!(sounding(&c, &s, &held), 3, "the riser and the shimmer");
+    assert_eq!(sounding(&s, &held), 3, "the riser and the shimmer");
     let now = s.frame();
     c.event(&mut s, now, Event::Lost(Tier::named("Amazing")));
     render(&mut s, 9_600);
-    assert_eq!(sounding(&c, &s, &held), 0, "gone in 0.2 s");
+    assert_eq!(sounding(&s, &held), 0, "gone in 0.2 s");
     // ×32 reached, then lost before its payout: none of it sounds.
     let (mut c, mut s) = playing();
     c.event(&mut s, 1_000, word(rung(5)));
     c.event(&mut s, 2_000, Event::Lost(Tier::TOP));
     for _ in 0..80 {
         render(&mut s, 4_800);
-        assert_eq!(sounding(&c, &s, &[Atom::Whoosh, Atom::Low]), 0);
+        assert_eq!(sounding(&s, &[Atom::Whoosh, Atom::Low]), 0);
     }
 }
 
@@ -359,10 +352,10 @@ fn the_riser_ends_by_itself_when_no_rung_comes() {
     c.event(&mut s, 0, word(rung(4)));
     c.event(&mut s, 1_000, word(rung(5) - 1));
     render(&mut s, (2 * BEAT) as usize);
-    assert_eq!(sounding(&c, &s, &[Atom::Riser]), 1);
+    assert_eq!(sounding(&s, &[Atom::Riser]), 1);
     render(&mut s, (BEAT + 9_600) as usize);
     assert_eq!(
-        sounding(&c, &s, &[Atom::Riser]),
+        sounding(&s, &[Atom::Riser]),
         0,
         "three beats and its release"
     );
@@ -387,11 +380,15 @@ fn lost_releases_cost_only_the_held_sounds_own_time() {
         c.dropped()
     );
     render(&mut s, (4 * BEAT) as usize);
-    assert_eq!(sounding(&c, &s, &PADS), 2, "held on past the lost release");
+    assert_eq!(
+        sounding(&s, &[Atom::Pad]),
+        2,
+        "held on past the lost release"
+    );
     // Two bars from the last word that held it on (on beat 3), and its
     // release.
     render(&mut s, (8 * BEAT) as usize);
-    assert_eq!(sounding(&c, &s, &PADS), 0, "ended by itself");
+    assert_eq!(sounding(&s, &[Atom::Pad]), 0, "ended by itself");
 }
 
 #[test]
@@ -454,41 +451,40 @@ fn no_event_sends_more_than_the_most_commands() {
 #[test]
 fn clinks_come_on_high_rungs_softer_when_thick_and_never_over_a_stinger() {
     let (mut c, mut out) = conductor();
-    let clinks = |c: &Conductor, out: &Sent| {
+    let clinks = |out: &Sent| {
         out.0
             .iter()
             .filter_map(|cmd| match *cmd {
-                Command::Note { patch, note, .. }
-                    if COINS.iter().any(|&a| c.palette[a] == patch) =>
-                {
-                    Some(note.velocity)
-                }
+                Command::At {
+                    cue: Cue::Note { patch, note, .. },
+                    ..
+                } if COINS.iter().any(|&a| pid(a) == patch) => Some(note.velocity),
                 _ => None,
             })
             .collect::<Vec<f32>>()
     };
     c.event(&mut out, 0, word(rung(2)));
-    assert!(clinks(&c, &out).is_empty(), "×4: none");
+    assert!(clinks(&out).is_empty(), "×4: none");
     // ×8 reached (its stinger's ka-ching rattling coins of its own).
     c.event(&mut out, BEAT, word(rung(3)));
     out.0.clear();
     c.event(&mut out, 10 * BEAT, word(rung(3) + 2));
     c.event(&mut out, 10 * BEAT + 2_400, word(rung(3) + 3));
-    let v = clinks(&c, &out);
+    let v = clinks(&out);
     assert_eq!(v.len(), 4, "two clinks and their bounces");
     assert!(v[2] < v[0], "the second, close after, softer");
     out.0.clear();
     c.event(&mut out, 20 * BEAT, word(rung(4)));
-    let before = clinks(&c, &out).len();
+    let before = clinks(&out).len();
     c.event(&mut out, 20 * BEAT + 1_000, word(rung(4) + 1));
-    assert_eq!(clinks(&c, &out).len(), before, "none over the stinger");
+    assert_eq!(clinks(&out).len(), before, "none over the stinger");
 }
 
 #[test]
 fn with_no_key_nothing_pitched_low_plays_and_the_pops_sit_high() {
     let (mut c, _) = Conductor::new(RATE, &crate::theme::CLASSIC);
     let mut out = Sent::default();
-    c.set_clock(&mut out, grid(NONE));
+    c.time_by(grid(NONE));
     let top = rung(Tier::COUNT);
     for streak in 1..=top {
         c.event(&mut out, u64::from(streak) * 6_000, word(streak));
@@ -511,8 +507,7 @@ fn with_no_key_nothing_pitched_low_plays_and_the_pops_sit_high() {
         BRASS[0],
         BRASS[1],
         Atom::Choir,
-        PADS[0],
-        PADS[1],
+        Atom::Pad,
         Atom::Low,
         Atom::Pip,
         Atom::Wah,
@@ -521,9 +516,9 @@ fn with_no_key_nothing_pitched_low_plays_and_the_pops_sit_high() {
         Atom::Burst,
         Atom::Hiss,
     ]
-    .map(|a| c.palette[a]);
+    .map(pid);
     assert!(out.notes().iter().all(|n| !pitched.contains(&n.1)));
-    let pop = c.palette[Atom::Pop];
+    let pop = pid(Atom::Pop);
     assert!(out
         .notes()
         .iter()
@@ -539,31 +534,34 @@ fn a_seek_calls_everything_off_and_lets_go() {
     out.0.clear();
     c.cancel(&mut out, 3_000);
     assert_eq!(out.0[0], Command::Cancel { tag: None });
-    let released = |a: Atom| {
-        out.0.contains(&Command::Release {
+    let released = |tag: Tag| {
+        out.0.contains(&Command::At {
             frame: 3_000,
-            patch: c.palette[a],
-            note: None,
-            tag: Tag::NONE,
+            tag,
+            cue: Cue::Release,
         })
     };
-    assert!(released(Atom::Riser) && released(PADS[0]) && released(PADS[1]));
+    assert!(released(super::tags::RISER) && released(super::tags::SHIMMER));
     assert!(!c.riser && c.rung == 0);
 }
 
 #[test]
 fn the_tempo_goes_to_the_synth_with_the_clock() {
     let (mut c, _) = Conductor::new(RATE, &crate::theme::CLASSIC);
+    let mut tempo = Tempo::default();
     let mut out = Sent::default();
+    tempo.time(&mut c, &mut out, grid(NONE));
+    assert!(out.0.is_empty(), "the synth's own tempo");
     let mut fast = song(0.9);
     fast.local_bpm = vec![150.0; fast.beats.len()];
-    c.set_clock(&mut out, Clock::from_analysis(&fast, 0.0, 0, SECOND, NONE));
+    let clock = Clock::from_analysis(&fast, 0.0, 0, SECOND, NONE);
+    tempo.time(&mut c, &mut out, clock);
     assert_eq!(out.0, [Command::Tempo { bpm: 150.0 }]);
-    c.set_clock(
-        &mut out,
-        Clock::from_analysis(&fast, 1.0, 48_000, SECOND, NONE),
-    );
+    let clock = Clock::from_analysis(&fast, 1.0, 48_000, SECOND, NONE);
+    tempo.time(&mut c, &mut out, clock);
     assert_eq!(out.0.len(), 1, "told once");
+    tempo.tell(&mut out, 150.4);
+    assert_eq!(out.0.len(), 1, "within half a beat a minute");
 }
 
 #[test]
@@ -690,7 +688,7 @@ fn a_word_held_full_long_pops_bigger() {
     );
     let (mut c, mut out) = conductor();
     c.event(&mut out, 1, pop(1.0));
-    let body = c.palette[Atom::PopBody];
+    let body = pid(Atom::PopBody);
     let bodies: Vec<f32> = (out.notes().iter())
         .filter(|n| n.1 == body)
         .map(|n| n.2)
@@ -769,9 +767,8 @@ fn the_rustle_follows_the_sheet() {
 fn the_signature_follows_its_stroke() {
     let x = sheet_alone(Sheet::Signature, 1.5);
     let heard = loudness(&x, 0.0, SIGNING - 0.03);
-    let most = super::pen::fastest();
     let pace: Vec<f64> = (0..heard.len())
-        .map(|k| super::pen::signature_speed(0.01 * k as f64, most))
+        .map(|k| super::pen::signature_speed((0.01 * k as f64, super::pen::GRAIN)))
         .collect();
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len() as f64;
     let (mh, mp) = (mean(&heard), mean(&pace));
@@ -807,13 +804,20 @@ fn a_stamp_lands_on_the_sheet_when_drawn() {
 }
 
 /// The notes on the announcer's voice: frame, pitch, velocity.
-fn sung(c: &Conductor, out: &Sent) -> Vec<(u64, f32, f32)> {
-    let singer = c.palette[Atom::Singer];
+fn sung(out: &Sent) -> Vec<(u64, f32, f32)> {
+    sung_in(out, 0)
+}
+
+/// The same on the announcer's voice of the theme at `theme`.
+fn sung_in(out: &Sent, theme: usize) -> Vec<(u64, f32, f32)> {
+    let singer = palette::id(theme, Atom::Singer);
     out.0
         .iter()
         .filter_map(|cmd| match *cmd {
-            Command::Note {
-                frame, patch, note, ..
+            Command::At {
+                frame,
+                cue: Cue::Note { patch, note, .. },
+                ..
             } if patch == singer => Some((frame, note.note, note.velocity)),
             _ => None,
         })
@@ -836,7 +840,7 @@ fn the_call_lands_on_the_slam_s_beat_in_key() {
     let (mut c, mut out) = conductor();
     let hit = c.event(&mut out, 15_000, word(rung(Tier::COUNT)));
     assert_eq!(hit, BEAT);
-    let notes = sung(&c, &out);
+    let notes = sung(&out);
     assert_eq!(notes[0].0, hit, "the first vowel on the stinger's hit");
     let mut eighths = 0;
     for syllable in call::times(Tier::TOP.multiplier()).unwrap() {
@@ -851,7 +855,7 @@ fn the_call_lands_on_the_slam_s_beat_in_key() {
         assert!(in_a_minor(n.1), "{n:?} in key");
         assert!((48.0..=80.0).contains(&n.1), "{n:?} where a voice sings");
     }
-    let (burst, hiss) = (c.palette[Atom::Burst], c.palette[Atom::Hiss]);
+    let (burst, hiss) = (pid(Atom::Burst), pid(Atom::Hiss));
     let noises = out
         .notes()
         .into_iter()
@@ -860,18 +864,18 @@ fn the_call_lands_on_the_slam_s_beat_in_key() {
     // A phrase reaching the top: on the downbeat with room before the
     // next line, where the jackpot's slam lands.
     let (mut c, mut out) = conductor();
-    c.set_clock(&mut out, grid([line(0, 7), line(14, 30), None, None]));
+    c.time_by(grid([line(0, 7), line(14, 30), None, None]));
     c.event(&mut out, BEAT / 2, Event::Phrase(Tier::TOP));
-    let notes = sung(&c, &out);
+    let notes = sung(&out);
     let mut jackpot = Sent::default();
     let d = c.event(&mut jackpot, BEAT / 2, Event::Jackpot);
     assert_eq!((notes[0].0, d), (8 * BEAT, 8 * BEAT));
     assert!(notes.iter().all(|n| in_a_minor(n.1)), "{notes:?}");
     // Unsure: at once, its first consonant from the moment it was called.
     let (mut c, mut out) = conductor();
-    c.set_clock(&mut out, unsure(NONE));
+    c.time_by(unsure(NONE));
     c.event(&mut out, 15_000, word(rung(Tier::COUNT)));
-    assert_eq!(sung(&c, &out)[0].0, 15_000);
+    assert_eq!(sung(&out)[0].0, 15_000);
     assert!(out.notes().iter().all(|n| n.0 >= 15_000));
 }
 
@@ -890,10 +894,10 @@ fn the_call_goes_with_the_slam() {
         assert!(call::name(t).is_some() && call::times(t.multiplier()).is_some());
         let (mut c, mut out) = conductor();
         c.event(&mut out, 15_000, word(t.spec().streak));
-        assert_eq!(!sung(&c, &out).is_empty(), rungs, "{}", t.name());
+        assert_eq!(!sung(&out).is_empty(), rungs, "{}", t.name());
         let (mut c, mut out) = conductor();
         c.event(&mut out, 15_000, Event::Phrase(t));
-        assert_eq!(!sung(&c, &out).is_empty(), chimes, "{}", t.name());
+        assert_eq!(!sung(&out).is_empty(), chimes, "{}", t.name());
     }
 }
 
@@ -901,7 +905,7 @@ fn the_call_goes_with_the_slam() {
 /// 1 000 (its first vowel there), as the clock has the lines `lines`.
 fn called(called: Called, lines: [Option<(u64, u64)>; Clock::LINES]) -> Vec<f32> {
     let (mut c, mut s) = playing();
-    c.set_clock(&mut s, grid(lines));
+    c.time_by(grid(lines));
     c.announce(&mut s, 1_000, 1_000, called);
     let mut out = vec![0.0; 2 * RATE as usize * 3];
     s.render_to(&mut out);
@@ -951,71 +955,46 @@ fn a_theme_s_announcer_calls_the_same_in_its_own_voice() {
     let calls = |theme: &crate::theme::Theme| {
         let (mut c, _) = Conductor::new(RATE, theme);
         let mut out = Sent::default();
-        c.set_clock(&mut out, grid(NONE));
+        c.time_by(grid(NONE));
         c.set_key(Some(&a_minor()), 0);
         c.announce(&mut out, 15_000, BEAT, Called::Times(Tier::TOP));
         c.announce(&mut out, 15_000, 4 * BEAT, Called::Name(Tier::TOP));
-        sung(&c, &out)
+        // On the theme's own voice alone.
+        let others = (crate::theme::THEMES.iter()).filter(|t| **t != theme);
+        assert!(others
+            .into_iter()
+            .all(|t| sung_in(&out, place(t)).is_empty()));
+        sung_in(&out, place(theme))
     };
     let spooky = &crate::theme::SPOOKY;
     assert_eq!(calls(spooky), calls(&crate::theme::CLASSIC));
     assert_ne!(spooky.patch(Atom::Singer), palette::patch(Atom::Singer));
 }
 
-/// A palette as built is told the synth nothing (so the game sounds as it
-/// is made, bit for bit, while nothing is edited); a patch edited is told
-/// once, as a command, its next notes the new patch's, and set back it is
-/// told again; one not taken is told on the next call.
+/// The synth's bank holds every theme's atoms in their order, each where
+/// [`id`] says and found again by [`of`]: a theme is other patches of the
+/// one synth, so with nothing edited nothing is told it as the theme in
+/// force changes (the game sounds as it is made, bit for bit), and a
+/// conductor on another theme plays that theme's patches.
 #[test]
-fn a_patch_is_told_the_synth_once_when_it_changes() {
-    for theme in crate::theme::THEMES {
-        let (mut c, _) = Conductor::new(RATE, theme);
-        let mut out = Sent::default();
-        for atom in Atom::ALL {
-            c.set_patch(&mut out, atom, theme.patch(atom));
-        }
-        assert!(out.0.is_empty(), "{}", theme.name);
+fn every_theme_s_patches_are_in_the_synth_s_bank() {
+    let bank = bank(|t, a| t.patch(a));
+    assert_eq!(bank.len(), crate::theme::THEMES.len() * Atom::ALL.len());
+    let (_, synth) = Conductor::new(RATE, &crate::theme::CLASSIC);
+    for (k, (theme, atom)) in every().enumerate() {
+        let id = id(place(theme), atom);
+        assert_eq!(id, PatchId::nth(k));
+        assert_eq!(of(id), Some((place(theme), atom)));
+        assert_eq!(synth.patch(id), Some(&theme.patch(atom)));
     }
-    let (mut c, mut synth) = Conductor::new(RATE, &crate::theme::CLASSIC);
-    let built = palette::patch(Atom::Pop);
-    let louder = jodel_synth::Patch {
-        level: built.level + 6.0,
-        ..built
-    };
-    c.set_patch(&mut Full, Atom::Pop, louder);
-    assert_eq!(c.dropped(), 1);
+    let spooky = &crate::theme::SPOOKY;
+    let mut c = Conductor::planner(RATE, spooky);
     let mut out = Sent::default();
-    c.set_patch(&mut out, Atom::Pop, louder);
-    c.set_patch(&mut out, Atom::Pop, louder);
-    let pop = c.palette[Atom::Pop];
-    assert_eq!(
-        out.0,
-        [Command::Patch {
-            patch: pop,
-            to: louder
-        }]
-    );
-    synth.command(out.0[0]);
-    assert_eq!(synth.patch(pop), Some(&louder));
-    out.0.clear();
-    c.set_patch(&mut out, Atom::Pop, built);
-    assert_eq!(out.0.len(), 1);
-}
-
-/// A key of the Synth tab's keyboard holds its note on the atom's patch
-/// until it is let go of, alone: the other keys held hold on.
-#[test]
-fn a_key_holds_its_note_until_it_is_let_go_of() {
-    let (mut c, mut synth) = Conductor::new(RATE, &crate::theme::CLASSIC);
-    c.key_down(&mut synth, 0, Atom::Choir, 60.0);
-    c.key_down(&mut synth, 0, Atom::Choir, 64.0);
-    let mut out = vec![0.0f32; 2 * 24_000];
-    synth.render_to(&mut out);
-    assert_eq!(synth.voices().filter(|v| v.held).count(), 2);
-    let at = synth.frame();
-    c.key_up(&mut synth, at, Atom::Choir, 60.0);
-    synth.render_to(&mut out);
-    let held: Vec<f32> = synth.voices().filter(|v| v.held).map(|v| v.note).collect();
-    assert_eq!(held, [64.0]);
-    assert_eq!(c.dropped(), 0);
+    c.time_by(grid(NONE));
+    c.event(&mut out, 0, word(1));
+    let ids: Vec<PatchId> = out.notes().iter().map(|n| n.1).collect();
+    assert!(!ids.is_empty());
+    assert!(ids
+        .iter()
+        .all(|&p| of(p).is_some_and(|(t, _)| t == place(spooky))));
 }

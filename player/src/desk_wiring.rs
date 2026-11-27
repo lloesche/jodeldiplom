@@ -280,11 +280,7 @@ impl Engine {
     /// A frame drawn: the karaoke game's new moments cued on the effects
     /// input ([`crate::sfx::Sfx::frame`]).
     pub(crate) fn sound_effects(&mut self, state: &State) {
-        let desk = crate::sfx::Desk {
-            effects: &self.effects,
-            heads: [&self.heads[0].input, &self.heads[1].input],
-            timebase: self.mixer.timebase(),
-        };
+        let desk = sfx_desk(&self.effects, &self.heads, &self.mixer);
         self.sfx.frame(state, desk);
     }
 
@@ -296,11 +292,7 @@ impl Engine {
     /// What the Synth tab asks played on the effects input
     /// ([`crate::sfx::Sfx::bench`]).
     pub(crate) fn bench(&mut self, state: &State, ask: crate::core::synth_tab::Bench) {
-        let desk = crate::sfx::Desk {
-            effects: &self.effects,
-            heads: [&self.heads[0].input, &self.heads[1].input],
-            timebase: self.mixer.timebase(),
-        };
+        let desk = sfx_desk(&self.effects, &self.heads, &self.mixer);
         self.sfx.bench(state, desk, ask);
     }
 
@@ -324,6 +316,20 @@ impl Engine {
             MicPort::CannotHear(why) => Some(why),
             _ => None,
         }
+    }
+}
+
+/// The desk as the effects play on it ([`crate::sfx::Desk`]): its effects
+/// input, the heads' input faders, the mixer's clock.
+fn sfx_desk<'a>(
+    effects: &'a Effects,
+    heads: &'a [HeadFaders; 2],
+    mixer: &Mixer,
+) -> crate::sfx::Desk<'a> {
+    crate::sfx::Desk {
+        effects,
+        heads: [&heads[0].input, &heads[1].input],
+        timebase: mixer.timebase(),
     }
 }
 

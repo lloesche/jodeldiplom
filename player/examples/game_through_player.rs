@@ -168,6 +168,8 @@ fn song() -> Vec<f32> {
             seed,
             pan: 0.0,
             shape: 0.0,
+            glide: None,
+            line: 0,
         };
         assert!(s.note(at, p, n, length));
     };
@@ -373,7 +375,7 @@ fn main() {
             (t > from - 0.1 && t < to + 0.7).then_some((from, to))
         });
         match (miss, state.karaoke.demo.held()) {
-            (Some(_), true) => app.dispatch(Action::DemoLetGo),
+            (Some(_), true) => app.dispatch(Action::Released(Op::KaraokeDemo)),
             (None, false) if state.playing.state == PlayState::Playing => {
                 app.dispatch(Action::Op(Op::KaraokeDemo))
             }

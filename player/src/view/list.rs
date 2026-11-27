@@ -18,8 +18,8 @@ use crate::core::karaoke::SongLyrics;
 use crate::core::keymap::{self, Context, Op};
 use crate::core::text::{self, clock};
 use crate::core::{
-    browser_rows, list_cursor, list_height, readiness, row_entry, Job, LyricsFacts, QueueFacts,
-    Readiness, Rhythm, RhythmFacts, Row, Side, State,
+    browser_rows, list_cursor, list_height, readiness, row_entry, Job, ListKind, LyricsFacts,
+    QueueFacts, Readiness, Rhythm, RhythmFacts, Row, Side, State,
 };
 
 /// What the empty queue says, and how to fill it.
@@ -287,12 +287,10 @@ impl Pane {
             shown: state.side == side,
         })
         .collect();
-        let body = match state.side {
-            Side::Browser => Body::Browser(Browser::of(state)),
-            Side::Queue => Body::Queue(Queue::of(state, width)),
-            Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => {
-                Body::Tab
-            }
+        let body = match state.side.list() {
+            Some(ListKind::Browser) => Body::Browser(Browser::of(state)),
+            Some(ListKind::Queue) => Body::Queue(Queue::of(state, width)),
+            None => Body::Tab,
         };
         Pane { tabs, body }
     }

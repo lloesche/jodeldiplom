@@ -1,11 +1,12 @@
-//! An envelope's curve ([`envelope`]): an ADSR drawn as it sounds, a
-//! linear rise, an exponential fall to the sustain level (to within 60 dB
-//! of it), held a while, and an exponential release, the times to scale
-//! with each other; a faint fill under the line in the accent.
+//! An envelope's curve ([`envelope`]): an ADSR drawn as the synth plays it
+//! ([`Adsr::level_at`]: a linear rise, an exponential fall to the sustain
+//! level, held a while, an exponential release), the times to scale with
+//! each other; a faint fill under the line in the accent.
 
 use iced::mouse::Cursor;
 use iced::widget::canvas::{self, path, Frame, Geometry, Path, Program, Stroke};
 use iced::{Element, Fill, Length, Point, Rectangle, Renderer, Theme, Widget as _};
+use jodel_synth::patch::Adsr;
 
 use crate::gui::look;
 
@@ -14,65 +15,52 @@ use crate::gui::look;
 const HOLD: f32 = 0.18;
 /// The points along each curved part.
 const STEPS: usize = 24;
-/// What an exponential part falls by over its time: 60 dB.
-const FALL: f32 = 6.907_755;
 
-/// The curve of an ADSR: its attack, decay and release in seconds, its
-/// sustain level 0 to 1.
+/// The curve of an ADSR.
 pub struct Envelope {
-    attack: f32,
-    decay: f32,
-    sustain: f32,
-    release: f32,
+    adsr: Adsr,
 }
 
-/// The curve of `attack`, `decay` and `release` seconds and `sustain`.
-pub fn envelope<'a, Message: 'a>(
-    attack: f32,
-    decay: f32,
-    sustain: f32,
-    release: f32,
-) -> Element<'a, Message> {
-    canvas::Canvas::new(Envelope {
-        attack: attack.max(0.0),
-        decay: decay.max(0.0),
-        sustain: sustain.clamp(0.0, 1.0),
-        release: release.max(0.0),
-    })
-    .width(Fill)
-    .height(Length::Fill)
-    .boxed()
+/// The curve of `adsr`.
+pub fn envelope<'a, Message: 'a>(adsr: Adsr) -> Element<'a, Message> {
+    canvas::Canvas::new(Envelope { adsr })
+        .width(Fill)
+        .height(Length::Fill)
+        .boxed()
 }
 
 impl Envelope {
-    /// The curve's points, x 0 to 1 across, y 0 (silent) to 1 (full).
+    /// The curve's points, x 0 to 1 across, y 0 (silent) to 1 (full): the
+    /// envelope's level at the ends of its parts and along the curved
+    /// ones, a struck one (no sustain) to its decay's end, a held one held
+    /// a while then let go.
     fn points(&self) -> Vec<(f32, f32)> {
-        let s = self.sustain;
-        // A struck sound rings out in its decay; a held one holds, then is
-        // let go.
-        let held = s > 0.0;
-        let release = if held { self.release } else { 0.0 };
+        let a = self.adsr;
+        let (attack, decay) = (a.attack.max(0.0), a.decay.max(0.0));
+        let held = a.sustain > 0.0;
+        let release = if held { a.release.max(0.0) } else { 0.0 };
         let hold = if held {
-            (self.attack + self.decay).max(0.05) * HOLD / (1.0 - HOLD)
+            (attack + decay).max(0.05) * HOLD / (1.0 - HOLD)
         } else {
             0.0
         };
-        let total = (self.attack + self.decay + hold + release).max(1e-3);
-        let x = |t: f32| t / total;
-        let mut p = vec![(0.0, 0.0), (x(self.attack), 1.0)];
-        for k in 1..=STEPS {
-            let u = k as f32 / STEPS as f32;
-            let level = s + (1.0 - s) * (-FALL * u).exp();
-            p.push((x(self.attack + u * self.decay), level));
-        }
+        let total = (attack + decay + hold + release).max(1e-3);
+        let gate = attack + decay + hold;
+        let along = |from: f32, length: f32| {
+            (1..=STEPS).map(move |k| from + length * k as f32 / STEPS as f32)
+        };
+        let mut times = vec![0.0, attack];
+        times.extend(along(attack, decay));
         if held {
-            let end = self.attack + self.decay + hold;
-            p.push((x(end), s));
-            for k in 1..=STEPS {
-                let u = k as f32 / STEPS as f32;
-                p.push((x(end + u * release), s * (-FALL * u).exp()));
-            }
+            times.push(gate);
+            times.extend(along(gate, release));
         }
+        let mut p = vec![(0.0, 0.0)];
+        p.extend(
+            times[1..]
+                .iter()
+                .map(|&t| (t / total, a.level_at(t, gate).clamp(0.0, 1.0))),
+        );
         p
     }
 }
@@ -126,13 +114,13 @@ mod tests {
     /// ends in its decay; every point within the box.
     #[test]
     fn the_curve_goes_as_the_envelope_does() {
-        let held = Envelope {
+        let adsr = Adsr {
             attack: 0.1,
             decay: 0.3,
             sustain: 0.5,
             release: 0.4,
         };
-        let p = held.points();
+        let p = Envelope { adsr }.points();
         assert_eq!(p[1].1, 1.0);
         assert!(p
             .iter()
@@ -140,8 +128,10 @@ mod tests {
         assert!((p[STEPS + 1].1 - 0.5).abs() < 1e-3, "at the sustain");
         assert!(p.last().unwrap().1 < 1e-3 && (p.last().unwrap().0 - 1.0).abs() < 1e-4);
         let struck = Envelope {
-            sustain: 0.0,
-            ..held
+            adsr: Adsr {
+                sustain: 0.0,
+                ..adsr
+            },
         };
         let q = struck.points();
         assert_eq!(q.len(), STEPS + 2);

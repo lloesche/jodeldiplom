@@ -9,15 +9,16 @@
 use iced::widget::{column, container, row, scrollable, text, Column, Row, Space};
 use iced::{Alignment, Color, Element, Fill, Length, Padding, Widget as _};
 use jodel_synth::engines::AnyParams;
-use jodel_synth::params::{Kind, Knobs, Spec};
-use jodel_synth::Patch;
+use jodel_synth::params::{Kind, Spec};
 
-use crate::core::synth_tab::{self, Edited, SynthAction};
-use crate::core::{Action, State};
+use crate::core::patch_book::PatchStatus;
+use crate::core::synth_tab::SynthAction;
+use crate::core::Action;
 use crate::gui::look::{self, size, space};
 use crate::gui::pointer::Grab;
 use crate::gui::widgets::{self, Icon};
 use crate::gui::window::Message;
+use crate::view::synth::{KnobRow, PatchView, Synth};
 
 /// A parameter's name, and its value, in points.
 const NAME: f32 = 92.0;
@@ -29,39 +30,22 @@ const CURVE: (f32, f32) = (220.0, 104.0);
 /// The choices shown side by side (more: a step either way).
 const SIDE_BY_SIDE: usize = 4;
 
-/// Where an atom's patch stands.
-pub fn status(edited: Option<&Edited>) -> &'static str {
-    match edited {
-        None => "as built",
-        Some(e) if e.kept == Some(e.patch) => "kept",
-        Some(e) if e.kept.is_some() => "kept, edited since",
-        Some(_) => "edited",
-    }
-}
-
 /// The id of a parameter's track: its key's words joined by `-`.
 pub fn knob_id(spec: &Spec) -> String {
     format!("synth-knob-{}", spec.key().replace(' ', "-"))
 }
 
 /// The middle of the tab.
-pub fn view<'a>(state: &State) -> Element<'a, Message> {
-    let theme = synth_tab::theme(state);
-    let atom = synth_tab::atom(state);
-    let p = synth_tab::patch(state, theme, atom);
-    let built = theme.patch(atom);
-    let edited = synth_tab::edited(state, theme, atom);
-    let held = state.synth.dragging;
-    let groups = scrollable(params(&p, &built, held))
-        .id("synth-params")
-        .height(Fill);
+pub fn view<'a>(m: &Synth) -> Element<'a, Message> {
+    let p = &m.patch;
+    let groups = scrollable(params(p)).id("synth-params").height(Fill);
     column![
-        title(state),
-        atoms(state),
-        engines(&p),
-        envelope(&p, &built, held),
+        title(m),
+        atoms(m),
+        engines(p.engine),
+        envelope(p),
         groups,
-        footer(edited),
+        footer(p.status),
     ]
     .spacing(space::M)
     .width(Fill)
@@ -70,9 +54,8 @@ pub fn view<'a>(state: &State) -> Element<'a, Message> {
 }
 
 /// The sound's name and moment, the layers its tier switches on, Play.
-fn title<'a>(state: &State) -> Element<'a, Message> {
-    let sound = synth_tab::sound(state);
-    let theme = synth_tab::theme(state);
+fn title<'a>(m: &Synth) -> Element<'a, Message> {
+    let sound = m.sound;
     let name = column![
         text(sound.moment.name())
             .size(size::CAPTION)
@@ -86,7 +69,7 @@ fn title<'a>(state: &State) -> Element<'a, Message> {
     ]
     .spacing(2.0);
     let tone = sound.tier.map_or(look::TEXT_DIM, |t| {
-        let [r, g, b] = theme.color(t);
+        let [r, g, b] = m.theme.color(t);
         Color::from_rgb(r, g, b)
     });
     let layers = (sound.layers.iter())
@@ -99,9 +82,7 @@ fn title<'a>(state: &State) -> Element<'a, Message> {
         .leading(Icon::Play)
         .key("enter")
         .id("synth-play")
-        .on_press(Message::Act(Action::Synth(SynthAction::Pick(
-            state.synth.sound,
-        ))));
+        .on_press(Message::Act(Action::Synth(SynthAction::Pick(m.selected))));
     row![
         name,
         container(layers)
@@ -115,22 +96,15 @@ fn title<'a>(state: &State) -> Element<'a, Message> {
 }
 
 /// The sound's atoms, the one shown lit; an edited one marked.
-fn atoms<'a>(state: &State) -> Element<'a, Message> {
-    let sound = synth_tab::sound(state);
-    let theme = synth_tab::theme(state);
-    let shown = synth_tab::atom(state);
-    let chips = sound.atoms.iter().enumerate().fold(
+fn atoms<'a>(m: &Synth) -> Element<'a, Message> {
+    let chips = m.atoms.iter().fold(
         Row::<Element<'a, Message>>::new().spacing(space::XS),
-        |r, (i, &a)| {
-            let mark = if synth_tab::edited(state, theme, a).is_some() {
-                " •"
-            } else {
-                ""
-            };
+        |r, a| {
+            let mark = if a.edited { " •" } else { "" };
             r.push(Element::from(
-                widgets::chip(format!("{}{mark}", a.name()))
-                    .lit((a == shown).then_some(look::ACCENT))
-                    .on_press(Message::Act(Action::Synth(SynthAction::Atom(i)))),
+                widgets::chip(format!("{}{mark}", a.atom.name()))
+                    .lit(a.shown.then_some(look::ACCENT))
+                    .on_press(Message::Act(Action::Synth(SynthAction::Atom(a.place)))),
             ))
         },
     );
@@ -141,8 +115,7 @@ fn atoms<'a>(state: &State) -> Element<'a, Message> {
 }
 
 /// The engine, a segmented choice.
-fn engines<'a>(p: &Patch) -> Element<'a, Message> {
-    let now = p.engine.engine();
+fn engines<'a>(now: &'static str) -> Element<'a, Message> {
     let segments = AnyParams::ENGINES.map(|name| {
         widgets::segment(name)
             .selected(name == now)
@@ -165,15 +138,12 @@ fn label<'a>(said: &'static str) -> Element<'a, Message> {
 }
 
 /// The envelope: its curve beside its four sliders.
-fn envelope<'a>(p: &Patch, built: &Patch, held: Option<usize>) -> Element<'a, Message> {
-    let sliders = (0..p.count())
-        .filter(|&k| p.spec(k).is_some_and(|s| s.group == "envelope"))
-        .fold(
-            Column::<Element<'a, Message>>::new().spacing(2.0),
-            |c, k| c.push(knob(p, built, k, held)),
-        );
-    let a = p.adsr;
-    let curve = container(widgets::envelope(a.attack, a.decay, a.sustain, a.release))
+fn envelope<'a>(p: &PatchView) -> Element<'a, Message> {
+    let sliders = p.envelope().fold(
+        Column::<Element<'a, Message>>::new().spacing(2.0),
+        |c, r| c.push(knob(r, p.held)),
+    );
+    let curve = container(widgets::envelope(p.adsr))
         .width(CURVE.0)
         .height(CURVE.1);
     widgets::card(
@@ -188,29 +158,17 @@ fn envelope<'a>(p: &Patch, built: &Patch, held: Option<usize>) -> Element<'a, Me
 
 /// The parameters that apply but the envelope's, in their groups (the
 /// engine's first), in two columns.
-fn params<'a>(p: &Patch, built: &Patch, held: Option<usize>) -> Element<'a, Message> {
-    let own = jodel_synth::patch::PARAMS.len();
-    let order = (own..p.count()).chain(0..own);
-    let mut groups: Vec<(&'static str, Vec<usize>)> = Vec::new();
-    for k in order.filter(|&k| p.applies(k)) {
-        let Some(spec) = p.spec(k).filter(|s| s.group != "envelope") else {
-            continue;
-        };
-        match groups.iter_mut().find(|(g, _)| *g == spec.group) {
-            Some((_, ks)) => ks.push(k),
-            None => groups.push((spec.group, vec![k])),
-        }
-    }
+fn params<'a>(p: &PatchView) -> Element<'a, Message> {
     // Into two columns, each group to the shorter.
     let mut columns: [(usize, Column<Element<'a, Message>>); 2] = [
         (0, Column::new().spacing(space::M)),
         (0, Column::new().spacing(space::M)),
     ];
-    for (group, ks) in groups {
-        let rows = ks.len();
-        let card = ks.into_iter().fold(
+    for (group, rows) in p.groups() {
+        let n = rows.len();
+        let card = rows.into_iter().fold(
             Column::<Element<'a, Message>>::new().spacing(2.0),
-            |c, k| c.push(knob(p, built, k, held)),
+            |c, r| c.push(knob(r, p.held)),
         );
         let block = column![
             text(group.to_uppercase())
@@ -223,8 +181,8 @@ fn params<'a>(p: &Patch, built: &Patch, held: Option<usize>) -> Element<'a, Mess
         ]
         .spacing(space::XS);
         let shorter = usize::from(columns[1].0 < columns[0].0);
-        let (n, c) = std::mem::replace(&mut columns[shorter], (0, Column::new()));
-        columns[shorter] = (n + rows + 1, c.push(block.boxed()));
+        let (k, c) = std::mem::replace(&mut columns[shorter], (0, Column::new()));
+        columns[shorter] = (k + n + 1, c.push(block.boxed()));
     }
     let [(_, left), (_, right)] = columns;
     row![left.width(Fill), right.width(Fill)]
@@ -236,15 +194,11 @@ fn params<'a>(p: &Patch, built: &Patch, held: Option<usize>) -> Element<'a, Mess
         .boxed()
 }
 
-/// Parameter `k`'s row: its name; a slider with its value, a choice, or
-/// a switch; in the accent where it is off the built-in patch's.
-fn knob<'a>(p: &Patch, built: &Patch, k: usize, held: Option<usize>) -> Element<'a, Message> {
-    let (Some(spec), Some(v)) = (p.spec(k), p.get(k)) else {
-        return Space::new().boxed();
-    };
-    let same_engine = built.engine.engine() == p.engine.engine();
-    let off = !(same_engine || k < jodel_synth::patch::PARAMS.len()) || built.get(k) != Some(v);
-    let tone = if off { look::ACCENT } else { look::TEXT };
+/// A parameter's row: its name; a slider with its value, a choice, or a
+/// switch; in the accent where it is off the built-in patch's.
+fn knob<'a>(r: &KnobRow, held: Option<usize>) -> Element<'a, Message> {
+    let (k, spec, v) = (r.knob.k, r.knob.spec, r.knob.value);
+    let tone = if r.off { look::ACCENT } else { look::TEXT };
     let set = |value: f32| Message::Act(Action::Synth(SynthAction::Set { knob: k, value }));
     let name = text(spec.name)
         .size(size::LABEL)
@@ -259,7 +213,7 @@ fn knob<'a>(p: &Patch, built: &Patch, k: usize, held: Option<usize>) -> Element<
                 .on_press(move |bounds, at| Message::Grab(Grab::SynthKnob(k, bounds), at));
             row![
                 container(track).width(Fill),
-                text(spec.kind.text(v))
+                text(r.text())
                     .size(size::LABEL)
                     .font(look::font::numbers())
                     .color(tone)
@@ -287,7 +241,7 @@ fn knob<'a>(p: &Patch, built: &Patch, k: usize, held: Option<usize>) -> Element<
                         .small()
                         .on_press(set((v - 1.0).rem_euclid(n)))
                 ),
-                text(spec.kind.text(v))
+                text(r.text())
                     .size(size::LABEL)
                     .color(tone)
                     .wrapping(text::Wrapping::None)
@@ -299,7 +253,7 @@ fn knob<'a>(p: &Patch, built: &Patch, k: usize, held: Option<usize>) -> Element<
             .boxed()
         }
         Kind::Toggle => Element::from(
-            widgets::chip(spec.kind.text(v))
+            widgets::chip(r.text())
                 .lit((v >= 0.5).then_some(tone))
                 .struck(v < 0.5)
                 .on_press(set(1.0 - v)),
@@ -313,23 +267,23 @@ fn knob<'a>(p: &Patch, built: &Patch, k: usize, held: Option<usize>) -> Element<
 }
 
 /// Where the patch stands, and Keep and Revert where they do something.
-fn footer<'a>(edited: Option<&Edited>) -> Element<'a, Message> {
+fn footer<'a>(status: PatchStatus) -> Element<'a, Message> {
     let act = |a: SynthAction| Message::Act(Action::Synth(a));
     let mut keep = widgets::secondary("Keep").key("K").id("synth-keep");
-    if edited.is_some_and(|e| e.kept != Some(e.patch)) {
+    if matches!(status, PatchStatus::Edited | PatchStatus::KeptEdited) {
         keep = keep.on_press(act(SynthAction::Keep));
     }
     let mut revert = widgets::ghost("As built").key("del").id("synth-revert");
-    if edited.is_some() {
+    if status != PatchStatus::AsBuilt {
         revert = revert.on_press(act(SynthAction::Revert));
     }
-    let tone = match edited {
-        None => look::TEXT_FAINT,
-        Some(e) if e.kept == Some(e.patch) => look::GOOD,
-        Some(_) => look::ACCENT,
+    let tone = match status {
+        PatchStatus::AsBuilt => look::TEXT_FAINT,
+        PatchStatus::Kept => look::GOOD,
+        PatchStatus::Edited | PatchStatus::KeptEdited => look::ACCENT,
     };
     row![
-        text(format!("The patch: {}", status(edited)))
+        text(format!("The patch: {}", status.name()))
             .size(size::LABEL)
             .font(look::font::label())
             .color(tone),

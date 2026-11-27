@@ -68,11 +68,10 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
         wait_until("mixed", || mixer.timebase().frame == 9_600);
         MIXER_ALLOCATIONS.store(0, Ordering::Relaxed);
         COUNTING.store(true, Ordering::Relaxed);
-        let release = Command::Release {
+        let release = Command::At {
             frame: 17_000,
-            patch,
-            note: None,
             tag: Tag(3),
+            cue: jodel_synth::Cue::Release,
         };
         // The patch edited as it sounds (a Synth tab's edit): quieter, then
         // another engine's.
@@ -93,10 +92,10 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
             for _ in 0..12 {
                 song.send(tone(patch, 13_000, -0.5));
             }
-            song.send(Command::Patch { patch, to: quieter });
+            song.patch(patch, quieter);
             for k in 0..18 {
                 if k == 9 {
-                    song.send(Command::Patch { patch, to: bell });
+                    song.patch(patch, bell);
                 }
                 song.send(tone(patch, 14_000 + 1_000 * k, 0.5));
             }

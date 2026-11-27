@@ -6,8 +6,9 @@
 //! captions and the right column's view say it ([`prep`]), the command
 //! palette over everything ([`command_palette`]) and the bottom bar
 //! ([`bottom`], the spectrum's [`plot`]); and whole screens: Now playing ([`now::NowPlaying`]), the
-//! settings ([`settings`]), the keys ([`help`]) and the lyrics editor
-//! ([`lyrics`]), in the player's colours ([`palette`]).
+//! settings ([`settings`]), the keys ([`help`]), the Synth tab
+//! ([`synth`]) and the lyrics editor ([`lyrics`]), in the player's
+//! colours ([`palette`]).
 
 pub mod bottom;
 pub mod bubbles;
@@ -25,4 +26,5 @@ pub mod prep;
 pub mod settings;
 pub mod setup;
 pub mod sync;
+pub mod synth;
 pub mod transition;

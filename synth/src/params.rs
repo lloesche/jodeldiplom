@@ -1,13 +1,14 @@
 //! Parameters as data: what a patch's and each engine's numbers are
 //! called, what they take, and how they are read and set ([`Param`]), so
 //! a patch can be shown, edited and written out by its tables alone
-//! ([`crate::patch::PARAMS`], each engine module's `PARAMS`, and the one
-//! view of them all on [`crate::engines::AnyParams`]).
+//! ([`crate::patch::PARAMS`], each engine module's `PARAMS`, and a whole
+//! patch's as [`Knob`]s: [`crate::Patch::knobs`]).
 //!
 //! Every value is a number: a range's in its unit, a choice's the index
 //! of its option, a switch's 0 or 1. Setting one clamps it to what it
 //! takes first, so a value from anywhere (a slider, a file) is one the
-//! sound takes.
+//! sound takes. As text a value is written and read back by its kind
+//! ([`Kind::write`], [`Kind::read`]).
 
 /// How a range's values sit along a slider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +142,30 @@ impl Kind {
             Kind::Toggle => if v >= 0.5 { "on" } else { "off" }.to_owned(),
         }
     }
+
+    /// `v` as a file writes it, to read back as it is ([`Kind::read`]): a
+    /// range's number in full, in its unit (no unit written), a choice's
+    /// option, a switch `on` or `off`.
+    pub fn write(self, v: f32) -> String {
+        match self {
+            Kind::Range { .. } => format!("{v}"),
+            Kind::Choice(_) | Kind::Toggle => self.text(v),
+        }
+    }
+
+    /// A value as a file writes it ([`Kind::write`]), if it is one of this
+    /// kind's (a number, an option's name, `on` or `off`).
+    pub fn read(self, s: &str) -> Option<f32> {
+        match self {
+            Kind::Range { .. } => s.parse().ok(),
+            Kind::Choice(options) => options.iter().position(|o| *o == s).map(|i| i as f32),
+            Kind::Toggle => match s {
+                "on" => Some(1.0),
+                "off" => Some(0.0),
+                _ => None,
+            },
+        }
+    }
 }
 
 /// What a parameter is, without how it is read: its group (empty: none),
@@ -164,6 +189,32 @@ impl Spec {
             format!("{} {}", self.group, self.name)
         }
     }
+
+    /// Whether `key` is its [`Spec::key`].
+    pub fn is_key(&self, key: &str) -> bool {
+        if self.group.is_empty() {
+            return key == self.name;
+        }
+        (key.strip_prefix(self.group)).and_then(|k| k.strip_prefix(' ')) == Some(self.name)
+    }
+}
+
+/// A parameter of a patch as it is now: its place among the patch's
+/// (what [`crate::Patch::set`] takes), what it is, its value, whether it
+/// applies now (one that does not is neither shown nor written out), and
+/// whether it is its engine's (not the patch's own).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Knob {
+    /// Its place.
+    pub k: usize,
+    /// What it is.
+    pub spec: Spec,
+    /// Its value.
+    pub value: f32,
+    /// Whether it applies now.
+    pub applies: bool,
+    /// Whether it is its engine's.
+    pub of_engine: bool,
 }
 
 /// A parameter of `P`: what it is ([`Spec`]), how it is read and set, and
@@ -268,6 +319,18 @@ impl<P> Param<P> {
     pub fn set(&self, p: &mut P, v: f32) {
         (self.write)(p, self.spec.kind.clamp(v));
     }
+
+    /// It in `p` as the `k`th knob of a patch (`of_engine`: of its
+    /// engine's).
+    pub(crate) fn knob(&self, p: &P, k: usize, of_engine: bool) -> Knob {
+        Knob {
+            k,
+            spec: self.spec,
+            value: self.get(p),
+            applies: self.applies(p),
+            of_engine,
+        }
+    }
 }
 
 /// `param`, applying only where `applies` says.
@@ -275,44 +338,23 @@ pub const fn when<P>(param: Param<P>, applies: fn(&P) -> bool) -> Param<P> {
     Param { applies, ..param }
 }
 
-/// What has parameters as data, each by its place in its tables: how
-/// many, what each is, whether it applies now, its value, and setting it.
-pub trait Knobs {
-    /// How many.
-    fn count(&self) -> usize;
-
-    /// What the `k`th is.
-    fn spec(&self, k: usize) -> Option<Spec>;
-
-    /// Whether the `k`th applies now.
-    fn applies(&self, k: usize) -> bool;
-
-    /// The `k`th's value.
-    fn get(&self, k: usize) -> Option<f32>;
-
-    /// Sets the `k`th to `v` (as it takes it); whether there is one.
-    fn set(&mut self, k: usize, v: f32) -> bool;
-}
-
-/// What `table`'s `k`th is (the helpers [`Knobs`] is made of, over one
-/// table).
-pub(crate) fn spec_of<P>(table: &[Param<P>], k: usize) -> Option<Spec> {
-    table.get(k).map(|q| q.spec)
-}
-
-/// Whether `table`'s `k`th applies to `p`.
-pub(crate) fn applies_to<P>(table: &[Param<P>], p: &P, k: usize) -> bool {
-    table.get(k).is_some_and(|q| q.applies(p))
-}
-
-/// `table`'s `k`th's value in `p`.
-pub(crate) fn get_in<P>(table: &[Param<P>], p: &P, k: usize) -> Option<f32> {
-    table.get(k).map(|q| q.get(p))
-}
-
-/// Sets `table`'s `k`th in `p`; whether there is one.
-pub(crate) fn set_in<P>(table: &[Param<P>], p: &mut P, k: usize, v: f32) -> bool {
-    table.get(k).map(|q| q.set(p, v)).is_some()
+/// A value set in one of two units, a switch between them (an LFO's rate
+/// in hertz or in beats, an operator's frequency as a ratio or fixed):
+/// which it is in, its number in each (in the other unit as at a
+/// reference), and the value of a number in each. Its parameters are the
+/// switch and a range for each unit, the one it is not in hidden
+/// ([`units!`]).
+pub trait TwoUnits: Copy {
+    /// Whether it is in the second unit.
+    fn second(self) -> bool;
+    /// Its number in the first unit.
+    fn in_first(self) -> f32;
+    /// Its number in the second unit.
+    fn in_second(self) -> f32;
+    /// `v` in the first unit.
+    fn first_of(v: f32) -> Self;
+    /// `v` in the second unit.
+    fn second_of(v: f32) -> Self;
 }
 
 /// A number parameter of a field (a path of fields: `adsr.attack`):
@@ -352,7 +394,75 @@ macro_rules! pick {
     };
 }
 
-pub(crate) use {field, pick, switch};
+/// A value of two units' three parameters ([`TwoUnits`]): its switch (on:
+/// the second unit, the value turned into it), and its number in each
+/// unit, each shown only in its own:
+/// `units!("group", Type, |p| p.place, "switch", ("first", min, max,
+/// "unit", Scale), ("second", min, max, "unit", Scale))`.
+macro_rules! units {
+    (
+        $group:expr,
+        $t:ty,
+        |$p:ident| $place:expr,
+        $switch:expr,
+        ($a:expr, $amin:expr, $amax:expr, $aunit:expr, $ascale:ident),
+        ($b:expr, $bmin:expr, $bmax:expr, $bunit:expr, $bscale:ident) $(,)?
+    ) => {
+        [
+            $crate::params::Param::toggle(
+                ($group, $switch),
+                |$p| $crate::params::on($crate::params::TwoUnits::second($place)),
+                |$p, v| {
+                    let x = $place;
+                    $place = if v >= 0.5 {
+                        <$t as $crate::params::TwoUnits>::second_of(
+                            $crate::params::TwoUnits::in_second(x),
+                        )
+                    } else {
+                        <$t as $crate::params::TwoUnits>::first_of(
+                            $crate::params::TwoUnits::in_first(x),
+                        )
+                    };
+                },
+            ),
+            $crate::params::when(
+                $crate::params::Param::range(
+                    ($group, $a),
+                    ($amin, $amax, $aunit, $crate::params::Scale::$ascale),
+                    |$p| $crate::params::TwoUnits::in_first($place),
+                    |$p, v| $place = <$t as $crate::params::TwoUnits>::first_of(v),
+                ),
+                |$p| !$crate::params::TwoUnits::second($place),
+            ),
+            $crate::params::when(
+                $crate::params::Param::range(
+                    ($group, $b),
+                    ($bmin, $bmax, $bunit, $crate::params::Scale::$bscale),
+                    |$p| $crate::params::TwoUnits::in_second($place),
+                    |$p, v| $place = <$t as $crate::params::TwoUnits>::second_of(v),
+                ),
+                |$p| $crate::params::TwoUnits::second($place),
+            ),
+        ]
+    };
+}
+
+/// A choice's options and their names from one list, in its order:
+/// `options!(ALL, NAMES: Type = [Type::A => "a", Type::B => "b"])` makes
+/// `const ALL: [Type; 2]` and `const NAMES: [&str; 2]` (for [`pick!`]).
+macro_rules! options {
+    (
+        $(#[$doc:meta])*
+        $vis:vis $all:ident, $names:ident: $t:ty = [$($v:expr => $n:expr),* $(,)?]
+    ) => {
+        $(#[$doc])*
+        $vis const $all: [$t; [$($n),*].len()] = [$($v),*];
+        $(#[$doc])*
+        const $names: [&str; [$($n),*].len()] = [$($n),*];
+    };
+}
+
+pub(crate) use {field, options, pick, switch, units};
 
 /// A switch's value: 1 on, 0 off.
 pub fn on(b: bool) -> f32 {
@@ -428,5 +538,28 @@ mod tests {
         assert_eq!(choice.share(1.0), 0.5);
         assert_eq!(Kind::Toggle.clamp(0.7), 1.0);
         assert_eq!(Kind::Toggle.text(0.0), "off");
+    }
+
+    /// A value written reads back as it was, of every kind; what a kind
+    /// takes not is read as nothing; a key is its group's and name's.
+    #[test]
+    fn a_value_reads_back_as_it_was_written() {
+        let choice = Kind::Choice(&["saw", "square", "sine"]);
+        for (kind, v) in [(HZ, 632.4567), (choice, 2.0), (Kind::Toggle, 1.0)] {
+            assert_eq!(kind.read(&kind.write(v)), Some(v), "{kind:?}");
+        }
+        assert_eq!(HZ.write(800.0), "800");
+        assert_eq!(choice.write(1.0), "square");
+        assert_eq!(choice.read("kazoo"), None);
+        assert_eq!(Kind::Toggle.read("maybe"), None);
+        let spec = Spec {
+            group: "op 1",
+            name: "ratio",
+            kind: HZ,
+        };
+        assert!(spec.is_key("op 1 ratio") && spec.is_key(&spec.key()));
+        assert!(!spec.is_key("op 1") && !spec.is_key("op 12 ratio") && !spec.is_key("ratio"));
+        let alone = Spec { group: "", ..spec };
+        assert!(alone.is_key("ratio") && !alone.is_key(" ratio"));
     }
 }

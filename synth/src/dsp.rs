@@ -437,9 +437,25 @@ pub fn hz(note: f32) -> f32 {
     440.0 * ((note - 69.0) / 12.0).exp2()
 }
 
+/// The MIDI note of frequency `hz` (fractional): [`hz`]'s inverse.
+pub fn note(hz: f64) -> f32 {
+    (69.0 + 12.0 * (hz / 440.0).log2()) as f32
+}
+
+/// Middle C, Hz: [`hz`] of note 60.
+pub const MIDDLE_C: f32 = 261.625_57;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_and_its_frequency_are_one_another_s() {
+        assert!((hz(60.0) - MIDDLE_C).abs() < 1e-3);
+        for n in [21.0f32, 60.0, 69.0, 100.5] {
+            assert!((note(f64::from(hz(n))) - n).abs() < 1e-4, "{n}");
+        }
+    }
 
     #[test]
     fn the_sine_is_accurate() {

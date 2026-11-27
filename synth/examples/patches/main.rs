@@ -87,6 +87,8 @@ fn render(d: &Demo, chorus: Option<ChorusSettings>) -> Vec<f32> {
             seed: 1 + k as u32,
             pan,
             shape: 0.0,
+            glide: None,
+            line: 0,
         };
         assert!(synth.note(frame, p, n, None));
     }

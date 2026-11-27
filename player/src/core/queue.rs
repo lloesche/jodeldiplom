@@ -9,7 +9,7 @@ use jodel_playback::Command;
 use crate::browser::{self, EntryKind};
 use crate::core::browse::{self, browser_rows, row_entry, Row};
 use crate::core::keymap::{self, Context, Op};
-use crate::core::{Effect, Placing, Screen, Side, State, WalkPurpose};
+use crate::core::{Effect, ListKind, Placing, Screen, Side, State, WalkPurpose};
 
 fn tracks(n: usize) -> &'static str {
     if n == 1 {
@@ -196,14 +196,14 @@ pub(crate) fn engine_changed(state: &mut State, queue: Vec<PathBuf>, current: Op
 /// `how` says: after it, after it and playing, or in its place with its
 /// whole folder (playing from the file).
 pub(crate) fn activate(state: &mut State, how: Placing, fx: &mut Vec<Effect>) {
-    match state.side {
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => {}
-        Side::Queue => {
+    match state.side.list() {
+        None => {}
+        Some(ListKind::Queue) => {
             if state.queue.cursor < state.queue.paths.len() {
                 fx.push(Effect::Engine(Command::Play(state.queue.cursor)));
             }
         }
-        Side::Browser => {
+        Some(ListKind::Browser) => {
             let rows = browser_rows(state);
             let Some(&row) = rows.get(state.browser.cursor) else {
                 return;

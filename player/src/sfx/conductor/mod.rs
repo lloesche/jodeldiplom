@@ -1,15 +1,18 @@
 //! The sound conductor (an adaptive sound-effect scheduler): the karaoke
 //! game's sounds, planned live in the
 //! song's tempo and key, as timed notes for our own synthesizer
-//! ([`jodel_synth::Synth`], made with the conductor: [`Conductor::new`]).
+//! ([`jodel_synth::Synth`], made with the conductor: [`Conductor::new`];
+//! its bank every theme's atoms, [`bank`], so a theme is the patches the
+//! conductor plays: [`Conductor::set_theme`]).
 //!
 //! The conductor plans on the thread that reads the game (where the
 //! moments are, [`super::moments`]), in the frames its sounds are cued on:
 //! the song's stream frames while it is sung, the desk's own after it (the
 //! diploma). It is told the game's events with their frames
 //! ([`Conductor::event`], which says where its hit lands, so a look can
-//! land with it) and the music clock ([`Conductor::set_clock`]: the song's
-//! beat grid from the analysis and the sung lines, [`Clock`]); it sends the
+//! land with it) and the music clock ([`Conductor::time_by`]: the song's
+//! beat grid from the analysis and the sung lines, [`Clock`]; the synth
+//! told its tempo by whoever plays on it, [`Tempo`]); it sends the
 //! notes, the releases of the held ones and the calls to call some off
 //! ([`jodel_synth::Command`]) to wherever they go
 //! ([`jodel_synth::Commands`]): the synth itself when rendering offline,
@@ -40,10 +43,8 @@
 //!   paper, pen, stamps and tunes, at once ([`Sheet`]: each on fixed notes,
 //!   the same every time).
 //! - The Synth tab's ([`crate::sfx::bench`]): any of the sounds above on
-//!   a click, a key of its keyboard held on an atom's patch
-//!   ([`Conductor::key_down`]), and an atom's patch edited, told the
-//!   synth as a command ([`Conductor::set_patch`]: it mirrors what its
-//!   synth has, so only a change is sent).
+//!   a click, by a conductor of its own on the same synth, and the keys of
+//!   its keyboard, each note on its own tag ([`tags`]).
 //!
 //! Where a hit lands is the song's grid's one rule
 //! ([`jodel_rhythm::grid::Grid::land`]), the one the looks land by too.
@@ -71,6 +72,7 @@ mod palette;
 mod pen;
 mod sheet;
 mod sounds;
+pub(crate) mod tags;
 
 #[cfg(test)]
 mod tests;
@@ -80,20 +82,20 @@ use jodel_synth::chorus::ChorusSettings;
 use jodel_synth::delay::DelaySettings;
 use jodel_synth::dynamics::CompressorSettings;
 use jodel_synth::hall::HallSettings;
-use jodel_synth::{Bank, Command, Commands, NoteOn, Patch, PatchId, Synth, Tag, GENTLE};
+use jodel_synth::{Bank, Command, Commands, Synth, GENTLE};
 
 pub use clock::Clock;
 pub use layers::{Chime, Layers, Streak};
-pub use palette::{patch, Atom};
+pub use palette::{bank, every, id, of, patch, place, Atom};
 pub use sheet::{Entry, Sheet};
-pub(crate) use sounds::JACKPOT_BEATS;
+pub(crate) use sounds::{Note, Score, JACKPOT_BEATS};
 
 use crate::theme::Theme;
 use crate::tiers::Tier;
 use key::Pentatonic;
 use layers::{chime_has, rung_has, rung_of, rung_share, tier_share};
-use palette::Palette;
-use sounds::{Score, PAYOUT, PAYOUT_LEAD, STREAK};
+use sounds::{Origin, PAYOUT_LEAD};
+use tags::{PAYOUT, STREAK};
 
 /// The synth's voices, and the notes that can wait in it.
 const VOICES: usize = 96;
@@ -211,26 +213,16 @@ pub enum Event {
     },
 }
 
-/// The tag of the keyboard's notes (the Synth tab's): a cancel of all
-/// calls them off, nothing else does.
-const KEYS: Tag = Tag(3);
-
-/// How long a key held on the Synth tab's keyboard holds its note at
-/// most, seconds (it is let go of with the key).
-const KEY_HOLD: f64 = 10.0;
-
 /// The sound conductor: the planner.
 pub struct Conductor {
-    palette: Palette,
-    /// Each atom's patch as its synth has it ([`Conductor::set_patch`]).
-    patches: [Patch; Atom::ALL.len()],
+    /// The theme whose patches it plays (its place: [`place`]).
+    theme: usize,
     /// The words in a row each rung is reached at.
     rungs: [u32; Tier::COUNT],
     clock: Clock,
     rate: u32,
     key: Option<Pentatonic>,
-    /// The tempo last told the synth.
-    tempo: f64,
+
     seed: u32,
     /// The commands not taken.
     dropped: u64,
@@ -249,18 +241,30 @@ pub struct Conductor {
 }
 
 impl Conductor {
-    /// A conductor planning at `rate` Hz for the tiers' rows (at the free
-    /// tempo, no key known, the song as at the reference loudness), and the
-    /// synth its notes are for, its patches `theme`'s, its bus set (lifted
-    /// by [`LEVEL`]: the effects path adds no gain of its own; to be moved
-    /// to where it renders: a synth on the effects path, at the device's
-    /// rate).
+    /// A conductor planning at `rate` Hz for the tiers' rows in `theme`
+    /// (at the free tempo, no key known, the song as at the reference
+    /// loudness), and the synth its notes are for, every theme's patches
+    /// as built ([`bank`], [`Theme::patch`]), made as [`Conductor::synth`]
+    /// makes it.
     ///
     /// # Panics
     ///
     /// If the synth takes no such rate (32 to 192 kHz).
     pub fn new(rate: u32, theme: &Theme) -> (Conductor, Synth) {
-        let (conductor, bank) = Conductor::planner(rate, theme);
+        let synth = Conductor::synth(rate, bank(|t, a| t.patch(a)));
+        (Conductor::planner(rate, theme), synth)
+    }
+
+    /// The synth a conductor's notes are for, at `rate` Hz, playing `bank`
+    /// (every theme's atoms: [`bank`]), its bus set (lifted by [`LEVEL`]:
+    /// the effects path adds no gain of its own; to be moved to where it
+    /// renders: a synth on the effects path, at the device's rate), at the
+    /// free clock's tempo.
+    ///
+    /// # Panics
+    ///
+    /// If the synth takes no such rate (32 to 192 kHz).
+    pub fn synth(rate: u32, bank: Bank) -> Synth {
         let mut synth = Synth::with_cues(rate, bank, VOICES, CUES);
         synth.set_reverb(HallSettings {
             size: 0.5,
@@ -277,22 +281,18 @@ impl Conductor {
             makeup: LEVEL,
             ..GENTLE
         });
-        synth.set_tempo(conductor.clock.tempo() as f32);
-        (conductor, synth)
+        synth.set_tempo(Tempo::default().told as f32);
+        synth
     }
 
-    /// The conductor alone, as [`Conductor::new`] makes it, and the bank
-    /// of patches its synth is to play (what it plans can be written down
-    /// without one: which atoms a sound plays).
-    pub fn planner(rate: u32, theme: &Theme) -> (Conductor, Bank) {
-        let patches = Atom::ALL.map(|a| theme.patch(a));
-        let (bank, palette) = Palette::bank(&patches);
+    /// The conductor alone, as [`Conductor::new`] makes it (what it plans
+    /// can be written down without a synth: which atoms a sound plays; or
+    /// sent to a synth made apart, [`Conductor::synth`]).
+    pub fn planner(rate: u32, theme: &Theme) -> Conductor {
         let clock = Clock::free(rate);
-        let conductor = Conductor {
-            palette,
-            patches,
+        Conductor {
+            theme: place(theme),
             rungs: layers::rungs(),
-            tempo: clock.tempo(),
             clock,
             rate,
             key: None,
@@ -304,79 +304,13 @@ impl Conductor {
             rung: 0,
             riser: false,
             trim: 0.0,
-        };
-        (conductor, bank)
-    }
-
-    /// `atom`'s patch from now on (an edit on the Synth tab, or one kept),
-    /// told its synth when it is not what the synth has already; one not
-    /// taken (a full queue) is told again on the next call.
-    pub fn set_patch(&mut self, out: &mut impl Commands, atom: Atom, patch: Patch) {
-        let k = atom as usize;
-        if self.patches[k] == patch {
-            return;
-        }
-        let to = Command::Patch {
-            patch: self.palette[atom],
-            to: patch,
-        };
-        if out.send(to) {
-            self.patches[k] = patch;
-        } else {
-            self.dropped += 1;
         }
     }
 
-    /// The atom whose patch the synth plays as `id`, if one is.
-    pub fn atom_of(&self, id: PatchId) -> Option<Atom> {
-        self.palette.atom_of(id)
-    }
-
-    /// The streak as at a song's start, nothing told the synth: the Synth
-    /// tab plays a rung or a run of words from none.
-    pub fn start_over(&mut self) {
-        self.rung = 0;
-        self.riser = false;
-        self.quiet_until = 0;
-        self.last_clink = None;
-    }
-
-    /// A key of the Synth tab's keyboard pressed on `at`: `note` on
-    /// `atom`'s patch, held until its key is let go of
-    /// ([`Conductor::key_up`]).
-    pub fn key_down(&mut self, out: &mut impl Commands, at: u64, atom: Atom, note: f32) {
-        let seed = self.seed;
-        self.seed = self.seed.wrapping_mul(0x9E37_79B9).wrapping_add(1);
-        let c = Command::Note {
-            frame: at,
-            patch: self.palette[atom],
-            note: NoteOn {
-                note,
-                velocity: 0.85,
-                seed,
-                pan: 0.0,
-                shape: 0.0,
-            },
-            length: Some((KEY_HOLD * f64::from(self.rate)) as u64),
-            tag: KEYS,
-        };
-        if !out.send(c) {
-            self.dropped += 1;
-        }
-    }
-
-    /// The key of `note` let go of on `at`: its note on `atom`'s patch let
-    /// go.
-    pub fn key_up(&mut self, out: &mut impl Commands, at: u64, atom: Atom, note: f32) {
-        let c = Command::Release {
-            frame: at,
-            patch: self.palette[atom],
-            note: Some(note),
-            tag: KEYS,
-        };
-        if !out.send(c) {
-            self.dropped += 1;
-        }
+    /// The theme whose patches it plays from now on (the synth has every
+    /// theme's: what sounds of another rings on).
+    pub fn set_theme(&mut self, theme: &Theme) {
+        self.theme = place(theme);
     }
 
     /// The rate it plans at, Hz.
@@ -384,15 +318,10 @@ impl Conductor {
         self.rate
     }
 
-    /// The music clock from now on; the synth told its tempo when it
-    /// changed.
-    pub fn set_clock(&mut self, out: &mut impl Commands, clock: Clock) {
+    /// The music clock its notes are timed by from now on (the synth is
+    /// told its tempo by whoever plays on it: [`Tempo::time`]).
+    pub fn time_by(&mut self, clock: Clock) {
         self.clock = clock;
-        if (clock.tempo() - self.tempo).abs() > 0.5 {
-            self.tempo = clock.tempo();
-            let bpm = self.tempo as f32;
-            self.score(out).send(Command::Tempo { bpm });
-        }
     }
 
     /// The song's key as the analysis found it (none: unpitched and high),
@@ -408,13 +337,8 @@ impl Conductor {
     /// call.
     pub fn set_loudness(&mut self, out: &mut impl Commands, lufs: Option<f64>) {
         let trim = calibration::trim(lufs);
-        if trim == self.trim {
-            return;
-        }
-        if out.send(Command::Level { db: trim }) {
+        if trim != self.trim && self.score(out).send(Command::Level { db: trim }) {
             self.trim = trim;
-        } else {
-            self.dropped += 1;
         }
     }
 
@@ -488,13 +412,16 @@ impl Conductor {
                 hit
             }
             Event::Diploma(Diploma::Sheet { sound, gain, pan }) => {
-                // Its notes' seeds its own: the same every time.
+                // Its notes' seeds its own: the same every time; its notes
+                // from `at`, at its level and gain, panned by `pan`.
                 let mut seed = sound.seed();
+                let gain = gain * 10f32.powf(sound.level().min(0.0) / 20.0);
                 let mut s = Score {
                     seed: &mut seed,
+                    origin: Origin { at, gain, pan },
                     ..self.score(out)
                 };
-                sheet::sheet(&mut s, at, sound, gain, pan);
+                sheet::sheet(&mut s, sound);
                 at
             }
             Event::Found { step } => {
@@ -629,17 +556,57 @@ impl Conductor {
         call::sing(&mut self.score(out), now, at, word, gain);
     }
 
-    /// The score the sounds are written into, sending to `out`.
-    fn score<'a>(&'a mut self, out: &'a mut dyn Commands) -> Score<'a> {
+    /// The score the sounds are written into, sending to `out`: its notes
+    /// on their own frames, on the theme's patches, in the key, timed by
+    /// the clock (a note written into it played as the conductor plays its
+    /// own: the Synth tab's keys).
+    pub(crate) fn score<'a>(&'a mut self, out: &'a mut dyn Commands) -> Score<'a> {
         Score {
             out,
             dropped: &mut self.dropped,
-            p: &self.palette,
+            theme: self.theme,
             key: self.key,
             beat: self.clock.beat_len(),
             bar: self.clock.bar(),
             rate: f64::from(self.rate),
             seed: &mut self.seed,
+            origin: Origin::NONE,
+        }
+    }
+}
+
+/// A synth's tempo as it was told last, kept by whoever plays on it (the
+/// one rule it is told by, however many planners play there: the game's
+/// conductor and the Synth tab's, [`crate::sfx::Sfx`]). A synth starts at
+/// the free clock's tempo ([`Conductor::synth`]), and so does this.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tempo {
+    told: f64,
+}
+
+impl Default for Tempo {
+    fn default() -> Tempo {
+        Tempo {
+            told: jodel_rhythm::grid::FREE_TEMPO,
+        }
+    }
+}
+
+impl Tempo {
+    /// `c` timing its notes by `clock` from now on, and the synth told its
+    /// tempo ([`Tempo::tell`]).
+    pub fn time(&mut self, c: &mut Conductor, out: &mut impl Commands, clock: Clock) {
+        c.time_by(clock);
+        self.tell(out, clock.tempo());
+    }
+
+    /// The synth told the tempo `bpm` when it is more than half a beat a
+    /// minute off what it was told last (which it is then, taken or not:
+    /// a command lost is counted by where it went).
+    pub fn tell(&mut self, out: &mut impl Commands, bpm: f64) {
+        if (bpm - self.told).abs() > 0.5 {
+            self.told = bpm;
+            out.send(Command::Tempo { bpm: bpm as f32 });
         }
     }
 }

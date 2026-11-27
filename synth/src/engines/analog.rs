@@ -17,7 +17,7 @@
 //! tanh.
 
 use crate::dsp::{self, Rate, Svf, SvfState};
-use crate::params::{field, pick, switch, when, Param};
+use crate::params::{field, options, pick, switch, when, Param};
 use crate::{Engine, NoteOn, VoiceMod};
 
 /// The oscillators' wave.
@@ -87,22 +87,24 @@ impl Default for Params {
     }
 }
 
-/// The waves and the filter's outputs, in their order, and their names.
-const WAVES: [Wave; 5] = [
-    Wave::Saw,
-    Wave::Square,
-    Wave::Pulse,
-    Wave::Triangle,
-    Wave::Sine,
-];
-const WAVE_NAMES: [&str; 5] = ["saw", "square", "pulse", "triangle", "sine"];
-const FILTERS: [Filter; 4] = [
-    Filter::LowPass,
-    Filter::BandPass,
-    Filter::HighPass,
-    Filter::Notch,
-];
-const FILTER_NAMES: [&str; 4] = ["low-pass", "band-pass", "high-pass", "notch"];
+options! {
+    /// The waves and the filter's outputs, in their order, and their names.
+    WAVES, WAVE_NAMES: Wave = [
+        Wave::Saw => "saw",
+        Wave::Square => "square",
+        Wave::Pulse => "pulse",
+        Wave::Triangle => "triangle",
+        Wave::Sine => "sine",
+    ]
+}
+options! {
+    FILTERS, FILTER_NAMES: Filter = [
+        Filter::LowPass => "low-pass",
+        Filter::BandPass => "band-pass",
+        Filter::HighPass => "high-pass",
+        Filter::Notch => "notch",
+    ]
+}
 
 /// ANALOG's parameters as data, with their ranges.
 pub const PARAMS: &[Param<Params>] = &[

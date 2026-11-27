@@ -16,7 +16,6 @@ use iced::widget::Id;
 use iced::{window, Point, Size};
 use iced_test::simulator::{press_key, release_key, Simulator};
 use jodel_output::SimClock;
-use jodel_synth::params::Knobs;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::synth_tab::{self, Bench, SynthAction};
@@ -24,7 +23,7 @@ use jodeldiplom::core::{update, Action, Effect, Side, State};
 use jodeldiplom::gui::pointer::Grab;
 use jodeldiplom::gui::synth;
 use jodeldiplom::gui::window::{Gui, Message};
-use jodeldiplom::sfx::bench::{What, SOUNDS};
+use jodeldiplom::sfx::bench::{Held, What, SOUNDS};
 
 const SIZE: Size = Size::new(1280.0, 800.0);
 
@@ -137,8 +136,7 @@ fn frames_until(gui: &mut Gui, what: &str, done: impl Fn(&Gui) -> bool) {
 
 /// The patch the tab shows.
 fn patch_shown(state: &State) -> jodel_synth::Patch {
-    let theme = synth_tab::theme(state);
-    synth_tab::patch(state, theme, synth_tab::atom(state))
+    synth_tab::patch(state, synth_tab::atom(state))
 }
 
 /// The tab opens from its tab; a click on a sound selects it and plays
@@ -183,10 +181,8 @@ fn a_synth_slider_edits_the_patch_kept_then_reverted() {
     let _gpu = gpu();
     let mut gui = window(synth_tab());
     let built = patch_shown(shown(&gui));
-    let decay = (0..built.count())
-        .find(|&k| built.spec(k).is_some_and(|s| s.key() == "envelope decay"))
-        .unwrap();
-    let spec = built.spec(decay).unwrap();
+    let knob = built.find("envelope decay").unwrap();
+    let (decay, spec) = (knob.k, knob.spec);
     let track = bounds(&gui, synth::knob_id(&spec));
     let at = Point::new(track.x + track.width - 0.5, track.center_y());
     let pressed = press_at(&mut gui, at);
@@ -211,13 +207,13 @@ fn a_synth_slider_edits_the_patch_kept_then_reverted() {
     // Kept: written down as it is.
     let _ = gui.update(Message::Frame(Instant::now()));
     click(&mut gui, "synth-keep");
-    let kept = &shown(&gui).synth.patches;
-    assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].kept, Some(edited));
+    let state = shown(&gui);
+    let (theme, atom) = (synth_tab::theme(state), synth_tab::atom(state));
+    assert_eq!(state.patches.kept(theme, atom), Some(edited));
     // Reverted: as built, nothing kept.
     let _ = gui.update(Message::Frame(Instant::now()));
     click(&mut gui, "synth-revert");
-    assert!(shown(&gui).synth.patches.is_empty());
+    assert!(shown(&gui).patches.is_empty());
     assert_eq!(patch_shown(shown(&gui)), built);
 }
 
@@ -276,17 +272,19 @@ fn the_synth_tab_is_in_the_tab_cycle_and_its_keys_step() {
     );
     let fx = update(&mut state, Action::Op(Op::SynthNote(0)));
     let atom = synth_tab::atom(&state);
-    assert!(
-        fx.contains(&Effect::Bench(Bench::Down { atom, note: 60.0 })),
-        "{fx:?}"
-    );
+    let theme = synth_tab::theme(&state);
+    let held = Held::Key(0);
+    let down = Bench::Down {
+        atom,
+        note: 60.0,
+        held,
+        theme,
+    };
+    assert!(fx.contains(&Effect::Bench(down)), "{fx:?}");
     update(&mut state, Action::Op(Op::SynthOctave(1)));
     let fx = update(&mut state, Action::Op(Op::ToggleSide));
     assert_eq!(state.side, Side::Shader);
-    assert!(
-        fx.contains(&Effect::Bench(Bench::Up { atom, note: 60.0 })),
-        "{fx:?}"
-    );
+    assert!(fx.contains(&Effect::Bench(Bench::Up { held })), "{fx:?}");
     state.side = Side::Synth;
     update(&mut state, Action::Op(Op::SynthKey(1)));
     assert_eq!(
@@ -302,4 +300,22 @@ fn the_synth_tab_is_in_the_tab_cycle_and_its_keys_step() {
     assert_eq!(state.synth.tempo, None);
     update(&mut state, Action::Op(Op::SynthTheme));
     assert_eq!(synth_tab::theme(&state).name, "spooky");
+}
+
+/// A key held while the theme compared changes is let go of all the
+/// same, its note alone: what lets it go names its key, not the theme nor
+/// the patch it was pressed on.
+#[test]
+fn a_key_held_across_a_theme_switch_is_let_go_of() {
+    let mut state = common::playing_state(120, 36);
+    state.side = Side::Synth;
+    update(&mut state, Action::Op(Op::SynthNote(4)));
+    update(&mut state, Action::Op(Op::SynthNote(7)));
+    update(&mut state, Action::Op(Op::SynthTheme));
+    let fx = update(&mut state, Action::Released(Op::SynthNote(4)));
+    let ups: Vec<&Effect> = (fx.iter())
+        .filter(|e| matches!(e, Effect::Bench(Bench::Up { .. })))
+        .collect();
+    assert_eq!(ups, [&Effect::Bench(Bench::Up { held: Held::Key(4) })]);
+    assert_eq!(state.synth.held, [(7, 67.0)]);
 }

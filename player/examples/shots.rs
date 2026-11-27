@@ -147,7 +147,7 @@ fn main_outline(state: &State, size: Size) -> String {
     match state.side {
         Side::Transition => out.push_str(&transition::Tab::of(state, state.heard()).to_string()),
         Side::Karaoke => out.push_str(&karaoke::Tab::of(state).to_string()),
-        Side::Synth => out.push_str(&jodeldiplom::gui::synth::outline(state)),
+        Side::Synth => out.push_str(&jodeldiplom::view::synth::Synth::of(state).to_string()),
         Side::Shader => out.push_str(&jodeldiplom::gui::shader::outline(state)),
         Side::Browser | Side::Queue | Side::Mixer => {}
     }
@@ -696,16 +696,11 @@ fn main() {
                 // A word's pop edited (a longer decay, more reverb) and not
                 // kept yet, in A minor a little slower, a chord held on the
                 // keyboard.
-                use jodel_synth::params::Knobs;
                 use jodeldiplom::core::synth_tab::SynthAction;
                 let mut s = state.clone();
                 s.side = Side::Synth;
                 let pop = jodeldiplom::theme::CLASSIC.patch(jodeldiplom::sfx::conductor::Atom::Pop);
-                let knob = |key: &str| {
-                    (0..pop.count())
-                        .find(|&k| pop.spec(k).is_some_and(|s| s.key() == key))
-                        .unwrap()
-                };
+                let knob = |key: &str| pop.find(key).unwrap().k;
                 for a in [
                     SynthAction::KeyStep(22),
                     SynthAction::TempoStep(-5),

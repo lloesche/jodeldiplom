@@ -25,7 +25,7 @@ use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::shine::Shone;
 use jodeldiplom::core::{karaoke, Action, Rhythm, Screen, Side, State};
 use jodeldiplom::core::{Anchor, HeadFrame, Playing};
-use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet};
+use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet, Tempo};
 use jodeldiplom::sfx::{Desk, Sfx};
 use jodeldiplom::tiers::Tier;
 
@@ -245,7 +245,7 @@ fn steady() -> jodel_rhythm::Analysis {
 fn conductor() -> (Conductor, Synth) {
     let (mut c, mut synth) = Conductor::new(RATE, &jodeldiplom::theme::CLASSIC);
     let clock = Clock::from_analysis(&steady(), 0.0, 0, f64::from(RATE), [None; Clock::LINES]);
-    c.set_clock(&mut synth, clock);
+    Tempo::default().time(&mut c, &mut synth, clock);
     c.set_key(Some(&jodel_rhythm::key::Key::on(9, true)), 0);
     (c, synth)
 }
@@ -455,7 +455,7 @@ fn the_synth_tab_plays_the_theme_it_compares() {
         .into();
     // Each once the last has rung out and the synth rests.
     const GAP: usize = 3 * RATE as usize;
-    let mut played: Vec<(&Theme, What, usize)> = Vec::new();
+    let mut played: Vec<(&'static Theme, What, usize)> = Vec::new();
     for theme in [&CLASSIC, &SPOOKY] {
         state.synth.theme = Some(theme);
         for &what in &sounds {
@@ -466,6 +466,7 @@ fn the_synth_tab_plays_the_theme_it_compares() {
                 what,
                 key: Some(key),
                 bpm: 120.0,
+                theme,
             };
             sfx.bench(&state, desk(), ask);
             for _ in 0..GAP / 480 {
@@ -478,32 +479,29 @@ fn the_synth_tab_plays_the_theme_it_compares() {
     for _ in 0..50 {
         ticks.tick();
     }
-    let other = |theme: &Theme| if *theme == CLASSIC { &SPOOKY } else { &CLASSIC };
-    let latency = Conductor::new(RATE, &CLASSIC).1.latency();
-    // Sound `k` of those played as a synth of `theme`'s alone makes it,
-    // `phase` frames into a block of its own (the synth takes its
-    // modulation once a block, so a sound sounds a little otherwise from
-    // each place in one), by a conductor that planned the sounds before it
-    // too (so it plans this one alike): its left side, its first frame
-    // the one heard as it is cued.
-    let made = |k: usize, theme: &Theme, phase: usize| {
-        let (mut c, _) = Conductor::new(RATE, &CLASSIC);
-        let mut planned = Written;
-        for &(_, what, at) in &played[..k] {
-            c.set_key(Some(&key), 0);
-            c.set_clock(&mut planned, Clock::steady(RATE, 120.0, at as u64));
-            bench::play(&mut c, &mut planned, at as u64, what);
+    let other = |theme: &Theme| -> &'static Theme {
+        if *theme == CLASSIC {
+            &SPOOKY
+        } else {
+            &CLASSIC
         }
+    };
+    let latency = Conductor::new(RATE, &CLASSIC).1.latency();
+    // Sound `k` of those played as the bench plays it in `theme` (its
+    // player made anew for each sound) on a synth of its own, `phase`
+    // frames into a block of its own (the synth takes its modulation once
+    // a block, so a sound sounds a little otherwise from each place in
+    // one): its left side, its first frame the one heard as it is cued.
+    let made = |k: usize, theme: &'static Theme, phase: usize| {
         let (_, what, at) = played[k];
-        let (_, mut synth) = Conductor::new(RATE, theme);
+        let (_, mut synth) = Conductor::new(RATE, &CLASSIC);
         synth.command(jodel_synth::Command::Tempo { bpm: 120.0 });
         let mut out = Shifted {
             synth: &mut synth,
             by: (at - phase) as u64,
         };
-        c.set_key(Some(&key), 0);
-        c.set_clock(&mut out, Clock::steady(RATE, 120.0, at as u64));
-        bench::play(&mut c, &mut out, at as u64, what);
+        let play = (theme, Some(&key), 120.0);
+        bench::Bench::new(RATE).play(&mut out, at as u64, what, play);
         let mut both = vec![0.0f32; 2 * (phase + latency + SPAN)];
         synth.render_to(&mut both);
         both.into_iter()
@@ -517,7 +515,7 @@ fn the_synth_tab_plays_the_theme_it_compares() {
         let at = at + latency;
         // Found with the sound from a block's start, then made from where
         // in a block it was heard to start.
-        let heard = |theme: &Theme| {
+        let heard = |theme: &'static Theme| {
             let (near, _, _) = found(left, at, &made(k, theme, 0), 0, SPAN / 8);
             let mut best = f64::MIN;
             for phase in 0..jodel_synth::BLOCK {
@@ -542,13 +540,47 @@ fn the_synth_tab_plays_the_theme_it_compares() {
 /// How long of each sound the Synth tab's test compares, frames.
 const SPAN: usize = RATE as usize / 2;
 
-/// Commands taken and let go of: what a conductor plans, written nowhere.
-struct Written;
-
-impl jodel_synth::Commands for Written {
-    fn send(&mut self, _: jodel_synth::Command) -> bool {
-        true
-    }
+/// The synth is made with every theme's patches as the state's book has
+/// them: with nothing edited nothing is told it (the game sounds as it is
+/// made, bit for bit), an edit is told it once as it plays, the patch
+/// alone, and so is one set back; a theme changed in the settings is told
+/// it nothing (its patches are in the synth already).
+#[test]
+fn the_synth_is_told_a_patch_once_when_it_changes() {
+    use jodeldiplom::sfx::conductor::Atom;
+    use jodeldiplom::theme::{CLASSIC, SPOOKY};
+    let (_, idle) = Conductor::new(RATE, &CLASSIC);
+    let (mixer, fader, _lead, effects, captures) = live_desk(idle, SimClock::Manual);
+    let ticks = Ticks {
+        mixer: &mixer,
+        time: device_time(&captures),
+    };
+    let mut state = common::playing_state(120, 36);
+    let mut sfx = Sfx::default();
+    let desk = || Desk {
+        effects: &effects,
+        heads: [&fader, &fader],
+        timebase: mixer.timebase(),
+    };
+    // Each frame drawn, then the mixer let take what it was sent.
+    let mut frame = |state: &State| {
+        sfx.frame(state, desk());
+        for _ in 0..3 {
+            ticks.tick();
+        }
+        effects.view().commands
+    };
+    frame(&state);
+    let made = frame(&state);
+    assert_eq!(frame(&state), made, "nothing edited: nothing told");
+    state.config.karaoke_theme = &SPOOKY;
+    assert_eq!(frame(&state), made, "another theme: nothing told");
+    state.patches.edit(&CLASSIC, Atom::Pop, |p| p.level += 6.0);
+    assert_eq!(frame(&state), made + 1, "an edit: once");
+    assert_eq!(frame(&state), made + 1);
+    state.patches.revert(&CLASSIC, Atom::Pop);
+    assert_eq!(frame(&state), made + 2, "set back: once again");
+    assert_eq!(effects.view().missed, 0);
 }
 
 /// Commands to `synth`, their frames `by` earlier.
@@ -559,33 +591,9 @@ struct Shifted<'a> {
 
 impl jodel_synth::Commands for Shifted<'_> {
     fn send(&mut self, c: jodel_synth::Command) -> bool {
-        use jodel_synth::Command;
-        let c = match c {
-            Command::Note {
-                frame,
-                patch,
-                note,
-                length,
-                tag,
-            } => Command::Note {
-                frame: frame - self.by,
-                patch,
-                note,
-                length,
-                tag,
-            },
-            Command::Release {
-                frame,
-                patch,
-                note,
-                tag,
-            } => Command::Release {
-                frame: frame - self.by,
-                patch,
-                note,
-                tag,
-            },
-            c => c,
+        let c = match c.frame() {
+            Some(f) => c.on(f - self.by),
+            None => c,
         };
         self.synth.send(c)
     }

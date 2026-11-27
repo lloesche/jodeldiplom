@@ -22,7 +22,7 @@
 //! (Cytomic, 2013).
 
 use crate::dsp::{self, Rate, Svf, SvfState};
-use crate::params::{field, pick, when, Param, Scale};
+use crate::params::{field, options, pick, when, Param, Scale};
 use crate::{Engine, NoteOn, VoiceMod, BLOCK};
 
 /// Where the noise comes from.
@@ -92,16 +92,22 @@ impl Default for Params {
     }
 }
 
-/// The sources and the filter's outputs in their order, and their names.
-const SOURCES: [Source; 4] = [
-    Source::White,
-    Source::Dust,
-    Source::Register { short: false },
-    Source::Register { short: true },
-];
-const SOURCE_NAMES: [&str; 4] = ["white", "dust", "register", "short register"];
-const FILTERS: [Filter; 3] = [Filter::LowPass, Filter::BandPass, Filter::HighPass];
-const FILTER_NAMES: [&str; 3] = ["low-pass", "band-pass", "high-pass"];
+options! {
+    /// The sources and the filter's outputs in their order, and their names.
+    SOURCES, SOURCE_NAMES: Source = [
+        Source::White => "white",
+        Source::Dust => "dust",
+        Source::Register { short: false } => "register",
+        Source::Register { short: true } => "short register",
+    ]
+}
+options! {
+    FILTERS, FILTER_NAMES: Filter = [
+        Filter::LowPass => "low-pass",
+        Filter::BandPass => "band-pass",
+        Filter::HighPass => "high-pass",
+    ]
+}
 
 /// NOISE's parameters as data, with their ranges.
 pub const PARAMS: &[Param<Params>] = &[

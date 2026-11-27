@@ -42,11 +42,20 @@
 //! dropped. Nothing here allocates: the queue, the list of those waiting
 //! and the render buffer have their room from the start (the buffer's for
 //! a period: [`LiveRun::reserve`]).
+//!
+//! A patch changed (an edit on the Synth tab) comes whole through a queue
+//! of its own, of a few, so the commands' queue stays the size of a note
+//! a command. The patches come first as a chunk takes what was sent: a
+//! patch is the synth's from that chunk on, for the notes waiting in it
+//! already as for those after (a note's level, spreads and start, drawn
+//! as it is cued, stay as they were drawn: one sent in the same chunk
+//! before the edit draws them from the new patch).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
-use jodel_synth::{Command, Synth, Tag};
+use jodel_synth::{Command, Patch, PatchId, Synth};
 
 use super::chunk::Slot;
 use super::effects::{Counts, LATE};
@@ -55,6 +64,8 @@ use crate::spsc::Consumer;
 /// The commands the queue to the mixer thread holds: several game events'
 /// worth (the most one sends is the planner's to say, a few hundred).
 pub const COMMANDS: usize = 2_048;
+/// The patches the queue beside it holds (each edit's: a few at a time).
+pub const PATCHES: usize = 64;
 /// The commands waiting for their output's first frames.
 const HELD: usize = 512;
 /// The outputs commands were put on the synth's frames by (their ids, the
@@ -78,7 +89,11 @@ pub(crate) enum On {
     Input(u64),
 }
 
-/// A command on its way to the mixer thread.
+/// A patch changed: which, and what it is now.
+pub(crate) type Changed = (PatchId, Patch);
+
+/// A command on its way to the mixer thread, on the clock its frames are
+/// on.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Sent {
     pub(crate) command: Command,
@@ -112,9 +127,11 @@ struct Chunk {
     ahead: u64,
 }
 
-/// The live synth as the mixer thread runs it.
+/// The live synth as the mixer thread runs it, and what it tells back.
 pub(crate) struct LiveRun {
     rx: Consumer<Sent>,
+    patches: Consumer<Changed>,
+    pub(super) counts: Arc<Counts>,
     synth: Option<Box<Synth>>,
     held: Vec<Held>,
     bound: [Option<u64>; BOUND],
@@ -127,61 +144,16 @@ pub(crate) struct LiveRun {
     scratch: Vec<f32>,
 }
 
-/// A command's frame, if it has one.
-fn frame_of(c: &Command) -> Option<u64> {
-    match *c {
-        Command::Note { frame, .. } | Command::Release { frame, .. } => Some(frame),
-        Command::Cancel { .. }
-        | Command::Tempo { .. }
-        | Command::Level { .. }
-        | Command::Patch { .. } => None,
-    }
-}
-
-/// `c` on frame `f`.
-fn at_frame(c: Command, f: u64) -> Command {
-    match c {
-        Command::Note {
-            patch,
-            note,
-            length,
-            tag,
-            ..
-        } => Command::Note {
-            frame: f,
-            patch,
-            note,
-            length,
-            tag,
-        },
-        Command::Release {
-            patch, note, tag, ..
-        } => Command::Release {
-            frame: f,
-            patch,
-            note,
-            tag,
-        },
-        other => other,
-    }
-}
-
-/// Whether a cancel of `tag` calls `c` off.
-fn called_off(c: &Command, tag: Option<Tag>) -> bool {
-    let of = match *c {
-        Command::Note { tag, .. } | Command::Release { tag, .. } => tag,
-        _ => return false,
-    };
-    match tag {
-        None => true,
-        Some(t) => t != Tag::NONE && t == of,
-    }
-}
-
 impl LiveRun {
-    pub(super) fn new(rx: Consumer<Sent>) -> LiveRun {
+    pub(super) fn new(
+        rx: Consumer<Sent>,
+        patches: Consumer<Changed>,
+        counts: Arc<Counts>,
+    ) -> LiveRun {
         LiveRun {
             rx,
+            patches,
+            counts,
             synth: None,
             held: Vec::with_capacity(HELD),
             bound: [None; BOUND],
@@ -191,18 +163,16 @@ impl LiveRun {
         }
     }
 
-    /// `synth` played from now on; the one before, to be let go of
-    /// elsewhere. What waited for the one before is dropped (counted).
-    pub(super) fn set(&mut self, synth: Option<Box<Synth>>, counts: &Counts) -> Option<Box<Synth>> {
-        self.drop_held(counts);
+    /// `synth` played from now on (its rate told back); the one before,
+    /// to be let go of elsewhere. What waited for the one before is
+    /// dropped (counted).
+    pub(super) fn set(&mut self, synth: Option<Box<Synth>>) -> Option<Box<Synth>> {
+        let rate = synth.as_ref().map_or(0, |s| s.rate().round() as u64);
+        self.counts.live_rate.store(rate, Ordering::Relaxed);
+        self.drop_held();
         self.bound = [None; BOUND];
         self.quiet = u64::MAX;
         std::mem::replace(&mut self.synth, synth)
-    }
-
-    /// Its synth, taken (to be let go of elsewhere).
-    pub(super) fn take_synth(&mut self, counts: &Counts) -> Option<Box<Synth>> {
-        self.set(None, counts)
     }
 
     /// The rate of its synth (`None`: none).
@@ -233,26 +203,26 @@ impl LiveRun {
     }
 
     /// The commands waiting for their output's frames dropped (counted).
-    fn drop_held(&mut self, counts: &Counts) {
+    fn drop_held(&mut self) {
         for _ in self.held.drain(..) {
-            counts.miss();
+            self.counts.miss();
         }
     }
 
     /// Everything waiting called off (its frames are of another place).
-    fn cancel_all(&mut self, counts: &Counts) {
-        self.drop_held(counts);
+    fn cancel_all(&mut self) {
+        self.drop_held();
         if let Some(s) = &mut self.synth {
             s.command(Command::Cancel { tag: None });
         }
     }
 
     /// Output `id` was flushed: what was put on its frames is called off.
-    pub(super) fn flushed(&mut self, id: u64, counts: &Counts) {
+    pub(super) fn flushed(&mut self, id: u64) {
         let ours = self.bound.contains(&Some(id)) || self.held.iter().any(|h| h.output == id);
         if ours {
             self.bound = [None; BOUND];
-            self.cancel_all(counts);
+            self.cancel_all();
         }
     }
 
@@ -261,9 +231,9 @@ impl LiveRun {
     /// opening before is dropped (counted) as it is taken: by its epoch, so
     /// that a command sent for this opening as it opens is not (draining
     /// the queue here would drop those too).
-    pub(super) fn opened(&mut self, counts: &Counts) {
+    pub(super) fn opened(&mut self) {
         self.bound = [None; BOUND];
-        self.cancel_all(counts);
+        self.cancel_all();
     }
 
     /// The commands come since the last chunk, put on the synth's frames,
@@ -274,19 +244,21 @@ impl LiveRun {
         (epoch, first): (u64, u64),
         rate: u32,
         slots: &BTreeMap<u64, Slot>,
-        counts: &Counts,
     ) {
         self.device_rate = rate;
         if self.rate() != Some(rate) {
-            // Not heard at this rate: nothing it is sent is.
+            // Not heard at this rate: nothing it is sent is (a synth made
+            // for the device's rate is made with the patches as they are).
+            while self.patches.pop().is_some() {}
             while let Some(sent) = self.rx.pop() {
-                if frame_of(&sent.command).is_some() {
-                    counts.miss();
+                if sent.command.frame().is_some() {
+                    self.counts.miss();
                 }
             }
-            self.drop_held(counts);
+            self.drop_held();
             return;
         }
+        self.change_patches();
         let chunk = Chunk {
             epoch,
             first,
@@ -300,25 +272,25 @@ impl LiveRun {
                 Place::Hold(_, output) if output == h.output => k += 1,
                 Place::Hold(..) | Place::Drop => {
                     self.held.swap_remove(k);
-                    counts.miss();
+                    self.counts.miss();
                 }
                 Place::At(offset) => {
                     self.held.swap_remove(k);
                     self.bind(h.slot, slots);
-                    self.carry_out(h.command, offset, counts);
+                    self.carry_out(h.command, offset);
                 }
             }
         }
         while let Some(Sent { command, on }) = self.rx.pop() {
-            if frame_of(&command).is_none() {
+            if command.frame().is_none() {
                 if let Command::Cancel { tag } = command {
                     let before = self.held.len();
-                    self.held.retain(|h| !called_off(&h.command, tag));
+                    self.held.retain(|h| !h.command.called_off_by(tag));
                     for _ in self.held.len()..before {
-                        counts.miss();
+                        self.counts.miss();
                     }
                 }
-                self.carry_out(command, 0, counts);
+                self.carry_out(command, 0);
                 continue;
             }
             match place(command, on, chunk, slots) {
@@ -326,7 +298,7 @@ impl LiveRun {
                     if let On::Input(slot) = on {
                         self.bind(slot, slots);
                     }
-                    self.carry_out(command, offset, counts);
+                    self.carry_out(command, offset);
                 }
                 Place::Hold(slot, output) if self.held.len() < HELD => {
                     self.held.push(Held {
@@ -335,25 +307,35 @@ impl LiveRun {
                         output,
                     });
                 }
-                Place::Hold(..) | Place::Drop => counts.miss(),
+                Place::Hold(..) | Place::Drop => self.counts.miss(),
+            }
+        }
+    }
+
+    /// The patches changed since the last chunk given the synth, from now
+    /// on, in the order they were sent.
+    fn change_patches(&mut self) {
+        while let Some((id, patch)) = self.patches.pop() {
+            let taken = self.synth.as_mut().is_some_and(|s| s.set_patch(id, patch));
+            if taken {
+                self.counts.commands.fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.counts.miss();
             }
         }
     }
 
     /// `command` given the synth `offset` frames from its next.
-    fn carry_out(&mut self, command: Command, offset: u64, counts: &Counts) {
+    fn carry_out(&mut self, command: Command, offset: u64) {
         let Some(synth) = &mut self.synth else {
-            counts.miss();
+            self.counts.miss();
             return;
         };
-        let command = match frame_of(&command) {
-            Some(_) => at_frame(command, synth.frame() + offset),
-            None => command,
-        };
+        let command = command.on(synth.frame() + offset);
         if synth.command(command) {
-            counts.commands.fetch_add(1, Ordering::Relaxed);
+            self.counts.commands.fetch_add(1, Ordering::Relaxed);
         } else {
-            counts.miss();
+            self.counts.miss();
         }
     }
 
@@ -423,10 +405,10 @@ impl LiveRun {
 /// frames, or dropped (a note too late, one too far ahead, an input with
 /// no output open, the desk's frames of another opening).
 fn place(command: Command, on: On, chunk: Chunk, slots: &BTreeMap<u64, Slot>) -> Place {
-    let Some(f) = frame_of(&command) else {
+    let Some(f) = command.frame() else {
         return Place::At(0);
     };
-    let note = matches!(command, Command::Note { .. });
+    let note = command.is_note();
     let (base, origin) = match on {
         On::Desk(epoch) if epoch != chunk.epoch => return Place::Drop,
         On::Desk(_) => (0, chunk.first),

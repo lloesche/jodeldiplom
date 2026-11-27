@@ -395,17 +395,21 @@ pub fn tone_synth(rate: u32, gate: f32) -> (jodel_synth::Synth, jodel_synth::Pat
 /// A note of `patch` on `frame`, panned `pan` (1: the right side alone),
 /// as the patch holds it.
 pub fn tone(patch: jodel_synth::PatchId, frame: u64, pan: f32) -> jodel_synth::Command {
-    jodel_synth::Command::Note {
+    jodel_synth::Command::At {
         frame,
-        patch,
-        note: jodel_synth::NoteOn {
-            note: 69.0,
-            velocity: 0.8,
-            seed: 1,
-            pan,
-            shape: 0.0,
-        },
-        length: None,
         tag: jodel_synth::Tag::NONE,
+        cue: jodel_synth::Cue::Note {
+            patch,
+            note: jodel_synth::NoteOn {
+                note: 69.0,
+                velocity: 0.8,
+                seed: 1,
+                pan,
+                shape: 0.0,
+                glide: None,
+                line: 0,
+            },
+            length: None,
+        },
     }
 }

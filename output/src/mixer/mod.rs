@@ -364,8 +364,14 @@ pub(crate) enum Msg {
     },
     Mic(Option<Input>),
     /// The effects input on strip `.0`, what it did told back through `.1`
-    /// and its live synth's commands through `.2`, in place of any before.
-    Effects(u64, Arc<effects::Counts>, crate::spsc::Consumer<live::Sent>),
+    /// and its live synth's commands through `.2` (its patches changed
+    /// through `.3`), in place of any before.
+    Effects(
+        u64,
+        Arc<effects::Counts>,
+        crate::spsc::Consumer<live::Sent>,
+        crate::spsc::Consumer<live::Changed>,
+    ),
     /// The effects input of `counts` gone: what the mixer thread ran of it
     /// goes back in `done` (`None`: another one runs now).
     EffectsGone {

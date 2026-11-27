@@ -1,19 +1,24 @@
 //! The Synth tab's workbench ([`crate::core::synth_tab`]): every sound of
-//! the game, listed by its moment ([`SOUNDS`]), each played through the
-//! conductor as the game plays it ([`play`]): a word's pop, a run of words
-//! climbing to the first rung, a rung reached (its stinger, its call and
-//! its payout where it has them), the rescue shot, a streak lost, a
-//! phrase's chime, the payout and the jackpot alone, the announcer's
-//! calls, the diploma's count-up, gems, points, rungs and its sheet's
-//! own sounds, and a result of a song's preparation found. Which atoms a sound plays is found by writing it down once
-//! ([`Sound::atoms`]): what it sends the synth, its patches named.
+//! the game, listed by its moment ([`SOUNDS`], [`moments`]), each played
+//! as the game plays it, by a conductor of the bench's own on the game's
+//! synth ([`Bench`]: the game's conductor is never touched): a word's pop,
+//! a run of words climbing to the first rung, a rung reached (its stinger,
+//! its call and its payout where it has them), the rescue shot, a streak
+//! lost, a phrase's chime, the payout and the jackpot alone, the
+//! announcer's calls, the diploma's count-up, gems, points, rungs and its
+//! sheet's own sounds, and a result of a song's preparation found; and the
+//! keys of the tab's keyboard, each note held on its own tag until its key
+//! is let go of. Which atoms a sound plays is found by writing it down
+//! once ([`Sound::atoms`]): what it sends the synth, its patches named.
 
+use std::ops::Range;
 use std::sync::LazyLock;
 
-use jodel_synth::{Command, Commands};
+use jodel_rhythm::key::Key;
+use jodel_synth::{Command, Commands, Cue};
 
-use super::conductor::{Atom, Called, Clock, Conductor, Diploma, Event, Sheet};
-use crate::core::karaoke::result::Side;
+use super::conductor::{self, tags, Atom, Called, Clock, Conductor, Diploma, Event, Note, Sheet};
+use crate::theme::Theme;
 use crate::tiers::Tier;
 
 /// A moment of the game, as the tab groups its sounds.
@@ -90,6 +95,21 @@ pub struct Sound {
 
 /// Every sound, by moment.
 pub static SOUNDS: LazyLock<Vec<Sound>> = LazyLock::new(catalogue);
+
+/// Each moment with its sounds' places in [`SOUNDS`], in their order.
+pub fn moments() -> impl Iterator<Item = (Moment, Range<usize>)> {
+    let sounds = &*SOUNDS;
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        let moment = sounds.get(from)?.moment;
+        let to = (sounds[from..].iter())
+            .position(|s| s.moment != moment)
+            .map_or(sounds.len(), |n| from + n);
+        let span = from..to;
+        from = to;
+        Some((moment, span))
+    })
+}
 
 /// The sounds with their atoms, written down by a conductor of their own.
 fn catalogue() -> Vec<Sound> {
@@ -248,7 +268,7 @@ fn catalogue() -> Vec<Sound> {
         };
         add(
             Moment::Sheet,
-            sheet_name(sheet),
+            sheet.title().into(),
             diploma(sound),
             None,
             Vec::new(),
@@ -264,64 +284,17 @@ fn catalogue() -> Vec<Sound> {
     sounds
 }
 
-/// A sheet's sound by name, as the tab lists it.
-fn sheet_name(sheet: Sheet) -> String {
-    use super::conductor::Entry;
-    let entry = |e| match e {
-        Entry::Words => "the words",
-        Entry::Streak => "the streak",
-    };
-    match sheet {
-        Sheet::Unroll => "Unrolled".into(),
-        Sheet::Star(Side::Left) => "A star, left".into(),
-        Sheet::Star(Side::Right) => "A star, right".into(),
-        Sheet::Title => "The title".into(),
-        Sheet::Written(e) => format!("Written: {}", entry(e)),
-        Sheet::Scribbled(e) => format!("Scribbled: {}", entry(e)),
-        Sheet::Sticker => "A sticker".into(),
-        Sheet::Cheer => "A cheer".into(),
-        Sheet::Whole => "Not from the start".into(),
-        Sheet::Snooze => "Nothing scored".into(),
-        Sheet::Medal(m) => format!("Medal: {}", m.name()),
-        Sheet::Stamp => "The stamp".into(),
-        Sheet::NewBest => "A new best".into(),
-        Sheet::Signature => "Signed".into(),
-        Sheet::Date => "Dated".into(),
-        Sheet::Tap => "A tap of the pen".into(),
-    }
-}
-
 /// The layers a tier's rung plays, by name.
 fn streak_layers(tier: Tier) -> Vec<&'static str> {
-    use super::conductor::Streak;
     (tier.spec().layers.streak.iter())
-        .map(|l| match l {
-            Streak::Glint => "glint",
-            Streak::Octave => "octave",
-            Streak::Register => "register",
-            Streak::Clinks => "clinks",
-            Streak::Reels => "reels",
-            Streak::Brass => "brass",
-            Streak::Riser => "riser",
-            Streak::Shimmer => "shimmer",
-            Streak::Glitter => "glitter",
-            Streak::Payout => "payout",
-            Streak::Call => "call",
-        })
+        .map(|l| l.name())
         .collect()
 }
 
 /// The layers a tier's chime plays, by name.
 fn chime_layers(tier: Tier) -> Vec<&'static str> {
-    use super::conductor::Chime;
     (tier.spec().layers.chime.iter())
-        .map(|l| match l {
-            Chime::Plucks => "plucks",
-            Chime::BrassHit => "brass hit",
-            Chime::TaDaa => "ta-daa",
-            Chime::Choir => "choir",
-            Chime::Call => "call",
-        })
+        .map(|l| l.name())
         .collect()
 }
 
@@ -332,20 +305,103 @@ const TICK_GAP: f64 = 0.06;
 /// The count-up's ticks.
 const TICKS: u32 = 16;
 
+/// How long a key held on the keyboard holds its note at most, seconds
+/// (it is let go of with the key).
+const KEY_HOLD: f64 = 10.0;
+
+/// How a key of the keyboard is held: by the pointer, or a computer key
+/// at its place on the keyboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Held {
+    /// The pointer.
+    Pointer,
+    /// The computer key at this place (0 up).
+    Key(u8),
+}
+
+impl Held {
+    /// Its notes' tag: its own ([`tags`]).
+    fn tag(self) -> jodel_synth::Tag {
+        match self {
+            Held::Pointer => tags::POINTER,
+            Held::Key(k) => tags::computer_key(k),
+        }
+    }
+}
+
+/// The workbench's player: a conductor of its own on the game's synth,
+/// planning on the desk's frames, made anew for each sound (so a rung or a
+/// run of words plays from none), on the patches of the theme it is
+/// played in. The synth's tempo is kept by whoever plays the game's
+/// conductor and this one on it ([`crate::sfx::Sfx`]): the bench's clock
+/// only times its notes ([`Conductor::time_by`]).
+pub struct Bench {
+    conductor: Conductor,
+}
+
+impl Bench {
+    /// One at `rate` Hz.
+    pub fn new(rate: u32) -> Bench {
+        Bench {
+            conductor: Conductor::planner(rate, &crate::theme::CLASSIC),
+        }
+    }
+
+    /// The rate it plans at, Hz.
+    pub fn rate(&self) -> u32 {
+        self.conductor.rate()
+    }
+
+    /// `what` from `at` in `theme`'s patches, in `key` (none: unpitched)
+    /// on a steady beat at `bpm`, sent to `out`.
+    pub fn play(
+        &mut self,
+        out: &mut impl Commands,
+        at: u64,
+        what: What,
+        (theme, key, bpm): (&Theme, Option<&Key>, f64),
+    ) {
+        let rate = self.rate();
+        let c = &mut self.conductor;
+        *c = Conductor::planner(rate, theme);
+        c.set_key(key, 0);
+        c.time_by(Clock::steady(rate, bpm, at));
+        play(c, out, at, what);
+    }
+
+    /// `note` on `atom`'s patch in `theme` from `at`, held by `held` until
+    /// it lets go ([`Bench::up`], at most [`KEY_HOLD`]).
+    pub fn down(
+        &mut self,
+        out: &mut impl Commands,
+        (at, theme): (u64, &Theme),
+        (atom, note): (Atom, f32),
+        held: Held,
+    ) {
+        let hold = (KEY_HOLD * f64::from(self.rate())) as u64;
+        let c = &mut self.conductor;
+        c.set_theme(theme);
+        let n = Note::new(at, atom, note).vel(0.85).hold(hold);
+        c.score(out).play(n.tag(held.tag()));
+    }
+
+    /// `held`'s note let go of on `at`, alone (whatever patch and theme it
+    /// was pressed on).
+    pub fn up(&mut self, out: &mut impl Commands, at: u64, held: Held) {
+        self.conductor.score(out).release(at, held.tag());
+    }
+}
+
 /// `what` played from `at` on the conductor's frames, sent to `out`; its
-/// clock and key as the caller set them.
-pub fn play(c: &mut Conductor, out: &mut impl Commands, at: u64, what: What) {
+/// clock and key as the caller set them, its streak as a song's start.
+fn play(c: &mut Conductor, out: &mut impl Commands, at: u64, what: What) {
     let second = f64::from(c.rate());
     let after = |k: u32, gap: f64| at + (f64::from(k) * gap * second) as u64;
     match what {
         What::Event(event) => {
-            if matches!(event, Event::Word { .. }) {
-                c.start_over();
-            }
             c.event(out, at, event);
         }
         What::Rung(tier) => {
-            c.start_over();
             let word = Event::Word {
                 streak: tier.spec().streak,
                 pan: 0.0,
@@ -354,7 +410,6 @@ pub fn play(c: &mut Conductor, out: &mut impl Commands, at: u64, what: What) {
             c.event(out, at, word);
         }
         What::Run => {
-            c.start_over();
             for k in 1..=Tier::ALL[0].spec().streak {
                 let pan = if k % 2 == 0 { 0.3 } else { -0.3 };
                 let word = Event::Word {
@@ -376,30 +431,26 @@ pub fn play(c: &mut Conductor, out: &mut impl Commands, at: u64, what: What) {
     }
 }
 
-/// What a sound sends, written down.
-#[derive(Default)]
-struct Written(Vec<Command>);
-
-impl Commands for Written {
-    fn send(&mut self, c: Command) -> bool {
-        self.0.push(c);
-        true
-    }
-}
-
 /// The atoms `what` plays (in A minor at 120 beats a minute), in the order
 /// it first plays them.
 fn atoms(what: What) -> Vec<Atom> {
-    const RATE: u32 = 48_000;
-    let (mut c, _) = Conductor::planner(RATE, &crate::theme::CLASSIC);
-    let mut out = Written::default();
-    c.set_key(Some(&jodel_rhythm::key::Key::on(9, true)), 0);
-    c.set_clock(&mut out, Clock::steady(RATE, 120.0, 0));
-    play(&mut c, &mut out, 0, what);
+    let mut bench = Bench::new(48_000);
+    let mut out: Vec<Command> = Vec::new();
+    let key = Key::on(9, true);
+    bench.play(
+        &mut out,
+        0,
+        what,
+        (&crate::theme::CLASSIC, Some(&key), 120.0),
+    );
     let mut atoms = Vec::new();
-    for command in out.0 {
-        if let Command::Note { patch, .. } = command {
-            if let Some(a) = c.atom_of(patch).filter(|a| !atoms.contains(a)) {
+    for command in out {
+        if let Command::At {
+            cue: Cue::Note { patch, .. },
+            ..
+        } = command
+        {
+            if let Some((_, a)) = conductor::of(patch).filter(|(_, a)| !atoms.contains(a)) {
                 atoms.push(a);
             }
         }
@@ -448,5 +499,58 @@ mod tests {
             top.is_some_and(|s| s.atoms.contains(&Atom::Singer)),
             "its call"
         );
+        // Each moment's sounds together, in the order listed.
+        let spans: Vec<Moment> = super::moments().map(|(m, _)| m).collect();
+        assert_eq!(spans, moments);
+        assert!(super::moments().all(|(m, span)| sounds[span].iter().all(|s| s.moment == m)));
+    }
+
+    /// A key of the keyboard holds its note on the atom's patch until it
+    /// is let go of, alone: the pointer and a computer key on the very
+    /// same pitch are two notes, and the one let go of goes, the other
+    /// held on; the theme's patch plays; a key pressed in one theme and let
+    /// go of after the tab compares another is let go of all the same.
+    #[test]
+    fn a_key_holds_its_note_until_it_is_let_go_of() {
+        use crate::theme::{CLASSIC, SPOOKY};
+        const RATE: u32 = 48_000;
+        let (_, mut synth) = Conductor::new(RATE, &CLASSIC);
+        let mut bench = Bench::new(RATE);
+        bench.down(&mut synth, (0, &SPOOKY), (Atom::Choir, 60.0), Held::Pointer);
+        bench.down(&mut synth, (0, &SPOOKY), (Atom::Choir, 60.0), Held::Key(4));
+        bench.down(&mut synth, (0, &SPOOKY), (Atom::Choir, 64.0), Held::Key(7));
+        let mut out = vec![0.0f32; 2 * 24_000];
+        synth.render_to(&mut out);
+        let held = |synth: &jodel_synth::Synth| {
+            let mut notes: Vec<f32> = synth.voices().filter(|v| v.held).map(|v| v.note).collect();
+            notes.sort_by(f32::total_cmp);
+            notes
+        };
+        assert_eq!(held(&synth), [60.0, 60.0, 64.0]);
+        let choir = conductor::id(conductor::place(&SPOOKY), Atom::Choir);
+        assert!(synth.voices().all(|v| v.patch == choir));
+        let at = synth.frame();
+        bench.up(&mut synth, at, Held::Pointer);
+        synth.render_to(&mut out);
+        assert_eq!(held(&synth), [60.0, 64.0]);
+        let at = synth.frame();
+        bench.up(&mut synth, at, Held::Key(4));
+        synth.render_to(&mut out);
+        assert_eq!(held(&synth), [64.0]);
+        // The theme switched, a sound of it played, the key still held let
+        // go of: nothing held.
+        let at = synth.frame();
+        bench.play(
+            &mut synth,
+            at,
+            What::Event(Event::Zap { pan: 0.0 }),
+            (&CLASSIC, None, 120.0),
+        );
+        synth.render_to(&mut out);
+        let at = synth.frame();
+        bench.up(&mut synth, at, Held::Key(7));
+        synth.render_to(&mut out);
+        assert!(held(&synth).is_empty(), "{:?}", held(&synth));
+        assert_eq!(synth.dropped(), 0);
     }
 }

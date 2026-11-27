@@ -37,7 +37,7 @@ use jodel_synth::{Bank, NoteOn, Patch, PatchId, Synth};
 use jodeldiplom::core::karaoke::result::{Medal, Shown, SongResult};
 use jodeldiplom::core::shine::Shone;
 use jodeldiplom::core::singing::rung;
-use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet};
+use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet, Tempo};
 use jodeldiplom::sfx::reveal::RevealSounds;
 use jodeldiplom::theme::Theme;
 use jodeldiplom::tiers::Tier;
@@ -215,10 +215,11 @@ fn play(
     let mut next = 0;
     let (mut voices, mut periods) = (0, Vec::new());
     let started = Instant::now();
+    let mut tempo = Tempo::default();
     for period in out.as_chunks_mut::<{ 2 * PERIOD }>().0 {
         let one = Instant::now();
         let now = synth.frame();
-        c.set_clock(&mut synth, clock_of(now));
+        tempo.time(&mut c, &mut synth, clock_of(now));
         while next < events.len() && events[next].0 < now + PERIOD as u64 {
             let (at, e) = events[next];
             c.event(&mut synth, at, e);
@@ -301,6 +302,8 @@ fn backing(seconds: f64) -> Vec<f32> {
             seed,
             pan: 0.0,
             shape: 0.0,
+            glide: None,
+            line: 0,
         };
         notes.push((at, p, n, length));
     };
@@ -473,7 +476,7 @@ fn diploma(dir: &Path, key: &jodel_rhythm::key::Key) {
             pan: 0.0,
         };
         let (out, _) = play(&[(0, Event::Diploma(sheet))], key, 4.0, &free);
-        save(dir, &sound.name(), &out);
+        save(dir, sound.name(), &out);
     }
     let named = |t: &str| Some(Tier::named(t));
     let six = [

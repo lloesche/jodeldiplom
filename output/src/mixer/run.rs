@@ -18,6 +18,7 @@ use super::desk::pack_format;
 use super::device::Device;
 use super::effects_run::{EffectsRun, RESERVED_CHANNELS};
 use super::input::{Feed, Opened};
+use super::live::LiveRun;
 use super::mic::Port;
 use super::parts::LaneRun;
 use super::ramp::{GainId, Waiting, When};
@@ -357,12 +358,12 @@ impl Run {
                 self.ports.mic.set(&mut self.aside, input);
                 self.fit_mic();
             }
-            Msg::Effects(strip, counts, live) => {
+            Msg::Effects(strip, counts, live, patches) => {
                 // One made before goes with this message (its synth goes
                 // aside).
-                let run = EffectsRun::new(strip, counts, live);
+                let run = EffectsRun::new(strip, LiveRun::new(live, patches, counts));
                 if let Some(mut old) = self.ports.effects.replace(run) {
-                    if let Some(synth) = old.take_live() {
+                    if let Some(synth) = old.live.set(None) {
                         self.aside.drop_later(Gone::Synth(synth));
                     }
                 }
@@ -372,13 +373,13 @@ impl Run {
                 let effects = &mut self.ports.effects;
                 let ours = effects
                     .as_ref()
-                    .is_some_and(|fx| Arc::ptr_eq(&fx.counts, &counts));
+                    .is_some_and(|fx| Arc::ptr_eq(&fx.live.counts, &counts));
                 let run = if ours { effects.take() } else { None };
                 let _ = done.send(run.map(Box::new));
             }
             Msg::EffectsLive(synth) => {
                 let old = match &mut self.ports.effects {
-                    Some(fx) => fx.set_live(Some(synth)),
+                    Some(fx) => fx.live.set(Some(synth)),
                     None => Some(synth),
                 };
                 if let Some(old) = old {
@@ -414,7 +415,7 @@ impl Run {
             return;
         };
         let device = self.device.as_ref().map_or(0, |d| d.format.rate);
-        let rate = device.max(fx.rate().unwrap_or(0));
+        let rate = device.max(fx.live.rate().unwrap_or(0));
         let frames = (self.options.period.as_secs_f64() * f64::from(rate)).ceil() as usize;
         fx.reserve(frames);
         self.strips
@@ -589,7 +590,7 @@ impl Run {
         // The desk's frames start over: what its synth waits to play on
         // them is called off.
         if let Some(fx) = &mut self.ports.effects {
-            fx.opened();
+            fx.live.opened();
         }
         self.fit_effects();
         Ok(())
@@ -650,7 +651,7 @@ impl Run {
     fn flush(&mut self, id: u64) -> Result<(), Error> {
         self.inputs.unlink(id);
         if let Some(fx) = &mut self.ports.effects {
-            fx.flushed(id);
+            fx.live.flushed(id);
         }
         // Its frames restart: there is no stream frame to time a change on
         // until they are mixed again.
@@ -805,7 +806,7 @@ impl Run {
         }
         let busy = slots.values().filter(|s| !s.idle());
         let busy = busy.flat_map(|s| s.lanes.iter().map(|l| l.strip));
-        let effects = self.ports.effects.as_ref().filter(|fx| fx.busy());
+        let effects = self.ports.effects.as_ref().filter(|fx| fx.live.busy());
         self.strips
             .settle_idle(busy.chain(effects.map(|fx| fx.strip)));
     }

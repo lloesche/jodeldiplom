@@ -259,6 +259,10 @@ pub struct Binding {
     /// The keys as the help writes them, where not one by one: `1 … 9`
     /// for a row that speaks for nine.
     pub help_keys: Option<&'static str>,
+    /// Whether what it does lasts as long as its key is held: let go of,
+    /// the key is [`Action::Released`](crate::core::Action::Released) of
+    /// it (whatever context is in force then).
+    pub held: bool,
 }
 
 impl Binding {
@@ -268,6 +272,11 @@ impl Binding {
             help_keys: Some(keys),
             ..self
         }
+    }
+
+    /// The row held: what it does lasts as long as its key.
+    pub const fn held(self) -> Binding {
+        Binding { held: true, ..self }
     }
 
     /// Its line in the help (the keys, what they do), if it has one.
@@ -285,31 +294,25 @@ pub fn contexts(state: &State) -> Vec<Context> {
         return vec![Context::Palette];
     }
     match state.screen {
-        Screen::Main => {
-            if state.browser.filter.as_ref().is_some_and(|f| f.editing) {
-                vec![Context::Filter]
-            } else if state.side == Side::Transition && state.transition.draft.edit.is_some() {
-                vec![Context::Fades, Context::Global]
-            } else if state.side == Side::Transition {
-                vec![Context::Transition, Context::Global]
-            } else if state.side == Side::Karaoke && state.karaoke.sync.is_some() {
-                vec![Context::Sync, Context::Global]
-            } else if state.side == Side::Karaoke {
-                vec![Context::Karaoke, Context::Global]
-            } else if state.side == Side::Mixer {
-                vec![Context::Desk, Context::Global]
-            } else if state.side == Side::Synth {
-                vec![Context::Synth, Context::Global]
-            } else if crate::core::shader_tab::searching(state) {
-                vec![Context::ShaderSearch]
-            } else if state.side == Side::Shader {
-                vec![Context::Shader, Context::Global]
-            } else if state.side == Side::Queue {
-                vec![Context::Queue, Context::List, Context::Global]
-            } else {
-                vec![Context::List, Context::Global]
-            }
+        Screen::Main if state.browser.filter.as_ref().is_some_and(|f| f.editing) => {
+            vec![Context::Filter]
         }
+        Screen::Main => match state.side {
+            Side::Transition if state.transition.draft.edit.is_some() => {
+                vec![Context::Fades, Context::Global]
+            }
+            Side::Transition => vec![Context::Transition, Context::Global],
+            Side::Karaoke if state.karaoke.sync.is_some() => vec![Context::Sync, Context::Global],
+            Side::Karaoke => vec![Context::Karaoke, Context::Global],
+            Side::Mixer => vec![Context::Desk, Context::Global],
+            Side::Synth => vec![Context::Synth, Context::Global],
+            Side::Shader if crate::core::shader_tab::searching(state) => {
+                vec![Context::ShaderSearch]
+            }
+            Side::Shader => vec![Context::Shader, Context::Global],
+            Side::Queue => vec![Context::Queue, Context::List, Context::Global],
+            Side::Browser => vec![Context::List, Context::Global],
+        },
         Screen::NowPlaying => vec![Context::NowPlaying, Context::Global],
         Screen::Settings if state.settings.folders.is_some() => {
             vec![Context::FolderList, Context::Global]
@@ -335,6 +338,22 @@ pub enum Meaning {
     Op(Op),
     /// A character to type into the filter or the palette.
     Type(char),
+}
+
+/// The keys of the first row of `context` doing `op`: what the screens
+/// write on what plays it (none: no row).
+pub fn keys_for(context: Context, op: Op) -> &'static [Key] {
+    (KEYMAP.iter())
+        .find(|b| b.context == context && b.op == op)
+        .map_or(&[], |b| b.keys)
+}
+
+/// What `key` let go of ends: each held row's op it is a key of, in any
+/// context.
+pub fn released(key: Key) -> impl Iterator<Item = Op> {
+    (KEYMAP.iter())
+        .filter(move |b| b.held && b.keys.contains(&key))
+        .map(|b| b.op)
 }
 
 fn find(context: Context, key: Key) -> Option<Op> {

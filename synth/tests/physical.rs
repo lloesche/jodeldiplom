@@ -142,6 +142,8 @@ fn modal_rings_out_and_says_so() {
             seed: 3,
             pan: 0.0,
             shape: 0.0,
+            glide: None,
+            line: 0,
         },
     );
     let m = held(72.0, 0.0);
@@ -170,6 +172,8 @@ fn strikes(p: &modal::Params, note: f32, per_second: f32, seconds: f32) -> Vec<f
                 seed: b as u32,
                 pan: 0.0,
                 shape: 0.0,
+                glide: None,
+                line: 0,
             };
             e.note_on(p, &mut v, &n);
         }

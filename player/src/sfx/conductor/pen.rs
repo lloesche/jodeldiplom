@@ -4,7 +4,7 @@
 //! now and then, all as loud as the pen is fast; still or lifted, it is
 //! silent), a hand writing words ([`handwriting`]: a letter after another,
 //! the pen lifted between words), the signature's very stroke
-//! ([`stroke_speed`]) and a tap of the nib ([`tap`]).
+//! ([`signature_speed`]) and a tap of the nib ([`tap`]).
 //!
 //! What is written is not known when its sound is planned (a value lands
 //! as it is drawn), so a hand writes a sample of what goes there ("40 of
@@ -13,14 +13,17 @@
 //! Nothing here allocates.
 
 use std::f64::consts::TAU;
+use std::sync::LazyLock;
+
+use jodel_synth::dsp;
 
 use super::palette::Atom;
-use super::sheet::{midi, Paper};
-use crate::core::karaoke::result::signature::signature_point;
-use crate::core::karaoke::result::{signed, SIGNING};
+use super::sounds::{Note, Score};
+use crate::core::karaoke::result::signature::signature_pace;
+use crate::core::karaoke::result::{signed, signing, SIGNING};
 
 /// A grain of the pen's scratch, seconds: a note on the nib each
-/// ([`Atom::Nib`]).
+/// ([`Atom::Nib`], whose rise is as long).
 pub(super) const GRAIN: f64 = 0.012;
 
 /// A date as the diploma writes one ("25 November 2026"), to write in for
@@ -35,31 +38,42 @@ const LIFT: f64 = 0.045;
 const STEP: f64 = 0.001;
 
 /// A pen scratching over paper from `start` for `length` seconds at `pan`,
-/// as fast as `speed(t)` says (seconds from its start, never going back; 0
-/// still or lifted, 1 its fastest): a grain at a time, its band higher and
-/// its grain louder the faster the pen goes, the fibres catching now and
-/// then (the more often the faster).
+/// as fast as `speed((t, grain))` says over each grain (from `t` seconds
+/// from its start, `grain` long, never going back; 0 still or lifted, 1
+/// its fastest: each pen takes the point or the mean it follows): a grain
+/// at a time, its band higher and its grain louder the faster the pen
+/// goes, the fibres catching now and then (the more often the faster).
 pub(super) fn scratch(
-    p: &mut Paper,
+    p: &mut Score,
     (start, length): (f64, f64),
     pan: f32,
-    mut speed: impl FnMut(f64) -> f64,
+    mut speed: impl FnMut((f64, f64)) -> f64,
 ) {
     let grains = (length / GRAIN).ceil() as u32;
     for k in 0..grains {
         let t = f64::from(k) * GRAIN;
-        let v = speed(t + 0.5 * GRAIN).clamp(0.0, 1.0);
+        let v = speed((t, GRAIN)).clamp(0.0, 1.0);
         if v < 0.02 {
             continue;
         }
         let fibre = f64::from(p.unit());
         let band = 1_500.0 + 4_500.0 * v + 1_000.0 * (fibre - 0.5);
         let loud = v.powf(0.8) * (0.7 + 0.6 * fibre);
-        p.play(start + t, Atom::Nib, midi(band), loud as f32, pan, GRAIN);
+        p.play(
+            Note::at_secs(start + t, Atom::Nib, dsp::note(band))
+                .vel(loud as f32)
+                .pan(pan)
+                .hold_secs(GRAIN),
+        );
         if f64::from(p.unit()) < v * 40.0 * GRAIN {
             let at = start + t + GRAIN * f64::from(p.unit());
-            let f = midi(2_500.0 + 2_500.0 * f64::from(p.unit()));
-            p.play(at, Atom::Snap, f, 0.5 * v as f32, pan, 0.01);
+            let f = dsp::note(2_500.0 + 2_500.0 * f64::from(p.unit()));
+            p.play(
+                Note::at_secs(at, Atom::Snap, f)
+                    .vel(0.5 * v as f32)
+                    .pan(pan)
+                    .hold_secs(0.01),
+            );
         }
     }
 }
@@ -92,8 +106,7 @@ impl<'a> Hand<'a> {
 
     /// How long the next letter takes.
     fn pace(&mut self) -> f64 {
-        let x = jodel_dsp::xorshift32(&mut self.seed);
-        0.055 + 0.035 * f64::from(x >> 8) / f64::from(1u32 << 24)
+        0.055 + 0.035 * f64::from(dsp::unit(&mut self.seed))
     }
 
     /// Whether the pen is lifted at `t`, between two words.
@@ -121,52 +134,55 @@ impl<'a> Hand<'a> {
 }
 
 /// `sample` written in by hand from `start` over `length` seconds, the
-/// pen at `velocity` (1: full), its letters' pace from `seed`.
-pub(super) fn handwriting(
-    p: &mut Paper,
-    (start, length): (f64, f64),
-    sample: &str,
-    (velocity, seed): (f64, u32),
-) {
-    let mut hand = Hand::new(length, sample, seed);
-    scratch(p, (start, length + 0.02), 0.0, |t| velocity * hand.speed(t));
+/// pen at `velocity` (1: full), its letters' pace from the sound's own
+/// seed (so the same every time).
+pub(super) fn handwriting(p: &mut Score, (start, length): (f64, f64), sample: &str, velocity: f64) {
+    let mut hand = Hand::new(length, sample, p.draw());
+    scratch(p, (start, length + 0.02), 0.0, |(t, grain)| {
+        velocity * hand.speed(t + 0.5 * grain)
+    });
 }
 
 /// A soft tap of the pen at `t` seconds, at `velocity`: a click of the nib
 /// and a little knock of the desk under the paper.
-pub(super) fn tap(p: &mut Paper, t: f64, velocity: f32) {
-    p.play(t, Atom::Snap, midi(1_800.0), velocity, 0.0, 0.01);
-    p.play(t, Atom::Knock, midi(527.0), 0.5 * velocity, 0.0, 0.05);
+pub(super) fn tap(p: &mut Score, t: f64, velocity: f32) {
+    p.play(
+        Note::at_secs(t, Atom::Snap, dsp::note(1_800.0))
+            .vel(velocity)
+            .hold_secs(0.01),
+    );
+    p.play(
+        Note::at_secs(t, Atom::Knock, dsp::note(527.0))
+            .vel(0.5 * velocity)
+            .hold_secs(0.05),
+    );
 }
 
-/// How fast the signature's pen goes along its stroke
-/// ([`signature_point`]) `a` seconds after the end, as the stage writes it
-/// ([`signed`]), its share of a second over the next step.
+/// How fast the signature's pen goes along its stroke `a` seconds after
+/// the end, as the stage writes it: its pace along the stroke
+/// ([`signature_pace`]) where the stage has it then ([`signed`]), times
+/// how fast it goes along it then ([`signing`]); of the signature's width
+/// a second.
 pub(super) fn stroke_speed(a: f64) -> f64 {
-    let at = |a: f64| {
-        let (x, y) = signature_point(signed(a) as f32);
-        (f64::from(x), f64::from(y))
-    };
-    let (p, q) = (at(a), at(a + STEP));
-    (q.0 - p.0).hypot(q.1 - p.1) / STEP
+    f64::from(signature_pace(signed(a) as f32)) * signing(a)
 }
 
-/// The signature's pen at its fastest ([`stroke_speed`]'s most).
-pub(super) fn fastest() -> f64 {
+/// The signature's pen at its fastest ([`stroke_speed`]'s most, by steps).
+static FASTEST: LazyLock<f64> = LazyLock::new(|| {
     let steps = (SIGNING / STEP).ceil() as u32;
     (0..steps)
         .map(|k| stroke_speed(f64::from(k) * STEP))
         .fold(1e-9, f64::max)
-}
+});
 
-/// How fast the signature's pen goes over the grain from `a` seconds, 0 to
-/// 1 (its fastest: `most`): the mean of its steps there.
-pub(super) fn signature_speed(a: f64, most: f64) -> f64 {
-    let steps = (GRAIN / STEP).round() as u32;
+/// How fast the signature's pen goes over `length` seconds from `a`, 0 to
+/// 1 (its fastest): the mean of its steps there.
+pub(super) fn signature_speed((a, length): (f64, f64)) -> f64 {
+    let steps = (length / STEP).round().max(1.0) as u32;
     let sum: f64 = (0..steps)
         .map(|k| stroke_speed(a + f64::from(k) * STEP))
         .sum();
-    sum / f64::from(steps) / most
+    sum / f64::from(steps) / *FASTEST
 }
 
 #[cfg(test)]
@@ -185,5 +201,14 @@ mod tests {
         assert_eq!(hand.speed(0.55), 0.0);
         assert!(hand.speed(0.7) > 0.0);
         assert_eq!(hand.speed(0.81), 0.0);
+    }
+
+    /// A grain is as long as the nib's rise, as built (each grain a note
+    /// that rises over it and is let go of over two).
+    #[test]
+    fn a_grain_is_the_nib_s_rise() {
+        let nib = super::super::palette::patch(Atom::Nib).adsr;
+        assert_eq!(nib.attack, GRAIN as f32);
+        assert_eq!(nib.release, 2.0 * GRAIN as f32);
     }
 }

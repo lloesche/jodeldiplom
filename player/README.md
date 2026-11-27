@@ -1063,9 +1063,9 @@ The game comes in a **theme**: the settings' row Karaoke theme, Classic
 (the default) or Spooky (`karaoke_theme` in the settings file,
 `"classic"` or `"spooky"`; `theme.rs`). A change is in force from the
 next frame, mid-song too: the colours, the looks, the fog and the grade
-at once, and the sounds' patches told the synth as it plays (what rings
-rings on in the new sound, a note held is let go of with its key, and
-nothing planned is lost). A theme overrides
+at once, and the sounds' patches the new theme's (the synth holds every
+theme's: what rings rings on in its own sound, a note held is let go of
+with its key, and nothing planned is lost). A theme overrides
 by key what the tiers and their effects look like and what the sounds
 are made of, and may hold effects throughout and grade the backdrop:
 the tiers' colours (their badge, verdict, marks and stickers), the
@@ -1513,7 +1513,7 @@ preset of your own.
 | `store` | what is kept on disk between runs: the two folders (`store::dirs`), a move of the data folder (`store::mover`), the session and the queues saved (`store::session`), the singer's delays (`store::delays`), the best scores (`store::scores`), the singing kept (`store::keep`) |
 | `store::cache` | the schemas of what is kept on disk between runs, and their versions |
 | `store::grids` | the beat grids fixed by hand, kept per track in the settings folder |
-| `store::patches` | the game's sounds' patches kept on the Synth tab (`patches/` in the data folder), a file a theme's atom, each parameter by its name (`core::synth_tab` the tab, `sfx::bench` its sounds by moment, `gui::screens::synth` its widgets) |
+| `store::patches` | the game's sounds' patches kept on the Synth tab (`patches/` in the data folder), a file a theme's atom, the patch as the synth writes it as text (`core::patch_book` every theme's patches as edited and kept, `core::synth_tab` the tab, `sfx::bench` its sounds by moment and its player, `view::synth` the tab's model, `gui::screens::synth` its widgets) |
 | `store::looks` | the looks kept on the Shader tab (`looks/` in the data folder), a JSON file each (`core::shader_tab` the tab, `gui::screens::shader` its widgets, `gui::backdrop::looks` the look over the backdrop on the GPU) |
 | `store::stems` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
 | `gui` | the window, an iced application (`gui::window`); every screen but Karaoke mode in iced's widgets (`gui::screens`, the main screen laid out from the measures in `gui::metrics`; the Mixer tab `gui::mixer`; the covers `gui::widgets::cover`, the lanes `gui::lanes`); Karaoke mode in the window's own widgets too (`gui::screens::karaoke::mode`), its stage a widget of its own on the GPU (`gui::stage_view`, `gui::present`, `gui::stage`, `gui::stage::gpu`, a pipeline a group of shapes, `gui::stage::shapes` the shapes of its shader; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |

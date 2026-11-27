@@ -29,14 +29,27 @@
 //!
 //! With the Effects strip down (−∞ or muted) nothing is played.
 //!
-//! The Synth tab's sounds and keys are played at once on the desk's
-//! frames ([`Sfx::bench`], [`bench`]), in the theme it compares while it
-//! shows. Each frame every atom's patch as the tab has it (edited, kept,
-//! or built in: [`crate::core::synth_tab::patch`]) is told the conductor,
-//! which sends its synth only what changed: with nothing edited or kept,
-//! nothing is sent. Another theme in force (the settings' changed, or the
-//! one the tab compares) is told the same way, mid-song too: the synth
-//! playing takes its patches, and what sounds rings on.
+//! The synth plays every theme's patches ([`conductor::bank`]): the
+//! theme in force (the settings') is the patches the game's conductor
+//! plays, so another one is in force from the next frame, mid-song too,
+//! and what sounds rings on. The Synth tab's sounds and keys are played at
+//! once on the desk's frames by a player of the bench's own on the same
+//! synth ([`Sfx::bench`], [`bench::Bench`]), in the theme the tab
+//! compares: the game's conductor is not touched. The patches as the
+//! state's book has them (edited, kept, or built in:
+//! [`crate::core::patch_book`]) are what the synth is made with; an edit
+//! after is told it as it plays, the patch changed alone (with nothing
+//! edited or kept, nothing is). The synth's tempo is kept here, for both
+//! ([`conductor::Tempo`]): the bench's sound plays at its tempo, the
+//! song's own again on the game's next clock.
+//!
+//! The two planners share the one synth's tags and voices (a cancel of
+//! all, a streak lost, a mono patch's lines): they are kept apart by the
+//! screens, not by the synth. The game sounds in Karaoke mode alone
+//! ([`crate::core::karaoke::in_mode`]) and the Synth tab is on the main
+//! screen, so the two meet only as one hands over to the other (a sound
+//! of the tab still ringing out as the mode starts). A use that plays
+//! both at once needs a lane of its own in the tags first.
 //!
 //! A song's result revealed after it ([`reveal`]) sounds its beats at once,
 //! each on the frame that reaches it, its paper and its music alike,
@@ -59,6 +72,7 @@ pub mod reveal;
 
 use jodel_output::mixer::{Effects, Fader, LiveCommands, Timebase};
 use jodel_playback::PlayState;
+use jodel_synth::Patch;
 
 pub use moments::{Cued, Frame, Moments};
 
@@ -108,6 +122,14 @@ pub struct Sfx {
     moments: Moments,
     /// The conductor at the device's rate, its synth on the desk.
     conductor: Option<Conductor>,
+    /// The Synth tab's player on the same synth.
+    bench: Option<bench::Bench>,
+    /// What the synth has: every theme's patches (in the bank's order),
+    /// the patches' book's revision they are of (none: not all told yet),
+    /// its tempo.
+    told_patches: Vec<Patch>,
+    revision: Option<u64>,
+    tempo: conductor::Tempo,
     /// Whether it planned on a song's frames since it was last called off,
     /// and what it was told of the song.
     on_song: bool,
@@ -131,6 +153,7 @@ impl Sfx {
     /// the moments call off, so it never calls them off).
     pub fn frame(&mut self, state: &State, desk: Desk<'_>) {
         self.conductor_at(&desk, state);
+        self.in_theme(state);
         self.patches(state, &desk);
         self.loudness(state, &desk);
         self.moments(state, &desk);
@@ -166,10 +189,10 @@ impl Sfx {
 
     /// The conductor at the device's rate, its synth sent to the desk, made
     /// again when the device opens at another (none at a rate the synth
-    /// takes not: silent there); its patches the theme's the effects play
-    /// in. Another theme is not a new synth: its patches are told the one
-    /// playing ([`Sfx::patches`]), so what sounds rings on and nothing
-    /// planned is lost.
+    /// takes not: silent there), with every theme's patches as the book
+    /// has them, and the bench's player on it. Another theme in force is
+    /// not a new synth: the conductor plays its patches ([`Sfx::patches`]),
+    /// so what sounds rings on and nothing planned is lost.
     fn conductor_at(&mut self, desk: &Desk<'_>, state: &State) {
         let rate = desk.timebase.rate;
         let at = self.conductor.as_ref().map(Conductor::rate);
@@ -177,52 +200,74 @@ impl Sfx {
         if rate == 0 || at == Some(rate) || !takes {
             return;
         }
-        let (conductor, synth) = Conductor::new(rate, crate::core::synth_tab::theme(state));
-        desk.effects.live(synth);
-        self.conductor = Some(conductor);
+        let book = &state.patches;
+        let bank = conductor::bank(|theme, atom| book.patch(theme, atom));
+        self.told_patches = (conductor::every())
+            .map(|(t, a)| book.patch(t, a))
+            .collect();
+        self.revision = Some(book.revision());
+        desk.effects.live(Conductor::synth(rate, bank));
+        self.conductor = Some(Conductor::planner(rate, state.theme()));
+        self.bench = Some(bench::Bench::new(rate));
+        self.tempo = conductor::Tempo::default();
         self.on_song = false;
         self.told = None;
     }
 
-    /// Each atom's patch in the theme the effects play in, as the Synth tab
-    /// has it (edited, kept, or built in), told the conductor, which tells
-    /// its synth what changed: the theme changed (in the settings, or the
-    /// one the tab compares), the patches of the atoms it overrides, as
-    /// commands that go before any note after them.
-    fn patches(&mut self, state: &State, desk: &Desk<'_>) {
-        let theme = crate::core::synth_tab::theme(state);
-        if let Some((c, mut out)) = self.conduct(desk, None) {
-            for atom in conductor::Atom::ALL {
-                c.set_patch(
-                    &mut out,
-                    atom,
-                    crate::core::synth_tab::patch(state, theme, atom),
-                );
-            }
+    /// The game's conductor on the theme in force.
+    fn in_theme(&mut self, state: &State) {
+        if let Some(c) = self.conductor.as_mut() {
+            c.set_theme(state.theme());
         }
     }
 
-    /// What the Synth tab asks played now, on the desk's frames: a sound
-    /// in its key on a steady beat at its tempo, or a key of its keyboard
-    /// pressed or let go of; the patches as the tab has them first. The
-    /// song's key and clock are told the conductor again after it.
+    /// Each theme's atoms' patches as the book has them, once it changed,
+    /// told the synth where they are not what it has (one not taken, a
+    /// full queue, on the next frame).
+    fn patches(&mut self, state: &State, desk: &Desk<'_>) {
+        if self.conductor.is_none() {
+            return;
+        }
+        let book = &state.patches;
+        if self.revision == Some(book.revision()) {
+            return;
+        }
+        let mut out = desk.effects.commands(None);
+        let all = tell_patches(&mut self.told_patches, book, |id, p| out.patch(id, p));
+        self.revision = all.then_some(book.revision());
+    }
+
+    /// What the Synth tab asks played now, on the desk's frames, by the
+    /// bench's player: a sound in its key on a steady beat at its tempo
+    /// (the synth told it), or a key of its keyboard pressed or let go of;
+    /// the patches as the book has them first.
     pub fn bench(&mut self, state: &State, desk: Desk<'_>, ask: crate::core::synth_tab::Bench) {
         use crate::core::synth_tab::Bench;
         self.conductor_at(&desk, state);
+        self.in_theme(state);
         self.patches(state, &desk);
         let at = desk.timebase.frame;
-        self.told = None;
-        let Some((c, mut out)) = self.conduct(&desk, None) else {
+        let Some(b) = self.bench.as_mut() else {
             return;
         };
+        let mut out = desk.effects.commands(None);
         match ask {
-            Bench::Play { what, key, bpm } => {
-                c.set_key(key.as_ref(), 0);
-                c.set_clock(&mut out, Clock::steady(c.rate(), bpm, at));
-                bench::play(c, &mut out, at, what);
+            Bench::Play {
+                what,
+                key,
+                bpm,
+                theme,
+            } => {
+                self.tempo.tell(&mut out, bpm);
+                b.play(&mut out, at, what, (theme, key.as_ref(), bpm));
             }
-            Bench::Down { atom, note } => c.key_down(&mut out, at, atom, note),
-            Bench::Up { atom, note } => c.key_up(&mut out, at, atom, note),
+            Bench::Down {
+                atom,
+                note,
+                held,
+                theme,
+            } => b.down(&mut out, (at, theme), (atom, note), held),
+            Bench::Up { held } => b.up(&mut out, at, held),
         }
     }
 
@@ -258,8 +303,9 @@ impl Sfx {
     /// `event` now, on the desk's frames (and their clock, of no grid).
     fn on_desk(&mut self, desk: &Desk<'_>, event: Event) {
         let at = desk.timebase.frame;
-        if let Some((c, mut out)) = self.conduct(desk, None) {
-            c.set_clock(&mut out, Clock::free(c.rate()));
+        if let Some(c) = self.conductor.as_mut() {
+            let mut out = desk.effects.commands(None);
+            self.tempo.time(c, &mut out, Clock::free(c.rate()));
             c.event(&mut out, at, event);
         }
     }
@@ -367,10 +413,11 @@ impl Sfx {
             grid: analysis.is_some(),
         };
         if self.told.as_ref() != Some(&told) {
-            if let Some((c, mut out)) = self.conduct(desk, None) {
+            if let Some(c) = self.conductor.as_mut() {
                 c.set_key(told.key.as_ref(), told.shift);
                 if !told.grid {
-                    c.set_clock(&mut out, Clock::free(c.rate()));
+                    let mut out = desk.effects.commands(None);
+                    self.tempo.time(c, &mut out, Clock::free(c.rate()));
                 }
             }
             self.told = Some(told);
@@ -393,8 +440,9 @@ impl Sfx {
             *slot = Some(line);
         }
         let clock = Clock::from_analysis(a, t, heard.frame, speed, lines);
-        if let Some((c, mut out)) = self.conduct(desk, Some(fader)) {
-            c.set_clock(&mut out, clock);
+        if let Some(c) = self.conductor.as_mut() {
+            let mut out = desk.effects.commands(Some(fader));
+            self.tempo.time(c, &mut out, clock);
         }
         // The desk mixes ahead of what is heard by its device's buffer.
         let ahead = desk.timebase.frame.saturating_sub(desk.timebase.heard);
@@ -416,5 +464,70 @@ impl Sfx {
         for d in heard {
             self.on_desk(desk, Event::Diploma(d));
         }
+    }
+}
+
+/// Each theme's atoms' patches as `book` has them told by `tell` (a
+/// synth's patch set: whether it was taken) where they are not what
+/// `told` says the synth has (in the bank's order), which they then are;
+/// whether every one was taken.
+fn tell_patches(
+    told: &mut [Patch],
+    book: &crate::core::patch_book::PatchBook,
+    mut tell: impl FnMut(jodel_synth::PatchId, Patch) -> bool,
+) -> bool {
+    let mut all = true;
+    for (k, (has, (theme, atom))) in told.iter_mut().zip(conductor::every()).enumerate() {
+        let patch = book.patch(theme, atom);
+        if *has != patch {
+            if tell(jodel_synth::PatchId::nth(k), patch) {
+                *has = patch;
+            } else {
+                all = false;
+            }
+        }
+    }
+    all
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::patch_book::PatchBook;
+    use crate::theme::{CLASSIC, SPOOKY};
+    use conductor::Atom;
+
+    /// An edit told the synth is what it then plays, in its theme alone:
+    /// the synth made of the book has its patches; the book edited, the
+    /// edited patch is told once and is the synth's, the other theme's
+    /// untouched; one not taken is told again.
+    #[test]
+    fn an_edit_is_the_synth_s_patch() {
+        let mut book = PatchBook::default();
+        let (_, mut synth) = Conductor::new(48_000, &CLASSIC);
+        let mut told: Vec<Patch> = (conductor::every())
+            .map(|(t, a)| book.patch(t, a))
+            .collect();
+        let mut sent = 0;
+        let mut tell = |told: &mut [Patch], book: &PatchBook| {
+            tell_patches(told, book, |id, p| {
+                sent += 1;
+                synth.set_patch(id, p)
+            })
+        };
+        assert!(tell(&mut told, &book), "nothing to tell");
+        book.edit(&SPOOKY, Atom::Pop, |p| p.level += 6.0);
+        assert!(
+            !tell_patches(&mut told.clone(), &book, |_, _| false),
+            "not taken"
+        );
+        assert!(tell(&mut told, &book));
+        assert!(tell(&mut told, &book));
+        assert_eq!(sent, 1, "told once");
+        let pop = conductor::id(conductor::place(&SPOOKY), Atom::Pop);
+        assert_eq!(synth.patch(pop), Some(&book.patch(&SPOOKY, Atom::Pop)));
+        assert_ne!(synth.patch(pop), Some(&SPOOKY.patch(Atom::Pop)));
+        let classic = conductor::id(conductor::place(&CLASSIC), Atom::Pop);
+        assert_eq!(synth.patch(classic), Some(&CLASSIC.patch(Atom::Pop)));
     }
 }

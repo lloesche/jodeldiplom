@@ -104,6 +104,8 @@ fn run(engines: &[AnyParams], voices: usize, notes: usize) -> (f64, usize) {
         seed: k as u32,
         pan: 0.0,
         shape: 0.0,
+        glide: None,
+        line: 0,
     };
     for (k, &id) in ids.iter().enumerate() {
         synth.note(0, id, note(k), None);

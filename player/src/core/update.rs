@@ -41,7 +41,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     let selected = preview::watched(state);
     match action {
         Action::Ctrl(how) => preview::ctrl(state, how, &mut fx),
-        Action::DemoLetGo => state.karaoke.demo.let_go(),
+        Action::Released(op) => released(state, op, &mut fx),
         Action::Op(op) => apply_op(state, op, &mut fx),
         Action::Type(c) => {
             if !help::typed(state, c.encode_utf8(&mut [0; 4]))
@@ -271,7 +271,7 @@ fn is_input(action: &Action) -> bool {
         // Ctrl alone is the preview's own; a key let go of, the pointer
         // moving and the sync's clicks heard press nothing.
         Action::Ctrl(_)
-        | Action::DemoLetGo
+        | Action::Released(_)
         | Action::PointerMoved { .. }
         | Action::PointerLeft
         | Action::Sync(_)
@@ -529,6 +529,17 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         }
         // Another tab's or screen's own, from elsewhere: where it is done.
         _ => state.info(format!("That is for: {}", op.home().title())),
+    }
+}
+
+/// The key of a held row's `op` let go of: what it holds ends, where it
+/// is going on (the demo singing, a key of the Synth tab's keyboard
+/// holding its note); nothing where it is not.
+fn released(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
+    match op {
+        Op::KaraokeDemo => state.karaoke.demo.let_go(),
+        Op::SynthNote(k) => super::synth_tab::key_up(state, k, fx),
+        _ => {}
     }
 }
 

@@ -207,7 +207,7 @@ impl Grab {
             }
             Grab::Piano(keys) => {
                 let key = piano::key_at(keys, synth_tab::KEYS / 12, at);
-                let note = key.map(|k| synth_tab::LOW + f32::from(k));
+                let note = key.map(|k| synth_tab::key_note(0, k));
                 (note != state.synth.mouse).then_some(Action::Synth(SynthAction::Press(note)))
             }
         }

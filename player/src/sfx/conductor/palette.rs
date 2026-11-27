@@ -1,8 +1,9 @@
 //! The conductor's instruments (its patch bank), as data: the atoms its
 //! sounds are made of
 //! ([`Atom`], every one in [`Atom::ALL`]), each one patch of our own synth
-//! ([`jodel_synth`], [`patch`]), and the bank they are made into
-//! ([`Palette`]): the bubble's pop, its body and glint, three coins for
+//! ([`jodel_synth`], [`patch`]), and the bank they are made into, every
+//! theme's atoms in it ([`bank`], each by [`id`]: a theme is other patches
+//! of the same bank): the bubble's pop, its body and glint, three coins for
 //! the clinks, the zap, ticks and pips, a whirr and a muted horn for the
 //! wind-down, a pluck, a bar chime, brass, a choir's "aah", a shimmer pad,
 //! glitter, a riser and a whoosh, the register's clack, thud, bell and
@@ -17,15 +18,17 @@
 //! quieter still, the big ones bigger; the synth's bus lifts them all
 //! together over the song ([`super::LEVEL`], after its compressor, into
 //! its limiter at -1 dBFS, which keeps a pile of them from clipping). The
-//! held ones (the pad, the riser) are given their lengths note by note.
+//! held ones (the pad, the riser) are given their lengths note by note,
+//! and what lasts as long as what it follows (the rustle's rise over the
+//! sheet's unrolling) its glide's time too: a patch holds no time of the
+//! stage's.
 
-use std::ops::Index;
-
+use jodel_synth::dsp::MIDDLE_C;
 use jodel_synth::engines::{analog, drum, fm, formant, modal, noise, phase, supersaw, AnyParams};
 use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
 use jodel_synth::{Bank, Patch, PatchId};
 
-use crate::core::karaoke::result::{STAMP_DOWN, UNROLL};
+use crate::theme::{Theme, THEMES};
 
 /// The atoms, and all of them in their order.
 macro_rules! atoms {
@@ -73,8 +76,7 @@ atoms! {
     BrassSaw,
     BrassPd,
     Choir,
-    PadTonic,
-    PadFifth,
+    Pad,
     Glitter,
     Riser,
     Whoosh,
@@ -105,11 +107,10 @@ atoms! {
     Nib,
 }
 
-/// The coins, taken in turn; the brass's two layers; the shimmer's two
-/// voices (the tonic and the fifth); the slam's three drums.
+/// The coins, taken in turn; the brass's two layers; the slam's three
+/// drums.
 pub(super) const COINS: [Atom; 3] = [Atom::CoinA, Atom::CoinB, Atom::CoinC];
 pub(super) const BRASS: [Atom; 2] = [Atom::BrassSaw, Atom::BrassPd];
-pub(super) const PADS: [Atom; 2] = [Atom::PadTonic, Atom::PadFifth];
 pub(super) const SLAM: [Atom; 3] = [Atom::SlamKick, Atom::SlamClap, Atom::SlamCrash];
 
 /// `engine` with `adsr` at `level` dB.
@@ -170,7 +171,8 @@ const fn brass(engine: AnyParams, filter_env: f32, level: f32) -> Patch {
 }
 
 /// The held shimmer: a bright, airy pad high up, breathing in the song's
-/// tempo; one voice a note, held as long as its notes say.
+/// tempo; one voice a line (the tonic's, the fifth's), held as long as
+/// its notes say.
 const PAD: Patch = Patch {
     lfo: Lfo {
         rate: LfoRate::Beats(2.0),
@@ -210,9 +212,6 @@ const fn band(res: f32, color: f32) -> noise::Params {
         ..noise::TICK
     }
 }
-
-/// Middle C, Hz.
-const MIDDLE_C: f32 = 261.625_57;
 
 /// Struck: a decay of `decay` seconds to silence (60 dB down), let go
 /// over `release` when the note is shorter.
@@ -371,7 +370,7 @@ pub const fn patch(a: Atom) -> Patch {
                 -13.0,
             )
         },
-        Atom::PadTonic | Atom::PadFifth => PAD,
+        Atom::Pad => PAD,
         // Glitter: a short bright sparkle.
         Atom::Glitter => Patch {
             reverb: 0.3,
@@ -588,12 +587,13 @@ pub const fn patch(a: Atom) -> Patch {
             ..voice(AnyParams::Analog(analog::SINE), Adsr::hit(0.1), -6.0)
         },
         // The sheet unrolling: the paper's rustle, its band rising as the
-        // sheet goes and wandering (the crinkles in it), as loud as its
-        // front is fast; and the air under it.
+        // sheet goes (over the unroll: its note's own glide) and wandering
+        // (the crinkles in it), as loud as its front is fast; and the air
+        // under it.
         Atom::Rustle => Patch {
             pitch: Glide {
                 from: -19.0,
-                time: UNROLL as f32,
+                time: 0.5,
                 curve: 1.0,
             },
             reverb: 0.1,
@@ -630,11 +630,12 @@ pub const fn patch(a: Atom) -> Patch {
             reverb: 0.05,
             ..voice(AnyParams::Noise(band(0.5, 0.0)), Adsr::hit(0.25), -6.0)
         },
-        // The air a stamp pushes as it comes down, rising and swelling.
+        // The air a stamp pushes as it comes down, rising and swelling
+        // (as long as it comes down: its note's own glide).
         Atom::Rush => Patch {
             pitch: Glide {
                 from: -24.0,
-                time: STAMP_DOWN as f32,
+                time: 0.1,
                 curve: 1.0,
             },
             ..voice(
@@ -667,44 +668,54 @@ pub const fn patch(a: Atom) -> Patch {
                 -6.0,
             )
         },
-        // The pen's nib on paper: a grain of its scratch, rising over one
-        // grain, held as long as its note, let go over two.
+        // The pen's nib on paper: a grain of its scratch, rising over 12
+        // ms (one grain of the pen's, [`super::pen::GRAIN`]), held as long
+        // as its note, let go over two.
         Atom::Nib => voice(
             AnyParams::Noise(band(0.6, 0.0)),
             Adsr {
-                attack: super::pen::GRAIN as f32,
+                attack: 0.012,
                 decay: 0.0,
                 sustain: 1.0,
-                release: 2.0 * super::pen::GRAIN as f32,
+                release: 0.024,
             },
             -16.0,
         ),
     }
 }
 
-/// The atoms' patches in a synth's bank.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct Palette([PatchId; Atom::ALL.len()]);
-
-impl Palette {
-    /// The bank of the atoms' `patches` (in [`Atom::ALL`]'s order), and
-    /// where each is in it.
-    pub(super) fn bank(patches: &[Patch; Atom::ALL.len()]) -> (Bank, Palette) {
-        let mut bank = Bank::new();
-        let ids = patches.map(|p| bank.add(p));
-        (bank, Palette(ids))
-    }
-
-    /// The atom whose patch `id` is.
-    pub(super) fn atom_of(&self, id: PatchId) -> Option<Atom> {
-        Atom::ALL.into_iter().find(|&a| self[a] == id)
-    }
+/// `theme`'s place among the themes ([`THEMES`]; one not there: the
+/// first's).
+pub fn place(theme: &Theme) -> usize {
+    THEMES.iter().position(|t| *t == theme).unwrap_or(0)
 }
 
-impl Index<Atom> for Palette {
-    type Output = PatchId;
+/// `atom`'s patch in the theme at `theme` ([`place`]) in the synth's bank
+/// ([`bank`]): every theme's atoms in turn, each in [`Atom::ALL`]'s
+/// order.
+pub fn id(theme: usize, atom: Atom) -> PatchId {
+    PatchId::nth(theme * Atom::ALL.len() + atom as usize)
+}
 
-    fn index(&self, a: Atom) -> &PatchId {
-        &self.0[a as usize]
+/// The theme (its place) and the atom whose patch `id` is in the bank, if
+/// it is one of the bank's.
+pub fn of(id: PatchId) -> Option<(usize, Atom)> {
+    let k = id.index();
+    let n = Atom::ALL.len();
+    (k < THEMES.len() * n).then(|| (k / n, Atom::ALL[k % n]))
+}
+
+/// Every theme's atoms in the bank's order ([`id`]).
+pub fn every() -> impl Iterator<Item = (&'static Theme, Atom)> {
+    (THEMES.into_iter()).flat_map(|theme| Atom::ALL.map(|atom| (theme, atom)))
+}
+
+/// The bank of every theme's atoms, each as `patch` has it (the theme's
+/// own: [`Theme::patch`]; or as edited), in [`id`]'s order.
+pub fn bank(patch: impl Fn(&'static Theme, Atom) -> Patch) -> Bank {
+    let mut bank = Bank::new();
+    for (theme, atom) in every() {
+        bank.add(patch(theme, atom));
     }
+    bank
 }

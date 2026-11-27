@@ -450,7 +450,7 @@ impl Gui {
                             self.act(Action::Ctrl(Ctrl::Released));
                         }
                         if self.app().is_some_and(|app| app.state.karaoke.demo.held()) {
-                            self.act(Action::DemoLetGo);
+                            self.act(Action::Released(keymap::Op::KaraokeDemo));
                         }
                         if self
                             .app()
@@ -502,16 +502,9 @@ impl Gui {
                 }
             }
             iced::Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
-                if self
-                    .app()
-                    .is_some_and(|app| super::keys::lets_go_of_demo(&app.state, &key))
-                {
-                    self.act(Action::DemoLetGo);
-                }
-                let note = (self.app())
-                    .and_then(|app| super::keys::lets_go_of_synth_note(&app.state, &key));
-                if let Some(k) = note {
-                    self.act(Action::Synth(SynthAction::KeyUp(k)));
+                // What the key held ends, where it is going on.
+                for op in super::keys::released(&key) {
+                    self.act(Action::Released(op));
                 }
             }
             iced::Event::Keyboard(keyboard::Event::KeyPressed {

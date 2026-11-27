@@ -9,8 +9,9 @@
 //!
 //! Each engine's parameters are data too: its module's `PARAMS` (their
 //! names, ranges, how they are read and set: [`crate::params`]), seen
-//! through [`AnyParams`] as [`Knobs`], so a patch of any engine can be
-//! shown and edited. A patch changed to another engine
+//! through [`AnyParams`] as a patch's knobs ([`crate::Patch::knobs`]), so a
+//! patch of any engine can be shown and edited. A patch changed to another
+//! engine
 //! ([`crate::Synth::set_patch`]) lets that patch's sounding voices go
 //! first, fading out: their voices are the old engine's.
 
@@ -26,7 +27,7 @@ pub mod string;
 pub mod supersaw;
 
 use crate::dsp::Rate;
-use crate::params::{self, Knobs, Spec};
+use crate::params::Knob;
 use crate::{Engine, NoteOn, VoiceMod};
 
 /// A voice played with another engine's parameters: never, as the host
@@ -92,34 +93,25 @@ macro_rules! engines {
         }
 
         /// Its engine's parameters, as its module's `PARAMS` has them.
-        impl Knobs for AnyParams {
-            fn count(&self) -> usize {
+        impl AnyParams {
+            /// How many.
+            pub(crate) fn count(&self) -> usize {
                 match self {
                     $(AnyParams::$name(_) => $module::PARAMS.len(),)*
                 }
             }
 
-            fn spec(&self, k: usize) -> Option<Spec> {
+            /// The `k`th as it is now (numbered among the engine's).
+            pub(crate) fn knob(&self, k: usize) -> Option<Knob> {
                 match self {
-                    $(AnyParams::$name(_) => params::spec_of($module::PARAMS, k),)*
+                    $(AnyParams::$name(p) => $module::PARAMS.get(k).map(|q| q.knob(p, k, true)),)*
                 }
             }
 
-            fn applies(&self, k: usize) -> bool {
+            /// Sets the `k`th to `v` (as it takes it); whether there is one.
+            pub(crate) fn set(&mut self, k: usize, v: f32) -> bool {
                 match self {
-                    $(AnyParams::$name(p) => params::applies_to($module::PARAMS, p, k),)*
-                }
-            }
-
-            fn get(&self, k: usize) -> Option<f32> {
-                match self {
-                    $(AnyParams::$name(p) => params::get_in($module::PARAMS, p, k),)*
-                }
-            }
-
-            fn set(&mut self, k: usize, v: f32) -> bool {
-                match self {
-                    $(AnyParams::$name(p) => params::set_in($module::PARAMS, p, k, v),)*
+                    $(AnyParams::$name(p) => $module::PARAMS.get(k).map(|q| q.set(p, v)).is_some(),)*
                 }
             }
         }

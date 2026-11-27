@@ -49,8 +49,9 @@
 //! algorithms); the band limit after J. R. Carson, "Notes on the Theory of
 //! Modulation" (Proc. IRE 10, 1922). The sine is [`dsp::sine`].
 
+use crate::dsp::MIDDLE_C;
 use crate::dsp::{self, Rate};
-use crate::params::{field, on, pick, when, Param, Scale};
+use crate::params::{field, options, pick, units, Param, Scale, TwoUnits};
 use crate::{Engine, NoteOn, VoiceMod};
 use std::f32::consts::TAU;
 
@@ -129,18 +130,20 @@ pub enum Algorithm {
     Parallel,
 }
 
-/// Every algorithm.
-pub const ALGORITHMS: [Algorithm; 9] = [
-    Algorithm::Stack,
-    Algorithm::TwoIntoStack,
-    Algorithm::Branch,
-    Algorithm::BranchStack,
-    Algorithm::ThreeIntoOne,
-    Algorithm::TwoPairs,
-    Algorithm::OneIntoThree,
-    Algorithm::PairAndTwo,
-    Algorithm::Parallel,
-];
+options! {
+    /// Every algorithm, and their names.
+    pub ALGORITHMS, ALGORITHM_NAMES: Algorithm = [
+        Algorithm::Stack => "4>3>2>1",
+        Algorithm::TwoIntoStack => "3+4>2>1",
+        Algorithm::Branch => "3>2>1, 4>1",
+        Algorithm::BranchStack => "4>3>1, 2>1",
+        Algorithm::ThreeIntoOne => "2+3+4>1",
+        Algorithm::TwoPairs => "2>1, 4>3",
+        Algorithm::OneIntoThree => "4>1+2+3",
+        Algorithm::PairAndTwo => "4>3, 1, 2",
+        Algorithm::Parallel => "1, 2, 3, 4",
+    ]
+}
 
 impl Algorithm {
     /// For each operator (0 is operator 1) the operators modulating it, a
@@ -185,73 +188,51 @@ impl Default for Params {
     }
 }
 
-/// The algorithms' names, in [`ALGORITHMS`]' order.
-const ALGORITHM_NAMES: [&str; 9] = [
-    "4>3>2>1",
-    "3+4>2>1",
-    "3>2>1, 4>1",
-    "4>3>1, 2>1",
-    "2+3+4>1",
-    "2>1, 4>3",
-    "4>1+2+3",
-    "4>3, 1, 2",
-    "1, 2, 3, 4",
-];
-
-/// Middle C, Hz: where an operator's ratio and its fixed frequency meet,
-/// as it is switched from one to the other.
-const MIDDLE_C: f32 = 261.625_57;
-
-/// An operator's frequency as a ratio (a fixed one as at middle C).
-fn ratio(f: Freq) -> f32 {
-    match f {
-        Freq::Ratio(r) => r,
-        Freq::Hz(hz) => hz / MIDDLE_C,
+/// A ratio or a fixed frequency, one in the other as at middle C (where
+/// they meet as an operator is switched from one to the other).
+impl TwoUnits for Freq {
+    fn second(self) -> bool {
+        matches!(self, Freq::Hz(_))
     }
-}
 
-/// An operator's frequency in hertz (a ratio as at middle C).
-fn hz(f: Freq) -> f32 {
-    match f {
-        Freq::Ratio(r) => r * MIDDLE_C,
-        Freq::Hz(hz) => hz,
+    fn in_first(self) -> f32 {
+        match self {
+            Freq::Ratio(r) => r,
+            Freq::Hz(hz) => hz / MIDDLE_C,
+        }
+    }
+
+    fn in_second(self) -> f32 {
+        match self {
+            Freq::Ratio(r) => r * MIDDLE_C,
+            Freq::Hz(hz) => hz,
+        }
+    }
+
+    fn first_of(v: f32) -> Freq {
+        Freq::Ratio(v)
+    }
+
+    fn second_of(v: f32) -> Freq {
+        Freq::Hz(v)
     }
 }
 
 /// Operator `$k`'s parameters (0 is operator 1), in group `$group`.
 macro_rules! op {
-    ($group:expr, $k:expr) => {
+    ($group:expr, $k:expr) => {{
+        let [fixed, ratio, hz]: [Param<Params>; 3] = units!(
+            $group,
+            Freq,
+            |p| p.ops[$k].freq,
+            "fixed",
+            ("ratio", 0.0, 32.0, "", Fine),
+            ("hz", 1.0, 20_000.0, "Hz", Log)
+        );
         [
-            Param::toggle(
-                ($group, "fixed"),
-                |p| on(matches!(p.ops[$k].freq, Freq::Hz(_))),
-                |p, v| {
-                    let f = p.ops[$k].freq;
-                    p.ops[$k].freq = if v >= 0.5 {
-                        Freq::Hz(hz(f))
-                    } else {
-                        Freq::Ratio(ratio(f))
-                    };
-                },
-            ),
-            when(
-                Param::range(
-                    ($group, "ratio"),
-                    (0.0, 32.0, "", Scale::Fine),
-                    |p| ratio(p.ops[$k].freq),
-                    |p, v| p.ops[$k].freq = Freq::Ratio(v),
-                ),
-                |p| matches!(p.ops[$k].freq, Freq::Ratio(_)),
-            ),
-            when(
-                Param::range(
-                    ($group, "hz"),
-                    (1.0, 20_000.0, "Hz", Scale::Log),
-                    |p| hz(p.ops[$k].freq),
-                    |p, v| p.ops[$k].freq = Freq::Hz(v),
-                ),
-                |p| matches!(p.ops[$k].freq, Freq::Hz(_)),
-            ),
+            fixed,
+            ratio,
+            hz,
             op_field!($group, "detune", $k, detune, -100.0, 100.0, "ct", Linear),
             op_field!($group, "level", $k, level, 0.0, 8.0, "", Fine),
             op_field!($group, "attack", $k, attack, 0.0, 4.0, "s", Fine),
@@ -260,7 +241,7 @@ macro_rules! op {
             op_field!($group, "release", $k, release, 0.0, 2.0, "", Linear),
             op_field!($group, "velocity", $k, velocity, 0.0, 1.0, "", Linear),
         ]
-    };
+    }};
 }
 
 /// A number of operator `$k`'s.
@@ -275,24 +256,31 @@ macro_rules! op_field {
     };
 }
 
-/// The parameters of each operator.
-const OP_PARAMS: [[Param<Params>; 10]; OPERATORS] = [
+/// The parameters of each operator, how many, and the routing's, the
+/// feedback's and the key scaling's before them.
+const PER_OPERATOR: usize = op!("op", 0).len();
+const OP_PARAMS: [[Param<Params>; PER_OPERATOR]; OPERATORS] = [
     op!("op 1", 0),
     op!("op 2", 1),
     op!("op 3", 2),
     op!("op 4", 3),
 ];
+const OWN: &[Param<Params>] = &[
+    pick!("fm", "algorithm", algorithm, ALGORITHMS, ALGORITHM_NAMES),
+    field!("fm", "feedback", feedback, 0.0, 3.0, "rad", Linear),
+    field!("fm", "key scale", key_scale, 0.0, 2.0, "", Linear),
+];
 
 /// FM's parameters as data, with their ranges: the routing, the feedback
 /// and the key scaling, then each operator's.
 pub const PARAMS: &[Param<Params>] = &{
-    let mut all = [OP_PARAMS[0][0]; 3 + 10 * OPERATORS];
-    all[0] = pick!("fm", "algorithm", algorithm, ALGORITHMS, ALGORITHM_NAMES);
-    all[1] = field!("fm", "feedback", feedback, 0.0, 3.0, "rad", Linear);
-    all[2] = field!("fm", "key scale", key_scale, 0.0, 2.0, "", Linear);
-    let mut k = 0;
-    while k < 10 * OPERATORS {
-        all[3 + k] = OP_PARAMS[k / 10][k % 10];
+    let mut all = [OWN[0]; OWN.len() + PER_OPERATOR * OPERATORS];
+    let mut k: usize = 0;
+    while k < all.len() {
+        all[k] = match k.checked_sub(OWN.len()) {
+            None => OWN[k],
+            Some(o) => OP_PARAMS[o / PER_OPERATOR][o % PER_OPERATOR],
+        };
         k += 1;
     }
     all

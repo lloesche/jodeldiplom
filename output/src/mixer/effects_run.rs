@@ -1,23 +1,17 @@
 //! The effects input on the mixer thread ([`super::effects`]): its live
-//! synth's frames (`live.rs`) summed into a chunk's samples for the mix,
-//! at its strip's gains. Nothing here allocates or locks as it mixes: the
+//! synth's frames (`live.rs`, which the mixer tells of the device opening,
+//! an output flushed, a synth come) summed into a chunk's samples for the
+//! mix, at its strip's gains. Nothing here allocates or locks as it mixes: the
 //! chunk's samples and gains have their room, for a period of up to
 //! [`RESERVED_CHANNELS`] channels at the device's rate or the synth's,
 //! from when the input is made, a synth comes or the device opens
 //! (`Run::fit_effects`, which also gives the mix and the strip's meter
 //! theirs).
 
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-
-use jodel_synth::Synth;
-
 use super::chunk::{HeardLane, Slot};
-use super::effects::Counts;
 use super::envelope::Envelope;
-use super::live::{LiveRun, Sent};
+use super::live::LiveRun;
 use super::strips::Strips;
-use crate::spsc::Consumer;
 use jodel_dsp::PEAK;
 
 /// The channels the effects' buffers have room for from the start.
@@ -27,9 +21,8 @@ pub(super) const RESERVED_CHANNELS: usize = 8;
 pub(crate) struct EffectsRun {
     /// Its strip.
     pub(super) strip: u64,
-    pub(super) counts: Arc<Counts>,
-    /// Its live synth, and the commands sent it.
-    live: LiveRun,
+    /// Its live synth, the commands sent it, and what it tells back.
+    pub(super) live: LiveRun,
     /// This chunk's sum (the device's channels), when it sounded.
     samples: Vec<i32>,
     sounded: bool,
@@ -40,21 +33,15 @@ pub(crate) struct EffectsRun {
 }
 
 impl EffectsRun {
-    pub(super) fn new(strip: u64, counts: Arc<Counts>, live: Consumer<Sent>) -> EffectsRun {
+    pub(super) fn new(strip: u64, live: LiveRun) -> EffectsRun {
         EffectsRun {
             strip,
-            counts,
-            live: LiveRun::new(live),
+            live,
             samples: Vec::new(),
             sounded: false,
             gains: Envelope::new(1.0),
             audible: false,
         }
-    }
-
-    /// The rate of its synth (`None`: none yet).
-    pub(super) fn rate(&self) -> Option<u32> {
-        self.live.rate()
     }
 
     /// Room for chunks of `frames` frames of up to [`RESERVED_CHANNELS`]
@@ -65,25 +52,6 @@ impl EffectsRun {
             .reserve(samples.saturating_sub(self.samples.len()));
         self.gains.reserve(frames);
         self.live.reserve(frames);
-    }
-
-    /// `synth` played live from now on; the one before, to be let go of
-    /// elsewhere.
-    pub(super) fn set_live(&mut self, synth: Option<Box<Synth>>) -> Option<Box<Synth>> {
-        let rate = synth.as_ref().map_or(0, |s| s.rate().round() as u64);
-        self.counts.live_rate.store(rate, Ordering::Relaxed);
-        self.live.set(synth, &self.counts)
-    }
-
-    /// Its live synth, taken (to be let go of elsewhere).
-    pub(super) fn take_live(&mut self) -> Option<Box<Synth>> {
-        self.counts.live_rate.store(0, Ordering::Relaxed);
-        self.live.take_synth(&self.counts)
-    }
-
-    /// The device opened (again): what waits in its synth is called off.
-    pub(super) fn opened(&mut self) {
-        self.live.opened(&self.counts);
     }
 
     /// Takes the gains it is heard at in the chunk just summed
@@ -107,17 +75,6 @@ impl EffectsRun {
         })
     }
 
-    /// Whether it may be heard for now (the synth busy).
-    pub(super) fn busy(&self) -> bool {
-        self.live.busy()
-    }
-
-    /// Output `id` was flushed: what the synth waits to play on its frames
-    /// is called off.
-    pub(super) fn flushed(&mut self, id: u64) {
-        self.live.flushed(id, &self.counts);
-    }
-
     /// The `n` frames from device frame `first` of its opening `epoch`,
     /// the device at `rate` with `ch` channels, the inputs as they gave
     /// their frames (`slots`): the commands come go to the synth, and the
@@ -130,7 +87,7 @@ impl EffectsRun {
         rate: u32,
         slots: &std::collections::BTreeMap<u64, Slot>,
     ) {
-        self.live.take((epoch, first), rate, slots, &self.counts);
+        self.live.take((epoch, first), rate, slots);
         self.samples.clear();
         self.samples.resize(n * ch, 0);
         self.sounded = self.live.sum(n, ch, rate, &mut self.samples);

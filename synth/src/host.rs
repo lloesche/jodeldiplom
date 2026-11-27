@@ -8,11 +8,11 @@
 //! a free one, else the oldest of those let go, else the oldest of all;
 //! the one taken is rendered there and then for the rest of the block,
 //! fading to silence, before the new note takes its place. A mono patch's
-//! note retriggers its own sounding voice on its frame: the voice plays up
-//! to that sample as it was, then its engine starts the note on it (keeping
-//! what it keeps), its envelope rises again from where it is, and its pitch
-//! and its note's shape slide to the new note's over the patch's
-//! [`Patch::slide`].
+//! note retriggers its own sounding voice on its frame (one voice a line
+//! of it: [`NoteOn::line`]): the voice plays up to that sample as it was,
+//! then its engine starts the note on it (keeping what it keeps), its
+//! envelope rises again from where it is, and its pitch and its note's
+//! shape slide to the new note's over the patch's [`Patch::slide`].
 //!
 //! Each block a voice's envelope, glides and LFO are worked out once; the
 //! engine renders it at unity level, and the host ramps its amplitude from
@@ -30,12 +30,12 @@
 //! [`Synth::latency`] frames.
 //!
 //! A planner tells it what to play in [`Command`]s ([`Synth::command`]):
-//! notes, a patch's held voices let go on a frame of their own (every
-//! voice of the patch still held, or those of one note, from the block
-//! that frame falls in), the notes and releases waiting of a [`Tag`] (or
-//! all of them) called off before they sound, the tempo, the bus's level,
-//! a patch changed (an edit on the Synth tab: [`Synth::set_patch`]). The
-//! queue's size is set as the synth is made ([`Synth::with_cues`]).
+//! notes, the held voices of a [`Tag`] (whatever their patch) let go on a frame of their
+//! own (from the block that frame falls in), the notes and releases
+//! waiting of a tag (or all of them) called off before they sound, the
+//! tempo, the bus's level. The queue's size is set as the synth is made
+//! ([`Synth::with_cues`]). A patch is changed as it plays by
+//! [`Synth::set_patch`] (an edit on the Synth tab).
 //!
 //! The synth is driven from one thread: cue notes and render on the same
 //! one. A planner on another thread hands it its commands through a
@@ -46,13 +46,14 @@
 //! hands them over.
 
 use crate::chorus::{Chorus, ChorusSettings};
+use crate::command::{Bank, Command, Commands, Cue, PatchId, Tag};
 use crate::delay::{Delay, DelaySettings};
 use crate::dsp::{self, Rate};
 use crate::dynamics::{Compressor, CompressorSettings, Level, Limiter, LimiterSettings};
 use crate::engines::{AnyVoice, Engines};
 use crate::env::Envelope;
 use crate::hall::{Hall, HallSettings};
-use crate::patch::{LfoRate, Patch};
+use crate::patch::{Glide, Patch};
 use crate::{NoteOn, VoiceMod, BLOCK};
 
 /// The notes that can wait to start at once in a synth made by
@@ -65,7 +66,7 @@ const HEADROOM: f32 = 0.5;
 
 /// The tempo a synth starts at (and takes for one that makes no sense),
 /// beats a minute.
-const TEMPO: f32 = 120.0;
+pub const TEMPO: f32 = 120.0;
 
 /// The bus compressor's settings at the start: gentle, only taking the
 /// edge off a pile of sounds (2:1 from -10 dBFS, a wide knee).
@@ -78,44 +79,6 @@ pub const GENTLE: CompressorSettings = CompressorSettings {
     makeup: 0.0,
 };
 
-/// A patch in a [`Bank`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PatchId(u16);
-
-/// The patches a synth plays, registered before it is made.
-#[derive(Clone, Debug, Default)]
-pub struct Bank {
-    patches: Vec<Patch>,
-}
-
-impl Bank {
-    /// An empty bank.
-    pub fn new() -> Bank {
-        Bank::default()
-    }
-
-    /// Adds `patch`; its id in the synth made of this bank.
-    ///
-    /// # Panics
-    ///
-    /// Past 65536 patches.
-    pub fn add(&mut self, patch: Patch) -> PatchId {
-        let id = u16::try_from(self.patches.len()).expect("at most 65536 patches");
-        self.patches.push(patch);
-        PatchId(id)
-    }
-
-    /// Its patches.
-    pub fn len(&self) -> usize {
-        self.patches.len()
-    }
-
-    /// Whether it has none.
-    pub fn is_empty(&self) -> bool {
-        self.patches.is_empty()
-    }
-}
-
 /// A sounding voice, as [`Synth::voices`] shows it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VoiceView {
@@ -125,85 +88,6 @@ pub struct VoiceView {
     pub note: f32,
     /// Whether it is still held (not yet let go).
     pub held: bool,
-}
-
-/// What a note or a release is part of, so those waiting of one can be
-/// called off together ([`Command::Cancel`]). [`Tag::NONE`] is no part:
-/// only a cancel of everything calls it off.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Tag(pub u8);
-
-impl Tag {
-    /// No part.
-    pub const NONE: Tag = Tag(0);
-}
-
-/// A timed instruction to a synth: what a planner sends it. Its frames are
-/// the synth's own.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a patch goes whole, in one command in order with the notes, through queues whose room is fixed from the start"
-)]
-pub enum Command {
-    /// [`Synth::note`], tagged.
-    Note {
-        /// The frame it starts on.
-        frame: u64,
-        /// Its patch.
-        patch: PatchId,
-        /// The note.
-        note: NoteOn,
-        /// How long it is held, frames (none: the patch's gate).
-        length: Option<u64>,
-        /// Its tag.
-        tag: Tag,
-    },
-    /// Every voice of `patch` still held (of one note only, with `note`)
-    /// let go on `frame`, from the block it falls in (one already
-    /// rendered: as soon as it can).
-    Release {
-        /// The frame it lets go on.
-        frame: u64,
-        /// The patch whose held voices it lets go.
-        patch: PatchId,
-        /// The note whose voices alone it lets go (none: all of them): a
-        /// key let go of while others are held.
-        note: Option<f32>,
-        /// Its tag.
-        tag: Tag,
-    },
-    /// [`Synth::set_patch`], from now on.
-    Patch {
-        /// The patch changed.
-        patch: PatchId,
-        /// What it is now.
-        to: Patch,
-    },
-    /// The notes and releases waiting of `tag` called off (none: all of
-    /// them, [`Tag::NONE`]'s too); those sounding sound on.
-    Cancel {
-        /// The tag called off.
-        tag: Option<Tag>,
-    },
-    /// [`Synth::set_tempo`], from now on.
-    Tempo {
-        /// Beats a minute.
-        bpm: f32,
-    },
-    /// The bus's level before its limiter, from now on: gliding there
-    /// over [`crate::dynamics::LEVEL_GLIDE`] while anything sounds or
-    /// waits, at once while nothing does. Not taken unless finite.
-    Level {
-        /// The level, dB.
-        db: f32,
-    },
-}
-
-/// Where a planner's commands go: a synth, or a queue to one.
-pub trait Commands {
-    /// Takes `c`; whether it was taken (not when full).
-    fn send(&mut self, c: Command) -> bool;
 }
 
 impl Commands for Synth {
@@ -226,41 +110,45 @@ struct Start {
     lfo: u32,
 }
 
-/// What waits for a frame: a note to start, or a release (of one note
-/// only, or all).
+/// What waits for a frame: a note of a patch to start, or a release of its tag's
+/// voices.
 #[derive(Clone, Copy, Debug)]
-enum CueKind {
-    Note(Start),
-    Release(Option<f32>),
+enum Due {
+    Note(u16, Start),
+    Release,
 }
 
-/// A cue waiting for its frame, of a patch, tagged.
+/// A cue waiting for its frame, tagged.
 #[derive(Clone, Copy, Debug)]
-struct Cue {
+struct Waiting {
     frame: u64,
-    patch: u16,
     tag: Tag,
-    kind: CueKind,
+    due: Due,
 }
 
 /// A cue room is filled with.
-const EMPTY: Cue = Cue {
+const EMPTY: Waiting = Waiting {
     frame: 0,
-    patch: 0,
     tag: Tag::NONE,
-    kind: CueKind::Release(None),
+    due: Due::Release,
 };
 
 /// A voice sounding.
 #[derive(Debug)]
 struct Sounding {
     patch: u16,
+    /// The tag its note was cued with (a release lets go of its own tag's
+    /// voices), and its line (a mono patch's voice for it).
+    tag: Tag,
+    line: u8,
     voice: AnyVoice,
     env: Envelope,
     note: f32,
     detune: f32,
-    /// Its note's own shape.
+    /// Its note's own shape, and how long its pitch glide takes (none: as
+    /// the patch says).
     shape: f32,
+    glide: Option<f32>,
     /// How far its pitch (semitones) and its shape started from where they
     /// are, sliding there over its patch's slide (a mono retrigger's).
     slide: [f32; 2],
@@ -340,7 +228,7 @@ pub struct Synth {
     /// The pool of voices, made once.
     voices: Box<[Option<Sounding>]>,
     /// The notes waiting, in the order of their frames.
-    cues: Box<[Cue]>,
+    cues: Box<[Waiting]>,
     waiting: usize,
     dropped: u64,
     stolen: u64,
@@ -462,20 +350,21 @@ impl Synth {
     /// Carries out `c`; whether it was taken.
     pub fn command(&mut self, c: Command) -> bool {
         match c {
-            Command::Note {
+            Command::At {
                 frame,
-                patch,
-                note,
-                length,
                 tag,
+                cue:
+                    Cue::Note {
+                        patch,
+                        note,
+                        length,
+                    },
             } => self.cue_note(frame, patch, note, length, tag),
-            Command::Release {
+            Command::At {
                 frame,
-                patch,
-                note,
                 tag,
-            } => self.cue_release(frame, patch, note, tag),
-            Command::Patch { patch, to } => self.set_patch(patch, to),
+                cue: Cue::Release,
+            } => self.cue_release(frame, tag),
             Command::Cancel { tag } => {
                 self.cancel_waiting(tag);
                 true
@@ -496,18 +385,19 @@ impl Synth {
         }
     }
 
-    /// A release of `patch` (of `note` only, with one) on `frame`, tagged
-    /// `tag`, queued.
-    fn cue_release(&mut self, frame: u64, patch: PatchId, note: Option<f32>, tag: Tag) -> bool {
-        if usize::from(patch.0) >= self.patches.len() {
-            return false;
-        }
-        self.queue(Cue {
+    /// A release of the voices of `tag` (any patch's) on `frame`, queued.
+    fn cue_release(&mut self, frame: u64, tag: Tag) -> bool {
+        self.queue(Waiting {
             frame,
-            patch: patch.0,
             tag,
-            kind: CueKind::Release(note),
+            due: Due::Release,
         })
+    }
+
+    /// `patch`'s place in the bank, if it is one of the bank's.
+    fn slot(&self, patch: PatchId) -> Option<u16> {
+        let k = patch.index();
+        (k < self.patches.len()).then_some(k as u16)
     }
 
     /// `patch` (one of the bank's) is `to` from now on: its next notes, and
@@ -517,10 +407,11 @@ impl Synth {
     /// the old engine's voices); one of the same engine plays on in the new
     /// sound. Whether it is one of the bank's. Nothing allocates.
     pub fn set_patch(&mut self, patch: PatchId, to: Patch) -> bool {
-        let k = usize::from(patch.0);
-        let Some(old) = self.patches.get(k).copied() else {
+        let Some(slot) = self.slot(patch) else {
             return false;
         };
+        let k = usize::from(slot);
+        let old = self.patches[k];
         if std::mem::discriminant(&old.engine) != std::mem::discriminant(&to.engine) {
             let play = Play {
                 rate: self.rate,
@@ -528,11 +419,11 @@ impl Synth {
                 patches: &self.patches,
                 engines: &self.engines,
             };
-            for slot in self.voices.iter_mut() {
-                if let Some(v) = slot.as_mut().filter(|v| v.patch == patch.0) {
+            for voice in self.voices.iter_mut() {
+                if let Some(v) = voice.as_mut().filter(|v| v.patch == slot) {
                     play.fade(v, &mut self.carry);
                     play.engines.free(&mut v.voice);
-                    *slot = None;
+                    *voice = None;
                 }
             }
         }
@@ -542,7 +433,7 @@ impl Synth {
 
     /// The patch `patch` is now, if it is one of the bank's.
     pub fn patch(&self, patch: PatchId) -> Option<&Patch> {
-        self.patches.get(usize::from(patch.0))
+        self.patches.get(patch.index())
     }
 
     /// [`Synth::note`], tagged `tag`.
@@ -554,9 +445,10 @@ impl Synth {
         length: Option<u64>,
         tag: Tag,
     ) -> bool {
-        let Some(p) = self.patches.get(usize::from(patch.0)) else {
+        let Some(slot) = self.slot(patch) else {
             return false;
         };
+        let p = &self.patches[usize::from(slot)];
         let mut r = dsp::seed(note.seed);
         let jitter = dsp::unit(&mut r) * p.spread.start.max(0.0) * self.rate.hz();
         let detune = dsp::white(&mut r) * p.spread.detune / 100.0;
@@ -572,16 +464,15 @@ impl Synth {
             gain: note.velocity.clamp(0.0, 1.0) * 10f32.powf(level / 20.0) * HEADROOM,
             lfo,
         };
-        self.queue(Cue {
+        self.queue(Waiting {
             frame: frame + jitter as u64,
-            patch: patch.0,
             tag,
-            kind: CueKind::Note(start),
+            due: Due::Note(slot, start),
         })
     }
 
     /// `cue` waiting for its frame; false (counted) when the queue is full.
-    fn queue(&mut self, cue: Cue) -> bool {
+    fn queue(&mut self, cue: Waiting) -> bool {
         if self.waiting == self.cues.len() {
             self.dropped += 1;
             return false;
@@ -660,7 +551,7 @@ impl Synth {
     /// The voices sounding.
     pub fn voices(&self) -> impl Iterator<Item = VoiceView> + '_ {
         self.voices.iter().flatten().map(|v| VoiceView {
-            patch: PatchId(v.patch),
+            patch: PatchId::nth(usize::from(v.patch)),
             note: v.note,
             held: v.env.held(),
         })
@@ -687,17 +578,17 @@ impl Synth {
         let due = self.cues[..self.waiting].partition_point(|c| c.frame < end);
         for k in 0..due {
             let cue = self.cues[k];
-            match cue.kind {
-                CueKind::Release(note) => {
+            match cue.due {
+                Due::Release => {
                     for v in self.voices.iter_mut().flatten() {
-                        if v.patch == cue.patch && note.is_none_or(|n| n == v.note) {
+                        if v.tag == cue.tag {
                             v.env.release();
                         }
                     }
                 }
-                CueKind::Note(start) => {
+                Due::Note(patch, start) => {
                     let offset = cue.frame.saturating_sub(self.next) as usize;
-                    self.start(cue.patch, &start, offset, &mut bus);
+                    self.start((patch, cue.tag), &start, offset, &mut bus);
                 }
             }
         }
@@ -735,8 +626,9 @@ impl Synth {
         self.next = end;
     }
 
-    /// Starts `cue`, a note of `patch`, at sample `offset` of the block.
-    fn start(&mut self, patch_id: u16, cue: &Start, offset: usize, bus: &mut Bus) {
+    /// Starts `cue`, a note of `patch_id` tagged `tag`, at sample `offset`
+    /// of the block.
+    fn start(&mut self, (patch_id, tag): (u16, Tag), cue: &Start, offset: usize, bus: &mut Bus) {
         let offset = offset.min(BLOCK - 1);
         let play = Play {
             rate: self.rate,
@@ -752,7 +644,7 @@ impl Synth {
             self.voices
                 .iter_mut()
                 .flatten()
-                .find(|v| v.patch == patch_id)
+                .find(|v| v.patch == patch_id && v.line == cue.note.line)
         } else {
             None
         };
@@ -767,8 +659,10 @@ impl Synth {
             let [pitch, shape] = sliding(v, patch.slide);
             let to = cue.note.note + cue.detune;
             v.slide = [pitch - to, shape - cue.note.shape];
+            v.tag = tag;
             v.note = cue.note.note;
             v.shape = cue.note.shape;
+            v.glide = cue.note.glide;
             v.detune = cue.detune;
             v.gain = cue.gain;
             v.pan = pan;
@@ -787,11 +681,14 @@ impl Synth {
         play.engines.note_on(&patch.engine, &mut voice, &cue.note);
         self.voices[k] = Some(Sounding {
             patch: patch_id,
+            tag,
+            line: cue.note.line,
             voice,
             env: Envelope::start(0.0),
             note: cue.note.note,
             detune: cue.detune,
             shape: cue.note.shape,
+            glide: cue.note.glide,
             slide: [0.0; 2],
             gain: cue.gain,
             pan,
@@ -867,10 +764,7 @@ impl Play<'_> {
         };
         let raw = dsp::sine(v.lfo);
         let wave = raw * depth;
-        let hz = match lfo.rate {
-            LfoRate::Hz(hz) => hz,
-            LfoRate::Beats(beats) => self.tempo / 60.0 / beats.max(1e-3),
-        };
+        let hz = lfo.rate.hz(self.tempo);
         v.lfo = v
             .lfo
             .wrapping_add(self.rate.inc_hz(hz).wrapping_mul(n as u32));
@@ -879,7 +773,14 @@ impl Play<'_> {
         let tremolo = 1.0 - lfo.amp * depth * (0.5 - 0.5 * raw);
         let amp1 = if ending { 0.0 } else { amp * v.gain * tremolo };
         let [sits, shape] = sliding(v, patch.slide);
-        let pitch = sits + patch.pitch.at(v.t) + wave * lfo.pitch;
+        let glide = match v.glide {
+            Some(time) => Glide {
+                time,
+                ..patch.pitch
+            },
+            None => patch.pitch,
+        };
+        let pitch = sits + glide.at(v.t) + wave * lfo.pitch;
         let m = VoiceMod {
             phase_inc: self.rate.inc(pitch),
             pitch,

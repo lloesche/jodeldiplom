@@ -17,13 +17,16 @@
 //! ADSR, glides of the pitch and the shape, an LFO, sends to the shared
 //! [`hall::Hall`], [`delay::Delay`] and [`chorus::Chorus`], and random
 //! spreads drawn from each note's seed). Its bus ends in a compressor and
-//! a limiter ([`dynamics`]), so a pile of sounds never clips. Notes are cued on the frame they are to start on
-//! ([`Synth::note`]), so a conductor can land them exactly on beat frames.
+//! a limiter ([`dynamics`]), so a pile of sounds never clips. Notes are
+//! cued on the frame they are to start on ([`Synth::note`], or by
+//! [`Command`]: [`command`]), so a conductor can land them exactly on beat
+//! frames.
 //!
 //! A patch's numbers and each engine's are data as well ([`params`]):
 //! named, with their ranges, read and set through tables, so a patch can
-//! be shown, edited and written out (the player's Synth tab), and changed
-//! as the synth plays ([`Command::Patch`]).
+//! be shown, edited and written out as text (the player's Synth tab:
+//! [`Patch::knobs`], [`Patch::to_text`]), and changed as the synth plays
+//! ([`Synth::set_patch`]).
 //!
 //! Everything runs in blocks of [`BLOCK`] samples: the engines take their
 //! modulation once a block ([`VoiceMod`]) and render at unity level; the
@@ -37,6 +40,7 @@
 #![warn(missing_docs)]
 
 pub mod chorus;
+pub mod command;
 pub mod delay;
 pub mod dsp;
 pub mod dynamics;
@@ -47,7 +51,8 @@ mod host;
 pub mod params;
 pub mod patch;
 
-pub use host::{Bank, Command, Commands, PatchId, Synth, Tag, VoiceView, CUES, GENTLE};
+pub use command::{Bank, Command, Commands, Cue, PatchId, Tag};
+pub use host::{Synth, VoiceView, CUES, GENTLE, TEMPO};
 pub use patch::Patch;
 
 use dsp::Rate;
@@ -88,6 +93,14 @@ pub struct NoteOn {
     /// glide and LFO: what the engine's `SHAPE` says it moves (a formant
     /// voice's vowel), note by note.
     pub shape: f32,
+    /// How long its pitch's glide takes, seconds (none: the patch's time): a
+    /// sound whose glide lasts as long as what it follows (a sheet
+    /// unrolling) says so note by note.
+    pub glide: Option<f32>,
+    /// The line of a mono patch it plays on (0 up): each line one voice,
+    /// retriggered by its own notes alone (two held notes of one sound on
+    /// one patch).
+    pub line: u8,
 }
 
 /// A sound engine: its parameters, the state of one of its voices, and

@@ -30,6 +30,8 @@ pub fn on(note: f32, seed: u32) -> NoteOn {
         seed,
         pan: 0.0,
         shape: 0.0,
+        glide: None,
+        line: 0,
     }
 }
 

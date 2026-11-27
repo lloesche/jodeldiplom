@@ -15,7 +15,7 @@ use common::measure::{biggest_jump, centroid, cents, magnitude, pitch, rms};
 use common::{left, on, render, RATE};
 use jodel_synth::engines::analog;
 use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
-use jodel_synth::{Bank, Command, NoteOn, Patch, PatchId, Synth, Tag, CUES};
+use jodel_synth::{Bank, Command, Cue, NoteOn, Patch, PatchId, Synth, Tag, CUES};
 
 /// A plain sine held `gate` seconds, released over `release`.
 fn sine(gate: f32, release: f32) -> Patch {
@@ -203,11 +203,10 @@ fn a_held_note_is_let_go_on_its_frame() {
         ..Patch::new(analog::SINE.into())
     };
     let (mut s, ids) = synth(&[held], 4);
-    let release = |frame| Command::Release {
+    let release = |frame| Command::At {
         frame,
-        patch: ids[0],
-        note: None,
         tag: Tag::NONE,
+        cue: Cue::Release,
     };
     assert!(s.command(release(10)), "let go before it starts: nothing");
     s.note(100, ids[0], on(69.0, 1), None);
@@ -221,7 +220,9 @@ fn a_held_note_is_let_go_on_its_frame() {
     assert_eq!(s.voices().count(), 0, "ended");
 }
 
-/// A release of one note lets that note's voices go, the others held on.
+/// A release lets go of the voices of its own tag alone, the others held
+/// on (two notes on one pitch apart by their tags); a mono patch's lines
+/// are a voice each, each retriggered by its own notes.
 #[test]
 fn a_note_is_let_go_alone() {
     let held = Patch {
@@ -230,19 +231,52 @@ fn a_note_is_let_go_alone() {
         ..Patch::new(analog::SINE.into())
     };
     let (mut s, ids) = synth(&[held], 4);
-    s.note(0, ids[0], on(60.0, 1), None);
-    s.note(0, ids[0], on(67.0, 2), None);
+    let note = |tag: u8, pitch: f32, line: u8| Command::At {
+        frame: 0,
+        tag: Tag(tag),
+        cue: Cue::Note {
+            patch: ids[0],
+            note: NoteOn {
+                line,
+                ..on(pitch, u32::from(tag))
+            },
+            length: None,
+        },
+    };
+    assert!(s.command(note(1, 60.0, 0)));
+    assert!(s.command(note(2, 60.0, 0)));
+    assert!(s.command(note(3, 67.0, 0)));
     render(&mut s, 4_800);
-    assert!(s.command(Command::Release {
-        frame: s.frame(),
-        patch: ids[0],
-        note: Some(60.0),
-        tag: Tag::NONE,
-    }));
+    assert_eq!(s.voices().count(), 3);
+    let release = |tag: u8, frame: u64| Command::At {
+        frame,
+        tag: Tag(tag),
+        cue: Cue::Release,
+    };
+    assert!(s.command(release(1, s.frame())));
     render(&mut s, 9_600);
-    let notes: Vec<f32> = s.voices().map(|v| v.note).collect();
-    assert_eq!(notes, [67.0]);
+    let mut notes: Vec<f32> = s.voices().map(|v| v.note).collect();
+    notes.sort_by(f32::total_cmp);
+    assert_eq!(notes, [60.0, 67.0]);
     assert!(s.voices().all(|v| v.held));
+    // Mono: a line a voice; a note on a line retriggers that line's.
+    let mono = Patch { mono: true, ..held };
+    let (mut s, ids) = synth(&[mono], 4);
+    for (pitch, line) in [(60.0, 0), (67.0, 1), (64.0, 0)] {
+        s.note(
+            0,
+            ids[0],
+            NoteOn {
+                line,
+                ..on(pitch, 1)
+            },
+            None,
+        );
+    }
+    render(&mut s, 4_800);
+    let mut notes: Vec<f32> = s.voices().map(|v| v.note).collect();
+    notes.sort_by(f32::total_cmp);
+    assert_eq!(notes, [64.0, 67.0]);
 }
 
 /// A patch set anew is what its next notes play, and its sounding voices
@@ -258,20 +292,14 @@ fn a_patch_set_anew_plays_from_then_on() {
         level: -12.0,
         ..soft()
     };
-    assert!(s.command(Command::Patch {
-        patch: ids[0],
-        to: quieter,
-    }));
+    assert!(s.set_patch(ids[0], quieter));
     assert_eq!(s.patch(ids[0]), Some(&quieter));
     s.note(s.frame(), ids[0], on(76.0, 2), None);
     let after = left(&render(&mut s, 9_600));
     assert_eq!(s.voices().count(), 2, "the note sounding plays on");
     let step = biggest_jump(&after[after.len() - 2_400..]);
     let other = Patch::new(jodel_synth::engines::fm::GLASS_BELL.into());
-    assert!(s.command(Command::Patch {
-        patch: ids[0],
-        to: other,
-    }));
+    assert!(s.set_patch(ids[0], other));
     assert_eq!(s.voices().count(), 0, "the old engine's voices let go");
     let faded = left(&render(&mut s, 4_800));
     assert!(biggest_jump(&faded) <= step * 1.5, "no click");
@@ -290,12 +318,14 @@ fn waiting_cues_are_called_off_by_tag() {
     let mut bank = Bank::new();
     bank.add(sine(0.01, 0.005));
     let mut s = Synth::with_cues(RATE, bank, 8, 3);
-    let note = |frame, tag| Command::Note {
+    let note = |frame, tag| Command::At {
         frame,
-        patch: ids[0],
-        note: on(69.0, 1),
-        length: None,
         tag: Tag(tag),
+        cue: Cue::Note {
+            patch: ids[0],
+            note: on(69.0, 1),
+            length: None,
+        },
     };
     assert!(s.command(note(1_000, 1)));
     assert!(s.command(note(2_000, 2)));
@@ -469,6 +499,31 @@ fn the_pitch_glide_bends_down_to_the_note() {
     let early = pitch(&out[480..2_880], 48_000.0);
     let late = pitch(&out[14_400..19_200], 48_000.0);
     assert!(early > 360.0 && early < 440.0, "{early}");
+    assert!(cents(late, 220.0).abs() < 5.0, "{late}");
+}
+
+/// A note's own glide time takes the place of its patch's: the same pew,
+/// told to take a second, is still high where the patch's has arrived.
+#[test]
+fn a_note_s_own_glide_time_is_its_patch_s() {
+    let pew = Patch {
+        pitch: Glide {
+            from: 12.0,
+            time: 0.2,
+            curve: 1.0,
+        },
+        ..sine(2.0, 0.1)
+    };
+    let (mut s, ids) = synth(&[pew], 8);
+    let slow = NoteOn {
+        glide: Some(1.0),
+        ..on(57.0, 0)
+    };
+    s.note(0, ids[0], slow, None);
+    let out = left(&render(&mut s, 72_000));
+    let mid = pitch(&out[14_400..19_200], 48_000.0);
+    let late = pitch(&out[57_600..62_400], 48_000.0);
+    assert!(cents(mid, 220.0) > 600.0, "{mid}");
     assert!(cents(late, 220.0).abs() < 5.0, "{late}");
 }
 

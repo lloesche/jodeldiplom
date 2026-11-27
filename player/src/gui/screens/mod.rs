@@ -198,7 +198,7 @@ fn main<'a>(state: &'a State, parts: &Parts<'a>) -> Element<'a, Message> {
     let shown = match state.side {
         Side::Transition => true,
         Side::Karaoke => m.voice.is_some() && tab.as_ref().is_some_and(|t| t.voice.is_none()),
-        Side::Browser | Side::Queue | Side::Mixer | Side::Synth | Side::Shader => false,
+        _ => false,
     };
     let lanes = if shown {
         space().boxed()
@@ -314,8 +314,8 @@ pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
             let m = metrics::main(size, state.side);
             match state.side {
                 Side::Karaoke => Some(karaoke::tab::cover(m.pane.size()).size()),
-                Side::Browser | Side::Queue => m.cover.map(|c| c.size()),
-                Side::Transition | Side::Mixer | Side::Synth | Side::Shader => None,
+                side if side.list().is_some() => m.cover.map(|c| c.size()),
+                _ => None,
             }
         }
         Screen::Settings | Screen::Help | Screen::Karaoke | Screen::Lyrics => None,

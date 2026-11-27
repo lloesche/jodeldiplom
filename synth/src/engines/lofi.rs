@@ -25,7 +25,7 @@
 //! the Vowels" (JASA, 1952); the pulse by polyBLEP (Välimäki et al.).
 
 use crate::dsp::{self, Rate};
-use crate::params::{field, pick, when, Param, Scale};
+use crate::params::{field, options, pick, when, Param, Scale};
 use crate::{Engine, NoteOn, VoiceMod, BLOCK};
 
 /// The wave.
@@ -79,16 +79,49 @@ pub enum Table {
     VoxE,
 }
 
-/// The chips' volume envelope: a step down every period + 1 frames (of
-/// 240 a second) from 15.
+/// The chips' volume envelope: how it runs, a step down every `period` +
+/// 1 frames (of 240 a second, `period` 0 to 15) from 15.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StepEnv {
-    /// None: the ADSR's curve.
+pub struct StepEnv {
+    /// How it runs.
+    pub mode: StepMode,
+    /// Its period (kept while it is off).
+    pub period: u8,
+}
+
+/// How the chips' volume envelope runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepMode {
+    /// Not at all: the ADSR's curve.
     Off,
-    /// Down to 0 once (period 0 to 15), the voice ending there.
-    Decay(u8),
+    /// Down to 0 once, the voice ending there.
+    Decay,
     /// Down to 0 and from 15 again.
-    Loop(u8),
+    Loop,
+}
+
+impl StepEnv {
+    /// None: the ADSR's curve.
+    pub const OFF: StepEnv = StepEnv {
+        mode: StepMode::Off,
+        period: 0,
+    };
+
+    /// Down once at `period`.
+    pub const fn decay(period: u8) -> StepEnv {
+        StepEnv {
+            mode: StepMode::Decay,
+            period,
+        }
+    }
+
+    /// Its period as it steps (0 while off).
+    fn steps(self) -> u8 {
+        match self.mode {
+            StepMode::Off => 0,
+            StepMode::Decay | StepMode::Loop => self.period.min(15),
+        }
+    }
 }
 
 /// The chip arpeggio.
@@ -131,40 +164,47 @@ impl Default for Params {
     }
 }
 
-/// The waves, the duties and the arpeggios in their order, and their
-/// names.
-const WAVES: [Wave; 12] = [
-    Wave::Pulse,
-    Wave::Triangle,
-    Wave::Noise { short: false },
-    Wave::Noise { short: true },
-    Wave::Table(Table::Sine),
-    Wave::Table(Table::Saw),
-    Wave::Table(Table::Hollow),
-    Wave::Table(Table::Organ),
-    Wave::Table(Table::Buzz),
-    Wave::Table(Table::VoxA),
-    Wave::Table(Table::VoxO),
-    Wave::Table(Table::VoxE),
-];
-const WAVE_NAMES: [&str; 12] = [
-    "pulse",
-    "triangle",
-    "noise",
-    "short noise",
-    "sine",
-    "saw",
-    "hollow",
-    "organ",
-    "buzz",
-    "ah",
-    "aw",
-    "ee",
-];
-const DUTIES: [Duty; 4] = [Duty::Eighth, Duty::Quarter, Duty::Half, Duty::ThreeQuarters];
-const DUTY_NAMES: [&str; 4] = ["12.5 %", "25 %", "50 %", "75 %"];
-const ARPS: [Arp; 4] = [Arp::Off, Arp::Octave, Arp::Major, Arp::Minor];
-const ARP_NAMES: [&str; 4] = ["off", "octave", "major", "minor"];
+options! {
+    /// The waves, the duties and the arpeggios in their order, and their
+    /// names.
+    WAVES, WAVE_NAMES: Wave = [
+        Wave::Pulse => "pulse",
+        Wave::Triangle => "triangle",
+        Wave::Noise { short: false } => "noise",
+        Wave::Noise { short: true } => "short noise",
+        Wave::Table(Table::Sine) => "sine",
+        Wave::Table(Table::Saw) => "saw",
+        Wave::Table(Table::Hollow) => "hollow",
+        Wave::Table(Table::Organ) => "organ",
+        Wave::Table(Table::Buzz) => "buzz",
+        Wave::Table(Table::VoxA) => "ah",
+        Wave::Table(Table::VoxO) => "aw",
+        Wave::Table(Table::VoxE) => "ee",
+    ]
+}
+options! {
+    DUTIES, DUTY_NAMES: Duty = [
+        Duty::Eighth => "12.5 %",
+        Duty::Quarter => "25 %",
+        Duty::Half => "50 %",
+        Duty::ThreeQuarters => "75 %",
+    ]
+}
+options! {
+    STEP_MODES, STEP_MODE_NAMES: StepMode = [
+        StepMode::Off => "off",
+        StepMode::Decay => "decay",
+        StepMode::Loop => "loop",
+    ]
+}
+options! {
+    ARPS, ARP_NAMES: Arp = [
+        Arp::Off => "off",
+        Arp::Octave => "octave",
+        Arp::Major => "major",
+        Arp::Minor => "minor",
+    ]
+}
 
 /// LOFI's parameters as data, with their ranges.
 pub const PARAMS: &[Param<Params>] = &[
@@ -172,38 +212,21 @@ pub const PARAMS: &[Param<Params>] = &[
     when(pick!("chip", "duty", duty, DUTIES, DUTY_NAMES), |p| {
         p.wave == Wave::Pulse
     }),
-    Param::choice(
-        ("steps", "envelope"),
-        &["off", "decay", "loop"],
-        |p| match p.step_env {
-            StepEnv::Off => 0.0,
-            StepEnv::Decay(_) => 1.0,
-            StepEnv::Loop(_) => 2.0,
-        },
-        |p, v| {
-            let k = period(p.step_env);
-            p.step_env = match v as u8 {
-                0 => StepEnv::Off,
-                1 => StepEnv::Decay(k),
-                _ => StepEnv::Loop(k),
-            };
-        },
+    pick!(
+        "steps",
+        "envelope",
+        step_env.mode,
+        STEP_MODES,
+        STEP_MODE_NAMES
     ),
     when(
         Param::range(
             ("steps", "period"),
             (0.0, 15.0, "", Scale::Whole),
-            |p| f32::from(period(p.step_env)),
-            |p, v| {
-                let k = v as u8;
-                p.step_env = match p.step_env {
-                    StepEnv::Off => StepEnv::Off,
-                    StepEnv::Decay(_) => StepEnv::Decay(k),
-                    StepEnv::Loop(_) => StepEnv::Loop(k),
-                };
-            },
+            |p| f32::from(p.step_env.steps()),
+            |p, v| p.step_env.period = v as u8,
         ),
-        |p| p.step_env != StepEnv::Off,
+        |p| p.step_env.mode != StepMode::Off,
     ),
     pick!("arp", "arp", arp, ARPS, ARP_NAMES),
     when(
@@ -224,7 +247,7 @@ pub const PARAMS: &[Param<Params>] = &[
 const CHIP: Params = Params {
     wave: Wave::Pulse,
     duty: Duty::Half,
-    step_env: StepEnv::Off,
+    step_env: StepEnv::OFF,
     arp: Arp::Off,
     arp_rate: 50.0,
     crush: 0.0,
@@ -241,7 +264,7 @@ pub const COIN: Params = Params {
 /// A thin pulse stepping down quickly: a menu blip.
 pub const BLIP: Params = Params {
     duty: Duty::Eighth,
-    step_env: StepEnv::Decay(1),
+    step_env: StepEnv::decay(1),
     ..CHIP
 };
 
@@ -274,7 +297,7 @@ pub const BASS: Params = Params {
 /// The long noise loop, stepping down: a chip snare or hit.
 pub const HIT: Params = Params {
     wave: Wave::Noise { short: false },
-    step_env: StepEnv::Decay(0),
+    step_env: StepEnv::decay(0),
     ..CHIP
 };
 
@@ -425,13 +448,6 @@ pub struct Lofi {
     block: f32,
 }
 
-fn period(env: StepEnv) -> u8 {
-    match env {
-        StepEnv::Off => 0,
-        StepEnv::Decay(p) | StepEnv::Loop(p) => p.min(15),
-    }
-}
-
 /// Table `at` (fractional, between neighbours), sample `k`.
 #[inline]
 fn table_at(at: f32, k: usize) -> f32 {
@@ -459,16 +475,16 @@ impl Engine for Lofi {
         v.register = 1;
         v.arp = 0.0;
         v.volume = 15;
-        v.divider = period(p.step_env);
+        v.divider = p.step_env.steps();
         v.frame = 0.0;
-        v.once = matches!(p.step_env, StepEnv::Decay(_));
+        v.once = p.step_env.mode == StepMode::Decay;
     }
 
     /// Each frame the divider counts down; at 0 it starts again and the
     /// volume steps down (a looping one from 0 back to 15). The ADSR only
     /// gates it: let go, the steps run on until its release is over.
     fn amp(&self, p: &Params, v: &mut Voice, adsr: f32) -> f32 {
-        if p.step_env == StepEnv::Off {
+        if p.step_env.mode == StepMode::Off {
             return adsr;
         }
         v.frame += FRAMES * self.block;
@@ -477,10 +493,10 @@ impl Engine for Lofi {
             if v.divider > 0 {
                 v.divider -= 1;
             } else {
-                v.divider = period(p.step_env);
+                v.divider = p.step_env.steps();
                 if v.volume > 0 {
                     v.volume -= 1;
-                } else if matches!(p.step_env, StepEnv::Loop(_)) {
+                } else if p.step_env.mode == StepMode::Loop {
                     v.volume = 15;
                 }
             }

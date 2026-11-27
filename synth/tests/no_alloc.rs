@@ -9,9 +9,8 @@ use jodel_synth::chorus::{ChorusSettings, Wave};
 use jodel_synth::engines::{
     analog, drum, fm, formant, lofi, modal, noise, phase, string, supersaw, AnyParams,
 };
-use jodel_synth::params::Knobs;
 use jodel_synth::patch::{Lfo, LfoRate};
-use jodel_synth::{Bank, Command, NoteOn, Patch, Synth};
+use jodel_synth::{Bank, Command, Cue, NoteOn, Patch, Synth};
 use jodel_testkit::{Call, Counting};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -118,9 +117,20 @@ fn rendering_allocates_nothing() {
             seed: k,
             pan: 0.0,
             shape: 0.0,
+            glide: None,
+            line: 0,
         };
         let length = (k % 3 == 0).then_some(u64::from(k % 7) * 500);
-        synth.note(u64::from(k) * 300, id, note, length);
+        // Tagged in fours: a release lets go of one tag's notes.
+        synth.command(Command::At {
+            frame: u64::from(k) * 300,
+            tag: jodel_synth::Tag((k % 4) as u8 + 1),
+            cue: Cue::Note {
+                patch: id,
+                note,
+                length,
+            },
+        });
         synth.set_tempo(100.0 + (k % 3) as f32);
         synth.command(Command::Level {
             db: -3.0 * (k % 4) as f32,
@@ -135,20 +145,21 @@ fn rendering_allocates_nothing() {
             ..ChorusSettings::default()
         });
         // A patch edited as it sounds: a parameter of the same engine, or
-        // another engine (its voices fading out); a held note let go.
+        // another engine (its voices fading out); one tag's held notes let
+        // go.
         if k % 5 == 0 {
             let mut to = *synth.patch(id).expect("in the bank");
-            to.set(k as usize % to.count(), (k % 11) as f32 / 10.0);
+            let knobs = to.knobs().count();
+            to.set(k as usize % knobs, (k % 11) as f32 / 10.0);
             if k % 10 == 0 {
                 let name = AnyParams::ENGINES[k as usize / 10 % AnyParams::ENGINES.len()];
                 to.engine = AnyParams::of_engine(name).expect("an engine");
             }
-            synth.command(Command::Patch { patch: id, to });
-            synth.command(Command::Release {
+            synth.set_patch(id, to);
+            synth.command(Command::At {
                 frame: synth.frame(),
-                patch: id,
-                note: Some(note.note),
-                tag: jodel_synth::Tag::NONE,
+                tag: jodel_synth::Tag(1),
+                cue: Cue::Release,
             });
         }
         synth.render_to(&mut out[..2 * 300]);

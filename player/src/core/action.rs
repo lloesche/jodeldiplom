@@ -129,9 +129,12 @@ pub enum Action {
     /// The Ctrl key, as the frontend saw it: held in the browser, it
     /// previews the file selected ([`crate::core::preview`]).
     Ctrl(crate::core::preview::Ctrl),
-    /// The demo key let go of (or the window left while it was held): the
-    /// demo stops singing at once ([`crate::core::singing::Demo`]).
-    DemoLetGo,
+    /// The key of a held row let go of (or the window left while it was
+    /// held; [`crate::core::keymap::Binding::held`]): what it does ends,
+    /// where it was going on (the demo stops singing at once,
+    /// [`crate::core::singing::Demo`]; a key of the Synth tab's keyboard
+    /// lets its note go).
+    Released(crate::core::keymap::Op),
     /// Select a list row (mouse).
     SelectRow(usize),
     /// A click on a list row: selects it, and a second click soon after
@@ -480,8 +483,8 @@ pub enum Effect {
     /// Keep a theme's atom's patch as edited on the Synth tab, in the data
     /// folder (`None`: forget what was kept, the built-in one again).
     KeepPatch {
-        /// The theme's name.
-        theme: &'static str,
+        /// The theme.
+        theme: &'static crate::theme::Theme,
         /// The atom.
         atom: crate::sfx::conductor::Atom,
         /// The patch.

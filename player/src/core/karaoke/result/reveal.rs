@@ -72,16 +72,38 @@ pub fn ease_out(x: f64) -> f64 {
     1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3)
 }
 
+/// How fast [`ease_out`] goes at `x`: its slope, 3 at the start, falling
+/// to 0 at the end (and 0 outside).
+pub fn ease_out_pace(x: f64) -> f64 {
+    if (0.0..1.0).contains(&x) {
+        3.0 * (1.0 - x).powi(2)
+    } else {
+        0.0
+    }
+}
+
 /// How much of the sheet has unrolled `age` seconds after its beat
 /// ([`Beat::Paper`]), 0 to 1: quickly, then slowing ([`UNROLL`]).
 pub fn unrolled(age: f64) -> f64 {
     ease_out(age / UNROLL)
 }
 
+/// How fast the sheet unrolls `age` seconds after its beat, of the whole
+/// sheet a second ([`unrolled`]'s slope).
+pub fn unrolling(age: f64) -> f64 {
+    ease_out_pace(age / UNROLL) / UNROLL
+}
+
 /// How much of the signature is written `age` seconds after the end, 0 to
 /// 1, along its stroke: quickly, then slowing ([`SIGNING`]).
 pub fn signed(age: f64) -> f64 {
     ease_out(age / SIGNING)
+}
+
+/// How fast the signature is written `age` seconds after the end, of its
+/// whole stroke a second ([`signed`]'s slope).
+pub fn signing(age: f64) -> f64 {
+    ease_out_pace(age / SIGNING) / SIGNING
 }
 
 /// Which of the heading's two stars.

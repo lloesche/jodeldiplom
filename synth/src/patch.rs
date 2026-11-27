@@ -19,9 +19,17 @@
 //! };
 //! # let _ = coin;
 //! ```
+//!
+//! Its parameters, its own and its engine's, are data ([`Patch::knobs`],
+//! [`Patch::set`]), and so is it as text ([`Patch::to_text`],
+//! [`Patch::from_text`]).
+
+use std::fmt::Write as _;
 
 use crate::engines::AnyParams;
-use crate::params::{self, field, on, switch, when, Knobs, Param, Scale, Spec};
+use crate::env::Envelope;
+use crate::host::TEMPO;
+use crate::params::{field, switch, units, when, Knob, Param, TwoUnits};
 
 /// An ADSR: a linear attack, an exponential decay to the sustain level,
 /// an exponential release; times in seconds.
@@ -75,6 +83,18 @@ impl Adsr {
             release,
         }
     }
+
+    /// Its level `t` seconds into a note let go after `held` seconds, 0
+    /// to 1: as a voice's envelope runs it.
+    pub fn level_at(&self, t: f32, held: f32) -> f32 {
+        let mut e = Envelope::start(0.0);
+        if t <= held {
+            return e.advance(self, t.max(0.0));
+        }
+        e.advance(self, held.max(0.0));
+        e.release();
+        e.advance(self, t - held.max(0.0))
+    }
 }
 
 /// A glide into place: a note starts `from` away from where it sits (its
@@ -123,6 +143,48 @@ pub enum LfoRate {
     Hz(f32),
     /// Beats a cycle, at the tempo the synth is told.
     Beats(f32),
+}
+
+impl LfoRate {
+    /// Cycles a second at `tempo` beats a minute.
+    pub fn hz(self, tempo: f32) -> f32 {
+        match self {
+            LfoRate::Hz(hz) => hz,
+            LfoRate::Beats(beats) => tempo / 60.0 / beats.max(1e-3),
+        }
+    }
+
+    /// Beats a cycle at `tempo` beats a minute.
+    pub fn beats(self, tempo: f32) -> f32 {
+        match self {
+            LfoRate::Hz(hz) => tempo / 60.0 / hz.max(1e-3),
+            LfoRate::Beats(beats) => beats,
+        }
+    }
+}
+
+/// Hertz or beats, a rate in the other as at the synth's starting tempo
+/// ([`TEMPO`]).
+impl TwoUnits for LfoRate {
+    fn second(self) -> bool {
+        matches!(self, LfoRate::Beats(_))
+    }
+
+    fn in_first(self) -> f32 {
+        self.hz(TEMPO)
+    }
+
+    fn in_second(self) -> f32 {
+        self.beats(TEMPO)
+    }
+
+    fn first_of(v: f32) -> LfoRate {
+        LfoRate::Hz(v)
+    }
+
+    fn second_of(v: f32) -> LfoRate {
+        LfoRate::Beats(v)
+    }
 }
 
 /// A sine LFO, a voice's own (it starts with the note, after a delay and
@@ -262,30 +324,26 @@ impl Patch {
     }
 }
 
-/// An LFO's rate in cycles a second (one in beats as at the synth's
-/// starting tempo, 120 a minute).
-fn lfo_hz(r: LfoRate) -> f32 {
-    match r {
-        LfoRate::Hz(hz) => hz,
-        LfoRate::Beats(beats) => 2.0 / beats.max(1e-3),
-    }
-}
+/// The group of a patch's envelope's parameters (its ADSR).
+pub const ENVELOPE: &str = "envelope";
 
-/// An LFO's rate in beats a cycle (one in hertz as at 120 a minute).
-fn lfo_beats(r: LfoRate) -> f32 {
-    match r {
-        LfoRate::Hz(hz) => 2.0 / hz.max(1e-3),
-        LfoRate::Beats(beats) => beats,
-    }
-}
+/// The LFO's rate: synced (in beats) or not (in hertz).
+const LFO_RATE: [Param<Patch>; 3] = units!(
+    "lfo",
+    LfoRate,
+    |p| p.lfo.rate,
+    "synced",
+    ("rate", 0.05, 40.0, "Hz", Log),
+    ("beats", 0.0625, 32.0, "beats", Log)
+);
 
 /// A patch's own parameters as data, with their ranges (its engine's are
-/// the engine's: [`AnyParams`] as [`Knobs`]).
+/// the engine's, each engine module's `PARAMS`).
 pub const PARAMS: &[Param<Patch>] = &[
-    field!("envelope", "attack", adsr.attack, 0.0, 4.0, "s", Fine),
-    field!("envelope", "decay", adsr.decay, 0.0, 8.0, "s", Fine),
-    field!("envelope", "sustain", adsr.sustain, 0.0, 1.0, "", Linear),
-    field!("envelope", "release", adsr.release, 0.0, 8.0, "s", Fine),
+    field!(ENVELOPE, "attack", adsr.attack, 0.0, 4.0, "s", Fine),
+    field!(ENVELOPE, "decay", adsr.decay, 0.0, 8.0, "s", Fine),
+    field!(ENVELOPE, "sustain", adsr.sustain, 0.0, 1.0, "", Linear),
+    field!(ENVELOPE, "release", adsr.release, 0.0, 8.0, "s", Fine),
     field!("voice", "level", level, -48.0, 12.0, "dB", Linear),
     field!("voice", "gate", gate, 0.0, 8.0, "s", Fine),
     field!("voice", "brighten", filter_env, -6.0, 8.0, "oct", Linear),
@@ -299,36 +357,9 @@ pub const PARAMS: &[Param<Patch>] = &[
     field!("shape", "from", shape.from, -2.0, 2.0, "", Linear),
     field!("shape", "time", shape.time, 0.0, 4.0, "s", Fine),
     field!("shape", "curve", shape.curve, 0.1, 8.0, "", Log),
-    Param::toggle(
-        ("lfo", "synced"),
-        |p| on(matches!(p.lfo.rate, LfoRate::Beats(_))),
-        |p, v| {
-            let r = p.lfo.rate;
-            p.lfo.rate = if v >= 0.5 {
-                LfoRate::Beats(lfo_beats(r))
-            } else {
-                LfoRate::Hz(lfo_hz(r))
-            };
-        },
-    ),
-    when(
-        Param::range(
-            ("lfo", "rate"),
-            (0.05, 40.0, "Hz", Scale::Log),
-            |p| lfo_hz(p.lfo.rate),
-            |p, v| p.lfo.rate = LfoRate::Hz(v),
-        ),
-        |p| matches!(p.lfo.rate, LfoRate::Hz(_)),
-    ),
-    when(
-        Param::range(
-            ("lfo", "beats"),
-            (0.0625, 32.0, "beats", Scale::Log),
-            |p| lfo_beats(p.lfo.rate),
-            |p, v| p.lfo.rate = LfoRate::Beats(v),
-        ),
-        |p| matches!(p.lfo.rate, LfoRate::Beats(_)),
-    ),
+    LFO_RATE[0],
+    LFO_RATE[1],
+    LFO_RATE[2],
     field!("lfo", "pitch", lfo.pitch, 0.0, 12.0, "st", Fine),
     field!("lfo", "bright", lfo.bright, 0.0, 4.0, "oct", Linear),
     field!("lfo", "amp", lfo.amp, 0.0, 1.0, "", Linear),
@@ -352,38 +383,81 @@ pub const PARAMS: &[Param<Patch>] = &[
     ),
 ];
 
-/// A patch's parameters: its own ([`PARAMS`]) first, then its engine's.
-impl Knobs for Patch {
-    fn count(&self) -> usize {
-        PARAMS.len() + self.engine.count()
+/// Its parameters, and it as text.
+impl Patch {
+    /// Its parameters as they are now: its own ([`PARAMS`]) first, then
+    /// its engine's (its module's `PARAMS`), each numbered by its place
+    /// ([`Knob::k`], what [`Patch::set`] takes); those that apply now and
+    /// those that do not.
+    pub fn knobs(&self) -> impl Iterator<Item = Knob> + '_ {
+        let own = (PARAMS.iter().enumerate()).map(|(k, q)| q.knob(self, k, false));
+        let engine = (0..self.engine.count())
+            .filter_map(|e| self.engine.knob(e))
+            .map(|n| Knob {
+                k: PARAMS.len() + n.k,
+                ..n
+            });
+        own.chain(engine)
     }
 
-    fn spec(&self, k: usize) -> Option<Spec> {
-        match k.checked_sub(PARAMS.len()) {
-            None => params::spec_of(PARAMS, k),
-            Some(e) => self.engine.spec(e),
-        }
+    /// Its `k`th parameter ([`Patch::knobs`]), if it has one.
+    pub fn knob(&self, k: usize) -> Option<Knob> {
+        self.knobs().nth(k)
     }
 
-    fn applies(&self, k: usize) -> bool {
-        match k.checked_sub(PARAMS.len()) {
-            None => params::applies_to(PARAMS, self, k),
-            Some(e) => self.engine.applies(e),
-        }
+    /// Its parameter keyed `key` ([`crate::params::Spec::key`]), if it has
+    /// one.
+    pub fn find(&self, key: &str) -> Option<Knob> {
+        self.knobs().find(|n| n.spec.is_key(key))
     }
 
-    fn get(&self, k: usize) -> Option<f32> {
+    /// Sets its `k`th parameter to `v`, as that takes it; whether there is
+    /// one.
+    pub fn set(&mut self, k: usize, v: f32) -> bool {
         match k.checked_sub(PARAMS.len()) {
-            None => params::get_in(PARAMS, self, k),
-            Some(e) => self.engine.get(e),
-        }
-    }
-
-    fn set(&mut self, k: usize, v: f32) -> bool {
-        match k.checked_sub(PARAMS.len()) {
-            None => params::set_in(PARAMS, self, k, v),
+            None => PARAMS.get(k).map(|q| q.set(self, v)).is_some(),
             Some(e) => self.engine.set(e, v),
         }
+    }
+
+    /// It as text: `engine NAME` (its module's), then a line `KEY = VALUE`
+    /// for each parameter that applies, its own then its engine's, in
+    /// their tables' order: the key its group and name
+    /// ([`crate::params::Spec::key`]), the value as its kind writes it
+    /// ([`crate::params::Kind::write`]).
+    pub fn to_text(&self) -> String {
+        let mut s = format!("engine {}\n", self.engine.engine());
+        for n in self.knobs().filter(|n| n.applies) {
+            let _ = writeln!(s, "{} = {}", n.spec.key(), n.spec.kind.write(n.value));
+        }
+        s
+    }
+
+    /// A patch in `text` ([`Patch::to_text`]'s) read over `base`: on its
+    /// engine (`base`'s own parameters where it is `base`'s engine, else
+    /// that engine's defaults), each parameter it names set as its kind
+    /// reads it, in its lines' order. A parameter left out, one it does
+    /// not know and a value it cannot read are `base`'s. None without an
+    /// engine it knows on its first line.
+    pub fn from_text(base: Patch, text: &str) -> Option<Patch> {
+        let mut lines = text.lines();
+        let engine = lines.next()?.strip_prefix("engine ")?;
+        let mut patch = base;
+        if patch.engine.engine() != engine {
+            patch.engine = AnyParams::of_engine(engine)?;
+        }
+        for line in lines {
+            let Some((key, value)) = line.split_once(" = ") else {
+                continue;
+            };
+            let Some(n) = patch.find(key) else {
+                continue;
+            };
+            if let Some(v) = n.spec.kind.read(value) {
+                patch.set(n.k, v);
+            }
+        }
+        Some(patch)
     }
 }
 
@@ -393,34 +467,89 @@ mod tests {
 
     /// Every parameter of every engine's default, set to its value, is as
     /// it was; read back after a set, it is what was set (clamped); each
-    /// key is a patch's once.
+    /// key is a patch's once, and found by it; each is numbered by its
+    /// place, the engine's after the patch's own.
     #[test]
     fn every_parameter_reads_back_what_it_is_set_to() {
         for name in AnyParams::ENGINES {
             let mut p = Patch::new(AnyParams::of_engine(name).unwrap());
-            let mut keys: Vec<String> = (0..p.count()).map(|k| p.spec(k).unwrap().key()).collect();
+            let knobs: Vec<Knob> = p.knobs().collect();
+            let mut keys: Vec<String> = knobs.iter().map(|n| n.spec.key()).collect();
             let n = keys.len();
             keys.sort();
             keys.dedup();
             assert_eq!(keys.len(), n, "{name}: a key twice");
-            for k in 0..p.count() {
-                if !p.applies(k) {
+            for (k, knob) in knobs.iter().enumerate() {
+                assert_eq!(knob.k, k);
+                assert_eq!(knob.of_engine, k >= PARAMS.len());
+                assert_eq!(p.find(&knob.spec.key()), Some(*knob));
+                if !knob.applies {
                     continue;
                 }
                 let before = p;
-                let v = p.get(k).unwrap();
-                assert!(p.set(k, v));
-                assert_eq!(p, before, "{name} {:?}", p.spec(k));
-                let to = p.spec(k).unwrap().kind.at(0.3);
+                assert!(p.set(k, knob.value));
+                assert_eq!(p, before, "{name} {:?}", knob.spec);
+                let to = knob.spec.kind.at(0.3);
                 p.set(k, to);
-                if p.applies(k) {
-                    let got = p.get(k).unwrap();
-                    assert!((got - to).abs() <= 1e-3 * to.abs().max(1.0), "{name} {k}");
+                if let Some(got) = p.knob(k).filter(|n| n.applies) {
+                    assert!(
+                        (got.value - to).abs() <= 1e-3 * to.abs().max(1.0),
+                        "{name} {k}"
+                    );
                 }
                 p = before;
             }
-            assert!(!p.set(p.count(), 0.0));
+            assert!(!p.set(knobs.len(), 0.0));
         }
+    }
+
+    /// A patch edited (its envelope, a send, a switch and what it shows,
+    /// its engine's parameters, a choice) reads back from its text as it
+    /// was; built in, as built; a key it does not know and a value out of
+    /// range are let be or taken in range; another engine's text is that
+    /// engine's.
+    #[test]
+    fn a_patch_reads_back_from_its_text() {
+        let mut p = Patch {
+            reverb: 0.31,
+            mono: true,
+            slide: 0.05,
+            ..Patch::new(crate::engines::analog::SINE.into())
+        };
+        p.adsr.decay = 0.4;
+        p.lfo.rate = LfoRate::Beats(0.75);
+        let wave = p.find("osc wave").unwrap();
+        p.set(wave.k, 2.0);
+        let text = p.to_text();
+        assert!(text.starts_with("engine analog\n"), "{text}");
+        assert!(text.contains("\nosc wave = pulse\n"), "{text}");
+        assert!(text.contains("\nvoice mono = on\n"), "{text}");
+        let sine = Patch::new(crate::engines::analog::SINE.into());
+        assert_eq!(Patch::from_text(sine, &text), Some(p));
+        let built = Patch::new(AnyParams::of_engine("lofi").unwrap());
+        assert_eq!(Patch::from_text(sine, &built.to_text()), Some(built));
+        let odd = text.replace("sends reverb = 0.31", "sends reverb = 7\nsparkle = 3");
+        assert_eq!(Patch::from_text(p, &odd).map(|q| q.reverb), Some(1.0));
+        assert_eq!(Patch::from_text(p, "engine kazoo\n"), None);
+    }
+
+    /// An envelope's level as the synth runs it: rising, falling to its
+    /// sustain, let go; a struck one ends in its decay, however long held.
+    #[test]
+    fn an_envelope_s_level_is_the_voice_s() {
+        let a = Adsr {
+            attack: 0.1,
+            decay: 0.2,
+            sustain: 0.5,
+            release: 0.3,
+        };
+        assert!((a.level_at(0.05, 1.0) - 0.5).abs() < 1e-5);
+        assert!((a.level_at(0.1, 1.0) - 1.0).abs() < 1e-3);
+        assert_eq!(a.level_at(0.6, 1.0), 0.5);
+        assert!((a.level_at(1.15, 1.0) - 0.5 * 0.001f32.sqrt()).abs() < 1e-4);
+        assert_eq!(a.level_at(1.4, 1.0), 0.0);
+        let struck = Adsr::hit(0.2);
+        assert_eq!(struck.level_at(0.3, 5.0), 0.0);
     }
 
     #[test]

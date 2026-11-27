@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use crate::browser::EntryKind;
 use crate::core::browse::{browser_rows, list_cursor, list_height, row_entry};
 use crate::core::{
-    karaoke, Effect, Facts, Gpu, Heard, Job, Prepared, Rhythm, RhythmRecipe, Rhythmed, Screen,
-    Side, State, RHYTHM_AHEAD,
+    karaoke, Effect, Facts, Gpu, Heard, Job, ListKind, Prepared, Rhythm, RhythmRecipe, Rhythmed,
+    Screen, Side, State, RHYTHM_AHEAD,
 };
 
 /// The files on screen whose details are not known yet.
@@ -34,8 +34,8 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
     }
     let height = list_height(state, state.side);
     let (_, scroll) = list_cursor(state, state.side);
-    let paths: Vec<PathBuf> = match state.side {
-        Side::Browser => browser_rows(state)
+    let paths: Vec<PathBuf> = match state.side.list() {
+        Some(ListKind::Browser) => browser_rows(state)
             .into_iter()
             .skip(scroll)
             .take(height)
@@ -43,7 +43,7 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
             .filter(|e| e.kind == EntryKind::File)
             .map(|e| e.path.clone())
             .collect(),
-        Side::Queue => state
+        Some(ListKind::Queue) => state
             .queue
             .paths
             .iter()
@@ -51,7 +51,7 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
             .take(height)
             .cloned()
             .collect(),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => Vec::new(),
+        None => Vec::new(),
     };
     paths
         .into_iter()

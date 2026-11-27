@@ -59,7 +59,7 @@
 //! polyBLEP pulse and the filters by Simper's SVF, as [`dsp`] cites them.
 
 use crate::dsp::{self, Rate, Svf, SvfState};
-use crate::params::{field, pick, Param};
+use crate::params::{field, options, pick, Param};
 use crate::{Engine, NoteOn, VoiceMod};
 
 /// What a voice plays.
@@ -117,27 +117,19 @@ impl Default for Params {
     }
 }
 
-/// The kinds, in their order, and their names.
-const KINDS: [Kind; 8] = [
-    Kind::Kick,
-    Kind::Snare,
-    Kind::Clap,
-    Kind::ClosedHat,
-    Kind::OpenHat,
-    Kind::Tom,
-    Kind::Rim,
-    Kind::Cymbal,
-];
-const KIND_NAMES: [&str; 8] = [
-    "kick",
-    "snare",
-    "clap",
-    "closed hat",
-    "open hat",
-    "tom",
-    "rim",
-    "cymbal",
-];
+options! {
+    /// The kinds, in their order, and their names.
+    KINDS, KIND_NAMES: Kind = [
+        Kind::Kick => "kick",
+        Kind::Snare => "snare",
+        Kind::Clap => "clap",
+        Kind::ClosedHat => "closed hat",
+        Kind::OpenHat => "open hat",
+        Kind::Tom => "tom",
+        Kind::Rim => "rim",
+        Kind::Cymbal => "cymbal",
+    ]
+}
 
 /// DRUM's parameters as data, with their ranges.
 pub const PARAMS: &[Param<Params>] = &[

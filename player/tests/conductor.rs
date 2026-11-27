@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jodel_rhythm::Analysis;
 use jodel_testkit::{Call, Counting};
-use jodeldiplom::sfx::conductor::{Called, Clock, Conductor, Diploma, Event};
+use jodeldiplom::sfx::conductor::{Called, Clock, Conductor, Diploma, Event, Tempo};
 use jodeldiplom::tiers::Tier;
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -46,6 +46,7 @@ fn conducting_allocates_nothing() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(8)));
     assert_eq!(ALLOCATIONS.swap(0, Ordering::Relaxed), 1);
     let mut streak = 0;
+    let mut tempo = Tempo::default();
     for block in 0..2_000u64 {
         let now = synth.frame();
         if block % 10 == 0 {
@@ -53,7 +54,7 @@ fn conducting_allocates_nothing() {
             lines[0] = Some((now + 10_000, now + 100_000));
             let t = now as f64 / f64::from(RATE);
             let clock = Clock::from_analysis(&a, t, now, f64::from(RATE), lines);
-            c.set_clock(&mut synth, clock);
+            tempo.time(&mut c, &mut synth, clock);
         }
         if block % 20 == 0 {
             streak += 1;
@@ -133,18 +134,21 @@ fn conducting_allocates_nothing() {
 }
 
 /// The theme switched as its sounds ring (the settings' row mid-song):
-/// its patches told the synth that plays, as commands, nothing allocated;
-/// a chord held on the choir plays on in the new theme's voice with no
-/// step in the sound bigger than its own before, and goes with its keys
-/// (no note stuck); the next word's pop is the new theme's, and so is
+/// the conductor plays the new theme's patches, every theme's in the synth
+/// already, so nothing is told it and nothing allocated; a chord held on
+/// the choir (the Synth tab's keys) rings on in the voice it started in,
+/// with no step in the sound bigger than its own before, and goes with its
+/// keys (no note stuck); the next word's pop is the new theme's, and so is
 /// every atom's note.
 #[test]
 fn a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing() {
-    use jodeldiplom::sfx::conductor::Atom;
-    use jodeldiplom::theme::{CLASSIC, SPOOKY};
+    use jodeldiplom::sfx::bench::{Bench, Held};
+    use jodeldiplom::sfx::conductor::{of, Atom};
+    use jodeldiplom::theme::{CLASSIC, SPOOKY, THEMES};
     const RATE: u32 = 48_000;
     const BLOCK: usize = 480;
     let (mut c, mut synth) = Conductor::new(RATE, &CLASSIC);
+    let mut keys = Bench::new(RATE);
     let word = Event::Word {
         streak: 1,
         pan: 0.0,
@@ -165,35 +169,31 @@ fn a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing() {
         }
         most
     };
+    // The theme and the atom a voice's patch is of.
+    let whose = |v: &jodel_synth::VoiceView| of(v.patch).map(|(t, a)| (THEMES[t], a));
     COUNTING.with(|on| on.set(true));
-    for note in [60.0, 64.0] {
-        c.key_down(&mut synth, 0, Atom::Choir, note);
+    for (k, note) in [(0, 60.0), (2, 64.0)] {
+        keys.down(&mut synth, (0, &CLASSIC), (Atom::Choir, note), Held::Key(k));
     }
     c.event(&mut synth, 0, word);
     // The chord settled, the pop gone.
     steps(&mut synth, 40);
     let before = steps(&mut synth, 20);
-    for atom in Atom::ALL {
-        c.set_patch(&mut synth, atom, SPOOKY.patch(atom));
-    }
+    c.set_theme(&SPOOKY);
     let across = steps(&mut synth, 20);
-    let choir = |synth: &jodel_synth::Synth, held: bool| {
-        (synth.voices())
-            .filter(|v| v.held == held && c.atom_of(v.patch) == Some(Atom::Choir))
-            .all(|v| synth.patch(v.patch) == Some(&SPOOKY.patch(Atom::Choir)))
-    };
     let held = synth.voices().filter(|v| v.held).count();
-    let rings_on = choir(&synth, true);
+    let rings_on = (synth.voices().filter(|v| v.held))
+        .all(|v| whose(&v).is_some_and(|(t, a)| *t == CLASSIC && a == Atom::Choir));
     let at = synth.frame();
     c.event(&mut synth, at, word);
     steps(&mut synth, 2);
     let pops = (synth.voices())
-        .filter(|v| c.atom_of(v.patch) == Some(Atom::Pop))
-        .map(|v| synth.patch(v.patch) == Some(&SPOOKY.patch(Atom::Pop)))
+        .filter(|v| whose(v).is_some_and(|(_, a)| a == Atom::Pop))
+        .map(|v| whose(&v).is_some_and(|(t, _)| *t == SPOOKY))
         .fold((0, true), |(n, all), new| (n + 1, all && new));
     let at = synth.frame();
-    for note in [60.0, 64.0] {
-        c.key_up(&mut synth, at, Atom::Choir, note);
+    for k in [0, 2] {
+        keys.up(&mut synth, at, Held::Key(k));
     }
     steps(&mut synth, 300);
     // Every atom's note on its patch in the new theme.
@@ -201,15 +201,16 @@ fn a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing() {
     let mut block = [0.0f32; 2 * jodel_synth::BLOCK];
     for atom in Atom::ALL {
         let at = synth.frame();
-        c.key_down(&mut synth, at, atom, 67.0);
+        keys.down(&mut synth, (at, &SPOOKY), (atom, 67.0), Held::Pointer);
         // Block by block until it sounds (past a spread's start: a choir's
         // voices come in one by one).
         let mut theirs = false;
         for _ in 0..100 {
             synth.render_to(&mut block);
-            let mut on = (synth.voices()).filter(|v| c.atom_of(v.patch) == Some(atom));
+            let mut on = (synth.voices()).filter(|v| whose(v).is_some_and(|(_, a)| a == atom));
             if let Some(v) = on.next() {
-                theirs = synth.patch(v.patch) == Some(&SPOOKY.patch(atom));
+                theirs = whose(&v).is_some_and(|(t, _)| *t == SPOOKY)
+                    && synth.patch(v.patch) == Some(&SPOOKY.patch(atom));
                 break;
             }
         }
@@ -217,14 +218,14 @@ fn a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing() {
             amiss = amiss.or(Some(atom));
         }
         let at = synth.frame();
-        c.key_up(&mut synth, at, atom, 67.0);
+        keys.up(&mut synth, at, Held::Pointer);
         steps(&mut synth, 300);
     }
     COUNTING.with(|on| on.set(false));
     assert_eq!(amiss, None, "every atom on the new theme's patch");
     assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0);
     assert_eq!(held, 2, "the chord plays on");
-    assert!(rings_on, "in the new theme's choir");
+    assert!(rings_on, "in the voice it started in");
     assert!(
         across <= 1.5 * before + 1e-4,
         "no click: {across} across the switch, {before} before"

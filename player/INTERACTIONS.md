@@ -1096,12 +1096,13 @@ really found, as its workers tell it: never a progress they did not tell.
   look or a sound reads the theme in force now, so a change is the next
   frame's, mid-song too: the tiers' colours and the count-in's accent,
   the effects' looks and what the theme holds throughout (Spooky's fog),
-  the backdrop's grade. Its sounds' patches are told the synth playing,
-  as commands through the effects' queue (nothing allocated on the mixer
-  thread): no new synth, so what rings rings on in the new sound (one on
-  another engine fades out over a block) without a click, a note held is
-  let go of with its key, and what is planned plays in the new theme.
-  The Synth tab keeps the theme it compares while it shows.
+  the backdrop's grade. Its sounds' patches are the synth's already (it
+  holds every theme's): no new synth, nothing told it, nothing allocated
+  on the mixer thread; the conductor plays the new theme's from then on,
+  so what rings rings on in the voice it started in without a click, a
+  note held is let go of with its key, and what is planned plays in the
+  new theme. The Synth tab plays its own sounds in the theme it compares,
+  never changing the game's.
   - `the_karaoke_theme_is_a_setting_row_and_saved`
   - `a_theme_changed_mid_song_is_the_next_frame_s`
   - `a_cover_is_graded_by_the_theme_of_its_frame` (`gui::backdrop`)
@@ -1252,25 +1253,33 @@ really found, as its workers tell it: never a progress they did not tell.
   (`0` the song's), `K` keeps the patch, `del` reverts it.
   - `the_synth_tab_is_in_the_tab_cycle_and_its_keys_step`
   - `the_synth_tab_opens_and_a_click_plays_its_sound`
-- **Y2.** A click on a sound plays it at once, through the conductor as
-  the game plays it, on the effects input (the Effects strip's), on the
-  desk's frames: in the key shown and on a steady beat at the tempo
-  shown (each chosen, else the song's, else no key and 120 a minute),
-  in the theme compared while the tab shows; the song's key and clock
-  are told the conductor again after it. Every sound of the game is
-  listed: words, rungs, chimes, the payout and the jackpot, the
-  announcer's calls, the diploma's and its sheet's.
+- **Y2.** A click on a sound plays it at once as the game plays it, by a
+  conductor of the bench's own (made anew for each sound, so a rung or a
+  run of words plays from none) on the game's synth, on the effects
+  input (the Effects strip's), on the desk's frames: in the key shown
+  and on a steady beat at the tempo shown (each chosen, else the song's,
+  else no key and 120 a minute; the synth told that tempo, the song's
+  again on the game's next clock), in the theme compared. The game's
+  conductor is not touched: its key, its clock, its streak stay the
+  song's. Every sound of the game is listed: words, rungs, chimes, the
+  payout and the jackpot, the announcer's calls, the diploma's and its
+  sheet's.
   - `the_synth_tab_opens_and_a_click_plays_its_sound`
   - `the_synth_tab_plays_the_theme_it_compares` (sfx)
   - `every_sound_plays_and_is_named_apart` (`sfx::bench`)
 - **Y3.** The patch shown is edited by its sliders, choices and switches,
   each parameter's range from the patch's tables, and the next play is
-  heard with it: the effects tell the synth each patch as the tab has
-  it, a command for each change only (with nothing edited nothing is
+  heard with it, the game's in that theme too: the edits live in the
+  state's book of patches (by theme and atom), the synth is made with
+  every theme's patches as the book has them, and an edit after is told
+  it once, the patch changed alone (with nothing edited nothing is
   sent: the game sounds as it is made, bit for bit); a patch moved to
   another engine fades its sounding voices out first.
   - `a_synth_slider_edits_the_patch_kept_then_reverted`
-  - `a_patch_is_told_the_synth_once_when_it_changes` (conductor)
+  - `the_synth_is_told_a_patch_once_when_it_changes` (sfx)
+  - `an_edit_is_the_synth_s_patch` (`sfx`)
+  - `every_theme_s_patches_are_in_the_synth_s_bank` (conductor)
+  - `a_patch_is_edited_kept_and_reverted_by_theme` (`core::patch_book`)
   - `a_patch_set_anew_plays_from_then_on` (synth)
   - `every_parameter_reads_back_what_it_is_set_to` (synth)
   - `every_patch_is_within_its_parameters_ranges` (`theme`)
@@ -1279,20 +1288,28 @@ really found, as its workers tell it: never a progress they did not tell.
   kept are loaded over the built-in ones. Revert brings the built-in
   patch back and forgets what was kept.
   - `a_patch_reads_back_as_it_was_written` (`store::patches`)
+  - `a_patch_reads_back_from_its_text` (synth)
   - `patches_are_kept_and_found_while_the_data_folder_moves` (`store::patches`)
   - `a_synth_slider_edits_the_patch_kept_then_reverted`
 - **Y5.** The keyboard plays the patch shown: a press holds the key under
   the pointer, sliding from key to key as it moves; a computer key holds
-  its note as long as it is held, the other notes holding on; every note
-  held is let go of as the tab is left or the window loses the keys.
+  its note as long as it is held, the other notes holding on (each key's
+  note its own, the pointer's and a computer key's on one pitch too); a
+  key's row is held in the keymap, so its key let go of ends it whatever
+  is held with it, and its note goes by its key alone, whatever theme
+  is compared by then; every note held is let go of as the tab is left
+  or the window loses the keys.
   - `the_synth_keyboard_plays_a_note`
+  - `a_key_held_across_a_theme_switch_is_let_go_of`
   - `the_synth_tab_is_in_the_tab_cycle_and_its_keys_step`
-  - `a_key_holds_its_note_until_it_is_let_go_of` (conductor)
+  - `a_key_holds_its_note_until_it_is_let_go_of` (`sfx::bench`)
   - `a_note_is_let_go_alone` (synth)
   - `a_point_is_on_the_key_drawn_there` (`gui::widgets::piano`)
 - **Y6.** Nothing allocates or locks on the mixer thread as the patches
-  are edited and the keys played: a patch goes to the synth whole, by
-  command, through the effects' queue of fixed size.
+  are edited and the keys played: a patch goes to the synth whole
+  through a queue of its own of fixed size, taken first as the mixer
+  takes a chunk's commands (so the commands' queue stays a note's size a
+  command), and is the synth's from that chunk on.
   - `rendering_allocates_nothing` (synth)
   - `playing_live_allocates_nothing_on_the_mixer_thread` (output)
 

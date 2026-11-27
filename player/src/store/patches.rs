@@ -17,30 +17,27 @@
 //! osc 2 sync = off
 //! ```
 //!
-//! `theme` and `atom` say whose it is, `engine` its engine; then each
-//! parameter of the patch that applies, its own then its engine's
-//! ([`jodel_synth::params::Knobs`]), in their tables' order, as `KEY =
-//! VALUE`: the key its group and name, a number in its unit, a choice by
-//! its option's name, a switch `on` or `off`. It is read over the theme's
-//! built-in patch of the atom (or its engine's defaults, for another
-//! engine): a parameter left out, or one this player does not know, is
-//! the built-in one's.
+//! `theme` and `atom` say whose it is; the rest is the patch as text
+//! ([`Patch::to_text`]: `engine` its engine, then each parameter of the
+//! patch that applies, its own then its engine's, in their tables' order,
+//! as `KEY = VALUE`: the key its group and name, a number in its unit, a
+//! choice by its option's name, a switch `on` or `off`). It is read over
+//! the theme's built-in patch of the atom ([`Patch::from_text`]; its
+//! engine's defaults, for another engine): a parameter left out, or one
+//! this player does not know, is the built-in one's.
 //!
 //! The files are written whole or not at all ([`durable`]), where the
 //! data folder is now (it may be moving: [`crate::store::mover`]), on a thread
 //! of their own, one at a time and in order ([`PatchStore`]).
 
-use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
-use jodel_synth::engines::AnyParams;
-use jodel_synth::params::{Kind, Knobs};
 use jodel_synth::Patch;
 
-use crate::core::synth_tab::Edited;
+use crate::core::patch_book::PatchBook;
 use crate::core::Action;
 use crate::sfx::conductor::Atom;
 use crate::store::cache;
@@ -54,22 +51,8 @@ fn file(dir: &Path, theme: &str, atom: Atom) -> PathBuf {
 
 /// `patch` as kept for `theme`'s `atom`, in [`cache::PATCH`]'s version.
 pub fn to_text(theme: &str, atom: Atom, patch: &Patch) -> String {
-    let mut s = format!(
-        "theme {theme}\natom {}\nengine {}\n",
-        atom.name(),
-        patch.engine.engine()
-    );
-    for k in (0..patch.count()).filter(|&k| patch.applies(k)) {
-        let (Some(spec), Some(v)) = (patch.spec(k), patch.get(k)) else {
-            continue;
-        };
-        let value = match spec.kind {
-            Kind::Range { .. } => format!("{v}"),
-            Kind::Choice(_) | Kind::Toggle => spec.kind.text(v),
-        };
-        let _ = writeln!(s, "{} = {value}", spec.key());
-    }
-    cache::PATCH.wrap(&s)
+    let head = format!("theme {theme}\natom {}\n", atom.name());
+    cache::PATCH.wrap(&(head + &patch.to_text()))
 }
 
 /// The patch in a file's `text` and whose it is (a theme and an atom this
@@ -81,44 +64,17 @@ pub fn from_text(text: &str) -> Option<(&'static Theme, Atom, Patch)> {
     if version > cache::PATCH.version {
         return None;
     }
-    let mut lines = body.lines();
-    let theme = Theme::named(lines.next()?.strip_prefix("theme ")?)?;
-    let atom = Atom::named(lines.next()?.strip_prefix("atom ")?)?;
-    let engine = lines.next()?.strip_prefix("engine ")?;
-    let mut patch = theme.patch(atom);
-    if patch.engine.engine() != engine {
-        patch.engine = AnyParams::of_engine(engine)?;
-    }
-    for line in lines {
-        let Some((key, value)) = line.split_once(" = ") else {
-            continue;
-        };
-        let found = (0..patch.count()).find_map(|k| {
-            let spec = patch.spec(k)?;
-            (spec.key() == key).then_some((k, spec.kind))
-        });
-        let Some((k, kind)) = found else {
-            continue;
-        };
-        let v = match kind {
-            Kind::Range { .. } => value.parse().ok(),
-            Kind::Choice(options) => options.iter().position(|o| *o == value).map(|i| i as f32),
-            Kind::Toggle => match value {
-                "on" => Some(1.0),
-                "off" => Some(0.0),
-                _ => None,
-            },
-        };
-        if let Some(v) = v {
-            patch.set(k, v);
-        }
-    }
+    let (theme, body) = body.split_once('\n')?;
+    let (atom, patch) = body.split_once('\n')?;
+    let theme = Theme::named(theme.strip_prefix("theme ")?)?;
+    let atom = Atom::named(atom.strip_prefix("atom ")?)?;
+    let patch = Patch::from_text(theme.patch(atom), patch)?;
     Some((theme, atom, patch))
 }
 
 /// Every patch kept in `dir` (where each is now: while the data folder
-/// moves, one not moved yet is where it was), each as edited and kept.
-pub fn load_all(dir: &Path) -> Vec<Edited> {
+/// moves, one not moved yet is where it was), a book of them as kept.
+pub fn load_all(dir: &Path) -> PatchBook {
     let mut kept = Vec::new();
     for theme in THEMES {
         for atom in Atom::ALL {
@@ -130,16 +86,11 @@ pub fn load_all(dir: &Path) -> Vec<Edited> {
                 continue;
             };
             if t == theme && a == atom {
-                kept.push(Edited {
-                    theme: theme.name,
-                    atom,
-                    patch,
-                    kept: Some(patch),
-                });
+                kept.push((theme, atom, patch));
             }
         }
     }
-    kept
+    PatchBook::of_kept(kept)
 }
 
 /// Keeps `patch` as `theme`'s `atom`'s in `dir`, whole or not at all;
@@ -156,7 +107,7 @@ pub fn save(dir: &Path, theme: &str, atom: Atom, patch: Option<&Patch>) -> io::R
 }
 
 /// What the store's thread does next: a patch kept, or forgotten.
-type Job = (&'static str, Atom, Option<Patch>);
+type Job = (&'static Theme, Atom, Option<Patch>);
 
 /// Keeps and forgets patches in a folder, on a thread of its own: in the
 /// order asked, one at a time. A failure is said with
@@ -171,7 +122,7 @@ impl PatchStore {
         let (jobs, rx) = mpsc::channel::<Job>();
         thread::spawn(move || {
             for (theme, atom, patch) in rx {
-                if let Err(e) = save(&dir, theme, atom, patch.as_ref()) {
+                if let Err(e) = save(&dir, theme.name, atom, patch.as_ref()) {
                     let what = if patch.is_some() { "kept" } else { "forgotten" };
                     let text = format!("The patch of {} was not {what}: {e}", atom.name());
                     if !outbox.send(Action::Failed(text)) {
@@ -184,7 +135,7 @@ impl PatchStore {
     }
 
     /// Keeps `patch` as `theme`'s `atom`'s (`None`: forgets it).
-    pub fn keep(&self, theme: &'static str, atom: Atom, patch: Option<Patch>) {
+    pub fn keep(&self, theme: &'static Theme, atom: Atom, patch: Option<Patch>) {
         let _ = self.jobs.send((theme, atom, patch));
     }
 }
@@ -203,11 +154,9 @@ mod tests {
         pop.mono = true;
         pop.slide = 0.05;
         let mut chime = SPOOKY.patch(Atom::Chime);
-        chime.engine = AnyParams::of_engine("lofi").unwrap();
-        let wave = (0..chime.count())
-            .find(|&k| chime.spec(k).is_some_and(|s| s.key() == "chip wave"))
-            .unwrap();
-        chime.set(wave, 5.0);
+        chime.engine = jodel_synth::engines::AnyParams::of_engine("lofi").unwrap();
+        let wave = chime.find("chip wave").unwrap();
+        chime.set(wave.k, 5.0);
         [(&CLASSIC, Atom::Pop, pop), (&SPOOKY, Atom::Chime, chime)]
     }
 
@@ -248,13 +197,17 @@ mod tests {
         save(&old, t.name, a, Some(&pop)).unwrap();
         save(&old, u.name, b, Some(&chime)).unwrap();
         let found = |at: &Path| -> Vec<(&str, Atom, Patch)> {
-            load_all(at)
-                .into_iter()
-                .map(|e| {
-                    assert_eq!(e.kept, Some(e.patch));
-                    (e.theme, e.atom, e.patch)
-                })
-                .collect()
+            let book = load_all(at);
+            let mut kept = Vec::new();
+            for theme in THEMES {
+                for atom in Atom::ALL {
+                    if let Some(patch) = book.kept(theme, atom) {
+                        assert_eq!(book.patch(theme, atom), patch);
+                        kept.push((theme.name, atom, patch));
+                    }
+                }
+            }
+            kept
         };
         let both = vec![("classic", a, pop), ("spooky", b, chime)];
         assert_eq!(found(&old), both);

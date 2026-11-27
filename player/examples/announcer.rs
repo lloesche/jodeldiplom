@@ -29,7 +29,7 @@ use jodel_rhythm::stems::{Splitter, Stem};
 use jodel_rhythm::{Analysis, Method, Region};
 use jodel_synth::Synth;
 use jodeldiplom::core::RhythmRecipe;
-use jodeldiplom::sfx::conductor::{Called, Clock, Conductor, Diploma, Event};
+use jodeldiplom::sfx::conductor::{Called, Clock, Conductor, Diploma, Event, Tempo};
 use jodeldiplom::theme::{Theme, CLASSIC, SPOOKY};
 use jodeldiplom::tiers::Tier;
 use jodeldiplom::work::rhythm::analyze_file;
@@ -86,6 +86,7 @@ fn play(song: &Song, rate: u32, cues: &[(u64, Cue)], seconds: f64) -> Vec<f32> {
     let frames = (seconds * f64::from(rate)) as usize / PERIOD * PERIOD;
     let mut out = vec![0.0f32; 2 * frames];
     let mut next = 0;
+    let mut tempo = Tempo::default();
     for period in out.as_chunks_mut::<{ 2 * PERIOD }>().0 {
         let now = synth.frame();
         let mut ahead = [None; Clock::LINES];
@@ -95,7 +96,7 @@ fn play(song: &Song, rate: u32, cues: &[(u64, Cue)], seconds: f64) -> Vec<f32> {
         }
         let t = song.offset + now as f64 / f64::from(rate);
         let clock = Clock::from_analysis(song.analysis, t, now, f64::from(rate), ahead);
-        c.set_clock(&mut synth, clock);
+        tempo.time(&mut c, &mut synth, clock);
         while next < cues.len() && cues[next].0 < now + PERIOD as u64 {
             let (at, cue) = cues[next];
             match cue {

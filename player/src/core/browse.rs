@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::browser::{self, EntryKind};
 use crate::core::keymap::Op;
 use crate::core::{
-    preview, queue, Effect, Filter, Placing, Screen, Search, Side, State, TYPE_AHEAD_MS,
+    preview, queue, Effect, Filter, ListKind, Placing, Screen, Search, Side, State, TYPE_AHEAD_MS,
 };
 
 /// One row of the browser side of the list.
@@ -81,29 +81,29 @@ fn reselect(state: &mut State, path: Option<PathBuf>) {
 /// The cursor and the first row shown of `side`, where it is a list (the
 /// browser or the queue), to be changed.
 fn view_mut(state: &mut State, side: Side) -> Option<(&mut usize, &mut usize)> {
-    match side {
-        Side::Browser => Some((&mut state.browser.cursor, &mut state.browser.scroll)),
-        Side::Queue => Some((&mut state.queue.cursor, &mut state.queue.scroll)),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => None,
+    match side.list() {
+        Some(ListKind::Browser) => Some((&mut state.browser.cursor, &mut state.browser.scroll)),
+        Some(ListKind::Queue) => Some((&mut state.queue.cursor, &mut state.queue.scroll)),
+        None => None,
     }
 }
 
 /// How many rows `side` has (none, for a tab that is no list).
 pub fn list_len(state: &State, side: Side) -> usize {
-    match side {
-        Side::Browser => browser_rows(state).len(),
-        Side::Queue => state.queue.paths.len(),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => 0,
+    match side.list() {
+        Some(ListKind::Browser) => browser_rows(state).len(),
+        Some(ListKind::Queue) => state.queue.paths.len(),
+        None => 0,
     }
 }
 
 /// The selected row and the first row shown of `side` (0 and 0, for a tab
 /// that is no list).
 pub fn list_cursor(state: &State, side: Side) -> (usize, usize) {
-    match side {
-        Side::Browser => (state.browser.cursor, state.browser.scroll),
-        Side::Queue => (state.queue.cursor, state.queue.scroll),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => (0, 0),
+    match side.list() {
+        Some(ListKind::Browser) => (state.browser.cursor, state.browser.scroll),
+        Some(ListKind::Queue) => (state.queue.cursor, state.queue.scroll),
+        None => (0, 0),
     }
 }
 
@@ -304,8 +304,8 @@ fn type_ahead(state: &mut State, c: char) {
     let prefix = if cycling { first.to_string() } else { typed };
     // The names as the list shows them (the title tag once it is read).
     let side = state.side;
-    let names: Vec<Option<String>> = match side {
-        Side::Browser => browser_rows(state)
+    let names: Vec<Option<String>> = match side.list() {
+        Some(ListKind::Browser) => browser_rows(state)
             .iter()
             .map(|&row| {
                 row_entry(state, row)
@@ -313,13 +313,13 @@ fn type_ahead(state: &mut State, c: char) {
                     .map(|e| shown_name(state, e).to_lowercase())
             })
             .collect(),
-        Side::Queue => state
+        Some(ListKind::Queue) => state
             .queue
             .paths
             .iter()
             .map(|path| Some(shown_title(state, path).to_lowercase()))
             .collect(),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => Vec::new(),
+        None => Vec::new(),
     };
     if names.is_empty() {
         return;

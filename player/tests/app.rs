@@ -370,7 +370,7 @@ fn the_demo_sings_with_no_microphone() {
     assert_eq!((tally.hit_words, tally.scored_words), (4, 4), "{tally:?}");
     assert!(tally.demo && !singing.heard.is_empty());
     // Let go of: nothing heard after.
-    app.dispatch(Action::DemoLetGo);
+    app.dispatch(Action::Released(jodeldiplom::core::keymap::Op::KaraokeDemo));
     let last = app.state.karaoke.singing.last_heard();
     draw_until(&mut app, from + 5.5);
     assert_eq!(app.state.karaoke.singing.last_heard(), last);

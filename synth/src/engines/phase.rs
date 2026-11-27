@@ -21,7 +21,7 @@
 //! u32 phases as in [`crate::dsp`].
 
 use crate::dsp::{self, Rate};
-use crate::params::{field, pick, when, Param};
+use crate::params::{field, options, pick, when, Param};
 use crate::{Engine, NoteOn, VoiceMod};
 
 /// A wave.
@@ -77,48 +77,38 @@ impl Default for Params {
     }
 }
 
-/// The waves and the lines in their order, and their names; the second
-/// wave the same with "the same" first.
-const WAVES: [Wave; 7] = [
-    Wave::Saw,
-    Wave::Square,
-    Wave::Pulse,
-    Wave::SawPulse,
-    Wave::ResoSaw,
-    Wave::ResoTriangle,
-    Wave::ResoTrapezoid,
-];
-const WAVE_NAMES: [&str; 7] = [
-    "saw",
-    "square",
-    "pulse",
-    "saw pulse",
-    "reso saw",
-    "reso triangle",
-    "reso trapezoid",
-];
-const SECOND: [Option<Wave>; 8] = [
-    None,
-    Some(Wave::Saw),
-    Some(Wave::Square),
-    Some(Wave::Pulse),
-    Some(Wave::SawPulse),
-    Some(Wave::ResoSaw),
-    Some(Wave::ResoTriangle),
-    Some(Wave::ResoTrapezoid),
-];
-const SECOND_NAMES: [&str; 8] = [
-    "the same",
-    "saw",
-    "square",
-    "pulse",
-    "saw pulse",
-    "reso saw",
-    "reso triangle",
-    "reso trapezoid",
-];
-const LINES: [Line; 3] = [Line::Single, Line::Mix, Line::Ring];
-const LINE_NAMES: [&str; 3] = ["single", "mix", "ring"];
+options! {
+    /// The waves and the lines in their order, and their names; the second
+    /// wave the same with "the same" first.
+    WAVES, WAVE_NAMES: Wave = [
+        Wave::Saw => "saw",
+        Wave::Square => "square",
+        Wave::Pulse => "pulse",
+        Wave::SawPulse => "saw pulse",
+        Wave::ResoSaw => "reso saw",
+        Wave::ResoTriangle => "reso triangle",
+        Wave::ResoTrapezoid => "reso trapezoid",
+    ]
+}
+options! {
+    SECOND, SECOND_NAMES: Option<Wave> = [
+        None => "the same",
+        Some(Wave::Saw) => "saw",
+        Some(Wave::Square) => "square",
+        Some(Wave::Pulse) => "pulse",
+        Some(Wave::SawPulse) => "saw pulse",
+        Some(Wave::ResoSaw) => "reso saw",
+        Some(Wave::ResoTriangle) => "reso triangle",
+        Some(Wave::ResoTrapezoid) => "reso trapezoid",
+    ]
+}
+options! {
+    LINES, LINE_NAMES: Line = [
+        Line::Single => "single",
+        Line::Mix => "mix",
+        Line::Ring => "ring",
+    ]
+}
 
 /// PHASE's parameters as data, with their ranges.
 pub const PARAMS: &[Param<Params>] = &[

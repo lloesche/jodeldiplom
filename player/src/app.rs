@@ -421,7 +421,7 @@ impl App {
         if let Some(data) = &options.data {
             app.state.karaoke.bests = crate::store::scores::load(&data.scores());
             // The Synth tab's patches kept, over the built-in ones.
-            app.state.synth.patches = crate::store::patches::load_all(&data.patches());
+            app.state.patches = crate::store::patches::load_all(&data.patches());
             // The Shader tab's looks kept.
             app.state.shader.kept = crate::store::looks::load_all(&data.looks());
         }

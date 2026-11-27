@@ -9,8 +9,10 @@
 //! open); the mixer thread puts them on the synth's frames as it takes
 //! them, and renders the synth (see `live.rs`: one late by more than
 //! [`LATE`] is dropped, a flush of the output calls off what waits on its
-//! frames). The synth is heard at the device's rate: the caller makes one
-//! again when the device opens at another.
+//! frames). A patch changed as it plays goes by a queue of its own, taken
+//! first each chunk ([`LiveCommands::patch`]). The synth is heard at the
+//! device's rate: the caller makes one again when the device opens at
+//! another.
 //!
 //! The desk's device plays all along in real time (see [`Mixer`]), so a
 //! sound on the desk's frames plays whatever the outputs do (a song over,
@@ -25,12 +27,12 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use jodel_synth::{Command, Commands, Synth};
+use jodel_synth::{Command, Commands, Patch, PatchId, Synth};
 
 use super::input::ask;
-use super::live::{On, Sent, COMMANDS};
+use super::live::{Changed, On, Sent, COMMANDS, PATCHES};
 use super::{Fader, Mixer, Msg, Strip};
-use crate::spsc::{Producer, Spsc};
+use crate::spsc::{Consumer, Producer, Spsc};
 
 /// How late a live synth's note may start, past its frame.
 pub const LATE: Duration = Duration::from_millis(80);
@@ -69,9 +71,17 @@ impl Counts {
 pub struct Effects {
     tx: Sender<Msg>,
     counts: Arc<Counts>,
-    /// The commands' way to the live synth (one sender at a time).
-    live: Mutex<Producer<Sent>>,
+    /// The commands' and the patches' ways to the live synth (one sender
+    /// at a time).
+    live: Mutex<Senders>,
     strip: Strip,
+}
+
+/// The two queues to the live synth: its commands, and the patches
+/// changed.
+struct Senders {
+    commands: Producer<Sent>,
+    patches: Producer<Changed>,
 }
 
 /// Where a planner's commands go to the live synth ([`Effects::commands`]):
@@ -79,14 +89,27 @@ pub struct Effects {
 /// while it lives (another sender waits for it): keep it for one planning
 /// step, as long as an event or a clock takes, never across a wait.
 pub struct LiveCommands<'a> {
-    tx: MutexGuard<'a, Producer<Sent>>,
+    tx: MutexGuard<'a, Senders>,
     on: On,
     counts: &'a Counts,
 }
 
+impl LiveCommands<'_> {
+    /// `patch` is `to` from the next chunk the mixer takes on (an edit:
+    /// [`Synth::set_patch`]), for the notes waiting in the synth already
+    /// too; whether it was taken (not when its queue is full: counted).
+    pub fn patch(&mut self, patch: PatchId, to: Patch) -> bool {
+        let taken = self.tx.patches.push((patch, to));
+        if !taken {
+            self.counts.miss();
+        }
+        taken
+    }
+}
+
 impl Commands for LiveCommands<'_> {
     fn send(&mut self, c: Command) -> bool {
-        let sent = self.tx.push(Sent {
+        let sent = self.tx.commands.push(Sent {
             command: c,
             on: self.on,
         });
@@ -95,6 +118,15 @@ impl Commands for LiveCommands<'_> {
         }
         sent
     }
+}
+
+/// A new queue of `capacity` values, both its ends.
+fn ends<T: Copy>(capacity: usize) -> (Producer<T>, Consumer<T>) {
+    let q = Spsc::new(capacity);
+    (
+        q.producer().expect("a new queue"),
+        q.consumer().expect("a new queue"),
+    )
 }
 
 impl Mixer {
@@ -107,14 +139,15 @@ impl Mixer {
             "a strip of another mixer"
         );
         let counts = Arc::new(Counts::default());
-        let live = Spsc::new(COMMANDS);
-        let (tx, rx) = (live.producer(), live.consumer());
-        let (tx, rx) = (tx.expect("a new queue"), rx.expect("a new queue"));
-        let _ = self.tx.send(Msg::Effects(strip.id(), counts.clone(), rx));
+        let (commands, rx) = ends(COMMANDS);
+        let (patches, patches_rx) = ends(PATCHES);
+        let _ = self
+            .tx
+            .send(Msg::Effects(strip.id(), counts.clone(), rx, patches_rx));
         Effects {
             tx: self.tx.clone(),
             counts,
-            live: Mutex::new(tx),
+            live: Mutex::new(Senders { commands, patches }),
             strip: strip.clone(),
         }
     }

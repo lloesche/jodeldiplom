@@ -22,8 +22,9 @@ pub mod signature;
 mod verdict;
 
 pub use reveal::{
-    ease_out, signed, unrolled, Beat, Motion, Reveal, Shown, Side, DATE_FROM, DATING, DROP,
-    GRADE_WRITE, SIGNING, STAMP_DOWN, STREAK_WRITE, UNROLL, WORDS_FILL,
+    ease_out, ease_out_pace, signed, signing, unrolled, unrolling, Beat, Motion, Reveal, Shown,
+    Side, DATE_FROM, DATING, DROP, GRADE_WRITE, SIGNING, STAMP_DOWN, STREAK_WRITE, UNROLL,
+    WORDS_FILL,
 };
 pub use verdict::{verdict_words, Medal, SongResult, Verdict};
 

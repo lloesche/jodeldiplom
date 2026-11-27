@@ -30,6 +30,7 @@ pub mod lag;
 pub mod lanes;
 pub mod lyric_edit;
 pub mod mic;
+pub mod patch_book;
 pub mod prep;
 pub mod preview;
 mod queue;
@@ -219,13 +220,29 @@ impl Side {
         Side::Shader,
     ];
 
-    /// Whether it takes the whole width (no right column).
-    pub fn wide(self) -> bool {
-        matches!(
-            self,
-            Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader
-        )
+    /// The list it is, if it is one (the browser, the queue); the other
+    /// tabs are none, each taking the whole width.
+    pub fn list(self) -> Option<ListKind> {
+        match self {
+            Side::Browser => Some(ListKind::Browser),
+            Side::Queue => Some(ListKind::Queue),
+            Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => None,
+        }
     }
+
+    /// Whether it takes the whole width (no right column): no list.
+    pub fn wide(self) -> bool {
+        self.list().is_none()
+    }
+}
+
+/// The tabs that are lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListKind {
+    /// The file browser.
+    Browser,
+    /// The play queue.
+    Queue,
 }
 
 /// The file browser's state.
@@ -789,8 +806,12 @@ pub struct State {
     pub karaoke: karaoke::KaraokeState,
     /// The Mixer tab: the desk's settings and what it shows.
     pub desk: desk::DeskState,
-    /// The Synth tab: the sound selected, the patches edited and kept.
+    /// The Synth tab: the sound selected, its key, tempo and theme, the
+    /// keys held.
     pub synth: synth_tab::SynthTab,
+    /// The game's sounds' patches edited on the Synth tab and kept in the
+    /// data folder, every theme's: what the effects play.
+    pub patches: patch_book::PatchBook,
     /// The Shader tab: the look edited, the presets kept.
     pub shader: shader_tab::ShaderTab,
     /// The microphone as last read (once a drawn frame), while one is
@@ -879,6 +900,7 @@ impl State {
             karaoke: karaoke::KaraokeState::default(),
             desk,
             synth: synth_tab::SynthTab::default(),
+            patches: patch_book::PatchBook::default(),
             shader: shader_tab::ShaderTab::default(),
             mic: None,
             drawn_heard: None,
@@ -924,8 +946,9 @@ impl State {
 
     /// The karaoke game's theme in force now: what its tiers' colours, its
     /// effects' looks, the backdrop's grade and its sounds' patches are
-    /// read from, frame by frame (the settings' theme; the Synth tab
-    /// compares one of its own: [`crate::core::synth_tab::theme`]).
+    /// read from, frame by frame (the settings' theme; the Synth tab plays
+    /// its own sounds in the one it compares,
+    /// [`crate::core::synth_tab::theme`], never the game's).
     pub fn theme(&self) -> &'static crate::theme::Theme {
         self.config.karaoke_theme
     }

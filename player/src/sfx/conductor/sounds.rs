@@ -39,18 +39,14 @@
 //! - [`found`]: a step of a song's preparation found something: a soft
 //!   pluck, a glint an octave over it.
 
-use jodel_synth::{Command, Commands, NoteOn, Tag};
+use jodel_synth::{Command, Commands, Cue, NoteOn, Tag};
 
 use super::key::{Pentatonic, DEGREES};
 use super::ladder::Step;
 use super::layers::{chime_brass, chime_has, tier_share, Chime, Streak};
-use super::palette::{Atom, Palette, BRASS, COINS, PADS, SLAM};
+use super::palette::{self, Atom, BRASS, COINS, SLAM};
+use super::tags::{PAYOUT, RISER, SHIMMER, STREAK};
 use crate::tiers::Tier;
-
-/// The tags the notes go with besides none (a sound playing out): the
-/// payout, and the glitter over the top, both called off with the streak.
-pub(super) const PAYOUT: Tag = Tag(1);
-pub(super) const STREAK: Tag = Tag(2);
 
 /// How long the jackpot and the payout are, beats (bars of `bar` beats),
 /// and the beat the payout's whoosh leads into it with: what they ask
@@ -85,26 +81,37 @@ const HIGH_NOTES: [f32; 4] = [96.0, 103.0, 108.0, 115.0];
 /// The degrees of the key the six clinks ring on, in turn.
 const CLINK_DEGREES: [i32; 6] = [0, 2, 4, 1, 3, 5];
 
-/// A note to send: its frame, atom, pitch (MIDI), velocity, pan, shape
-/// (its own: a sung vowel), length (none: the patch's gate) and tag.
+/// When a note is: on a frame (a game's), or seconds from the score's
+/// origin (a sheet's sound's, [`Origin`]).
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Note {
-    at: u64,
+enum Time {
+    Frame(u64),
+    Secs(f64),
+}
+
+/// A note to send: when, its atom, pitch (MIDI), velocity, pan, shape
+/// (its own: a sung vowel), length (none: the patch's gate), tag, its
+/// glide's time (0: the patch's) and its mono patch's line.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Note {
+    at: Time,
     atom: Atom,
     pitch: f32,
     velocity: f32,
     pan: f32,
     shape: f32,
-    length: Option<u64>,
+    length: Option<Time>,
     tag: Tag,
+    glide: Option<f32>,
+    line: u8,
 }
 
 impl Note {
-    /// `atom` on `pitch` at `at`: full, in the middle, as the patch holds
-    /// it, a sound of its own.
-    pub(super) fn new(at: u64, atom: Atom, pitch: f32) -> Note {
+    /// `atom` on `pitch` at frame `at`: full, in the middle, as the patch
+    /// holds it, a sound of its own.
+    pub(crate) fn new(at: u64, atom: Atom, pitch: f32) -> Note {
         Note {
-            at,
+            at: Time::Frame(at),
             atom,
             pitch,
             velocity: 1.0,
@@ -112,10 +119,20 @@ impl Note {
             shape: 0.0,
             length: None,
             tag: Tag::NONE,
+            glide: None,
+            line: 0,
         }
     }
 
-    pub(super) fn vel(self, velocity: f32) -> Note {
+    /// The same `t` seconds from the score's origin ([`Origin::at`]).
+    pub(super) fn at_secs(t: f64, atom: Atom, pitch: f32) -> Note {
+        Note {
+            at: Time::Secs(t),
+            ..Note::new(0, atom, pitch)
+        }
+    }
+
+    pub(crate) fn vel(self, velocity: f32) -> Note {
         Note { velocity, ..self }
     }
 
@@ -127,67 +144,126 @@ impl Note {
         Note { shape, ..self }
     }
 
-    pub(super) fn hold(self, frames: u64) -> Note {
+    pub(crate) fn hold(self, frames: u64) -> Note {
         Note {
-            length: Some(frames),
+            length: Some(Time::Frame(frames)),
             ..self
         }
     }
 
-    fn tag(self, tag: Tag) -> Note {
+    /// Held `seconds` (a frame at least).
+    pub(super) fn hold_secs(self, seconds: f64) -> Note {
+        Note {
+            length: Some(Time::Secs(seconds)),
+            ..self
+        }
+    }
+
+    pub(crate) fn tag(self, tag: Tag) -> Note {
         Note { tag, ..self }
+    }
+
+    /// Its pitch's glide taking `seconds` (as long as what it follows).
+    pub(super) fn glide(self, seconds: f64) -> Note {
+        Note {
+            glide: Some(seconds as f32),
+            ..self
+        }
+    }
+
+    /// On line `line` of its mono patch (a voice each).
+    fn line(self, line: u8) -> Note {
+        Note { line, ..self }
     }
 }
 
+/// Where a score's notes are from: frames added to theirs, a gain their
+/// velocities are taken by, a pan added to theirs; none of it for the
+/// game's own ([`Origin::NONE`]), a sheet's sound's from where it plays.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Origin {
+    pub(super) at: u64,
+    pub(super) gain: f32,
+    pub(super) pan: f32,
+}
+
+impl Origin {
+    /// None: the notes as they are.
+    pub(super) const NONE: Origin = Origin {
+        at: 0,
+        gain: 1.0,
+        pan: 0.0,
+    };
+}
+
 /// What the sounds are written with: where the commands go (and the count
-/// of those not taken), the patches, the key (if known), frames a beat,
-/// beats a bar, frames a second, the variations' seed.
-pub(super) struct Score<'a> {
+/// of those not taken), the theme whose patches play (its place), the key
+/// (if known), frames a beat, beats a bar, frames a second, the
+/// variations' seed, and where the notes are from.
+pub(crate) struct Score<'a> {
     pub(super) out: &'a mut dyn Commands,
     pub(super) dropped: &'a mut u64,
-    pub(super) p: &'a Palette,
+    pub(super) theme: usize,
     pub(super) key: Option<Pentatonic>,
     pub(super) beat: f64,
     pub(super) bar: u32,
     pub(super) rate: f64,
     pub(super) seed: &'a mut u32,
+    pub(super) origin: Origin,
 }
 
 impl Score<'_> {
-    /// `c` sent, counted if it was not taken.
-    pub(super) fn send(&mut self, c: Command) {
-        if !self.out.send(c) {
+    /// `c` sent, counted if it was not taken; whether it was.
+    pub(super) fn send(&mut self, c: Command) -> bool {
+        let taken = self.out.send(c);
+        if !taken {
             *self.dropped += 1;
+        }
+        taken
+    }
+
+    /// `t` in frames from the origin.
+    fn frames(&self, t: Time) -> u64 {
+        match t {
+            Time::Frame(f) => f,
+            Time::Secs(s) => self.secs(s),
         }
     }
 
-    /// `n` sent, its seed the next.
-    pub(super) fn play(&mut self, n: Note) {
+    /// `n` sent, its seed the next, from the origin.
+    pub(crate) fn play(&mut self, n: Note) {
         let seed = jodel_dsp::xorshift32(self.seed);
-        let patch = self.p[n.atom];
-        self.send(Command::Note {
-            frame: n.at,
-            patch,
-            note: NoteOn {
-                note: n.pitch,
-                velocity: n.velocity.clamp(0.0, 1.0),
-                seed,
-                pan: n.pan.clamp(-1.0, 1.0),
-                shape: n.shape.clamp(-1.0, 1.0),
-            },
-            length: n.length,
+        let o = self.origin;
+        let length = n.length.map(|l| match l {
+            Time::Frame(f) => f,
+            Time::Secs(s) => self.secs(s).max(1),
+        });
+        self.send(Command::At {
+            frame: o.at + self.frames(n.at),
             tag: n.tag,
+            cue: Cue::Note {
+                patch: palette::id(self.theme, n.atom),
+                note: NoteOn {
+                    note: n.pitch,
+                    velocity: (n.velocity * o.gain).clamp(0.0, 1.0),
+                    seed,
+                    pan: (n.pan + o.pan).clamp(-1.0, 1.0),
+                    shape: n.shape.clamp(-1.0, 1.0),
+                    glide: n.glide,
+                    line: n.line,
+                },
+                length,
+            },
         });
     }
 
-    /// `atom`'s held voices let go at `at`.
-    fn release(&mut self, at: u64, atom: Atom) {
-        let patch = self.p[atom];
-        self.send(Command::Release {
+    /// The held voices of `tag` let go at `at` (whatever their patch: the
+    /// theme's they were played in).
+    pub(crate) fn release(&mut self, at: u64, tag: Tag) {
+        self.send(Command::At {
             frame: at,
-            patch,
-            note: None,
-            tag: Tag::NONE,
+            tag,
+            cue: Cue::Release,
         });
     }
 
@@ -221,18 +297,19 @@ impl Score<'_> {
 
     /// A number from the seed, 0 to 1.
     pub(super) fn unit(&mut self) -> f32 {
-        unit(jodel_dsp::xorshift32(self.seed))
+        jodel_synth::dsp::unit(self.seed)
+    }
+
+    /// The next seed of its own (a sound's part with a stream of its own:
+    /// a hand's letters).
+    pub(super) fn draw(&mut self) -> u32 {
+        jodel_dsp::xorshift32(self.seed)
     }
 
     /// A pan anywhere in `-width` to `width`.
-    fn scatter(&mut self, width: f32) -> f32 {
+    pub(super) fn scatter(&mut self, width: f32) -> f32 {
         (2.0 * self.unit() - 1.0) * width
     }
-}
-
-/// A seed as a number from 0 to 1.
-fn unit(seed: u32) -> f32 {
-    (seed >> 8) as f32 / (1u32 << 24) as f32
 }
 
 /// A word's bubble at `at`, on the ladder's `step`, `share` of the rungs
@@ -619,21 +696,19 @@ pub(super) fn jackpot(s: &mut Score, at: u64) {
 /// most [`RISE_WAIT`] beats (if no rung comes it ends by itself).
 pub(super) fn riser(s: &mut Score, at: u64) {
     let hold = s.beats(RISE_WAIT);
-    s.play(Note::new(at, Atom::Riser, 84.0).hold(hold));
+    s.play(Note::new(at, Atom::Riser, 84.0).hold(hold).tag(RISER));
 }
 
 /// The riser let go a breath before the hit at `hit` it led into.
 pub(super) fn riser_lands(s: &mut Score, hit: u64) {
     let breath = s.secs(BREATH);
-    s.release(hit.saturating_sub(breath), Atom::Riser);
+    s.release(hit.saturating_sub(breath), RISER);
 }
 
 /// The held sounds let go at `at`: the riser and the shimmer.
 pub(super) fn let_go(s: &mut Score, at: u64) {
-    s.release(at, Atom::Riser);
-    for atom in PADS {
-        s.release(at, atom);
-    }
+    s.release(at, RISER);
+    s.release(at, SHIMMER);
 }
 
 /// The shimmer pad from `at` (the tonic and the fifth high up; none with
@@ -641,12 +716,13 @@ pub(super) fn let_go(s: &mut Score, at: u64) {
 /// voices take the note again where they are, so it carries on).
 pub(super) fn shimmer(s: &mut Score, at: u64) {
     let hold = s.beats(SHIMMER_BARS * f64::from(s.bar));
-    for (k, atom) in PADS.into_iter().enumerate() {
-        let Some(note) = s.tonal(2 * k as i32, PAD_HOME) else {
+    for k in 0..2u8 {
+        let Some(note) = s.tonal(2 * i32::from(k), PAD_HOME) else {
             return;
         };
         let pan = if k == 0 { -0.3 } else { 0.3 };
-        s.play(Note::new(at, atom, note).vel(0.8).pan(pan).hold(hold));
+        let pad = Note::new(at, Atom::Pad, note).line(k).tag(SHIMMER);
+        s.play(pad.vel(0.8).pan(pan).hold(hold));
     }
 }
 

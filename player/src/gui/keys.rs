@@ -5,7 +5,6 @@
 use iced::keyboard::{key::Named, Key as IcedKey, Modifiers};
 
 use crate::core::keymap::{self, Key, KeyCode, Op};
-use crate::core::State;
 
 /// An iced key as the core's [`Key`], with `modifiers` held.
 pub fn key(key: &IcedKey, modifiers: Modifiers) -> Option<Key> {
@@ -58,32 +57,12 @@ pub fn pressed(plain: &IcedKey, logical: &IcedKey, modifiers: Modifiers) -> Opti
     })
 }
 
-/// Whether `key` let go of is the demo key, held
-/// ([`crate::core::singing::Demo`]): the key alone, whatever is held with
-/// it now or shows over the mode.
-pub fn lets_go_of_demo(state: &State, key: &IcedKey) -> bool {
-    let demo = |k: Key| {
-        keymap::KEYMAP
-            .iter()
-            .any(|b| b.op == Op::KaraokeDemo && b.keys.contains(&k))
-    };
-    state.karaoke.demo.held() && self::key(key, Modifiers::empty()).is_some_and(demo)
-}
-
-/// The Synth tab's keyboard key `key` let go of is, while one is held
-/// there: its place ([`Op::SynthNote`]), whatever is held with it now.
-pub fn lets_go_of_synth_note(state: &State, key: &IcedKey) -> Option<i8> {
-    if state.synth.held.is_empty() {
-        return None;
-    }
-    let key = self::key(key, Modifiers::empty())?;
-    keymap::KEYMAP
-        .iter()
-        .filter(|b| b.context == keymap::Context::Synth && b.keys.contains(&key))
-        .find_map(|b| match b.op {
-            Op::SynthNote(k) => Some(k),
-            _ => None,
-        })
+/// What `key` let go of ends ([`keymap::released`]): the ops of the held
+/// rows it is a key of (the demo's, a key of the Synth tab's keyboard),
+/// the key alone, whatever is held with it now or shows; each is let go
+/// of by [`crate::core::Action::Released`].
+pub fn released(key: &IcedKey) -> Vec<Op> {
+    self::key(key, Modifiers::empty()).map_or_else(Vec::new, |k| keymap::released(k).collect())
 }
 
 /// The key's name as the setup screen takes it: one character, `"enter"`
