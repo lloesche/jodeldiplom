@@ -19,6 +19,7 @@
 //! | [`COVER_SONG`] | which cover taken apart is a song's (`covers/songs/*.txt`) |
 //! | [`COVER_ALBUM`] | an album's covers taken apart, with their perceptual hashes (`covers/albums/*.txt`) |
 //! | [`PATCH`] | a game sound's patch kept on the Synth tab (`patches/*.txt`) |
+//! | [`STORY_PLAN`] | a song's story planned for the karaoke (`stories/*.txt`) |
 //!
 //! A text file starts with a header naming its schema and the version of
 //! it the file was written in, and the player that wrote it (for the
@@ -51,7 +52,9 @@
 //! timing by another than the one the player times with now is timed
 //! again: `crate::work::lyrics::WordTimer::maker`), a cover taken apart on its
 //! models and the way it is taken apart (`crate::work::cover::VERSION`, in the
-//! file, compared when it is read). That is apart from the schema: a
+//! file, compared when it is read), a story's plan on its language model and
+//! what it was asked (`crate::work::story::VERSION` and the prompt's hash, in
+//! the file, compared when it is read). That is apart from the schema: a
 //! better aligner raises its own version (`jodel_lyrics::VERSION`,
 //! `jodel_lyrics::speech::maker`), not the schema's.
 
@@ -202,8 +205,17 @@ pub const PATCH: Schema = Schema {
     user_data: true,
 };
 
+/// A song's story planned for the karaoke ([`crate::work::story`]): what
+/// made it and what it was asked (compared when it is read), then the
+/// plan as JSON, or why the song has none.
+pub const STORY_PLAN: Schema = Schema {
+    name: "story-plan",
+    version: 1,
+    user_data: false,
+};
+
 /// Every schema.
-pub const ALL: [Schema; 16] = [
+pub const ALL: [Schema; 17] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -220,6 +232,7 @@ pub const ALL: [Schema; 16] = [
     COVER_SONG,
     COVER_ALBUM,
     PATCH,
+    STORY_PLAN,
 ];
 
 /// The first word of a header.
@@ -289,6 +302,19 @@ pub fn identity(path: &std::path::Path) -> Option<String> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_nanos());
     Some(format!("{} {} {modified}", path.display(), meta.len()))
+}
+
+/// The file in `dir` that keeps `what` of the song at `path` (whether or
+/// not it is there): named by the hash of the song's [`identity`] and
+/// `what`, so a file changed is looked up afresh; `None` when the song
+/// cannot be read.
+pub fn file_for(
+    dir: &std::path::Path,
+    path: &std::path::Path,
+    what: &str,
+) -> Option<std::path::PathBuf> {
+    let key = format!("{} {what}", identity(path)?);
+    Some(dir.join(format!("{}.txt", name(&key))))
 }
 
 /// An [`identity`]'s parts: the path, the size and the modification time.

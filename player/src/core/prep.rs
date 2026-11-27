@@ -18,8 +18,8 @@
 //! - the cover once taken apart ([`Heard::Cover`]: its layers, as they
 //!   were made);
 //! - and, for what is to come, a story of the song written as a language
-//!   model writes it and its scenes as an image model draws them
-//!   ([`Heard::Story`]): nothing tells them yet.
+//!   model writes it ([`crate::work::story`]) and its scenes as an image
+//!   model draws them ([`Heard::Story`]): nothing draws them yet.
 //!
 //! Each result found is counted ([`Prep::found`]), so a sound can follow
 //! it ([`crate::sfx`]).
@@ -270,9 +270,10 @@ impl PartialEq for CoverCut {
 
 /// The seam for a story of the song ([`Heard::Story`]): written by a
 /// language model and told as it writes it, its scenes drawn by an image
-/// model and told step by step. Nothing in the player tells them yet; a
-/// worker that writes or draws them sends them on its outbox, and the
-/// preparation view shows them ([`crate::view::prep::StoryView`]).
+/// model and told step by step. The plan's job tells its words
+/// ([`crate::work::story`]); nothing draws the scenes yet. A worker that
+/// writes or draws them sends them on its outbox, and the preparation
+/// view shows them ([`crate::view::prep::StoryView`]).
 #[derive(Clone)]
 pub enum Story {
     /// The next words of the story, as the model writes them.

@@ -6,8 +6,10 @@
 //!   lyrics ([`lyrics`]), the covers taken apart for the karaoke
 //!   background ([`cover`]) and the cover art decoded ([`art`]), each
 //!   song's loudness ([`loudness`]) and the original singer's phrases
-//!   ([`shine`]) as the karaoke sings it, and the files the setup fetches
-//!   ([`download`]). Each keeps what it makes in the data folder.
+//!   ([`shine`]) as the karaoke sings it, the files the setup fetches
+//!   ([`download`]), and the karaoke story's plan as the language model
+//!   writes it ([`story`], a unit of work for whoever runs the model).
+//!   Each keeps what it makes in the data folder.
 //! - What they are built of: a [`Queue`] of work their threads wait on,
 //!   the two [`Lanes`] a worker is asked in (wanted now, and to get ready
 //!   ahead), and a [`Job`] that runs once on a thread of its own, tells
@@ -22,6 +24,7 @@ pub mod lyrics;
 pub mod outbox;
 pub mod rhythm;
 pub mod shine;
+pub mod story;
 #[cfg(test)]
 pub(crate) mod told;
 

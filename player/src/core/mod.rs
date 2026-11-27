@@ -39,6 +39,7 @@ pub mod shine;
 pub mod singing;
 pub mod sliders;
 pub mod stems;
+pub mod story;
 pub mod sync;
 pub mod synth_tab;
 pub mod text;

@@ -88,24 +88,21 @@ pub fn beside(analyses: &Path) -> PathBuf {
     analyses.parent().unwrap_or(analyses).join("loudness")
 }
 
-/// The file of `path` in `dir` (whether or not it is there); `None` when
-/// the song cannot be read.
-pub fn file_for(dir: &Path, path: &Path) -> Option<PathBuf> {
-    let key = format!("{} loudness", crate::store::cache::identity(path)?);
-    Some(dir.join(format!("{}.txt", crate::store::cache::name(&key))))
-}
+/// What the files keep ([`crate::store::cache::file_for`]).
+const KEPT: &str = "loudness";
 
 /// The loudness kept for `path` in `dir`, where there is one of this
 /// version.
 pub fn load(dir: &Path, path: &Path) -> Option<Measured> {
-    let file = crate::store::mover::locate(&file_for(dir, path)?);
+    let file = crate::store::mover::locate(&crate::store::cache::file_for(dir, path, KEPT)?);
     from_text(&std::fs::read_to_string(file).ok()?)
 }
 
 /// `measured` kept for `path` in `dir`, durably.
 pub fn store(dir: &Path, path: &Path, measured: &Measured) -> std::io::Result<()> {
     let dir = crate::store::mover::current(dir);
-    let file = file_for(&dir, path).ok_or_else(|| std::io::Error::other("the song is gone"))?;
+    let file = crate::store::cache::file_for(&dir, path, KEPT)
+        .ok_or_else(|| std::io::Error::other("the song is gone"))?;
     durable::write_atomic(&file, to_text(measured).as_bytes())
 }
 

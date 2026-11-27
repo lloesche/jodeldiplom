@@ -5,7 +5,8 @@
 //! moves it by itself, what it goes well with), every driver (what it is,
 //! how fast it moves) and every preset (its id, name, tags and stack), as
 //! JSON ([`json`]) or Markdown ([`markdown`], what `docs/looks-catalogue.md`
-//! is).
+//! is), or in brief where the whole would not fit a model's prompt
+//! ([`brief`]: the karaoke story's plan).
 
 use serde::Serialize;
 
@@ -107,8 +108,100 @@ pub fn json() -> String {
     serde_json::to_string_pretty(&catalogue()).unwrap_or_default()
 }
 
+/// The catalogue in brief, for a model's prompt where the whole of it
+/// would not fit: its rules; the presets family by family, each stack
+/// made from no other once, its id quoted and its passes in order
+/// (`"rock" curve>halation>grain>chromatic`), the presets made from it
+/// after it, each its id and the passes it adds (`"rock-70s"
+/// +split_tone`); every pass's cost and knobs (with their ranges, where
+/// not 0 to 1); and the drivers, fast and slow. Made once.
+pub fn brief() -> &'static str {
+    static BRIEF: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BRIEF.get_or_init(|| {
+        let c = catalogue();
+        let mut out = format!(
+            "The catalogue. A look is a preset, and passes added after its passes: at most {} passes in all, costing at most {}.\nPresets, family by family, each id in quotes: \"genre\" a>b, \"genre-era\" +c, \"genre-theme\" would be the presets genre (its passes a then b), genre-era (a, b, then c) and genre-theme (a and b).\n",
+            c.rules.most_passes,
+            n(c.rules.budget)
+        );
+        for family in presets::families() {
+            out.push_str(&format!("- {}: {}\n", family.family, stacks(&family.looks)));
+        }
+        out.push_str(
+            "The passes, each its cost and its knobs, each knob 0 to 1 unless its range is given:\n",
+        );
+        for p in &c.passes {
+            let knobs: Vec<String> = (p.knobs.iter())
+                .map(|k| {
+                    if (k.lo, k.hi) == (0.0, 1.0) {
+                        k.name.to_owned()
+                    } else {
+                        format!("{} ({} to {})", k.name, n(k.lo), n(k.hi))
+                    }
+                })
+                .collect();
+            out.push_str(&format!(
+                "- {} (cost {}): {}\n",
+                p.name,
+                n(p.cost),
+                knobs.join(", ")
+            ));
+        }
+        for (speed, name) in [(Speed::Fast, "fast"), (Speed::Slow, "slow")] {
+            let of: Vec<&str> = (c.drivers.iter())
+                .filter(|d| d.speed == speed)
+                .map(|d| d.name)
+                .collect();
+            out.push_str(&format!("Drivers, {name}: {}\n", of.join(", ")));
+        }
+        out
+    })
+}
+
+/// A family's presets as [`brief`] has them: each stack made from no
+/// other (a root) with its passes, then the presets made from it (whose
+/// id is the root's and more after a dash, and whose passes start with
+/// the root's), each with the passes it adds; in the family's order.
+fn stacks(looks: &[crate::Look]) -> String {
+    fn passes(l: &crate::Look) -> Vec<&str> {
+        l.layers.iter().map(|x| x.pass.as_str()).collect()
+    }
+    let made_from = |l: &crate::Look, root: &crate::Look| {
+        l.id.strip_prefix(root.id.as_str())
+            .is_some_and(|rest| rest.starts_with('-'))
+            && passes(l).starts_with(&passes(root))
+    };
+    // Each look's root: the shortest it is made from, else itself.
+    let roots: Vec<usize> = (looks.iter().enumerate())
+        .map(|(k, l)| {
+            (looks.iter().enumerate())
+                .filter(|(_, r)| made_from(l, r))
+                .min_by_key(|(_, r)| r.id.len())
+                .map_or(k, |(j, _)| j)
+        })
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    for (k, root) in looks.iter().enumerate() {
+        if roots[k] != k {
+            continue;
+        }
+        let base = passes(root).len();
+        let mut s = format!("\"{}\" {}", root.id, passes(root).join(">"));
+        for (j, l) in looks.iter().enumerate() {
+            if j != k && roots[j] == k {
+                s.push_str(&format!(", \"{}\"", l.id));
+                for p in &passes(l)[base..] {
+                    s.push_str(&format!(" +{p}"));
+                }
+            }
+        }
+        out.push(s);
+    }
+    out.join(", ")
+}
+
 /// A number as the catalogue writes it: as short as it is.
-fn n(v: f32) -> String {
+pub(crate) fn n(v: f32) -> String {
     let s = format!("{v:.3}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s.is_empty() || s == "-0" {
@@ -283,5 +376,61 @@ mod tests {
             json["passes"].as_array().map(Vec::len),
             Some(crate::passes::PASSES.len())
         );
+    }
+
+    /// The catalogue in brief names every preset with its passes (read
+    /// back from it, each preset's as it is), every pass with its cost
+    /// and knobs, every driver, and the rules.
+    #[test]
+    fn the_brief_has_the_whole_catalogue() {
+        let brief = super::brief();
+        let mut read: Vec<(String, Vec<String>)> = Vec::new();
+        for family in crate::presets::families() {
+            let line = (brief.lines())
+                .find_map(|l| l.strip_prefix(&format!("- {}: ", family.family)))
+                .expect(&family.family);
+            // A root's passes ("\"id\" a>b"), then those made from it
+            // ("\"id\" +c +d").
+            let mut root: Vec<String> = Vec::new();
+            for item in line.split(", ") {
+                let (id, rest) = item[1..].split_once('"').expect(item);
+                let rest = rest.trim();
+                if rest.is_empty() || rest.starts_with('+') {
+                    let added = rest.split_whitespace().map(|p| p[1..].to_owned());
+                    read.push((id.to_owned(), root.iter().cloned().chain(added).collect()));
+                } else {
+                    root = rest.split('>').map(str::to_owned).collect();
+                    read.push((id.to_owned(), root.clone()));
+                }
+            }
+        }
+        let mut all: Vec<(String, Vec<String>)> = (crate::presets::all().iter())
+            .map(|l| {
+                (
+                    l.id.clone(),
+                    l.layers.iter().map(|x| x.pass.clone()).collect(),
+                )
+            })
+            .collect();
+        read.sort();
+        all.sort();
+        assert_eq!(read, all);
+        assert!(brief.contains(
+            "- rock: \"rock\" curve>halation>grain>chromatic, \"rock-70s\" +split_tone, \"rock-rebellion\", \"rock-freedom\" +lens_flare +light_leak, "
+        ));
+        assert!(brief.contains("- grain (cost 1): amount, size (0.6 to 3), chroma\n"));
+        assert!(brief.contains(&format!(
+            "at most {} passes in all, costing at most {}",
+            crate::guard::MOST_LAYERS,
+            super::n(crate::guard::BUDGET)
+        )));
+        let drivers: String = (brief.lines())
+            .filter_map(|l| l.strip_prefix("Drivers, "))
+            .filter_map(|l| l.split_once(": "))
+            .map(|(_, names)| format!("{names}, "))
+            .collect();
+        for d in crate::Driver::ALL {
+            assert!(drivers.contains(&format!("{}, ", d.name())), "{}", d.name());
+        }
     }
 }

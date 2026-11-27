@@ -343,6 +343,18 @@ impl Pass {
         self.knobs.iter().enumerate().find(|(_, k)| k.name == name)
     }
 
+    /// What the music can move by `knob` (one of its knobs, or `mix`):
+    /// its slot (the knob's place, or [`crate::MIX`]), how far the music
+    /// may move it, and the light a unit of it moves; `None` for a knob
+    /// it has not.
+    pub fn drivable(&self, knob: &str) -> Option<(usize, f32, f32)> {
+        if knob == "mix" {
+            return Some((crate::MIX, crate::guard::MIX_SWING, crate::guard::MIX_LIGHT));
+        }
+        self.knob(knob)
+            .map(|(i, k)| (i, k.swing, k.light / (k.hi - k.lo).max(1e-6)))
+    }
+
     /// Its knobs at their defaults.
     pub fn defaults(&self) -> [f32; 8] {
         let mut k = [0.0; 8];

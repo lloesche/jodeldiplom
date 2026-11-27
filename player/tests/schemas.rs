@@ -548,6 +548,72 @@ fn loudness_files_are_pinned() {
     assert_eq!(loudness::from_text(&kept), Some(measured));
 }
 
+/// A song's story planned, and a song with none: pinned, read back the
+/// same.
+#[test]
+fn story_plan_files_are_pinned() {
+    use jodeldiplom::core::story::{Art, Character, Confidence, Plan, Rgb, Scene, Shot, Style};
+    use jodeldiplom::work::story::{from_text, to_text, Kept, VERSION};
+    let mut grain = jodel_looks::Layer::of("grain");
+    grain.knobs.insert("amount".into(), 0.45);
+    grain.drive = Some(vec![jodel_looks::Drive {
+        knob: "amount".into(),
+        by: jodel_looks::Driver::Chorus,
+        amount: 0.6,
+    }]);
+    let plan = Plan {
+        story: "Two friends leave a grey town by the sea.".into(),
+        characters: vec![Character {
+            name: "narrator".into(),
+            looks: "Woman, 20s, long dark hair, yellow raincoat".into(),
+        }],
+        scenes: vec![Scene {
+            first_line: 0,
+            last_line: 3,
+            from: 0.0,
+            to: 41.5,
+            section: "verse 1".into(),
+            shot: Shot::CloseUp,
+            characters: vec!["narrator".into()],
+            shows: "The narrator at the harbour.".into(),
+            prompt: "Narrator on a rainy quay at dusk, boats in front, hills behind".into(),
+        }],
+        art: Art {
+            knowledge: "Not known.".into(),
+            confidence: Confidence::Low,
+            genre: "folk".into(),
+            era: "90s".into(),
+            style: Style::Watercolor,
+            style_keywords: "watercolor, rain, muted greys".into(),
+            palette: vec![Rgb([0x3a, 0x4a, 0x5a]), Rgb([0xf0, 0xec, 0xe0])],
+            motifs: vec!["boats".into()],
+            why: "Soft washes for a rainy town.".into(),
+        },
+        look: jodel_looks::Look {
+            id: "film+song".into(),
+            name: "Film, the song's own".into(),
+            about: "Soft washes for a rainy town.".into(),
+            tags: vec!["longing".into()],
+            layers: vec![grain],
+        },
+    };
+    let asked = "0123456789abcdef";
+    // What made it is versioned apart: the sample says "x".
+    let made = format!("\nmade story {VERSION}\n");
+    let text =
+        to_text(asked, &Kept::Plan(Box::new(plan.clone()))).replace(&made, "\nmade story x\n");
+    let kept = pinned(&cache::STORY_PLAN, "txt", text.as_bytes());
+    let kept = String::from_utf8(kept)
+        .unwrap()
+        .replace("\nmade story x\n", &made);
+    assert_eq!(from_text(&kept, asked), Some(Kept::Plan(Box::new(plan))));
+    let none = to_text(
+        asked,
+        &Kept::NoStory("2 scenes: 15 to 30 were asked for".into()),
+    );
+    assert!(none.ends_with("\nnone 2 scenes: 15 to 30 were asked for\n"));
+}
+
 /// Every version of every schema keeps its sample.
 #[test]
 fn every_version_keeps_its_sample() {

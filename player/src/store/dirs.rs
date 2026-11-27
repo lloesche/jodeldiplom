@@ -149,6 +149,12 @@ impl Data {
         self.0.join("shine")
     }
 
+    /// The songs' stories planned for the karaoke
+    /// ([`crate::work::story`]).
+    pub fn stories(&self) -> PathBuf {
+        self.0.join("stories")
+    }
+
     /// The best scores sung.
     pub fn scores(&self) -> PathBuf {
         self.0.join("scores.txt")
@@ -157,7 +163,7 @@ impl Data {
     /// The folders of what the player makes and can make again (but the
     /// covers', [`crate::work::cover::CoverStore::dirs_in`]), and what each
     /// holds: what [`forget_cache`] forgets.
-    fn caches(&self) -> [(PathBuf, &'static str); 5] {
+    fn caches(&self) -> [(PathBuf, &'static str); 6] {
         [
             (
                 self.analyses(),
@@ -167,6 +173,7 @@ impl Data {
             (self.lyrics(), "lyrics"),
             (self.loudness(), "songs' loudness"),
             (self.shine(), "original singer's phrases"),
+            (self.stories(), "songs' stories"),
         ]
     }
 

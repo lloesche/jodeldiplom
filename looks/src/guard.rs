@@ -35,6 +35,12 @@ use crate::CheckedLayer;
 pub const BUDGET: f32 = 8.0;
 /// The most passes in a stack.
 pub const MOST_LAYERS: usize = 6;
+
+/// Whether `passes` passes costing `cost` are over the budget: more than
+/// [`MOST_LAYERS`], or costing more than [`BUDGET`].
+pub fn over(passes: usize, cost: f32) -> bool {
+    passes > MOST_LAYERS || cost > BUDGET
+}
 /// The most light the fast drivers may move together.
 pub const FAST_LIGHT: f32 = 0.08;
 /// The most light the slow drivers may move together.

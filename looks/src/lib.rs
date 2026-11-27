@@ -27,6 +27,7 @@
 pub mod catalogue;
 pub mod demo;
 pub mod drive;
+mod faults;
 pub mod guard;
 pub mod math;
 pub mod pass;
@@ -158,26 +159,19 @@ impl Look {
                     None => notes.push(format!("{} has no knob {name:?}: left out", pass.name)),
                 }
             }
-            let asked: Vec<(String, Driver, f32)> = match &layer.drive {
-                Some(d) => d.iter().map(|d| (d.knob.clone(), d.by, d.amount)).collect(),
-                None => (pass.natural.iter())
-                    .map(|n| (n.knob.to_owned(), n.by, n.amount))
-                    .collect(),
-            };
             let mut drives = Vec::new();
-            for (name, by, amount) in asked {
+            for Drive {
+                knob: name,
+                by,
+                amount,
+            } in layer.drives(pass)
+            {
                 let amount = if amount.is_finite() {
                     amount.clamp(-1.0, 1.0)
                 } else {
                     0.0
                 };
-                let slot = if name == "mix" {
-                    Some((MIX, guard::MIX_SWING, guard::MIX_LIGHT))
-                } else {
-                    pass.knob(&name)
-                        .map(|(i, k)| (i, k.swing, k.light / (k.hi - k.lo).max(1e-6)))
-                };
-                match slot {
+                match pass.drivable(&name) {
                     Some((slot, swing, light)) if swing > 0.0 && amount != 0.0 => {
                         drives.push(CheckedDrive {
                             slot,
@@ -203,7 +197,7 @@ impl Look {
             });
         }
         let mut dropped = Vec::new();
-        while layers.len() > guard::MOST_LAYERS || cost(&layers) > guard::BUDGET {
+        while guard::over(layers.len(), cost(&layers)) {
             let dearest = (0..layers.len())
                 .filter(|&i| !layers[i].keep)
                 .max_by(|&a, &b| {
