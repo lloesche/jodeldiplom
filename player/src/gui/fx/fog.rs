@@ -9,13 +9,13 @@
 //!
 //! It keeps what the singer reads as the fire does
 //! ([`super::edge_fire`]): only a little of it inside the lyric band
-//! ([`IN_BAND`]), nothing in the score's corner, the badge or the meter
-//! ([`Clear`]), each edge feathered.
+//! ([`KEEP`]'s `in_band`), nothing in the score's corner, the badge or the
+//! meter ([`Clear`]), each edge feathered.
 //!
 //! A theme holds it throughout ([`crate::theme::Theme::always`]); no row
 //! lists it. [`fog`] is the shader's reference ([`wgsl`]: `fx_fog`), held
 //! to it on the GPU ([`REFERENCE`]). It is drawn only in strips along the
-//! edges, as far in as it reaches ([`strips`]), and everything past it in
+//! edges, as far in as it reaches ([`deepest`]), and everything past it in
 //! them returns at once.
 //!
 //! Its look ([`Spec::params`], `p`): `x` how much it breathes and swells
@@ -25,8 +25,8 @@
 use jodel_rhythm::stems::Stem;
 
 use super::helpers::{lattice, sat, smoothstep, speed, vnoise};
+use super::screen_pass::{draw_strips, Edges, KeepClear};
 use super::{At, Clear, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
-use crate::gui::stage::gpu::Instance;
 
 /// The fog: a strip along an edge (`quad`), the lyric band's top and
 /// bottom in `shape[0..2]`, what it keeps clear as [`Clear::on`] puts it,
@@ -49,33 +49,25 @@ pub const SPEC: Spec = Spec {
 };
 
 fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
-    let &At::Screen {
-        area, band, clear, ..
-    } = at
-    else {
-        return;
-    };
-    if live.strength <= 0.0 {
-        return;
-    }
     let grow = swell(&live.music, live.look);
-    out.shapes
-        .extend(strips(area, grow).into_iter().map(|quad| {
-            clear.on(Instance {
-                quad,
-                shape: [band.0, band.1, 0.0, 0.0],
-                params: [FOG, live.strength, 0.0, 0.0],
-                ..Instance::default()
-            })
-        }));
+    draw_strips(FOG, EDGES, (at, live, out), |h| deepest(h, grow));
+}
+
+/// How deep the fog is (pixels) at the bottom of a frame `h` high, `grow`
+/// times as deep as with no music ([`swell`]): how deep its strips are
+/// ([`Edges::strips`]).
+pub fn deepest(h: f32, grow: f32) -> f32 {
+    h * HIGH * grow
 }
 
 /// How deep the fog is at the bottom, a share of the frame's height (with
 /// no music).
 const HIGH: f32 = 0.18;
 /// How deep up the sides and along the top, a share of the bottom's.
-const SIDE: f32 = 0.65;
-const TOP: f32 = 0.35;
+const EDGES: Edges = Edges {
+    side: 0.65,
+    top: 0.35,
+};
 /// How much deeper it is with the bass at its loudest, and on a beat and a
 /// bar's first beat (their pulses at their height, the grid sure).
 const BREATH: f32 = 0.3;
@@ -85,11 +77,13 @@ const SURGE: f32 = 0.15;
 /// darkening under it does, at the edge.
 const THICK: f32 = 0.5;
 const DARK: f32 = 0.62;
-/// How much of it shows inside the lyric band at most.
-pub const IN_BAND: f32 = 0.3;
-/// How far round the lyric band and what is kept clear it thins, a share
-/// of the frame's height.
-const FEATHER: f32 = 0.06;
+/// How it keeps what the singer reads: thinning a share of the frame's
+/// height round the lyric band and what is kept clear, as much as this of
+/// it showing in the band at most.
+const KEEP: KeepClear = KeepClear {
+    feather: 0.06,
+    in_band: 0.3,
+};
 /// The haze's colour, and the darkening's (sRGB).
 const HAZE: [f32; 3] = [0.7, 0.85, 0.8];
 const COLD: [f32; 3] = [0.05, 0.0, 0.09];
@@ -118,27 +112,6 @@ pub fn swell(m: &Music, p: [f32; 4]) -> f32 {
     1.0 + p[0].max(0.0) * (BREATH * bass + m.kick(PULSE, SURGE))
 }
 
-/// The strips of `area` (left, top, width, height) the fog reaches,
-/// `grow` times as deep as with no music ([`swell`]), none over another:
-/// along the bottom and the top the whole width, up the sides between
-/// them.
-pub fn strips((x, y, w, h): (f32, f32, f32, f32), grow: f32) -> Vec<[f32; 4]> {
-    let reach = h * HIGH * grow + 2.0;
-    let bottom = reach.min(h);
-    let top = (reach * TOP).min(h - bottom);
-    let side = (reach * SIDE).min(w / 2.0);
-    let (y0, y1) = (y + top, y + h - bottom);
-    let mut strips = vec![[x, y1, x + w, y + h]];
-    if top > 0.0 {
-        strips.push([x, y, x + w, y0]);
-    }
-    if y1 > y0 {
-        strips.push([x, y0, x + side, y1]);
-        strips.push([x + w - side, y0, x + w, y1]);
-    }
-    strips
-}
-
 /// The fog at pixel `px` of a frame `size` (pixels) at `time` (seconds),
 /// `strength` 0 (none) to 1 (as thick as it gets), `band` the lyric band's
 /// top and bottom (none where the bottom is not below the top), what it
@@ -160,20 +133,10 @@ pub fn fog(
     }
     let s = strength.min(1.0);
     let h = size.1;
-    let f = h * FEATHER;
-    let across = |a: f32, b: f32, v: f32| smoothstep(a - f, a, v) * (1.0 - smoothstep(b, b + f, v));
-    let in_box = |r: [f32; 4]| {
-        across(r[0], r[2], px.0) * across(r[1], r[3], px.1) * f32::from(u8::from(r[2] > r[0]))
-    };
-    let in_band = across(band.0, band.1, px.1) * f32::from(u8::from(band.1 > band.0));
-    let kept = clear.boxes().into_iter().map(in_box).fold(0.0, f32::max);
-    let deep = h * HIGH * swell(m, p);
-    let bottom = size.1 - px.1;
+    let kept = KEEP.keep(px, h, band, clear);
+    let deep = deepest(h, swell(m, p));
     // How far in, a share of its depth at the nearest edge.
-    let u = (bottom / deep)
-        .min(px.0 / (deep * SIDE))
-        .min((size.0 - px.0) / (deep * SIDE))
-        .min(px.1 / (deep * TOP));
+    let u = EDGES.depth(px, size, deep);
     if u >= 1.0 {
         return [0.0; 4];
     }
@@ -225,7 +188,7 @@ pub fn fog(
         });
         a = lit + a * (1.0 - lit);
     }
-    let keep = (1.0 - (1.0 - IN_BAND) * in_band.max(kept)) * (1.0 - kept);
+    let keep = kept.keep;
     [
         rgb[0].min(1.0) * keep,
         rgb[1].min(1.0) * keep,
@@ -239,8 +202,9 @@ pub fn fog(
 /// frame takes them through `out_rgb`).
 pub fn wgsl() -> String {
     let v = |c: [f32; 3]| format!("vec3<f32>({:?}, {:?}, {:?})", c[0], c[1], c[2]);
+    let (side, top, feather, in_band) = (EDGES.side, EDGES.top, KEEP.feather, KEEP.in_band);
     format!(
-        "const FOG_HIGH: f32 = {HIGH:?};\nconst FOG_SIDE: f32 = {SIDE:?};\nconst FOG_TOP: f32 = {TOP:?};\nconst FOG_BREATH: f32 = {BREATH:?};\nconst FOG_PULSE: f32 = {PULSE:?};\nconst FOG_SURGE: f32 = {SURGE:?};\nconst FOG_THICK: f32 = {THICK:?};\nconst FOG_DARK: f32 = {DARK:?};\nconst FOG_IN_BAND: f32 = {IN_BAND:?};\nconst FOG_FEATHER: f32 = {FEATHER:?};\nconst FOG_HAZE: vec3<f32> = {};\nconst FOG_COLD: vec3<f32> = {};\nconst FOG_EYE_CELL: f32 = {EYE_CELL:?};\nconst FOG_EYE_STAY: f32 = {EYE_STAY:?};\nconst FOG_EYE: f32 = {EYE:?};\nconst FOG_EYE_GLOW: vec3<f32> = {};\nconst FOG_PUPIL: vec3<f32> = {};\nconst FOG_BLINK: f32 = {BLINK:?};\nconst FOG_APART: f32 = {APART:?};\nconst FOG_RIDGE: f32 = {RIDGE:?};\nconst FOG_HALO: f32 = {HALO:?};\n{SHADER}",
+        "const FOG_HIGH: f32 = {HIGH:?};\nconst FOG_SIDE: f32 = {side:?};\nconst FOG_TOP: f32 = {top:?};\nconst FOG_BREATH: f32 = {BREATH:?};\nconst FOG_PULSE: f32 = {PULSE:?};\nconst FOG_SURGE: f32 = {SURGE:?};\nconst FOG_THICK: f32 = {THICK:?};\nconst FOG_DARK: f32 = {DARK:?};\nconst FOG_IN_BAND: f32 = {in_band:?};\nconst FOG_FEATHER: f32 = {feather:?};\nconst FOG_HAZE: vec3<f32> = {};\nconst FOG_COLD: vec3<f32> = {};\nconst FOG_EYE_CELL: f32 = {EYE_CELL:?};\nconst FOG_EYE_STAY: f32 = {EYE_STAY:?};\nconst FOG_EYE: f32 = {EYE:?};\nconst FOG_EYE_GLOW: vec3<f32> = {};\nconst FOG_PUPIL: vec3<f32> = {};\nconst FOG_BLINK: f32 = {BLINK:?};\nconst FOG_APART: f32 = {APART:?};\nconst FOG_RIDGE: f32 = {RIDGE:?};\nconst FOG_HALO: f32 = {HALO:?};\n{SHADER}",
         v(HAZE),
         v(COLD),
         v(EYE_GLOW),
@@ -259,14 +223,6 @@ fn fog_swell(m: Music, p: vec4<f32>) -> f32 {
     return 1.0 + max(p.x, 0.0) * (FOG_BREATH * m.stems[STEM_BASS] + kick);
 }
 
-fn fog_across(a: f32, b: f32, v: f32, f: f32) -> f32 {
-    return smoothstep(a - f, a, v) * (1.0 - smoothstep(b, b + f, v));
-}
-
-fn fog_in_box(r: vec4<f32>, px: vec2<f32>, f: f32) -> f32 {
-    return fog_across(r.x, r.z, px.x, f) * fog_across(r.y, r.w, px.y, f) * select(0.0, 1.0, r.z > r.x);
-}
-
 fn fx_fog(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, clear: mat3x4<f32>, p: vec4<f32>, m: Music) -> vec4<f32> {
     let strength = sb.x;
     let band = sb.yz;
@@ -275,15 +231,9 @@ fn fx_fog(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, clear: mat3x
     }
     let s = min(strength, 1.0);
     let h = size.y;
-    let f = h * FOG_FEATHER;
-    let in_band = fog_across(band.x, band.y, px.y, f) * select(0.0, 1.0, band.y > band.x);
-    let kept = max(max(fog_in_box(clear[0], px, f), fog_in_box(clear[1], px, f)), fog_in_box(clear[2], px, f));
+    let kept = fx_keep_clear(px, h, band, clear, FOG_FEATHER, FOG_IN_BAND);
     let deep = h * FOG_HIGH * fog_swell(m, p);
-    let bottom = size.y - px.y;
-    let u = min(
-        min(bottom / deep, px.x / (deep * FOG_SIDE)),
-        min((size.x - px.x) / (deep * FOG_SIDE), px.y / (deep * FOG_TOP)),
-    );
+    let u = fx_edge_depth(px, size, deep, FOG_SIDE, FOG_TOP);
     if u >= 1.0 {
         return vec4<f32>(0.0);
     }
@@ -323,7 +273,7 @@ fn fx_fog(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, clear: mat3x
         rgb = eye * lit + FOG_EYE_GLOW * halo + rgb * (1.0 - lit);
         a = lit + a * (1.0 - lit);
     }
-    let keep = (1.0 - (1.0 - FOG_IN_BAND) * max(in_band, kept)) * (1.0 - kept);
+    let keep = kept.y;
     return vec4<f32>(min(rgb, vec3<f32>(1.0)) * keep, a * keep);
 }
 ";
@@ -465,7 +415,7 @@ mod tests {
                 (f * 0.37).fract() * 300.0,
                 1400.0 + (f * 0.61).fract() * 200.0,
             );
-            assert!(at(band, f * 0.1)[3] <= IN_BAND + 1e-4, "{band:?}");
+            assert!(at(band, f * 0.1)[3] <= KEEP.in_band + 1e-4, "{band:?}");
         }
     }
 
@@ -478,7 +428,7 @@ mod tests {
         };
         let grow = swell(&loud, LOOK);
         assert!(grow > 1.3, "{grow}");
-        let strips = strips((0.0, 0.0, SIZE.0, SIZE.1), grow);
+        let strips = EDGES.strips((0.0, 0.0, SIZE.0, SIZE.1), deepest(SIZE.1, grow));
         for k in 0..20_000 {
             let f = k as f32;
             let px = ((f * 0.613).fract() * SIZE.0, (f * 0.377).fract() * SIZE.1);

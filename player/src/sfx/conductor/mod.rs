@@ -63,7 +63,7 @@
 //! allocates nothing.
 
 pub mod calibration;
-mod call;
+pub mod call;
 mod clock;
 mod key;
 mod ladder;
@@ -85,15 +85,16 @@ use jodel_synth::hall::HallSettings;
 use jodel_synth::{Bank, Command, Commands, Synth, GENTLE};
 
 pub use clock::Clock;
-pub use layers::{Chime, Layers, Streak};
+pub use layers::{at_rung, Chime, Layers, Streak, StreakSet};
 pub use palette::{bank, every, id, of, patch, place, Atom};
 pub use sheet::{Entry, Sheet};
-pub(crate) use sounds::{Note, Score, JACKPOT_BEATS};
+pub(crate) use sounds::{Note, Score};
 
+use crate::core::singing::rung;
 use crate::theme::Theme;
-use crate::tiers::Tier;
+use crate::tiers::{self, Landing, Tier};
 use key::Pentatonic;
-use layers::{chime_has, rung_has, rung_of, rung_share, tier_share};
+use layers::{chime_has, share};
 use sounds::{Origin, PAYOUT_LEAD};
 use tags::{PAYOUT, STREAK};
 
@@ -162,15 +163,12 @@ pub enum Called {
 }
 
 impl Called {
-    /// Whether the announcer has a word for it.
-    pub fn sung(self) -> bool {
-        self.word().is_some()
-    }
-
-    /// Its word, if the announcer has one.
+    /// Its word: its tier's name, its row's
+    /// ([`crate::tiers::TierSpec::call`]); its multiplier, the number's
+    /// ([`call::times`]; none for a number with no word).
     fn word(self) -> Option<call::Word> {
         match self {
-            Called::Name(tier) => call::name(tier),
+            Called::Name(tier) => Some(tier.spec().call),
             Called::Times(tier) => call::times(tier.multiplier()),
         }
     }
@@ -217,8 +215,6 @@ pub enum Event {
 pub struct Conductor {
     /// The theme whose patches it plays (its place: [`place`]).
     theme: usize,
-    /// The words in a row each rung is reached at.
-    rungs: [u32; Tier::COUNT],
     clock: Clock,
     rate: u32,
     key: Option<Pentatonic>,
@@ -231,9 +227,9 @@ pub struct Conductor {
     clinks: usize,
     last_clink: Option<u64>,
     quiet_until: u64,
-    /// The rung the run has reached (0: none), and whether the riser into
-    /// the next one sounds.
-    rung: u32,
+    /// The rung the run has reached (none: under the first), and whether
+    /// the riser into the next one sounds.
+    rung: Option<Tier>,
     riser: bool,
     /// The bus's level told the synth, dB from [`LEVEL`]
     /// ([`calibration::trim`]).
@@ -292,7 +288,6 @@ impl Conductor {
         let clock = Clock::free(rate);
         Conductor {
             theme: place(theme),
-            rungs: layers::rungs(),
             clock,
             rate,
             key: None,
@@ -301,7 +296,7 @@ impl Conductor {
             clinks: 0,
             last_clink: None,
             quiet_until: 0,
-            rung: 0,
+            rung: None,
             riser: false,
             trim: 0.0,
         }
@@ -359,7 +354,7 @@ impl Conductor {
         let mut s = self.score(out);
         s.send(Command::Cancel { tag: None });
         sounds::let_go(&mut s, at);
-        self.rung = 0;
+        self.rung = None;
         self.riser = false;
         self.quiet_until = 0;
         self.last_clink = None;
@@ -376,22 +371,20 @@ impl Conductor {
             }
             Event::Lost(from) => {
                 self.lose(out, at);
-                let reels = layers::reach(rung_of(from), Streak::Reels);
+                let reels = layers::reach(from, Streak::Reels);
                 sounds::wind_down(&mut self.score(out), at, reels);
                 at
             }
             Event::Phrase(tier) => {
                 let hit = self.chime(out, at, Some(tier));
                 if chime_has(Some(tier), Chime::Call) {
-                    let length = JACKPOT_BEATS * self.clock.beat_len();
-                    let d = self.clock.land(at, When::Downbeat { length });
+                    let d = self.lands(at, Landing::Phrase);
                     self.announce(out, at, d, Called::Name(tier));
                 }
                 hit
             }
             Event::Jackpot => {
-                let length = JACKPOT_BEATS * self.clock.beat_len();
-                let d = self.clock.land(at, When::Downbeat { length });
+                let d = self.lands(at, Landing::Phrase);
                 sounds::jackpot(&mut self.score(out), d);
                 d
             }
@@ -400,15 +393,14 @@ impl Conductor {
                 at
             }
             Event::Diploma(Diploma::Gem { tier, pan }) => {
-                sounds::gem(&mut self.score(out), at, tier_share(tier), pan);
+                sounds::gem(&mut self.score(out), at, share(tier), pan);
                 at
             }
             Event::Diploma(Diploma::Points(tier)) => self.chime(out, at, tier),
             Event::Diploma(Diploma::Rung(tier)) => {
-                let r = rung_of(tier);
                 let hit = self.clock.land(at, When::Beat);
-                let layers = layers::at_rung(r);
-                sounds::stinger(&mut self.score(out), at, hit, rung_share(r), layers);
+                let (played, size) = (at_rung(Some(tier)), share(Some(tier)));
+                sounds::stinger(&mut self.score(out), at, hit, size, played);
                 hit
             }
             Event::Diploma(Diploma::Sheet { sound, gain, pan }) => {
@@ -431,6 +423,14 @@ impl Conductor {
         }
     }
 
+    /// Where a tier's `landing` at `at` lands on the clock
+    /// ([`tiers::lands`]): with the slam, a rung's on the next beat, a
+    /// phrase's on a bar's first beat with room for it.
+    fn lands(&self, at: u64, landing: Landing) -> u64 {
+        self.clock
+            .land(at, tiers::lands(landing, self.clock.beat_len()))
+    }
+
     /// A chime of `tier` (none: under the first) from `at`, on the next
     /// beat; where its hit lands.
     fn chime(&mut self, out: &mut impl Commands, at: u64, tier: Option<Tier>) -> u64 {
@@ -446,7 +446,7 @@ impl Conductor {
         s.send(Command::Cancel { tag: Some(PAYOUT) });
         s.send(Command::Cancel { tag: Some(STREAK) });
         sounds::let_go(&mut s, at);
-        self.rung = 0;
+        self.rung = None;
         self.riser = false;
     }
 
@@ -465,12 +465,13 @@ impl Conductor {
         // Only the streak lost lets go of the rung reached ([`Event::Lost`]):
         // a word a step lower (told late, or a word rescued after those past
         // it) climbs on from there.
-        let step = ladder::step(streak, &self.rungs);
-        let share = rung_share(step.rung);
-        let glint = rung_has(step.rung, Streak::Glint);
-        sounds::pop(&mut self.score(out), at, step, share, glint, pan, size);
+        let degree = ladder::degree(streak, &layers::rungs());
+        let reached = rung(streak);
+        let played = at_rung(reached);
+        let rungs_up = (share(reached), played.contains(Streak::Glint));
+        sounds::pop(&mut self.score(out), at, degree, rungs_up, pan, size);
         let second = f64::from(self.rate);
-        if rung_has(step.rung, Streak::Clinks) && at >= self.quiet_until {
+        if played.contains(Streak::Clinks) && at >= self.quiet_until {
             let thick = self
                 .last_clink
                 .is_some_and(|t| at.saturating_sub(t) < (CLINK_GAP * second) as u64);
@@ -481,47 +482,48 @@ impl Conductor {
             self.last_clink = Some(at);
         }
         let mut lands = at;
-        if step.rung > self.rung {
-            lands = self.rung_up(out, at, step.rung);
-        } else {
-            // The word before a rung a riser leads into: the riser, until
-            // the rung comes.
-            let next = self.rungs.iter().position(|&r| r == streak + 1);
-            let rises = next.is_some_and(|k| rung_has(k as u32 + 1, Streak::Riser));
-            if rises && !self.riser {
-                sounds::riser(&mut self.score(out), at);
-                self.riser = true;
-            }
-            if rung_has(step.rung, Streak::Glitter) {
-                let first = self.clock.next_step(at + 1, 4);
-                let sixteenth = (self.clock.beat_len() / 4.0) as u64;
-                let steps = [first, first + sixteenth];
-                sounds::glitter_after(&mut self.score(out), steps);
+        match reached {
+            Some(tier) if reached > self.rung => lands = self.rung_up(out, at, tier),
+            _ => {
+                // The word before a rung a riser leads into: the riser,
+                // until the rung comes.
+                let next = (Tier::ALL.into_iter()).find(|t| t.spec().streak == streak + 1);
+                let rises = next.is_some_and(|t| at_rung(Some(t)).contains(Streak::Riser));
+                if rises && !self.riser {
+                    sounds::riser(&mut self.score(out), at);
+                    self.riser = true;
+                }
+                if played.contains(Streak::Glitter) {
+                    let first = self.clock.next_step(at + 1, 4);
+                    let sixteenth = (self.clock.beat_len() / 4.0) as u64;
+                    let steps = [first, first + sixteenth];
+                    sounds::glitter_after(&mut self.score(out), steps);
+                }
             }
         }
-        if rung_has(step.rung, Streak::Shimmer) {
+        if played.contains(Streak::Shimmer) {
             // Started on the rung's hit; each word after holds it on.
             sounds::shimmer(&mut self.score(out), lands);
         }
         lands
     }
 
-    /// Rung `r` reached on `at`, above the last: its stinger, and its
+    /// `tier`'s rung reached on `at`, above the last: its stinger, and its
     /// payout where it has one; the frame its hit lands on.
-    fn rung_up(&mut self, out: &mut impl Commands, at: u64, r: u32) -> u64 {
-        self.rung = r;
-        let hit = self.clock.land(at, When::Beat);
+    fn rung_up(&mut self, out: &mut impl Commands, at: u64, tier: Tier) -> u64 {
+        self.rung = Some(tier);
+        let hit = self.lands(at, Landing::Rung);
         if self.riser {
             sounds::riser_lands(&mut self.score(out), hit);
             self.riser = false;
         }
-        let layers = layers::at_rung(r);
-        let end = sounds::stinger(&mut self.score(out), at, hit, rung_share(r), layers);
+        let played = at_rung(Some(tier));
+        let end = sounds::stinger(&mut self.score(out), at, hit, share(Some(tier)), played);
         self.quiet_until = self.quiet_until.max(end);
-        if layers.contains(&Streak::Call) {
-            self.announce(out, at, hit, Called::Times(Tier::ALL[r as usize - 1]));
+        if played.contains(Streak::Call) {
+            self.announce(out, at, hit, Called::Times(tier));
         }
-        if layers.contains(&Streak::Payout) {
+        if played.contains(Streak::Payout) {
             self.payout(out, end);
         }
         hit

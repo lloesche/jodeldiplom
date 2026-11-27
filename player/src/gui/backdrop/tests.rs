@@ -182,13 +182,14 @@ fn a_cover_is_graded_by_the_theme_of_its_frame() {
         ..cue(Some(&a))
     };
     let mut v = Visualiser::default();
-    let classic = run(&mut v, &graded(CLASSIC.grade), frames(FADE) + 1);
-    assert_eq!(classic.slots[0].look.grade, CLASSIC.grade);
-    let spooky = run(&mut v, &graded(SPOOKY.grade), 1);
-    assert_eq!(spooky.slots[0].look.grade, SPOOKY.grade);
+    let (classic_grade, spooky_grade) = (CLASSIC.grade.uniform(), SPOOKY.grade.uniform());
+    let classic = run(&mut v, &graded(classic_grade), frames(FADE) + 1);
+    assert_eq!(classic.slots[0].look.grade, classic_grade);
+    let spooky = run(&mut v, &graded(spooky_grade), 1);
+    assert_eq!(spooky.slots[0].look.grade, spooky_grade);
     assert_eq!(shares(&spooky), vec![1.0], "the same cover, showing on");
-    let back = run(&mut v, &graded(CLASSIC.grade), 1);
-    assert_eq!(back.slots[0].look.grade, CLASSIC.grade);
+    let back = run(&mut v, &graded(classic_grade), 1);
+    assert_eq!(back.slots[0].look.grade, classic_grade);
 }
 
 #[test]

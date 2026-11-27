@@ -7,8 +7,9 @@
 
 use super::super::big_text::{BigText, Face};
 use super::gpu::Instance;
-use super::score::rgba8;
+use super::palette::rgba;
 use super::{Lane, Stage};
+use crate::theme::Theme;
 use crate::view::karaoke::KaraokePicture;
 
 /// How large the count-in's number is at most, a share of the screen's
@@ -66,18 +67,20 @@ fn placed(
 }
 
 impl Stage {
-    /// `picture`'s count-in into `out`, in the window's `area`.
+    /// `picture`'s count-in into `out`, in the window's `area`, in
+    /// `theme`'s accent.
     pub(super) fn count(
         &mut self,
         out: &mut Vec<Instance>,
         picture: &KaraokePicture,
         area: (f32, f32, f32, f32),
+        theme: &Theme,
     ) {
         let shout = self.faces.get(Face::SHOUT);
         let Some(c) = placed(shout, picture, area) else {
             return;
         };
-        let accent = rgba8(self.theme.accent(), c.alpha);
+        let accent = rgba(theme.accent(), c.alpha);
         let number = (Face::SHOUT, c.text.as_str());
         let split = f32::INFINITY;
         self.set_text(out, number, (c.base, c.px), c.at, split, (accent, accent));
@@ -134,7 +137,7 @@ mod tests {
         let mut stage = Stage::default();
         let mut digit_at = |p: KaraokePicture| {
             let mut out = Vec::new();
-            stage.count(&mut out, &p, area);
+            stage.count(&mut out, &p, area, &crate::theme::CLASSIC);
             let out = crate::gui::stage::runs(&out);
             assert_eq!(out.len(), 1, "{out:?}");
             let at = (out[0].quad[0], out[0].quad[1]);

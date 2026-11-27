@@ -128,7 +128,7 @@ pub fn wgsl() -> String {
 }
 
 const SHADER: &str = r"
-fn lyric_frost(col: vec3<f32>, a: f32, px: vec2<f32>, box: vec4<f32>, time: f32, strength: f32, p: vec4<f32>) -> vec4<f32> {
+fn lyric_frost(col: vec3<f32>, a: f32, px: vec2<f32>, box: vec4<f32>, time: f32, strength: f32, p: vec4<f32>, th: Theme) -> vec4<f32> {
     if strength <= 0.0 {
         return vec4<f32>(col, a);
     }
@@ -191,7 +191,7 @@ pub const REFERENCE: Reference = Reference {
     let c = ins[i * 3u];
     let a = ins[i * 3u + 1u];
     let quad = vec4<f32>(800.0, 1300.0, 2200.0, 1440.0);
-    let o = lyric_frost(c.xyz, c.w, a.xy, quad, a.z, a.w, ins[i * 3u + 2u]);
+    let o = lyric_frost(c.xyz, c.w, a.xy, quad, a.z, a.w, ins[i * 3u + 2u], Theme());
     outs[i] = vec4<f32>(o.rgb * o.a, o.a);",
     cpu: |s| {
         let (c, a) = (s[0], s[1]);

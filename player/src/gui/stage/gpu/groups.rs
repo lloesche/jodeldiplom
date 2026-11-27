@@ -188,7 +188,8 @@ fn groups_wgsl() -> String {
 /// ([`crate::gui::stage::shapes::glory::wgsl`]), the diploma's shapes
 /// ([`crate::gui::stage::shapes::seal::wgsl`],
 /// [`crate::gui::stage::shapes::paper::wgsl`]), the effects (only the group's
-/// own effect's code: [`fx::wgsl::wgsl`]) and the music ([`fx::music::wgsl`]).
+/// own effect's code: [`fx::wgsl::wgsl`]), the music ([`fx::music::wgsl`])
+/// and how the theme dresses the effects ([`crate::theme::wgsl`]).
 pub fn shader(group: Group) -> String {
     let own: Vec<Fx> = group.effect().into_iter().collect();
     compose(group, &own)
@@ -204,7 +205,7 @@ pub fn every_effect_shader() -> String {
 /// The stage's shader drawing `group`, with `effects`' code.
 fn compose(group: Group, effects: &[Fx]) -> String {
     format!(
-        "const GROUP: u32 = {}u;\n// An effect's that keeps still as the screen shakes.\nconst STILL: bool = {};\n{}{}{}{}{}{}{}{}{}{}{}{}",
+        "const GROUP: u32 = {}u;\n// An effect's that keeps still as the screen shakes.\nconst STILL: bool = {};\n{}{}{}{}{}{}{}{}{}{}{}{}{}",
         group.code(),
         group.still(),
         groups_wgsl(),
@@ -219,6 +220,7 @@ fn compose(group: Group, effects: &[Fx]) -> String {
         crate::gui::stage::shapes::paper::wgsl(),
         fx::wgsl::wgsl(effects),
         fx::music::wgsl(),
+        crate::theme::wgsl(),
     )
 }
 

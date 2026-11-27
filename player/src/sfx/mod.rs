@@ -336,8 +336,7 @@ impl Sfx {
         // anchor forgotten, its frames of another place now), halted
         // (paused or stopped, by hand or at its end), or its singing went
         // back (sought back, sung again).
-        let config = &state.config;
-        let shown = config.karaoke_game && config.karaoke_notes;
+        let shown = state.show().sounds;
         let left = !(sung && crate::core::karaoke::in_mode(state) && shown);
         if left {
             self.moments.reset();

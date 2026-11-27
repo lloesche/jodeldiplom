@@ -4,8 +4,8 @@
 //! singing's time it happens (or at once, for one happening now: the
 //! streak lost, a phrase's tier). A bubble bursting is a word's pop up the
 //! ladder, a shot fired its zap, the streak lost from a rung its wind-down,
-//! a phrase rated its chime (and the jackpot where its tier's row fires
-//! one, [`crate::gui::fx::Fx::Jackpot`]).
+//! a phrase rated its chime (and the jackpot where its tier's row hits
+//! one, [`crate::tiers::TierSpec::jackpot`]).
 //!
 //! A pop is told the words in a row with it ([`Event::Word`]), as the
 //! singing counts them as it bursts ([`crate::core::singing::Burst::run`]:
@@ -25,8 +25,6 @@ use std::path::PathBuf;
 
 use super::conductor::Event;
 use crate::core::singing::{Cue, Cursor, Moment, Singing};
-use crate::gui::fx::{strength, Fx};
-use crate::tiers::Tier;
 
 /// An event cued: what, and when (the singing's time; `None`: at once).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,11 +67,6 @@ pub struct Moments {
 /// The pan of a moment `across` its line (0 its start, 1 its end).
 fn pan(across: f32) -> f32 {
     (across.clamp(0.0, 1.0) - 0.5) * 0.8
-}
-
-/// Whether a phrase reaching `tier` hits the jackpot (its row fires one).
-pub fn jackpot(tier: Tier) -> bool {
-    strength(tier.spec().fx.on_phrase, Fx::Jackpot) > 0.0
 }
 
 impl Moments {
@@ -135,7 +128,7 @@ fn cue(m: &Moment, clock: f64, out: &mut Vec<Cued>) {
                     return;
                 };
                 push(Event::Phrase(tier), at);
-                if jackpot(tier) {
+                if tier.spec().jackpot() {
                     push(Event::Jackpot, at);
                 }
             }
@@ -148,6 +141,7 @@ fn cue(m: &Moment, clock: f64, out: &mut Vec<Cued>) {
 mod tests {
     use super::*;
     use crate::core::shine::Shone;
+    use crate::tiers::Tier;
 
     /// Word `word`'s bubble bursting at `at` as `burst` (its place among
     /// those bursting together, and their count).
@@ -335,7 +329,9 @@ mod tests {
                 (Event::Jackpot, None),
             ]
         );
-        assert!(Tier::ALL[..Tier::COUNT - 1].iter().all(|&t| !jackpot(t)));
+        assert!(Tier::ALL[..Tier::COUNT - 1]
+            .iter()
+            .all(|t| !t.spec().jackpot()));
     }
 
     /// The last phrase's tier, decided as the song ends (its frames all

@@ -1,13 +1,14 @@
 //! The stage's pass ([`StagePass`]): a pipeline a [`Group`], what they
 //! read (the window's numbers, the text's atlas, the tubes' lines, the
-//! effects' looks, the music and the diploma's paper baked), and a frame's
-//! shapes in runs of a group.
+//! effects' looks, the music, the diploma's paper baked and how the theme
+//! dresses the effects), and a frame's shapes in runs of a group.
 
 use super::bake::Bake;
 use super::groups::{runs, Runs};
 use super::{shader, Feed, Group, Instance, Screen, ATLAS, SCREEN_BYTES};
 use crate::gui::fx::Fx;
 use crate::gui::particles::{uniform_entry, MUSIC_BYTES};
+use crate::theme::UNIFORM_BYTES as THEME_BYTES;
 
 /// How many bytes the effects' looks are: a vec4 an effect.
 const LOOKS_BYTES: u64 = 16 * Fx::COUNT as u64;
@@ -57,10 +58,11 @@ pub struct StagePass {
     layout: wgpu::BindGroupLayout,
     bind: wgpu::BindGroup,
     uniforms: wgpu::Buffer,
-    /// The effects' looks ([`crate::gui::fx::Spec::params`]) and the music
-    /// this frame.
+    /// The effects' looks ([`crate::gui::fx::Spec::params`]), the music
+    /// and the theme ([`crate::theme::Theme::uniform`]) this frame.
     looks: wgpu::Buffer,
     music: wgpu::Buffer,
+    theme: wgpu::Buffer,
     sampler: wgpu::Sampler,
     /// The text's atlas, made with the first text put into it (a pass
     /// never given any has a texel of it), and its view.
@@ -165,6 +167,7 @@ impl StagePass {
                 },
                 uniform_entry(4, LOOKS_BYTES),
                 uniform_entry(5, MUSIC_BYTES),
+                uniform_entry(7, THEME_BYTES),
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -212,11 +215,13 @@ impl StagePass {
         };
         let looks = uniform("jodeldiplom stage looks", LOOKS_BYTES);
         let music = uniform("jodeldiplom stage music", MUSIC_BYTES);
+        let theme = uniform("jodeldiplom stage theme", THEME_BYTES);
         let bake = (groups.contains(&Group::Paper)).then(|| Bake::new(device, &pipeline_layout));
         let reads = Reads {
             layout: &layout,
             looks: &looks,
             music: &music,
+            theme: &theme,
             sampler: &sampler,
             atlas: &atlas_view,
             paths: &paths,
@@ -232,6 +237,7 @@ impl StagePass {
             uniforms,
             looks,
             music,
+            theme,
             sampler,
             atlas: None,
             atlas_view,
@@ -286,10 +292,13 @@ impl StagePass {
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&screen));
         queue.write_buffer(&self.music, 0, bytemuck::cast_slice(&feed.music.uniform()));
         queue.write_buffer(&self.looks, 0, bytemuck::cast_slice(&feed.looks.0));
+        let theme = feed.theme.uniform();
+        queue.write_buffer(&self.theme, 0, bytemuck::bytes_of(&theme));
         let reads = Reads {
             layout: &self.layout,
             looks: &self.looks,
             music: &self.music,
+            theme: &self.theme,
             sampler: &self.sampler,
             atlas: &self.atlas_view,
             paths: &self.paths,
@@ -380,6 +389,7 @@ impl StagePass {
             layout: &self.layout,
             looks: &self.looks,
             music: &self.music,
+            theme: &self.theme,
             sampler: &self.sampler,
             atlas: &self.atlas_view,
             paths: &self.paths,
@@ -427,6 +437,7 @@ pub(super) struct Reads<'a> {
     layout: &'a wgpu::BindGroupLayout,
     looks: &'a wgpu::Buffer,
     music: &'a wgpu::Buffer,
+    theme: &'a wgpu::Buffer,
     sampler: &'a wgpu::Sampler,
     atlas: &'a wgpu::TextureView,
     paths: &'a wgpu::Buffer,
@@ -472,6 +483,10 @@ impl Reads<'_> {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(baked.unwrap_or(self.atlas)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.theme.as_entire_binding(),
                 },
             ],
         })

@@ -279,14 +279,17 @@ fn the_music_moves_what_a_row_lists() {
     assert!((look[1] - (Fx::Bulbs.spec().params[1] + 0.5)).abs() < 1e-6);
 }
 
-/// A theme's looks are the frame's, and what it holds throughout is held
-/// whatever the singing (at no tier too); the classic theme holds nothing.
+/// What a theme holds throughout is held whatever the singing (at no tier
+/// too), its looks the effects' own (a theme dresses the effects apart:
+/// no mod of a look turns one into another theme's); the classic theme
+/// holds nothing. An effect reads another's strength in the frame.
 #[test]
 fn a_theme_holds_its_own_throughout() {
     let mut board = Board::default();
     let none = step(None, held_at(0.0));
     let f = board.frame(&SPOOKY, &none, &Music::NEUTRAL, 1.0);
-    assert_eq!(f.looks(), SPOOKY.looks());
+    assert_eq!(f.looks(), Looks::SPECS);
+    assert_eq!(f.live(Fx::Bulbs).of(Fx::Fog), f.live(Fx::Fog).strength);
     assert!(!SPOOKY.always.is_empty());
     for u in SPOOKY.always {
         let live = f.live(u.fx);

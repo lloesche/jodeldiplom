@@ -28,6 +28,22 @@ const WIDEST: &str = "888 in a row";
 const EASE: f32 = 0.12;
 /// How tall a capital is, a share of its text's size.
 const CAP: f32 = 0.72;
+/// How much larger the badge is as it pops in (its pop falling away this
+/// fast, a second).
+const POP: f32 = 0.45;
+const POP_FALL: f32 = 7.0;
+/// The ×'s size, in the badge's units ([`times_px`]), and half its height
+/// either side of its middle, a share of its size.
+const TIMES_SCALE: f32 = 1.05;
+const HALF_TALL: f32 = 0.62;
+/// The pill's padding round its text, a share of the streak's size.
+const PAD: f32 = 0.45;
+/// The air between the name and the streak under it, a share of the
+/// streak's size.
+const LEADING: f32 = 0.4;
+/// How far the glow behind the × reaches from its middle, in the badge's
+/// units.
+const GLOW_REACH: f32 = 1.4;
 
 /// The multiplier's badge as shown: the rung (the last reached, kept
 /// while it fades), how much it shows, how long since it went up, and
@@ -69,7 +85,7 @@ impl Badge {
         (self.shown > 0.01).then(|| Showing {
             tier,
             alpha: self.shown,
-            pop: 1.0 + 0.45 * (-self.since * 7.0).exp(),
+            pop: 1.0 + POP * (-self.since * POP_FALL).exp(),
         })
     }
 }
@@ -100,7 +116,10 @@ impl Place {
     /// padding round them).
     fn lines(&self) -> (f32, f32, f32) {
         let (name, streak) = (self.named * CAP, self.small * CAP);
-        let (half, pad) = ((name + self.small * 0.4 + streak) / 2.0, self.small * 0.45);
+        let (half, pad) = (
+            (name + self.small * LEADING + streak) / 2.0,
+            self.small * PAD,
+        );
         (name / 2.0 - half, half - streak / 2.0, half + pad)
     }
 }
@@ -118,12 +137,12 @@ struct Spot {
 }
 
 /// How tall the badge is at rest, in its units: its × (the tallest of
-/// it: [`times_px`], 0.62 of that either side of its middle).
-const TALL: f32 = 1.05 * 1.24;
+/// it: [`times_px`], [`HALF_TALL`] of that either side of its middle).
+const TALL: f32 = TIMES_SCALE * (2.0 * HALF_TALL);
 
 /// The ×'s size at a unit `p`.
 fn times_px(p: f32) -> f32 {
-    (p * 1.05).floor()
+    (p * TIMES_SCALE).floor()
 }
 
 /// The badge's unit over `lane` in the window's `area`: a pill's height,
@@ -145,8 +164,8 @@ fn spot(lane: &Lane, area: (f32, f32, f32, f32), w: &Widths) -> Spot {
     let place = place(lane.head, left, w);
     let (named, small) = sizes(w.p);
     let wide = w.pill * (place.named / named).max(place.small / small);
-    let pad = place.small * 0.45;
-    let half = (px * 0.62).max(place.lines().2);
+    let pad = place.small * PAD;
+    let half = (px * HALF_TALL).max(place.lines().2);
     Spot {
         px,
         cy,
@@ -242,10 +261,10 @@ impl Stage {
             0.0,
             [0.0; 4],
             rgba(GOLD, (0.35 + 0.5 * up) * alpha * pop),
-            p * 1.4 * pop,
+            p * GLOW_REACH * pop,
         ));
         let gold = rgba(GOLD_TOP, alpha);
-        let at = (lane.head - tw / 2.0, cy - px * 0.62 * pop);
+        let at = (lane.head - tw / 2.0, cy - px * HALF_TALL * pop);
         let number = self.text(
             out,
             Face::SHOUT,
@@ -263,7 +282,7 @@ impl Stage {
         let (named, small) = (place.named, place.small);
         let streak = (game && singing.tally.streak > 0)
             .then(|| format!("{} in a row", singing.tally.streak));
-        let pad = small * 0.45;
+        let pad = small * PAD;
         let nw = self.measure(Face::SHOUT, tier.name(), named);
         let sw = (streak.as_ref()).map_or(0.0, |s| self.measure(Face::NUMBER, s, small));
         let (name_dy, streak_dy, half) = place.lines();
@@ -349,7 +368,7 @@ mod tests {
         assert_eq!((wide.named, wide.small), (29.0, 21.0));
         assert!(wide.right < 450.0 - 40.0);
         let (name, streak, half) = wide.lines();
-        assert!(half <= times_px(w.p) * 0.62, "{half}");
+        assert!(half <= times_px(w.p) * HALF_TALL, "{half}");
         assert!(
             streak - name >= (wide.named + wide.small) * CAP / 2.0,
             "{name} {streak}"

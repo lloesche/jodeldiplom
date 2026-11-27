@@ -285,7 +285,8 @@ fn it_lands_where_its_sound_does() {
         };
         let thrown = dust(&played(step, music, fire));
         let grid = song.grid_at(now).on(now, fire, 1.0);
-        let lands = grid.land(fire, when(by, &music), &[line]);
+        let when = crate::tiers::lands(by.into(), f64::from(music.beat_length()));
+        let lands = grid.land(fire, when, &[line]);
         assert!(
             (f64::from(thrown[0].1.start) - lands).abs() < 1e-4,
             "{by:?} at {now}: {} {lands}",
@@ -438,16 +439,21 @@ fn the_ink_is_lit_and_outlined() {
     );
 }
 
-/// A pale row's word (the top's, near white) is the rainbow; a strong
-/// colour's its own.
+/// A prismatic row's word (the top's) is the rainbow in every theme;
+/// another row's its own colour, as is a word of no row.
 #[test]
-fn a_pale_row_shouts_in_the_rainbow() {
-    for (row, t) in TIERS.iter().enumerate() {
-        let (.., bow) = colours(By::Phrase(row), &crate::theme::CLASSIC);
-        let c = t.color;
-        let pale = c.iter().all(|&v| v > 0.9);
-        assert_eq!(bow, if pale { 1.0 } else { 0.0 }, "{}: {bow}", t.name);
+fn a_prismatic_row_shouts_in_the_rainbow() {
+    for theme in crate::theme::THEMES {
+        for (row, t) in TIERS.iter().enumerate() {
+            let (.., bow) = colours(By::Phrase(row), theme);
+            assert_eq!(bow, if t.prismatic { 1.0 } else { 0.0 }, "{}", t.name);
+        }
     }
+    assert!(Tier::TOP.spec().prismatic);
+    assert_eq!(
+        colours(By::Rung(TIERS.len()), &crate::theme::CLASSIC).3,
+        0.0
+    );
 }
 
 /// The taps: a texel's own coverage at its middle, between texels the

@@ -51,8 +51,10 @@ mod helpers;
 pub mod jackpot;
 pub mod lyric_fire;
 pub mod lyric_frost;
+pub mod marquee;
 pub mod music;
 pub mod rainbow;
+mod screen_pass;
 pub mod slam;
 pub mod step_up;
 pub mod wgsl;
@@ -237,7 +239,8 @@ pub fn strength(list: &[Use], fx: Fx) -> f32 {
 }
 
 /// Every effect's look ([`Spec::params`], moved by the music: [`Mod`]),
-/// as the shaders read it (`looks`, every frame).
+/// as the shaders read it (`looks`, every frame), the same in every
+/// theme.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Looks(pub [[f32; 4]; Fx::COUNT]);
 
@@ -329,9 +332,8 @@ pub enum At {
         /// Its height.
         size: f32,
     },
-    /// The lane, a pill's height, the stage's area, the lyric band (its
-    /// top and bottom) and how strongly the marquee's bulbs show round the
-    /// lane (its effect's strength: the flames set them on fire).
+    /// The lane, a pill's height, the stage's area and the lyric band (its
+    /// top and bottom).
     Lane {
         /// The lane.
         lane: LaneBox,
@@ -341,8 +343,6 @@ pub enum At {
         area: (f32, f32, f32, f32),
         /// The lyric band's top and bottom.
         band: (f32, f32),
-        /// The bulbs' strength.
-        bulbs: f32,
     },
     /// The stage's area: left, top, width, height.
     Sky {
@@ -639,9 +639,11 @@ pub struct Reference {
 /// names, its stage shapes' WGSL (functions with `fn <ident>_shape(o: Out,
 /// p: vec2<f32>, k: u32) -> vec4<f32>`, premultiplied, as the stage's
 /// shapes are: light comes with no coverage), its lyric treatment (with
-/// `fn lyric_<ident>(col, a, px, quad, time, strength, look) -> vec4<f32>`
-/// in its WGSL: the text's straight colour and coverage), its look's four
-/// numbers (the shaders' `looks[FX_<IDENT>]`), its shader's reference,
+/// `fn lyric_<ident>(col, a, px, quad, time, strength, look, theme) ->
+/// vec4<f32>` in its WGSL: the text's straight colour and coverage), its
+/// look's four numbers (the shaders' `looks[FX_<IDENT>]`: what it moves
+/// by and how much, never how a theme dresses it, which the shaders read
+/// from `theme`: [`crate::theme::Theme::uniform`]), its shader's reference,
 /// whether its shapes keep still as the screen shakes (the edges on fire,
 /// which are the screen's own: its pipeline's `STILL`), and whether, fired
 /// by a phrase, it shouts the phrase's verdict itself (the word slam: the
@@ -663,7 +665,10 @@ pub struct Spec {
     pub wgsl: Option<fn() -> String>,
     /// Its lyric treatment.
     pub lyric: Option<Lyric>,
-    /// Its look.
+    /// Its look: `y` the speed every look shares (`helpers::speed`; 0 is
+    /// taken as 1), the other numbers as its module names them; a number
+    /// an effect does not read is 0 (a mod of it would move nothing: a test
+    /// holds the rows and themes to that).
     pub params: [f32; 4],
     /// Its shader's reference.
     pub reference: Option<Reference>,
@@ -767,6 +772,22 @@ mod tests {
             }
         }
         assert!(seen.len() > 20, "{seen:?}");
+    }
+
+    /// No row nor theme moves a number of an effect's look that the effect
+    /// does not read (0 in its spec, but the speed every look shares).
+    #[test]
+    fn every_mod_moves_a_number_its_effect_reads() {
+        let rows = crate::tiers::TIERS.iter().flat_map(|t| t.fx.lists());
+        let themes = crate::theme::THEMES.iter().map(|t| t.always);
+        for u in rows.chain(themes).flatten() {
+            for m in u.mods {
+                if let Param::Look(n @ (0 | 2 | 3)) = m.param {
+                    let read = u.fx.spec().params[usize::from(n)] != 0.0;
+                    assert!(read, "{:?}: look {n} is not one it reads", u.fx);
+                }
+            }
+        }
     }
 
     static TREATED: [Use; 3] = [

@@ -159,7 +159,7 @@ impl Score {
 /// `index` where its analysis has one; with the singer's hits, trail and
 /// pitch now on them where they sing (`t`: seconds into the song as the
 /// words show it, ahead of what is heard by `karaoke_lead`). None with
-/// the notes hidden (`karaoke_notes`).
+/// the notes hidden ([`karaoke::Show::lane`]).
 fn with_notes(
     state: &State,
     index: usize,
@@ -167,7 +167,8 @@ fn with_notes(
     lines: &mut [LyricLine],
     t: f64,
 ) {
-    if !state.config.karaoke_notes {
+    let show = state.show();
+    if !show.lane {
         return;
     }
     let path = &state.queue.paths[index];
@@ -189,7 +190,7 @@ fn with_notes(
             }
         };
         if ours {
-            let game = (state.config.karaoke_game, state.karaoke.lag.late);
+            let game = (show.scored, state.karaoke.lag.late);
             sung_on(singing, game, i, &notes, heard, l);
         }
         l.notes = notes.notes;
@@ -608,7 +609,8 @@ fn score_now(state: &State) -> Option<Score> {
     let singing = &state.karaoke.singing;
     let index = karaoke::song_index(state)?;
     let path = state.queue.paths.get(index)?;
-    (state.config.karaoke_game && singing.is_of(path) && singing.words() > 0).then_some(Score {
+    let scored = state.show().scored;
+    (scored && singing.is_of(path) && singing.words() > 0).then_some(Score {
         points: singing.tally.score,
         streak: singing.tally.streak,
     })

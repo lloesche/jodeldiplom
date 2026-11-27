@@ -966,10 +966,10 @@ impl State {
     }
 
     /// The karaoke game's theme in force now: what its tiers' colours, its
-    /// effects' looks, the backdrop's grade and its sounds' patches are
-    /// read from, frame by frame (the settings' theme; the Synth tab plays
-    /// its own sounds in the one it compares,
-    /// [`crate::core::synth_tab::theme`], never the game's).
+    /// effects' dress, the backdrop's grade and its sounds' patches are
+    /// read from, frame by frame (the settings' theme). The game's looks
+    /// and sounds are always in it; only the Synth tab's own sounds may be
+    /// in another ([`State::bench_theme`], in [`synth_tab`]).
     pub fn theme(&self) -> &'static crate::theme::Theme {
         self.config.karaoke_theme
     }

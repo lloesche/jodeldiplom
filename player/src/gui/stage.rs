@@ -122,8 +122,6 @@ pub struct Stage {
     /// The bursts a step up throws from the bar under the word sung,
     /// while the lyrics are set without the lane ([`lyrics`]).
     ups: Vec<super::particles::Spray>,
-    /// The theme it was last drawn in ([`Stage::scene`]: the song's).
-    theme: &'static crate::theme::Theme,
 }
 
 /// What the stage is made from, besides the picture.
@@ -171,7 +169,7 @@ impl<'a> Song<'a> {
         Song {
             singing: &state.karaoke.singing,
             sung,
-            game: state.config.karaoke_game,
+            game: state.show().scored,
             length: state
                 .playing
                 .track
@@ -221,7 +219,7 @@ pub fn wanted(state: &State) -> bool {
     if crate::core::karaoke::result_shown(state).is_some() {
         return true;
     }
-    if !state.config.karaoke_notes {
+    if !state.show().lane {
         return false;
     }
     let Some(index) = crate::core::karaoke::song_index(state) else {
@@ -316,14 +314,15 @@ impl Lane {
     /// multiplier's badge, the meter and its verdict, the score's corner),
     /// its top and bottom: from a little under the stage's top, [`HUD`] of
     /// the height down, never past a little over the highest the marquee
-    /// bulbs round the glass light ([`super::fx::bulbs::lit_top`]), whether
+    /// bulbs round the glass light ([`super::fx::marquee::lit_top`]), whether
     /// they show or not, so nothing moves as they come and go (the air
     /// left between it and their light is the marquee's). What is in it is
     /// made smaller where it is lower than that.
     pub fn hud(&self, area: (f32, f32, f32, f32)) -> (f32, f32) {
         let air = area.3 * AIR;
         let top = area.1 + air;
-        let bulbs = super::fx::bulbs::lit_top(self.glass(area).rect(), super::fx::far_corner(area));
+        let bulbs =
+            super::fx::marquee::lit_top(self.glass(area).rect(), super::fx::far_corner(area));
         (top, (bulbs - air).min(top + area.3 * HUD).max(top))
     }
 
@@ -739,6 +738,7 @@ impl Stage {
             light_sprays: self.lights.clone(),
             music,
             looks: effects.looks(),
+            theme: effects.theme,
             shake: self.shake,
             ..frame
         }

@@ -1,11 +1,11 @@
 //! What each tier's row of the tier table ([`crate::tiers::TIERS`]) plays
-//! on top of the conductor's sounds: a small list of layers for the
-//! streak at its rung ([`Streak`]) and one for a phrase's chime reaching
-//! it ([`Chime`], its brass the chords each layer names: [`Hit`]),
-//! together a row's [`Layers`]. How big a sound is beyond
-//! that (how many notes, how loud, how long) follows from where its tier
-//! is among the rows, its share of the way to the top
-//! ([`rung_share`], [`tier_share`]); so a new tier is one row more.
+//! on top of the conductor's sounds: the layers the streak takes on at its
+//! rung ([`Streak`], [`Layers::adds`]: a rung plays its own and every rung's
+//! below, [`at_rung`]) and those of a phrase's chime reaching it
+//! ([`Chime`], its brass the chords each layer names: [`Hit`]), together a
+//! row's [`Layers`]. How big a sound is beyond that (how many notes, how
+//! loud, how long) follows from where its tier is among the rows, its
+//! share of the way to the top ([`share`]); so a new tier is one row more.
 
 use crate::tiers::Tier;
 
@@ -39,6 +39,26 @@ pub enum Streak {
 }
 
 impl Streak {
+    /// Every layer, in their order.
+    pub const ALL: [Streak; 11] = [
+        Streak::Glint,
+        Streak::Octave,
+        Streak::Register,
+        Streak::Clinks,
+        Streak::Reels,
+        Streak::Brass,
+        Streak::Riser,
+        Streak::Shimmer,
+        Streak::Glitter,
+        Streak::Payout,
+        Streak::Call,
+    ];
+
+    /// The first tier whose rung plays it (none: no row adds it).
+    pub fn first_tier(self) -> Option<Tier> {
+        (Tier::ALL.into_iter()).find(|t| t.spec().layers.adds.contains(&self))
+    }
+
     /// Its name, as the Synth tab shows it.
     pub fn name(self) -> &'static str {
         match self {
@@ -141,32 +161,68 @@ impl Chime {
     }
 }
 
+/// A set of the streak's layers ([`Streak`]), one bit a layer: as cheap
+/// to ask whether it holds one as to read a bit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StreakSet(u16);
+
+// Every layer has its bit.
+const _: () = assert!(Streak::ALL.len() <= 16);
+
+impl StreakSet {
+    /// No layers.
+    pub const NONE: StreakSet = StreakSet(0);
+
+    /// The set of `layers`.
+    pub const fn of(layers: &[Streak]) -> StreakSet {
+        let mut bits = 0;
+        let mut i = 0;
+        while i < layers.len() {
+            bits |= 1 << layers[i] as u16;
+            i += 1;
+        }
+        StreakSet(bits)
+    }
+
+    /// This set and `other`'s layers.
+    pub const fn with(self, other: StreakSet) -> StreakSet {
+        StreakSet(self.0 | other.0)
+    }
+
+    /// Whether it holds `layer`.
+    pub const fn contains(self, layer: Streak) -> bool {
+        self.0 & (1 << layer as u16) != 0
+    }
+
+    /// Its layers, in their order.
+    pub fn iter(self) -> impl Iterator<Item = Streak> {
+        Streak::ALL.into_iter().filter(move |&l| self.contains(l))
+    }
+}
+
 /// A tier's layers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layers {
-    /// The streak's at its rung.
-    pub streak: &'static [Streak],
+    /// The streak's its rung adds to the rung's below (it plays those and
+    /// these: [`at_rung`]).
+    pub adds: &'static [Streak],
     /// A phrase's chime's.
     pub chime: &'static [Chime],
 }
 
-/// The rungs: rung `r` (1 up) is reached at `RUNGS[r - 1]` words in a
-/// row, the tiers' streaks.
+/// The rungs: a tier's is reached at its streak, words in a row, Good's
+/// first.
 pub(super) fn rungs() -> [u32; Tier::COUNT] {
     Tier::ALL.map(|t| t.spec().streak)
 }
 
-/// The layers at rung `r` (0: under the first, none).
-pub(super) fn at_rung(r: u32) -> &'static [Streak] {
-    (r as usize)
-        .checked_sub(1)
-        .and_then(|k| Tier::ALL.get(k))
-        .map_or(&[], |t| t.spec().layers.streak)
-}
-
-/// Whether rung `r` plays `layer`.
-pub(super) fn rung_has(r: u32, layer: Streak) -> bool {
-    at_rung(r).contains(&layer)
+/// The streak's layers at `rung` (none: under the first, none): what
+/// every row up to it adds.
+pub fn at_rung(rung: Option<Tier>) -> StreakSet {
+    let up_to = rung.map_or(0, |t| t.index() + 1);
+    (Tier::ALL[..up_to].iter()).fold(StreakSet::NONE, |s, t| {
+        s.with(StreakSet::of(t.spec().layers.adds))
+    })
 }
 
 /// Whether a phrase's chime at `tier` (none: under the first) plays
@@ -182,31 +238,18 @@ pub(super) fn chime_brass(tier: Option<Tier>) -> impl Iterator<Item = &'static H
     layers.iter().flat_map(|c| c.brass())
 }
 
-/// How far rung `r` is from the first rung playing `layer` to the top, 0
+/// How far `rung` is from the first rung playing `layer` to the top, 0
 /// to 1 (none: it plays none).
-pub(super) fn reach(r: u32, layer: Streak) -> Option<f32> {
-    if !rung_has(r, layer) {
-        return None;
-    }
-    let first = (1..=Tier::COUNT as u32).find(|&k| rung_has(k, layer))?;
-    let top = Tier::COUNT as u32;
-    Some(match top - first {
+pub(super) fn reach(rung: Tier, layer: Streak) -> Option<f32> {
+    let first = layer.first_tier().filter(|&f| f <= rung)?;
+    Some(match Tier::TOP.index() - first.index() {
         0 => 1.0,
-        span => (r - first) as f32 / span as f32,
+        span => (rung.index() - first.index()) as f32 / span as f32,
     })
 }
 
-/// Rung `r`'s share of the way to the top (1 up to the rungs).
-pub(super) fn rung_share(r: u32) -> f32 {
-    (r as f32 / Tier::COUNT as f32).clamp(0.0, 1.0)
-}
-
-/// Tier `t`'s (none: under the first, 0).
-pub(super) fn tier_share(t: Option<Tier>) -> f32 {
-    t.map_or(0.0, |t| (t.index() + 1) as f32 / Tier::COUNT as f32)
-}
-
-/// The rung a tier's is (1 up).
-pub(super) fn rung_of(t: Tier) -> u32 {
-    t.index() as u32 + 1
+/// `tier`'s share of the way to the top (none: under the first, 0; the
+/// top's 1): how big its sounds are, a phrase's chime at it or its rung's.
+pub(super) fn share(tier: Option<Tier>) -> f32 {
+    tier.map_or(0.0, |t| (t.index() + 1) as f32 / Tier::COUNT as f32)
 }

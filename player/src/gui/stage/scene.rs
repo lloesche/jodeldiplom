@@ -30,7 +30,6 @@ impl Stage {
         tint: &Tint,
     ) -> Option<StageFrame> {
         self.targets.clear();
-        self.theme = song.theme;
         // What lies under the lane (as the pixmap did): the lines set in
         // the middle, the count-in, the score; over it, the bubbles of
         // the lines set in the middle.
@@ -38,21 +37,23 @@ impl Stage {
         let which = if lane { Which::Info } else { Which::All };
         let into = (&mut under, &mut over, &mut sprays);
         let rim = self.lyrics(into, picture, (area, which));
-        self.count(&mut under, picture, area);
+        self.count(&mut under, picture, area, song.theme);
         self.score(&mut under, picture, area, dt);
         if picture.controls.is_some() {
             let (x, y, w, h) = area;
             clip(&mut under, 0, [x, y, x + w, y + h * (1.0 - picture.bar)]);
         }
         let place = Place::of(self, area, picture.reach);
-        let (mut frame, button, always) = match self.result(picture, tint, area, &place) {
+        let dress = (tint, song.theme);
+        let (mut frame, button, always) = match self.result(picture, dress, area, &place) {
             Some((frame, button)) => (frame, button, true),
             None => {
                 let mut frame = if lane {
                     self.frame(song, picture, area, heard, dt)
                 } else {
                     self.rim_shine((&mut over, &mut sprays), (song, heard), rim);
-                    StageFrame::bare(crate::core::lag::sung_clock(heard, song.late) as f32)
+                    let clock = crate::core::lag::sung_clock(heard, song.late) as f32;
+                    StageFrame::bare(clock, song.theme)
                 };
                 under.append(&mut frame.instances);
                 under.append(&mut over);

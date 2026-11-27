@@ -20,8 +20,8 @@
 //! likewise, the flick held (a coin off each word hit while it is). Each
 //! draws from the playhead's slot, over the stage ([`super::Layer::Playhead`]).
 //!
-//! Their look's `x` (each effect's, [`Spec::params`]): 0 gold, 1 candy
-//! (each spray of coins a sweet's colour of its own: [`candied`]).
+//! In a theme with coins of its own colours ([`crate::theme::Theme::coins`]:
+//! Spooky's candy) each spray of coins is one of them ([`candied`]).
 //!
 //! [`fountain`], [`rain`] and [`flick`] are the shader's maths on the
 //! processor, held to it on the GPU (`crate::gui::shader_check`, from their
@@ -30,6 +30,7 @@
 use super::{At, Layer, Live, Out, Playing, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
 use crate::gui::sparks::{rand, TAU, WHITE};
+use crate::theme::Theme;
 use jodel_looks::math::mix3;
 use jodel_rhythm::grid::When;
 
@@ -66,24 +67,13 @@ fn seed(clock: f64, salt: u32) -> u32 {
     (clock * 1000.0) as u32 ^ salt
 }
 
-/// The sweets' colours candied coins come in (sRGB): strawberry, mint,
-/// lime, grape, orange, blue raspberry.
-pub const CANDY: [[f32; 3]; 6] = [
-    [1.0, 0.42, 0.72],
-    [0.4, 1.0, 0.7],
-    [0.7, 1.0, 0.25],
-    [0.72, 0.45, 1.0],
-    [1.0, 0.55, 0.15],
-    [0.35, 0.85, 1.0],
-];
-
-/// `s` as a look `p` has it: gold (`x` under a half), or a sweet's colour
-/// by its seed ([`CANDY`]).
-pub fn candied(s: Spray, p: [f32; 4]) -> Spray {
-    if p[0] < 0.5 {
+/// `s` in `theme`'s coins: as it is (gold) where the theme has none of its
+/// own, else one of its colours by the spray's seed.
+pub fn candied(s: Spray, theme: &Theme) -> Spray {
+    let Some(colors) = theme.coins else {
         return s;
-    }
-    let rgb = CANDY[(s.seed % CANDY.len() as u32) as usize];
+    };
+    let rgb = colors[(s.seed % colors.len() as u32) as usize];
     Spray { rgb, ..s }
 }
 
@@ -91,7 +81,7 @@ fn draw_fountain(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
     if let (&At::Playhead { tip, pill, .. }, true) = (at, live.fired) {
         let size = pill * 0.3 * live.strength;
         let s = coin_fountain(tip, size, live.clock, seed(live.clock, 0xF0_4417));
-        out.sprays.push(candied(s, live.look));
+        out.sprays.push(candied(s, live.theme));
     }
 }
 
@@ -118,7 +108,7 @@ fn draw_rain(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
             let seed = seed(live.clock, 0x4A_1700);
             let rain = coin_rain(w, h, size, live.clock, seed);
             out.sprays
-                .extend(rain.into_iter().map(|s| candied(s, live.look)));
+                .extend(rain.into_iter().map(|s| candied(s, live.theme)));
             slot.playing = None;
             return;
         }
@@ -126,7 +116,7 @@ fn draw_rain(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
         if m.land(live.clock, When::Beat) <= live.clock {
             let seed = seed(live.clock, 0x4A_1700);
             let burst = coin_burst(w, h, size, live.clock as f32, seed);
-            out.sprays.push(candied(burst, live.look));
+            out.sprays.push(candied(burst, live.theme));
             left -= 1;
         }
         slot.playing = Some(Playing {
@@ -148,7 +138,7 @@ fn draw_rain(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
             let start = live.clock as f32 - late * beat;
             let size = pill * 0.4 * p.strength;
             out.sprays
-                .push(candied(coin_burst(w, h, size, start, seed), live.look));
+                .push(candied(coin_burst(w, h, size, start, seed), live.theme));
         }
         p.next += 1.0;
         p.left -= 1;
@@ -161,7 +151,7 @@ fn draw_flick(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
         let size = pill * 0.25 * live.listed;
         let flick = |w| coin_flick(w, size, live.clock, seed(live.clock, 0xF1_1C00));
         out.sprays
-            .extend(word.map(|w| candied(flick(w), live.look)));
+            .extend(word.map(|w| candied(flick(w), live.theme)));
     }
 }
 

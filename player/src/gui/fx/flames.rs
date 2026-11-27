@@ -1,34 +1,36 @@
 //! Flames burning along the lane's top and bottom, licking out and
-//! flickering, white at their roots to red at their tips: the one fire
+//! flickering, white at their roots to red at their tips as made (the
+//! theme's fire's colours, [`crate::theme::Theme::fire`]): the one fire
 //! ([`fire`]), light, drawn where it blooms ([`crate::gui::bloom`]), as
 //! strong as the rows hold them (Amazing's first).
 //!
-//! Round the marquee's bulbs ([`super::bulbs`]) they set the bulbs on
-//! fire, as the bulbs show: the flames burn from round each bulb instead of
-//! the lane's edge, wrapping its outer side and licking up taller between
-//! the bulbs, dying away on the lane's side of the row; drawn as light,
-//! under the bulbs (a screen pass over it), which stay crisp on top, framed
-//! by the fire. Marquee and flames read as one marquee on fire.
+//! Round the marquee's bulbs ([`super::marquee`]) they set the bulbs on
+//! fire, as the bulbs show (their effect's strength, read in the frame:
+//! [`Live::of`]): the flames burn from round each bulb instead of the
+//! lane's edge, wrapping its outer side and licking up taller between the
+//! bulbs, dying away on the lane's side of the row; drawn as light, under
+//! the bulbs (a screen pass over it), which stay crisp on top, framed by
+//! the fire. Marquee and flames read as one marquee on fire.
 //!
 //! They never reach what is round the lane: over it, no higher than the
-//! bulbs light ([`super::bulbs::lit_top`], the HUD's band over it); under
-//! it, not into the lyric band. Each flame fits its room and fades out
-//! smoothly over the outer part of it, to nothing before its end; behind
-//! its root line it fades out too, and at its span's ends: nothing of it
-//! is left at its quad's edges, so no edge of it shows.
+//! bulbs light ([`super::marquee::lit_top`], the HUD's band over it);
+//! under it, not into the lyric band. Each flame fits its room and fades
+//! out smoothly over the outer part of it, to nothing before its end;
+//! behind its root line it fades out too, and at its span's ends: nothing
+//! of it is left at its quad's edges, so no edge of it shows.
 //!
 //! They surge with the music ([`surge`]): taller and hotter on a bar's
 //! first beat, a pulse on each beat, as sure as the beat grid is; its look
-//! ([`Spec::params`]): `x` how much (1 as made, 0 not at all), `z` 0
-//! classic orange to 1 a ghostly green.
+//! ([`Spec::params`]): `x` how much (1 as made, 0 not at all).
 //!
 //! [`flames_at`] is the shader's reference ([`wgsl`]), held to it on the
 //! GPU ([`REFERENCE`]).
 
-use super::bulbs::{self, Row};
 use super::helpers::{fire, fire_light, smoothstep};
+use super::marquee::{self, Row};
 use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
 use crate::gui::stage::gpu::Instance;
+use crate::theme::{Ramp, THEMES};
 
 /// The flames along an edge: `shape` the span (from `x`, to `z`), its root
 /// line (`y`) and outward (`w`: 1 down, -1 up), `params[1]` their height,
@@ -89,7 +91,6 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
             pill,
             area,
             band,
-            bulbs,
         },
         s,
     ) = (at, live.strength)
@@ -101,8 +102,8 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
     }
     let rect = lane.rect();
     let size = super::far_corner(area);
-    let row = bulbs::row(rect, size);
-    let marquee = row.map_or(0.0, |_| bulbs::shown(bulbs));
+    let row = marquee::row(rect, size);
+    let marquee = row.map_or(0.0, |_| marquee::shown(live.of(Fx::Bulbs)));
     let Row {
         ring,
         r,
@@ -117,7 +118,7 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
     let (x0, x1) = (mix(rect[0], ring[0]), mix(rect[2], ring[2]));
     let gap = (ring[2] - ring[0]) / across as f32;
     let edges = [
-        (rect[1], ring[1], -1.0, bulbs::lit_top(rect, size)),
+        (rect[1], ring[1], -1.0, marquee::lit_top(rect, size)),
         (rect[3], ring[3], 1.0, band.0),
     ];
     for (edge, line, outward, limit) in edges {
@@ -161,14 +162,14 @@ pub fn surge(m: &Music, p: [f32; 4]) -> (f32, f32) {
 /// as the marquee shows, from round its bulbs (dying away on the lane's
 /// side of their row) and taller between them, as tall and as hot as they
 /// surge, fading out before the line they may reach and at the span's
-/// ends; `ghost` of the way to a ghostly green (their look's `z`).
+/// ends; in `fire`'s colours.
 pub fn flames_at(
     p: (f32, f32),
     shape: [f32; 4],
     params: [f32; 4],
     color: [f32; 4],
     color2: [f32; 4],
-    (time, ghost): (f32, f32),
+    (time, fire_colors): (f32, &Ramp),
 ) -> [f32; 3] {
     let [x0, root, x1, outward] = shape;
     let [_, high, k, limit] = params;
@@ -192,7 +193,7 @@ pub fn flames_at(
     let keep = (1.0 - smoothstep(FADE.0 * room, FADE.1 * room, out))
         * smoothstep(-GONE_BEHIND * h, 0.0, out);
     let heat = fire(p.0 / h, d / (h * grow * tall), time) * (1.0 + hot) * HEAT;
-    fire_light(heat, ghost).map(|c| c * k * along * keep)
+    fire_light(heat, fire_colors).map(|c| c * k * along * keep)
 }
 
 /// [`flames_at`] in WGSL and its shapes (`flames_shape`), for the stage's
@@ -205,7 +206,7 @@ pub fn wgsl() -> String {
 }
 
 const SHADER: &str = r"
-fn flames_at(p: vec2<f32>, shape: vec4<f32>, params: vec4<f32>, color: vec4<f32>, color2: vec4<f32>, time: f32, ghost: f32) -> vec3<f32> {
+fn flames_at(p: vec2<f32>, shape: vec4<f32>, params: vec4<f32>, color: vec4<f32>, color2: vec4<f32>, time: f32, fire: array<vec4<f32>, FIRE_STOPS>) -> vec3<f32> {
     let h = max(params.y, 1.0);
     let out = (p.y - shape.y) * shape.w;
     let room = (params.w - shape.y) * shape.w;
@@ -224,19 +225,19 @@ fn flames_at(p: vec2<f32>, shape: vec4<f32>, params: vec4<f32>, color: vec4<f32>
     let keep = (1.0 - smoothstep(FLAMES_FADE.x * room, FLAMES_FADE.y * room, out))
         * smoothstep(-FLAMES_GONE_BEHIND * h, 0.0, out);
     let heat = fx_fire(p.x / h, d / (h * color.x * tall), time) * (1.0 + color.y) * FLAMES_HEAT;
-    return fx_fire_light(heat, ghost) * (params.z * along * keep);
+    return fx_fire_light(heat, fire) * (params.z * along * keep);
 }
 
 fn flames_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let l = flames_at(p, o.shape, o.params, o.color, o.color2, screen.time, looks[FX_FLAMES].z);
+    let l = flames_at(p, o.shape, o.params, o.color, o.color2, screen.time, theme.fire);
     return vec4<f32>(out_rgb(l), 0.0);
 }
 ";
 
 /// The flames round lanes along their edges, plain and round a marquee
 /// (its bulbs half and wholly shown), still and surging, at points along
-/// and off an edge, through their flicker: the shader's `flames_at` as
-/// [`flames_at`].
+/// and off an edge, through their flicker, in every theme's colours: the
+/// shader's `flames_at` as [`flames_at`].
 pub const REFERENCE: Reference = Reference {
     samples: || {
         (0..1200)
@@ -251,9 +252,10 @@ pub const REFERENCE: Reference = Reference {
                     100.0 + fr(0.19) * 1000.0,
                     root + outward * (fr(0.31) * 1.8 - 0.4) * high,
                     3.0 + fr(0.37) * 4.0,
-                    [0.0, 1.0, 0.5, 0.0][k % 4],
+                    0.0,
                 ];
                 let grow = 1.0 + fr(0.71) * FLARE;
+                let fire = THEMES[(k / 4) % THEMES.len()].fire.uniform();
                 [
                     p,
                     [100.0, root, 1100.0, outward],
@@ -261,16 +263,21 @@ pub const REFERENCE: Reference = Reference {
                     [grow, fr(0.83) * FLARE_HEAT, marquee, 12.0],
                     [96.0, 44.0, root - outward * 15.0, 23.0],
                 ]
+                .into_iter()
+                .chain(fire)
             })
             .collect()
     },
-    ins: 5,
+    ins: 10,
     outs: 1,
     body: "
-    let s = ins[i * 5u];
-    outs[i] = vec4<f32>(flames_at(s.xy, ins[i * 5u + 1u], ins[i * 5u + 2u], ins[i * 5u + 3u], ins[i * 5u + 4u], s.z, s.w), 0.0);",
+    let j = i * 10u;
+    let s = ins[j];
+    let fire = array<vec4<f32>, FIRE_STOPS>(ins[j + 5u], ins[j + 6u], ins[j + 7u], ins[j + 8u], ins[j + 9u]);
+    outs[i] = vec4<f32>(flames_at(s.xy, ins[j + 1u], ins[j + 2u], ins[j + 3u], ins[j + 4u], s.z, fire), 0.0);",
     cpu: |s| {
-        let [r, g, b] = flames_at((s[0][0], s[0][1]), s[1], s[2], s[3], s[4], (s[0][2], s[0][3]));
+        let fire = Ramp::of_uniform(&s[5..]);
+        let [r, g, b] = flames_at((s[0][0], s[0][1]), s[1], s[2], s[3], s[4], (s[0][2], &fire));
         vec![[r, g, b, 0.0]]
     },
     near: (3e-3, 3e-3),
@@ -292,7 +299,7 @@ mod tests {
             [BLAZE, 60.0, 1.0, 160.0],
             [grow, hot, marquee, 12.0],
             [96.0, 44.0, 290.0, 23.0],
-            (time, 0.0),
+            (time, &crate::theme::CLASSIC.fire),
         )
     }
 

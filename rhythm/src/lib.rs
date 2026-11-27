@@ -60,6 +60,7 @@
 #![warn(missing_docs)]
 
 pub mod activation;
+mod biquad;
 pub mod cues;
 pub mod frontend;
 pub mod grid;

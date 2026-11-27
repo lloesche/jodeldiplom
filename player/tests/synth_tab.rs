@@ -208,7 +208,7 @@ fn a_synth_slider_edits_the_patch_kept_then_reverted() {
     let _ = gui.update(Message::Frame(Instant::now()));
     click(&mut gui, "synth-keep");
     let state = shown(&gui);
-    let (theme, atom) = (synth_tab::theme(state), synth_tab::atom(state));
+    let (theme, atom) = (state.bench_theme(), synth_tab::atom(state));
     assert_eq!(state.patches.kept(theme, atom), Some(edited));
     // Reverted: as built, nothing kept.
     let _ = gui.update(Message::Frame(Instant::now()));
@@ -272,7 +272,7 @@ fn the_synth_tab_is_in_the_tab_cycle_and_its_keys_step() {
     );
     let fx = update(&mut state, Action::Op(Op::SynthNote(0)));
     let atom = synth_tab::atom(&state);
-    let theme = synth_tab::theme(&state);
+    let theme = state.bench_theme();
     let held = Held::Key(0);
     let down = Bench::Down {
         atom,
@@ -299,7 +299,7 @@ fn the_synth_tab_is_in_the_tab_cycle_and_its_keys_step() {
     update(&mut state, Action::Op(Op::SynthTempo(0)));
     assert_eq!(state.synth.tempo, None);
     update(&mut state, Action::Op(Op::SynthTheme));
-    assert_eq!(synth_tab::theme(&state).name, "spooky");
+    assert_eq!(state.bench_theme().name, "spooky");
 }
 
 /// A key held while the theme compared changes is let go of all the

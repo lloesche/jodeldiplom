@@ -34,6 +34,7 @@ use super::next::{self, Place};
 use super::{disc, pill, rgba, Face, Rgb, Stage, COVER_PAD};
 use crate::core::karaoke::result::{Beat, Shown};
 use crate::core::shine::Tier;
+use crate::theme::Theme;
 use crate::view::karaoke::{
     best_words, date_words, points_text, KaraokePicture, Next, ResultShown,
 };
@@ -342,13 +343,14 @@ impl Stage {
     }
 
     /// The result screen of `picture` (none without a result) in the
-    /// window's `area` (pixels), above its controls' bar, in `tint`, left
-    /// of Next's `button`; and how the button shows over it while the mode
-    /// waits for Next (the scene draws it: [`Stage::scene`]).
+    /// window's `area` (pixels), above its controls' bar, in `tint` (its
+    /// stickers in `theme`'s tiers' colours), left of Next's `button`; and
+    /// how the button shows over it while the mode waits for Next (the
+    /// scene draws it: [`Stage::scene`]).
     pub(super) fn result(
         &mut self,
         picture: &KaraokePicture,
-        tint: &Tint,
+        (tint, theme): (&Tint, &'static Theme),
         (x, y, w, h): (f32, f32, f32, f32),
         button: &Place,
     ) -> Option<(StageFrame, Option<next::Look>)> {
@@ -367,10 +369,7 @@ impl Stage {
         room.shake = seal::shake(&look, verdict, room.s);
         room.calm = sat((reveal.still() - t) as f32 / 2.0);
         let words = self.words_of(&shown.shown);
-        let mut d = StageFrame {
-            clock: t as f32,
-            ..StageFrame::default()
-        };
+        let mut d = StageFrame::bare(t as f32, theme);
         // Over the backdrop: a little darker, a light behind the sheet, and
         // the rays a medal sends out behind it.
         d.instances.push(pill(
@@ -396,7 +395,7 @@ impl Stage {
         self.points(&mut d, &room, shown, &words);
         self.hits(&mut d, &room, shown, &words);
         self.streak(&mut d, &room, shown, &words);
-        self.stars(&mut d, &room, shown, &words);
+        self.stars(&mut d, &room, shown, (&words, theme));
         self.verdict(&mut d, &room, shown, tint, (verdict, &words));
         self.best(&mut d, &room, shown, &words);
         self.signed(&mut d, &room, shown, &words);

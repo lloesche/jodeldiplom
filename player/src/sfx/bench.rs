@@ -209,15 +209,13 @@ fn catalogue() -> Vec<Sound> {
                 format!("“Times {}!”", tier.multiplier()),
             ),
         ] {
-            if called.sung() {
-                add(
-                    Moment::Announcer,
-                    name,
-                    What::Call(called),
-                    None,
-                    Vec::new(),
-                );
-            }
+            add(
+                Moment::Announcer,
+                name,
+                What::Call(called),
+                None,
+                Vec::new(),
+            );
         }
     }
     add(
@@ -286,7 +284,8 @@ fn catalogue() -> Vec<Sound> {
 
 /// The layers a tier's rung plays, by name.
 fn streak_layers(tier: Tier) -> Vec<&'static str> {
-    (tier.spec().layers.streak.iter())
+    conductor::at_rung(Some(tier))
+        .iter()
         .map(|l| l.name())
         .collect()
 }

@@ -16,11 +16,12 @@
 //! the meter's stays away ([`super::Spec::shouts`]).
 //!
 //! It lands where the sound fired with it lands, by the grid's one rule
-//! ([`when`], [`super::Music::land`]): a rung's on the next beat with its
-//! stinger, a phrase's on a bar's first beat with room before a sung line,
-//! with the jackpot; falling the last moment before it. Where it lands at
-//! once (the grid unsure, the beat too far), it appears landing, squashed,
-//! on the frame its sound does.
+//! and the tiers' one rule for a moment ([`crate::tiers::lands`],
+//! [`super::Music::land`]): a rung's on the next beat with its stinger, a
+//! phrase's on a bar's first beat with room before a sung line, with the
+//! jackpot; falling the last moment before it. Where it lands at once (the
+//! grid unsure, the beat too far), it appears landing, squashed, on the
+//! frame its sound does.
 //!
 //! The word is lettered by the stage ([`super::Letters`]: its faces, its
 //! atlas, its size fixed for the stage and its strength its scale), drawn
@@ -28,13 +29,12 @@
 //! and a dark outline round them ([`cover`]: 9 taps of the atlas a pixel,
 //! one where it is inside a letter), its face lit from the top, in the
 //! tier's colour ([`ink`], the shader's reference held to it on the GPU:
-//! [`REFERENCE`]): a row's strong colour its own, a pale one's (the top
-//! row's near white) the rainbow running across the letters ([`colours`]).
+//! [`REFERENCE`]): a row's colour its own, a prismatic row's (the top's:
+//! [`crate::tiers::TierSpec::prismatic`]) the rainbow running across the
+//! letters ([`colours`]).
 //! Its glow is the light's bloom: a copy of the word goes
 //! into the light ([`super::Letters::glow`]). Its look ([`Spec::params`],
 //! `p`): `x` how much it glows (1 as made).
-
-use jodel_rhythm::grid::When;
 
 use super::helpers::{mix3, smoothstep};
 use super::{At, By, Fx, Layer, Letters, Live, Out, Playing, Reference, Slot, Spec};
@@ -69,10 +69,6 @@ pub const SPEC: Spec = Spec {
 
 /// How long it falls before it lands, at most, in seconds.
 const DROP: f32 = 0.16;
-/// The room after a bar's first beat a phrase's slam lands on, before a
-/// sung line, in beats: as long as the jackpot fired with it sounds, so
-/// they land on the same bar's first beat.
-pub const BEATS: f64 = crate::sfx::conductor::JACKPOT_BEATS;
 /// How large it is as it starts falling, in its sizes.
 const FROM: f32 = 2.2;
 /// How far it squashes as it lands: wider by most of this, lower by it.
@@ -131,7 +127,8 @@ fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
     };
     let t = live.clock as f32;
     if let (true, Some(by)) = (live.fired, live.by) {
-        let lands = live.music.land(live.clock, when(by, &live.music));
+        let when = crate::tiers::lands(by.into(), f64::from(live.music.beat_length()));
+        let lands = live.music.land(live.clock, when);
         slot.playing = Some(Playing {
             by,
             at: t,
@@ -190,19 +187,6 @@ fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
     });
 }
 
-/// Where it lands, fired `by` (to `music`): as the sound fired with it
-/// lands ([`super::Music::land`]): a rung's on the next beat, with its
-/// stinger; a phrase's on a bar's first beat with room for [`BEATS`] before
-/// a sung line, with the jackpot.
-pub fn when(by: By, music: &super::Music) -> When {
-    match by {
-        By::Rung(_) => When::Beat,
-        By::Phrase(_) => When::Downbeat {
-            length: BEATS * f64::from(music.beat_length()),
-        },
-    }
-}
-
 /// What it shouts, fired `by`: a phrase reaching a row, its tier's name
 /// ("DIVA!"); a row's rung reached, its multiplier ("×32",
 /// [`Tier::multiplier`]); none for a row there is not.
@@ -218,14 +202,14 @@ pub fn word(by: By) -> Option<String> {
 /// Its colours in `theme`, fired `by` a row: its face the row's tier's
 /// warmed a little with gold, its outline that darkened, its glow leaning
 /// to gold; and how much its face is the rainbow instead: all of it for a
-/// pale row's (the top's, near white), none for a strong colour's.
+/// prismatic row's (the top's), none for another's.
 fn colours(by: By, theme: &Theme) -> ([f32; 3], [f32; 3], [f32; 3], f32) {
     let (By::Phrase(row) | By::Rung(row)) = by;
-    let c = Tier::ALL.get(row).map_or(GOLD, |&t| theme.color(t));
+    let tier = Tier::ALL.get(row);
+    let c = tier.map_or(GOLD, |&t| theme.color(t));
     let face = mix3(c, GOLD, 0.25);
-    let most = c[0].max(c[1]).max(c[2]).max(1e-4);
-    let pale = 1.0 - smoothstep(0.15, 0.45, (most - c[0].min(c[1]).min(c[2])) / most);
-    (face, face.map(|v| v * 0.16), mix3(c, GOLD, 0.5), pale)
+    let bow = tier.map_or(0.0, |t| f32::from(u8::from(t.spec().prismatic)));
+    (face, face.map(|v| v * 0.16), mix3(c, GOLD, 0.5), bow)
 }
 
 /// Where it lands in `room` (left, top, right, bottom) on a stage in

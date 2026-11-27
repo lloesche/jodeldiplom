@@ -90,7 +90,7 @@ fn star_color(theme: &Theme, tier: Option<Tier>, t: f64, i: usize) -> Rgb {
         return PLAIN;
     };
     let base = tier_color(theme, Some(tier));
-    if tier.spec().sticker.prismatic {
+    if tier.spec().prismatic {
         let h = hue(t as f32 * 0.25 + i as f32 * 0.13);
         return [0, 1, 2].map(|k| base[k] + (h[k] - base[k]) * 0.35);
     }
@@ -102,13 +102,14 @@ impl Stage {
     /// glinting as it lands, and as its tier's row says: glinting now and
     /// then while the screen twinkles, prismatic, a halo with its light,
     /// twinkles and a burst), and, once all are on, how many reached each
-    /// tier under them (`words`' tally).
+    /// tier under them (`words`' tally); each in its tier's colour in
+    /// `theme`.
     pub(super) fn stars(
         &mut self,
         d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
-        words: &Written,
+        (words, theme): (&Written, &Theme),
     ) {
         let (t, reveal, r) = (shown.t, &shown.shown.reveal, &shown.shown.result);
         let places = Places::of(r.phrases.len(), room);
@@ -134,7 +135,7 @@ impl Stage {
                 Some(_) => (1.0, size),
             };
             let turn = (noise(i as u32 * 7 + 3) - 0.5) * 0.6;
-            let col = star_color(self.theme, p.tier, t, i);
+            let col = star_color(theme, p.tier, t, i);
             let glow = (s * 0.7, rgba(col, halo * shows));
             let ink = rgba(col, plain * shows);
             d.instances
@@ -155,20 +156,21 @@ impl Stage {
             }
         }
         if !r.phrases.is_empty() {
-            self.tally(d, room, shown, (words, places.bottom() + size * 1.2));
+            let below = places.bottom() + size * 1.2;
+            self.tally(d, room, shown, (words, below, theme));
         }
     }
 
     /// How many phrases reached each tier (`words`' tally, the best
     /// first), under the stickers (the last row's bottom at `below`), once
-    /// all are on: in a row across the sheet's middle, or two where one
-    /// would not fit ([`tally_rows`]).
+    /// all are on, each in its tier's colour in `theme`: in a row across
+    /// the sheet's middle, or two where one would not fit ([`tally_rows`]).
     fn tally(
         &mut self,
         d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
-        (words, below): (&Written, f32),
+        (words, below, theme): (&Written, f32, &Theme),
     ) {
         let (t, reveal, r) = (shown.t, &shown.shown.reveal, &shown.shown.result);
         let last = r.phrases.len().saturating_sub(1);
@@ -193,7 +195,7 @@ impl Stage {
             let cy = cy + row as f32 * px * 1.6;
             let mut left = room.at(0.5, 0.0).0 - total / 2.0;
             for (tier, text) in &words.tally[items] {
-                let col = star_color(self.theme, Some(*tier), t, 0);
+                let col = star_color(theme, Some(*tier), t, 0);
                 let none = (0.0, [0.0; 4]);
                 let chip_at = (left + chip, cy);
                 d.instances

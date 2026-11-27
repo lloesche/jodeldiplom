@@ -3,8 +3,8 @@
 //! a click plays it on the effects input, as the game plays it but by a
 //! player of the bench's own (the game's is never touched), in the song's
 //! key and tempo, or one chosen in the tab's header, in the theme the tab
-//! compares (Classic or Spooky: [`theme`]; the game's own sounds stay in
-//! the theme in force). The atoms a sound plays are its patches: the one
+//! compares (Classic or Spooky: [`State::bench_theme`]; the game's own
+//! sounds stay in the theme in force). The atoms a sound plays are its patches: the one
 //! selected is shown and edited (its engine, its envelope, its parameters,
 //! by their tables: [`jodel_synth::params`]) in the theme compared, and an
 //! edit is heard on the next play, the game's in that theme too: the
@@ -144,16 +144,20 @@ pub enum SynthAction {
     LetGo,
 }
 
-/// The theme the tab plays and edits its sounds in: the one it compares,
-/// else the one in force ([`State::theme`]).
-pub fn theme(state: &State) -> &'static Theme {
-    state.synth.theme.unwrap_or_else(|| state.theme())
+impl State {
+    /// The theme the Synth tab plays and edits its sounds in: the one it
+    /// compares, else the one in force ([`State::theme`]). A sounds-only
+    /// override, on purpose: comparing a theme there never changes how
+    /// the game looks or sounds.
+    pub fn bench_theme(&self) -> &'static Theme {
+        self.synth.theme.unwrap_or_else(|| self.theme())
+    }
 }
 
 /// `atom`'s patch in the tab's theme as the book has it: edited, kept, or
 /// built in.
 pub fn patch(state: &State, atom: Atom) -> Patch {
-    state.patches.patch(theme(state), atom)
+    state.patches.patch(state.bench_theme(), atom)
 }
 
 /// The sound selected.
@@ -214,14 +218,14 @@ fn play(state: &State, fx: &mut Vec<Effect>) {
         what: sound(state).what,
         key: key(state),
         bpm: tempo(state),
-        theme: theme(state),
+        theme: state.bench_theme(),
     }));
 }
 
 /// The atom's patch in the tab's theme changed by `change`, if that
 /// changes it.
 fn edit(state: &mut State, change: impl FnOnce(&mut Patch)) {
-    let (theme, atom) = (theme(state), atom(state));
+    let (theme, atom) = (state.bench_theme(), atom(state));
     state.patches.edit(theme, atom, change);
 }
 
@@ -249,7 +253,7 @@ fn moment_step(state: &mut State, by: i32) {
 fn down(state: &mut State, note: f32, held: Held, fx: &mut Vec<Effect>) {
     let atom = atom(state);
     state.synth.on = Some(atom);
-    let theme = theme(state);
+    let theme = state.bench_theme();
     fx.push(Effect::Bench(Bench::Down {
         atom,
         note,
@@ -355,7 +359,7 @@ pub fn act(state: &mut State, what: SynthAction, fx: &mut Vec<Effect>) {
 
 /// The atom's patch kept as it is now, written to the data folder.
 fn keep(state: &mut State, fx: &mut Vec<Effect>) {
-    let (theme, atom) = (theme(state), atom(state));
+    let (theme, atom) = (state.bench_theme(), atom(state));
     match state.patches.keep(theme, atom) {
         Ok(patch) => {
             fx.push(Effect::KeepPatch {
@@ -375,7 +379,7 @@ fn keep(state: &mut State, fx: &mut Vec<Effect>) {
 /// The atom's patch back to its built-in one, what was kept of it
 /// forgotten.
 fn revert(state: &mut State, fx: &mut Vec<Effect>) {
-    let (theme, atom) = (theme(state), atom(state));
+    let (theme, atom) = (state.bench_theme(), atom(state));
     let Some(kept) = state.patches.revert(theme, atom) else {
         return;
     };
@@ -419,7 +423,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
             state.synth.octave = (state.synth.octave + i32::from(by)).clamp(-OCTAVES, OCTAVES);
         }
         Op::SynthTheme => {
-            let at = crate::sfx::conductor::place(theme(state));
+            let at = crate::sfx::conductor::place(state.bench_theme());
             act(
                 state,
                 SynthAction::Theme(THEMES[(at + 1) % THEMES.len()]),

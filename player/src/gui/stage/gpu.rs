@@ -469,6 +469,8 @@ pub struct StageFrame {
     pub music: crate::gui::fx::Music,
     /// The effects' looks this frame.
     pub looks: crate::gui::fx::Looks,
+    /// The theme the effects are dressed in ([`crate::theme::Theme::uniform`]).
+    pub theme: &'static crate::theme::Theme,
     /// How far the screen is shaken (pixels across and down): all of it
     /// but the screen passes, which are the screen's own.
     pub shake: [f32; 2],
@@ -478,10 +480,12 @@ pub struct StageFrame {
 }
 
 impl StageFrame {
-    /// A frame with nothing in it yet, at `clock` (the singing's time).
-    pub fn bare(clock: f32) -> StageFrame {
+    /// A frame with nothing in it yet, at `clock` (the singing's time),
+    /// dressed in `theme`.
+    pub fn bare(clock: f32, theme: &'static crate::theme::Theme) -> StageFrame {
         StageFrame {
             clock,
+            theme,
             ..StageFrame::default()
         }
     }
@@ -490,8 +494,8 @@ impl StageFrame {
 /// What a stage pass draws next: its shapes (back to front), the screen
 /// passes and those over everything (each drawn apart:
 /// [`StagePass::draw_screen`], [`StagePass::draw_top`]), the text to put
-/// into the atlas first, the music, the effects' looks, the screen's shake
-/// and the singing's time.
+/// into the atlas first, the music, the effects' looks, the theme they are
+/// dressed in, the screen's shake and the singing's time.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Feed<'a> {
     /// The shapes.
@@ -508,6 +512,8 @@ pub struct Feed<'a> {
     pub music: crate::gui::fx::Music,
     /// The effects' looks.
     pub looks: crate::gui::fx::Looks,
+    /// The theme.
+    pub theme: &'static crate::theme::Theme,
     /// The screen's shake.
     pub shake: [f32; 2],
     /// The time.
@@ -525,6 +531,7 @@ impl StageFrame {
             paths: &self.paths,
             music: self.music,
             looks: self.looks,
+            theme: self.theme,
             shake: self.shake,
             clock: self.clock,
         }
@@ -543,6 +550,7 @@ impl StageFrame {
             uploads: &self.uploads,
             music: self.music,
             looks: self.looks,
+            theme: self.theme,
             shake: self.shake,
             clock: self.clock,
             ..Feed::default()

@@ -859,7 +859,8 @@ really found, as its workers tell it: never a progress they did not tell.
     `the_stage_shader_s_glory_is_its_reference`,
     `the_particles_shader_draws_what_sprite_says` (`gui::shader_check`)
   - `the_stage_draws_the_same_frames` (fx_digest),
-    `a_look_moved_by_the_music_reaches_the_lyric_treatment` (fx_looks)
+    `a_look_moved_by_the_music_reaches_the_lyric_treatment`,
+    `a_theme_s_dress_reaches_the_lyric_treatment` (fx_looks)
   - `light_rolls_off_to_white` (`gui::bloom`),
     `the_bloom_s_tone_map_is_its_reference` (`gui::shader_check`)
   - `the_bands_shine_by_the_tier`, `a_step_up_bursts_once_a_tier`,
@@ -1095,8 +1096,10 @@ really found, as its workers tell it: never a progress they did not tell.
   saved at once as `karaoke_theme`). Everything that has a colour, a
   look or a sound reads the theme in force now, so a change is the next
   frame's, mid-song too: the tiers' colours and the count-in's accent,
-  the effects' looks and what the theme holds throughout (Spooky's fog),
-  the backdrop's grade. Its sounds' patches are the synth's already (it
+  how the effects are dressed (the fire's colours, the bulbs, the coins,
+  the angels: the shaders' theme uniform, apart from the effects' looks,
+  which no theme changes) and what the theme holds throughout (Spooky's
+  fog), the backdrop's grade. Its sounds' patches are the synth's already (it
   holds every theme's): no new synth, nothing told it, nothing allocated
   on the mixer thread; the conductor plays the new theme's from then on,
   so what rings rings on in the voice it started in without a click, a
@@ -1105,6 +1108,7 @@ really found, as its workers tell it: never a progress they did not tell.
   never changing the game's.
   - `the_karaoke_theme_is_a_setting_row_and_saved`
   - `a_theme_changed_mid_song_is_the_next_frame_s`
+  - `a_theme_s_dress_reaches_the_lyric_treatment` (fx_looks)
   - `a_cover_is_graded_by_the_theme_of_its_frame` (`gui::backdrop`)
   - `a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing`
     (conductor)

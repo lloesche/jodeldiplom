@@ -23,6 +23,8 @@
 //! too, its lowest notes under [`BAND_LOW`]: its harmonics repeat at its
 //! own period.
 
+use crate::biquad::Biquad;
+
 /// The rate the voice is heard at.
 pub const RATE: u32 = 16_000;
 /// The seconds a frame hears.
@@ -66,16 +68,16 @@ pub struct Yin {
 }
 
 /// The filter to the voice's band, at [`RATE`].
-struct Band([Biquad; 3]);
+struct Band([Biquad<f32>; 3]);
 
 impl Band {
     fn new() -> Band {
         // A fourth-order Butterworth's two sections: quality 1/(2·cos(π/8))
         // and 1/(2·cos(3π/8)).
         Band([
-            Biquad::new(BAND_LOW, 0.541_196_1, true),
-            Biquad::new(BAND_LOW, 1.306_563, true),
-            Biquad::new(BAND_HIGH, std::f64::consts::FRAC_1_SQRT_2, false),
+            section(BAND_LOW, 0.541_196_1, true),
+            section(BAND_LOW, 1.306_563, true),
+            section(BAND_HIGH, std::f64::consts::FRAC_1_SQRT_2, false),
         ])
     }
 
@@ -84,39 +86,22 @@ impl Band {
     }
 }
 
-/// One second-order section (transposed direct form II).
-struct Biquad {
-    b: [f32; 3],
-    a: [f32; 2],
-    z: [f32; 2],
-}
-
-impl Biquad {
-    /// A high-pass (`high`) or low-pass section at `hz` with quality `q`,
-    /// at [`RATE`].
-    fn new(hz: f64, q: f64, high: bool) -> Biquad {
-        let w = std::f64::consts::TAU * hz / f64::from(RATE);
-        let (sin, cos) = w.sin_cos();
-        let alpha = sin / (2.0 * q);
-        let a0 = 1.0 + alpha;
-        let (b0, b1) = if high {
-            ((1.0 + cos) / 2.0, -(1.0 + cos))
-        } else {
-            ((1.0 - cos) / 2.0, 1.0 - cos)
-        };
-        Biquad {
-            b: [(b0 / a0) as f32, (b1 / a0) as f32, (b0 / a0) as f32],
-            a: [(-2.0 * cos / a0) as f32, ((1.0 - alpha) / a0) as f32],
-            z: [0.0; 2],
-        }
-    }
-
-    fn run(&mut self, x: f32) -> f32 {
-        let y = self.b[0] * x + self.z[0];
-        self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
-        self.z[1] = self.b[2] * x - self.a[1] * y;
-        y
-    }
+/// A high-pass (`high`) or low-pass section at `hz` with quality `q`, at
+/// [`RATE`].
+fn section(hz: f64, q: f64, high: bool) -> Biquad<f32> {
+    let w = std::f64::consts::TAU * hz / f64::from(RATE);
+    let (sin, cos) = w.sin_cos();
+    let alpha = sin / (2.0 * q);
+    let a0 = 1.0 + alpha;
+    let (b0, b1) = if high {
+        ((1.0 + cos) / 2.0, -(1.0 + cos))
+    } else {
+        ((1.0 - cos) / 2.0, 1.0 - cos)
+    };
+    Biquad::new(
+        [(b0 / a0) as f32, (b1 / a0) as f32, (b0 / a0) as f32],
+        [(-2.0 * cos / a0) as f32, ((1.0 - alpha) / a0) as f32],
+    )
 }
 
 impl Yin {

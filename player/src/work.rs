@@ -17,9 +17,10 @@
 //!   ([`voice`]).
 //! - What they are built of: a [`Queue`] of work their threads wait on,
 //!   the two [`Lanes`] a worker is asked in (wanted now, and to get ready
-//!   ahead), and a [`Job`] that runs once on a thread of its own, tells
-//!   how it stands, and waits for a retry after a failure; their results
-//!   come back to the app through the [`outbox`].
+//!   ahead), a [`Job`] that runs once on a thread of its own, tells how it
+//!   stands, and waits for a retry after a failure, and a thread doing the
+//!   last thing asked of it ([`Latest`]: the shine's, the loudness's);
+//!   their results come back to the app through the [`outbox`].
 
 pub mod art;
 pub mod cover;
@@ -40,7 +41,9 @@ pub mod voice;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use outbox::Notify;
@@ -48,6 +51,65 @@ use outbox::Notify;
 /// A song's file name, for the trace.
 pub fn song_name(path: &std::path::Path) -> std::borrow::Cow<'_, str> {
     path.file_name().unwrap_or_default().to_string_lossy()
+}
+
+/// A thread doing the last thing asked of it, one at a time: what is
+/// asked while it works waits, and of all asked meanwhile only the last is
+/// done ([`Latest::want`], each ask once in a row); what it finds is
+/// taken as it comes ([`Latest::take`]), `notify` told as each is (the
+/// shine's references, the songs' loudness).
+pub struct Latest<Ask, Found> {
+    tx: Sender<Ask>,
+    rx: Receiver<Found>,
+    /// What was last asked for.
+    asked: Option<Ask>,
+}
+
+impl<Ask: Clone + Send + 'static, Found: Send + 'static> Latest<Ask, Found> {
+    /// A worker on a thread of its own: `start` run on it first (setting
+    /// the thread up), giving the work done for each ask; `notify` told as
+    /// each is done.
+    pub fn new<W: FnMut(Ask) -> Found>(
+        start: impl FnOnce() -> W + Send + 'static,
+        notify: Notify,
+    ) -> Latest<Ask, Found> {
+        let (tx, wants) = mpsc::channel::<Ask>();
+        let (found, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut work = start();
+            while let Ok(mut want) = wants.recv() {
+                // Only the last asked for.
+                while let Ok(later) = wants.try_recv() {
+                    want = later;
+                }
+                if found.send(work(want)).is_err() {
+                    return;
+                }
+                notify();
+            }
+        });
+        Latest {
+            tx,
+            rx,
+            asked: None,
+        }
+    }
+
+    /// The ask `ask` makes wanted, unless `is` says the last asked for is
+    /// it (so a want made every frame asks once, making nothing).
+    pub fn want(&mut self, is: impl FnOnce(&Ask) -> bool, ask: impl FnOnce() -> Ask) {
+        if self.asked.as_ref().is_some_and(is) {
+            return;
+        }
+        let ask = ask();
+        self.asked = Some(ask.clone());
+        let _ = self.tx.send(ask);
+    }
+
+    /// What was found since the last call, if anything was.
+    pub fn take(&self) -> Option<Found> {
+        self.rx.try_recv().ok()
+    }
 }
 
 /// Work for background threads to wait on: what is to be done (`W`), under
@@ -377,5 +439,40 @@ mod tests {
         assert_eq!((job.status(), told.load(Ordering::SeqCst)), (2, 1));
         job.retry();
         job.wait_for_retry();
+    }
+
+    /// Asked while it works, it does only the last ask after; an ask the
+    /// same as the last is asked once; each found told.
+    #[test]
+    fn latest_does_only_the_last_asked_meanwhile() {
+        let (gate, held) = mpsc::channel::<()>();
+        let (begun, working) = mpsc::channel::<()>();
+        let (told, heard) = mpsc::channel::<()>();
+        let notify: Notify = Arc::new(move || {
+            let _ = told.send(());
+        });
+        let mut latest = Latest::new(
+            move || {
+                move |ask: u32| {
+                    if ask == 1 {
+                        begun.send(()).unwrap();
+                        held.recv().unwrap();
+                    }
+                    ask * 10
+                }
+            },
+            notify,
+        );
+        let wait = Duration::from_secs(10);
+        latest.want(|&a| a == 1, || 1);
+        working.recv_timeout(wait).unwrap();
+        latest.want(|&a| a == 2, || 2);
+        latest.want(|&a| a == 3, || 3);
+        latest.want(|&a| a == 3, || unreachable!("asked once in a row"));
+        gate.send(()).unwrap();
+        heard.recv_timeout(wait).unwrap();
+        heard.recv_timeout(wait).unwrap();
+        let found: Vec<u32> = std::iter::from_fn(|| latest.take()).collect();
+        assert_eq!(found, [10, 30]);
     }
 }

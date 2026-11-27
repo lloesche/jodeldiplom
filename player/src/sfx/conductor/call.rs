@@ -18,7 +18,6 @@
 
 use super::palette::Atom;
 use super::sounds::{Note, Score};
-use crate::tiers::Tier;
 
 /// The lowest the call's tonic is put at (C3): its melody, from the fifth
 /// over it to the octave and a step, sits where an alto sings (G3 to C#5).
@@ -157,7 +156,7 @@ const NG: Consonant = Consonant::Hum { length: 0.07 };
 /// glides to, a diphthong's), those after it, how many eighths it lasts
 /// (from its vowel to the next one's), the degree of the key it is sung on.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Syllable {
+pub struct Syllable {
     pub(super) before: &'static [Consonant],
     pub(super) vowel: f32,
     pub(super) to: Option<f32>,
@@ -166,8 +165,10 @@ pub(super) struct Syllable {
     pub(super) degree: i32,
 }
 
-/// A word: its syllables.
-pub(super) type Word = &'static [Syllable];
+/// A word: its syllables (a tier's name is its row's,
+/// [`crate::tiers::TierSpec::call`]; a multiplier's is its number's,
+/// [`times`]).
+pub type Word = &'static [Syllable];
 
 /// A syllable of `vowel` on `degree` for `eighths`, nothing round it.
 const fn syl(vowel: f32, eighths: u32, degree: i32) -> Syllable {
@@ -194,26 +195,36 @@ const fn with(before: &'static [Consonant], s: Syllable, after: &'static [Conson
     Syllable { before, after, ..s }
 }
 
-const GOOD: [Syllable; 1] = [with(&[G], syl(OO, 3, 5), &[D])];
-const GREAT: [Syllable; 1] = [with(&[G], glide(EH, I, 3, 5), &[T])];
-const AWESOME: [Syllable; 2] = [syl(AW, 2, 5), with(&[S], syl(UH, 2, 3), &[M])];
-const AMAZING: [Syllable; 3] = [
+/// "Good!"
+pub const GOOD: [Syllable; 1] = [with(&[G], syl(OO, 3, 5), &[D])];
+/// "Great!"
+pub const GREAT: [Syllable; 1] = [with(&[G], glide(EH, I, 3, 5), &[T])];
+/// "Awe-some!"
+pub const AWESOME: [Syllable; 2] = [syl(AW, 2, 5), with(&[S], syl(UH, 2, 3), &[M])];
+/// "A-ma-zing!"
+pub const AMAZING: [Syllable; 3] = [
     syl(UH, 1, 3),
     with(&[M], glide(EH, I, 2, 5), &[]),
     with(&[Z], syl(IH, 2, 4), &[NG]),
 ];
-const DIVA: [Syllable; 2] = [with(&[D], syl(I, 1, 3), &[]), with(&[V], syl(A, 3, 5), &[])];
+/// "Di-va!"
+pub const DIVA: [Syllable; 2] = [with(&[D], syl(I, 1, 3), &[]), with(&[V], syl(A, 3, 5), &[])];
 
 /// "times", before a multiplier's number.
 const TIMES: Syllable = with(&[T], glide(A, I, 1, 3), &[M, Z]);
+/// "Times two!"
 const TIMES_TWO: [Syllable; 2] = [TIMES, with(&[T], syl(U, 3, 5), &[])];
+/// "Times four!"
 const TIMES_FOUR: [Syllable; 2] = [TIMES, with(&[F], syl(AW, 3, 5), &[])];
+/// "Times eight!"
 const TIMES_EIGHT: [Syllable; 2] = [TIMES, with(&[], glide(EH, I, 3, 5), &[T])];
+/// "Times six-teen!"
 const TIMES_SIXTEEN: [Syllable; 3] = [
     TIMES,
     with(&[S], syl(IH, 1, 4), &[K, S]),
     with(&[T], syl(I, 3, 5), &[N]),
 ];
+/// "Times thir-ty-two!"
 const TIMES_THIRTY_TWO: [Syllable; 4] = [
     TIMES,
     with(&[TH], syl(UH, 1, 5), &[]),
@@ -221,21 +232,9 @@ const TIMES_THIRTY_TWO: [Syllable; 4] = [
     with(&[T], syl(U, 3, 5), &[]),
 ];
 
-/// The word a phrase reaching `tier` is called out with: its name (none
-/// for a name it has no word for).
-pub(super) fn name(tier: Tier) -> Option<Word> {
-    Some(match tier.name() {
-        "Good" => &GOOD,
-        "Great" => &GREAT,
-        "Awesome" => &AWESOME,
-        "Amazing" => &AMAZING,
-        "Diva" => &DIVA,
-        _ => return None,
-    })
-}
-
 /// The words a rung reached is called out with: "times" and its
-/// multiplier (none for a number it has no word for).
+/// `multiplier` (none for a number it has no word for; every tier's has
+/// one, a test holds it to that).
 pub(super) fn times(multiplier: u32) -> Option<Word> {
     Some(match multiplier {
         2 => &TIMES_TWO,

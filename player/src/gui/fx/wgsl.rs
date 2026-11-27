@@ -39,7 +39,7 @@ pub fn wgsl(effects: &[Fx]) -> String {
             out += &format!("const G_LYRIC_{ident}: u32 = {g}u;\n");
             if own {
                 treats += &format!(
-                    "    if GROUP == G_LYRIC_{ident} {{\n        return lyric_{}(col, a, p, o.quad, screen.time, k, looks[FX_{ident}]);\n    }}\n",
+                    "    if GROUP == G_LYRIC_{ident} {{\n        return lyric_{}(col, a, p, o.quad, screen.time, k, looks[FX_{ident}], theme);\n    }}\n",
                     s.ident
                 );
             }

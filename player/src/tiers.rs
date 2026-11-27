@@ -17,6 +17,14 @@
 //! phrase reaching it counts as it only right after a phrase that counted
 //! at least the row below, else as that row ([`Tier::counted`]).
 //!
+//! A row's moments are its own too: the word the announcer calls a phrase
+//! reaching it out with ([`TierSpec::call`]; its rung's is its
+//! multiplier's), whether it shines in the rainbow (its sticker, its
+//! slammed word: [`TierSpec::prismatic`]) and hits the jackpot (where it
+//! fires the jackpot's burst: [`TierSpec::jackpot`]); where a moment lands
+//! is one rule for the slam, the jackpot and the announcer alike
+//! ([`lands`]).
+//!
 //! A look held while the singing glows is a value a row: between two rows
 //! (the glow easing from one to the other) it is the straight line between
 //! their values ([`held`]), below the first from none.
@@ -25,7 +33,10 @@
 //! and each row looks and sounds other than the one before (a test holds
 //! them to it).
 
-use crate::gui::fx::{Effects, Fx, Use};
+use jodel_rhythm::grid::When;
+
+use crate::gui::fx::{By, Effects, Fx, Use};
+use crate::sfx::conductor::call::{self, Word};
 use crate::sfx::conductor::{Chime, Layers, Streak};
 
 /// How a tier fills the meter.
@@ -37,13 +48,12 @@ pub enum Paint {
     Rainbow,
 }
 
-/// How a tier's sticker looks on the diploma.
+/// How a tier's sticker looks on the diploma (its colour running through
+/// the rainbow where its row is prismatic: [`TierSpec::prismatic`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sticker {
     /// Whether it glints now and then while the screen twinkles.
     pub glints: bool,
-    /// Whether its colour runs a little through the rainbow.
-    pub prismatic: bool,
     /// How strong its halo is (0: none); with one it also lights what is
     /// round it, twinkles and bursts as it lands.
     pub halo: f32,
@@ -76,9 +86,8 @@ pub struct TierSpec {
     /// rainbow ([`crate::gui::shine::Glow`]), and where its held looks
     /// are its own ([`held`]).
     pub glow: f32,
-    /// How many bands the rainbow fans out from the playhead (a whole
-    /// number).
-    pub bands: f32,
+    /// How many bands the rainbow fans out from the playhead.
+    pub bands: u32,
     /// How much the rainbow lights the whole lane, 0 to 1 (held).
     pub lane_light: f32,
     /// The effects it shows: while the singing is at it, when a phrase
@@ -86,7 +95,8 @@ pub struct TierSpec {
     pub fx: Effects,
     /// How brightly the backdrop's subject is lit, 0 to 1 (held).
     pub backdrop_glow: f32,
-    /// How strong the spotlight rays from behind it are, 0 to 1 (held).
+    /// How strong the spotlight rays from behind it are, 0 none, 1 full
+    /// (held; the top's past 1, overdriven).
     pub backdrop_rays: f32,
     /// How much harder the subject moves with the beat (its push, its
     /// rim's light, a phrase landing's flare), 0 to 1 over none (held:
@@ -97,10 +107,24 @@ pub struct TierSpec {
     pub mark: f32,
     /// How its sticker looks on the diploma.
     pub sticker: Sticker,
+    /// Whether it shines in the rainbow: its sticker's colour running a
+    /// little through it, its slammed word's face all of it.
+    pub prismatic: bool,
     /// What its sounds are made of: the streak's at its rung, a phrase's
     /// chime reaching it (the game's synth plays them:
     /// [`crate::sfx::conductor`]).
     pub layers: Layers,
+    /// The word the announcer calls a phrase reaching it out with, its
+    /// name (where its chime calls: [`Chime::Call`]).
+    pub call: Word,
+}
+
+impl TierSpec {
+    /// Whether a phrase reaching it hits the jackpot: where its `on_phrase`
+    /// fires the jackpot's burst ([`Fx::Jackpot`]), its sound goes with it.
+    pub fn jackpot(&self) -> bool {
+        crate::gui::fx::strength(self.fx.on_phrase, Fx::Jackpot) > 0.0
+    }
 }
 
 /// The tiers, Good first.
@@ -114,7 +138,7 @@ pub static TIERS: [TierSpec; 5] = [
         color: [0.35, 0.92, 0.62],
         fill: Paint::Rainbow,
         glow: 0.25,
-        bands: 10.0,
+        bands: 10,
         lane_light: 0.0,
         fx: Effects {
             held: &[Use::of(Fx::Rainbow, 1.0)],
@@ -127,13 +151,14 @@ pub static TIERS: [TierSpec; 5] = [
         mark: 1.8,
         sticker: Sticker {
             glints: false,
-            prismatic: false,
             halo: 0.0,
         },
+        prismatic: false,
         layers: Layers {
-            streak: &[],
+            adds: &[],
             chime: &[],
         },
+        call: &call::GOOD,
     },
     TierSpec {
         name: "Great",
@@ -144,7 +169,7 @@ pub static TIERS: [TierSpec; 5] = [
         color: [1.0, 0.78, 0.22],
         fill: Paint::Rgb([1.0, 0.72, 0.16]),
         glow: 0.5,
-        bands: 14.0,
+        bands: 14,
         lane_light: 0.0,
         fx: Effects {
             held: &[Use::of(Fx::Rainbow, 1.0), Use::of(Fx::Glow, 1.0)],
@@ -157,13 +182,14 @@ pub static TIERS: [TierSpec; 5] = [
         mark: 1.8,
         sticker: Sticker {
             glints: false,
-            prismatic: false,
             halo: 0.0,
         },
+        prismatic: false,
         layers: Layers {
-            streak: &[Streak::Glint, Streak::Octave],
+            adds: &[Streak::Glint, Streak::Octave],
             chime: &[Chime::Plucks],
         },
+        call: &call::GREAT,
     },
     TierSpec {
         name: "Awesome",
@@ -174,7 +200,7 @@ pub static TIERS: [TierSpec; 5] = [
         color: [1.0, 0.56, 0.3],
         fill: Paint::Rgb([1.0, 0.5, 0.22]),
         glow: 0.625,
-        bands: 16.0,
+        bands: 16,
         lane_light: 0.5,
         fx: Effects {
             held: &[Use::of(Fx::Rainbow, 1.0), Use::of(Fx::Glow, 1.0)],
@@ -188,19 +214,14 @@ pub static TIERS: [TierSpec; 5] = [
         mark: 1.8,
         sticker: Sticker {
             glints: true,
-            prismatic: false,
             halo: 0.0,
         },
+        prismatic: false,
         layers: Layers {
-            streak: &[
-                Streak::Glint,
-                Streak::Octave,
-                Streak::Register,
-                Streak::Clinks,
-                Streak::Reels,
-            ],
+            adds: &[Streak::Register, Streak::Clinks, Streak::Reels],
             chime: &[Chime::Plucks, Chime::BrassHit],
         },
+        call: &call::AWESOME,
     },
     TierSpec {
         name: "Amazing",
@@ -211,7 +232,7 @@ pub static TIERS: [TierSpec; 5] = [
         color: [1.0, 0.35, 0.6],
         fill: Paint::Rgb([1.0, 0.3, 0.58]),
         glow: 0.75,
-        bands: 18.0,
+        bands: 18,
         lane_light: 1.0,
         fx: Effects {
             held: &[
@@ -233,22 +254,14 @@ pub static TIERS: [TierSpec; 5] = [
         mark: 1.8,
         sticker: Sticker {
             glints: true,
-            prismatic: false,
             halo: 0.0,
         },
+        prismatic: false,
         layers: Layers {
-            streak: &[
-                Streak::Glint,
-                Streak::Octave,
-                Streak::Register,
-                Streak::Clinks,
-                Streak::Reels,
-                Streak::Brass,
-                Streak::Riser,
-                Streak::Shimmer,
-            ],
+            adds: &[Streak::Brass, Streak::Riser, Streak::Shimmer],
             chime: &[Chime::Plucks, Chime::TaDaa],
         },
+        call: &call::AMAZING,
     },
     TierSpec {
         name: "Diva",
@@ -259,7 +272,7 @@ pub static TIERS: [TierSpec; 5] = [
         color: [0.96, 0.93, 1.0],
         fill: Paint::Rgb([1.0, 0.95, 0.85]),
         glow: 1.0,
-        bands: 22.0,
+        bands: 22,
         lane_light: 1.0,
         fx: Effects {
             held: &[
@@ -291,27 +304,55 @@ pub static TIERS: [TierSpec; 5] = [
         mark: 2.4,
         sticker: Sticker {
             glints: true,
-            prismatic: true,
             halo: 0.5,
         },
+        prismatic: true,
         layers: Layers {
-            streak: &[
-                Streak::Glint,
-                Streak::Octave,
-                Streak::Register,
-                Streak::Clinks,
-                Streak::Reels,
-                Streak::Brass,
-                Streak::Riser,
-                Streak::Shimmer,
-                Streak::Glitter,
-                Streak::Payout,
-                Streak::Call,
-            ],
+            adds: &[Streak::Glitter, Streak::Payout, Streak::Call],
             chime: &[Chime::Plucks, Chime::TaDaa, Chime::Choir, Chime::Call],
         },
+        call: &call::DIVA,
     },
 ];
+
+/// How many beats a phrase's moment takes after the bar's first beat it
+/// lands on (the jackpot's sound, the slam's word, the announcer's call):
+/// the room it asks for before a sung line.
+pub const MOMENT_BEATS: f64 = 3.0;
+
+/// How a tier's moment lands: as its rung reached, or as a phrase
+/// reaching it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Landing {
+    /// Its rung reached.
+    Rung,
+    /// A phrase reaching it.
+    Phrase,
+}
+
+impl From<By> for Landing {
+    /// Where what fired an effect lands by.
+    fn from(by: By) -> Landing {
+        match by {
+            By::Rung(_) => Landing::Rung,
+            By::Phrase(_) => Landing::Phrase,
+        }
+    }
+}
+
+/// Where a tier's `landing` lands, `beat` long a beat (in the clock's own
+/// units): a rung's on the next beat, with its stinger; a phrase's on a
+/// bar's first beat with room for [`MOMENT_BEATS`] before a sung line,
+/// with the jackpot. The slam, the jackpot and the announcer all land by
+/// it.
+pub fn lands(landing: Landing, beat: f64) -> When {
+    match landing {
+        Landing::Rung => When::Beat,
+        Landing::Phrase => When::Downbeat {
+            length: MOMENT_BEATS * beat,
+        },
+    }
+}
 
 /// A held look at glow `k`: the straight line through none at 0 and each
 /// row's `value` at its glow, the top's from there on. At a row's glow it
@@ -414,7 +455,7 @@ mod tests {
             .flat_map(|list| Fx::ALL.map(|fx| f64::from(crate::gui::fx::strength(list, fx))));
         [
             t.glow,
-            t.bands,
+            t.bands as f32,
             t.lane_light,
             t.backdrop_glow,
             t.backdrop_rays,
@@ -426,7 +467,7 @@ mod tests {
         .into_iter()
         .chain([
             f64::from(u8::from(s.glints)),
-            f64::from(u8::from(s.prismatic)),
+            f64::from(u8::from(t.prismatic)),
         ])
         .chain(effects)
         .collect()
@@ -435,12 +476,12 @@ mod tests {
     /// Every row in order: each bar, streak, glow, band count, backdrop
     /// glow and beat above the one before, the held looks never less, each
     /// row looking other than the one before (a row that copies another's
-    /// looks fails here), and sounding more: its streak's layers all the
-    /// row before's and more, its chime's the row before's (a "ta-daa" in
-    /// place of a short brass hit) and other; the top's glow 1, its rung
-    /// paying out, its phrase's chime a choir; each named apart, a mark on
-    /// the meter, and its rung reached at its streak, the one before a word
-    /// short of it.
+    /// looks fails here), and sounding more: its rung adding layers no row
+    /// below adds, its chime's the row before's (a "ta-daa" in place of a
+    /// short brass hit) and other; the top's glow 1, its rung paying out,
+    /// its phrase's chime a choir; each named apart, a mark on the meter,
+    /// and its rung reached at its streak, the one before a word short of
+    /// it.
     #[test]
     fn every_row_is_in_order() {
         for w in TIERS.windows(2) {
@@ -457,8 +498,13 @@ mod tests {
             }
             assert_ne!(looks(a), looks(b), "{pair}");
             let (la, lb) = (a.layers, b.layers);
-            assert!(la.streak.iter().all(|l| lb.streak.contains(l)), "{pair}");
-            assert!(lb.streak.len() > la.streak.len(), "{pair}");
+            let below = |l: &Streak| {
+                TIERS
+                    .iter()
+                    .take_while(|t| t.name != b.name)
+                    .any(|t| t.layers.adds.contains(l))
+            };
+            assert!(!lb.adds.is_empty() && !lb.adds.iter().any(below), "{pair}");
             let kept = |l: &Chime| {
                 lb.chime.contains(l) || (*l == Chime::BrassHit && lb.chime.contains(&Chime::TaDaa))
             };
@@ -467,13 +513,13 @@ mod tests {
         }
         assert_eq!(Tier::TOP.spec().glow, 1.0);
         assert!(TIERS[0].glow > 0.0 && TIERS[0].streak > 0);
-        let top = Tier::TOP.spec().layers;
-        assert!(top.streak.contains(&Streak::Payout) && top.chime.contains(&Chime::Choir));
+        let top = crate::sfx::conductor::at_rung(Some(Tier::TOP));
+        assert!(top.contains(Streak::Payout));
+        assert!(Tier::TOP.spec().layers.chime.contains(&Chime::Choir));
         assert_eq!(crate::core::singing::rung(0), None);
         let marks = crate::gui::stage::shapes::glory::MARKS;
         for t in Tier::ALL {
             assert_eq!(Tier::named(t.name()), t);
-            assert_eq!(t.spec().bands.fract(), 0.0, "{}", t.name());
             let streak = t.spec().streak;
             let below = t.index().checked_sub(1).map(|i| Tier::ALL[i]);
             assert_eq!(crate::core::singing::rung(streak), Some(t));
@@ -508,6 +554,19 @@ mod tests {
         for (i, t) in TIERS.iter().enumerate() {
             assert!(!t.earned || i > 0, "{}", t.name);
         }
+    }
+
+    /// A row's moments: only the top hits the jackpot; a phrase's moment
+    /// lands on a bar's first beat with room for it, a rung's on the next
+    /// beat.
+    #[test]
+    fn a_row_s_moments_go_together() {
+        for t in Tier::ALL {
+            assert_eq!(t.spec().jackpot(), t == Tier::TOP, "{}", t.name());
+        }
+        assert_eq!(lands(By::Rung(0).into(), 0.5), When::Beat);
+        let length = MOMENT_BEATS * 0.5;
+        assert_eq!(lands(By::Phrase(4).into(), 0.5), When::Downbeat { length });
     }
 
     #[test]

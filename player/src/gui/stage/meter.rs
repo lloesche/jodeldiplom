@@ -220,7 +220,7 @@ impl Stage {
         }
         // The effects' light round the lane (the rows' glow and flames),
         // then over the screen (the angels).
-        let lane = Stage::lane_at(at.area, &at.lane, effects);
+        let lane = Stage::lane_at(at.area, &at.lane);
         self.effects_at(&lane, effects, (&mut d.lights, &mut Vec::new()));
         let sky = At::Sky { area: at.area };
         self.effects_at(&sky, effects, (&mut Vec::new(), &mut d.light_sprays));

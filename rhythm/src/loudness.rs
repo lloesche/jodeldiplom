@@ -16,6 +16,8 @@
 //! bilinear transform: at 48 kHz they are the table's to six places. A
 //! mono track is measured as it is heard, on both sides.
 
+use crate::biquad::Biquad;
+
 /// The gate under which a block is not counted at all, LUFS.
 pub const ABSOLUTE_GATE: f64 = -70.0;
 /// How far under the loudness of the blocks over [`ABSOLUTE_GATE`] a block
@@ -24,30 +26,8 @@ pub const RELATIVE_GATE: f64 = 10.0;
 /// The steps a block takes (400 ms in steps of 100 ms).
 const STEPS: usize = 4;
 
-/// A biquad, its coefficients normalised (`a0` = 1), in transposed direct
-/// form II.
-#[derive(Clone, Copy, Debug)]
-struct Biquad {
-    b: [f64; 3],
-    a: [f64; 2],
-    s: [f64; 2],
-}
-
-impl Biquad {
-    fn new(b: [f64; 3], a: [f64; 2]) -> Biquad {
-        Biquad { b, a, s: [0.0; 2] }
-    }
-
-    fn run(&mut self, x: f64) -> f64 {
-        let y = self.b[0] * x + self.s[0];
-        self.s[0] = self.b[1] * x - self.a[0] * y + self.s[1];
-        self.s[1] = self.b[2] * x - self.a[1] * y;
-        y
-    }
-}
-
 /// The K-weighting at `rate` Hz: the shelf, then the high pass.
-fn k_weighting(rate: f64) -> [Biquad; 2] {
+fn k_weighting(rate: f64) -> [Biquad<f64>; 2] {
     // The shelf: its corner (Hz), gain (dB) and Q, fitted to the table.
     let (f0, gain, q) = (
         1_681.974_450_955_533,
@@ -85,7 +65,7 @@ fn lufs(mean_square: f64) -> f64 {
 /// A loudness meter over a whole track, fed stereo at one rate.
 #[derive(Clone, Debug)]
 pub struct Meter {
-    filters: [[Biquad; 2]; 2],
+    filters: [[Biquad<f64>; 2]; 2],
     /// Frames a step takes, and those of the step under way so far.
     step: usize,
     filled: usize,
@@ -179,7 +159,8 @@ mod tests {
             [-1.990_047_454_833_98, 0.990_072_250_366_21],
         );
         for (f, (b, a)) in [(shelf, table_shelf), (high_pass, table_high_pass)] {
-            for (x, y) in f.b.iter().zip(b).chain(f.a.iter().zip(a)) {
+            let (fb, fa) = f.coefficients();
+            for (x, y) in fb.iter().zip(b).chain(fa.iter().zip(a)) {
                 assert!((x - y).abs() < 1e-6, "{x} against the table's {y}");
             }
         }

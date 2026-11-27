@@ -195,15 +195,13 @@ fn the_ladder_climbs_and_lands_on_the_tonic_at_every_rung() {
     for rungs in [&table[..], &[3, 7], &[4, 8, 12, 16, 20, 24, 30]] {
         let mut last = 0;
         for streak in 1..=rungs[rungs.len() - 1] + 40 {
-            let step = ladder::step(streak, rungs);
+            let degree = ladder::degree(streak, rungs);
             if rungs.contains(&streak) {
-                assert_eq!(step.degree, key::DEGREES, "{rungs:?} {streak}");
+                assert_eq!(degree, key::DEGREES, "{rungs:?} {streak}");
             } else if last != key::DEGREES {
-                assert!(step.degree >= last, "climbs: {rungs:?} {streak}");
+                assert!(degree >= last, "climbs: {rungs:?} {streak}");
             }
-            let reached = rungs.iter().filter(|&&r| r <= streak).count();
-            assert_eq!(step.rung as usize, reached);
-            last = step.degree;
+            last = degree;
         }
     }
     // Up to the first rung: the pops climbing, its word on the octave.
@@ -235,17 +233,17 @@ fn the_ladder_climbs_and_lands_on_the_tonic_at_every_rung() {
 fn a_lower_step_keeps_the_rung_only_the_streak_lost_lets_it_go() {
     let (mut c, mut out) = conductor();
     c.event(&mut out, 15_000, word(rung(1)));
-    assert_eq!(c.rung, 1);
+    assert_eq!(c.rung, Some(Tier::ALL[0]));
     out.0.clear();
     c.event(&mut out, 30_000, word(rung(1) - 1));
     c.event(&mut out, 36_000, word(rung(1) + 1));
-    assert_eq!(c.rung, 1);
+    assert_eq!(c.rung, Some(Tier::ALL[0]));
     let called_off = out.0.iter().any(|c| matches!(c, Command::Cancel { .. }));
     assert!(!called_off, "{:?}", out.0);
     let plucks = out.on(pid(Atom::Pluck));
     assert!(plucks.is_empty(), "no stinger again: {plucks:?}");
     c.event(&mut out, 40_000, Event::Lost(Tier::ALL[0]));
-    assert_eq!(c.rung, 0);
+    assert_eq!(c.rung, None);
 }
 
 #[test]
@@ -274,7 +272,7 @@ fn a_stinger_picks_up_now_and_hits_on_the_beat_and_a_jump_misses_none() {
     c.event(&mut out, 1_000, word(rung(1) - 1));
     assert!(out.on(pid(Atom::Chime)).is_empty());
     c.event(&mut out, 15_000, word(rung(2) + 1));
-    assert_eq!(c.rung, 2);
+    assert_eq!(c.rung, Some(Tier::ALL[1]));
     assert!(out.on(pid(Atom::Chime)).contains(&BEAT), "rung 2's bell");
 }
 
@@ -542,7 +540,7 @@ fn a_seek_calls_everything_off_and_lets_go() {
         })
     };
     assert!(released(super::tags::RISER) && released(super::tags::SHIMMER));
-    assert!(!c.riser && c.rung == 0);
+    assert!(!c.riser && c.rung.is_none());
 }
 
 #[test]
@@ -843,7 +841,7 @@ fn the_call_lands_on_the_slam_s_beat_in_key() {
     let notes = sung(&out);
     assert_eq!(notes[0].0, hit, "the first vowel on the stinger's hit");
     let mut eighths = 0;
-    for syllable in call::times(Tier::TOP.multiplier()).unwrap() {
+    for syllable in call::times(Tier::TOP.multiplier()).expect("its word") {
         let on = hit + u64::from(eighths) * BEAT / 2;
         assert!(
             notes.iter().any(|n| n.0 == on),
@@ -879,19 +877,22 @@ fn the_call_lands_on_the_slam_s_beat_in_key() {
     assert!(out.notes().iter().all(|n| n.0 >= 15_000));
 }
 
-/// Only the rows that slam call out (the call goes with the slam), and
-/// every row has its words to be called with.
+/// Only the rows that slam call out (the call goes with the slam), each
+/// row's name its own, and every row's multiplier has its word.
 #[test]
 fn the_call_goes_with_the_slam() {
     use crate::gui::fx::{strength, Fx};
-    for t in Tier::ALL {
+    for (k, t) in Tier::ALL.into_iter().enumerate() {
         let fx = &t.spec().fx;
         let slams = |list| strength(list, Fx::Slam) > 0.0;
         let chimes = layers::chime_has(Some(t), Chime::Call);
         assert_eq!(chimes, slams(fx.on_phrase), "{}", t.name());
-        let rungs = rung_has(rung_of(t), Streak::Call);
+        let rungs = at_rung(Some(t)).contains(Streak::Call);
         assert_eq!(rungs, slams(fx.on_rung), "{}", t.name());
-        assert!(call::name(t).is_some() && call::times(t.multiplier()).is_some());
+        assert!(call::times(t.multiplier()).is_some(), "×{}", t.multiplier());
+        for other in &Tier::ALL[k + 1..] {
+            assert_ne!(t.spec().call, other.spec().call, "{}", t.name());
+        }
         let (mut c, mut out) = conductor();
         c.event(&mut out, 15_000, word(t.spec().streak));
         assert_eq!(!sung(&out).is_empty(), rungs, "{}", t.name());
@@ -997,4 +998,33 @@ fn every_theme_s_patches_are_in_the_synth_s_bank() {
     assert!(ids
         .iter()
         .all(|&p| of(p).is_some_and(|(t, _)| t == place(spooky))));
+}
+
+/// Every layer of the streak is in `Streak::ALL` once, in its place (a
+/// new one fails to build here until it is placed), each its own bit of
+/// a set, so a set of them all lists them all.
+#[test]
+fn every_streak_layer_is_listed_once_in_its_place() {
+    fn place(l: Streak) -> usize {
+        match l {
+            Streak::Glint => 0,
+            Streak::Octave => 1,
+            Streak::Register => 2,
+            Streak::Clinks => 3,
+            Streak::Reels => 4,
+            Streak::Brass => 5,
+            Streak::Riser => 6,
+            Streak::Shimmer => 7,
+            Streak::Glitter => 8,
+            Streak::Payout => 9,
+            Streak::Call => 10,
+        }
+    }
+    for (i, l) in Streak::ALL.into_iter().enumerate() {
+        assert_eq!((l as usize, place(l)), (i, i), "{l:?}");
+        assert_eq!(StreakSet::of(&[l]).iter().collect::<Vec<_>>(), [l]);
+    }
+    assert_eq!(place(Streak::Call) + 1, Streak::ALL.len());
+    let all: Vec<Streak> = StreakSet::of(&Streak::ALL).iter().collect();
+    assert_eq!(all, Streak::ALL);
 }

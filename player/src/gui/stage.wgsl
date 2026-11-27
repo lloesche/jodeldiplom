@@ -13,6 +13,8 @@
 @group(0) @binding(5) var<uniform> music: Music;
 // The diploma's paper, baked (`stage_gpu::bake`).
 @group(0) @binding(6) var baked: texture_2d<f32>;
+// How the theme dresses the effects (`theme::Theme::uniform`).
+@group(0) @binding(7) var<uniform> theme: Theme;
 
 fn path_point(i: u32) -> vec4<f32> {
     return paths[i];

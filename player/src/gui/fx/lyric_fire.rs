@@ -5,12 +5,15 @@
 //! letters keep their shapes and stay bright, so the line reads as well
 //! as ever.
 //!
+//! Its colours are the theme's fire's ([`crate::theme::Theme::fire`]).
+//!
 //! [`lyric_fire`] is the shader's reference ([`wgsl`]: `lyric_fire`),
 //! held to it on the GPU ([`REFERENCE`]). Its look ([`Spec::params`]):
-//! `x` 0 classic orange to 1 a ghostly green, `y` how fast it flickers.
+//! `y` how fast it flickers.
 
 use super::helpers::{heat, lattice, letter_up, mix3, sat, smoothstep, speed, vnoise};
 use super::{Live, Lyric, Reference, Spec, Text};
+use crate::theme::{Ramp, THEMES};
 
 /// The line sung on fire.
 pub const SPEC: Spec = Spec {
@@ -38,10 +41,10 @@ const BED: f32 = 0.55;
 /// A lyric's colour `col` (straight, 0 to 1) and coverage `a` at pixel
 /// `px` of its text run's quad `bx` (left, top, right, bottom, pixels) at
 /// `time` (seconds), on fire as strongly as `strength` (0: as it was, 1:
-/// flames up to its letters' tops), `p` its look (`x` 0 classic orange to
-/// 1 a ghostly green, `y` how fast it flickers: 1 as made, 0 taken as 1):
-/// its new colour (straight) and coverage, the flames behind the letters
-/// covering some of the quad the letters leave.
+/// flames up to its letters' tops), `p` its look (`y` how fast it
+/// flickers: 1 as made, 0 taken as 1), in `fire`'s colours: its new
+/// colour (straight) and coverage, the flames behind the letters covering
+/// some of the quad the letters leave.
 pub fn lyric_fire(
     col: [f32; 3],
     a: f32,
@@ -49,7 +52,7 @@ pub fn lyric_fire(
     bx: [f32; 4],
     time: f32,
     strength: f32,
-    p: [f32; 4],
+    (p, fire): ([f32; 4], &Ramp),
 ) -> [f32; 4] {
     if strength <= 0.0 {
         return [col[0], col[1], col[2], a];
@@ -66,7 +69,7 @@ pub fn lyric_fire(
     let tip = s * (0.4 + 1.1 * n);
     let k = sat(1.0 - z.max(0.0) / tip.max(1e-3));
     // The letters heated from their feet: never darker than orange.
-    let hot = heat(0.55 + 0.45 * k, p[0]);
+    let hot = heat(0.55 + 0.45 * k, fire);
     let tint = smoothstep(0.0, 0.35, k) * (0.6 + 0.35 * s);
     let letter = mix3(col, hot, tint);
     // The flames behind them: ragged tongues, deep red to orange (darker
@@ -76,7 +79,7 @@ pub fn lyric_fire(
         * (1.0 - smoothstep(bx[2] - high * 0.4, bx[2], px.0));
     let bed_a =
         smoothstep(0.05, 0.4, k) * (0.4 + 0.6 * n) * BED * s * along * smoothstep(0.0, 0.25, z);
-    let bed = heat(0.2 + 0.55 * k, p[0]);
+    let bed = heat(0.2 + 0.55 * k, fire);
     let under_a = a + bed_a * (1.0 - a);
     let under = [0, 1, 2].map(|i| letter[i] * a + bed[i] * bed_a * (1.0 - a));
     // Sparks: one in a few cells of a grid rising (each column at its own
@@ -98,7 +101,7 @@ pub fn lyric_fire(
             * s
             * along;
     }
-    let glow = heat(0.85, p[0]);
+    let glow = heat(0.85, fire);
     let out_a = spark + under_a * (1.0 - spark);
     let rgb = [0, 1, 2].map(|i| {
         let premul = glow[i] * spark + under[i] * (1.0 - spark);
@@ -118,7 +121,8 @@ pub fn wgsl() -> String {
 }
 
 const SHADER: &str = r"
-fn lyric_fire(col: vec3<f32>, a: f32, px: vec2<f32>, box: vec4<f32>, time: f32, strength: f32, p: vec4<f32>) -> vec4<f32> {
+fn lyric_fire(col: vec3<f32>, a: f32, px: vec2<f32>, box: vec4<f32>, time: f32, strength: f32, p: vec4<f32>, th: Theme) -> vec4<f32> {
+    let fire = th.fire;
     if strength <= 0.0 {
         return vec4<f32>(col, a);
     }
@@ -131,13 +135,13 @@ fn lyric_fire(col: vec3<f32>, a: f32, px: vec2<f32>, box: vec4<f32>, time: f32, 
         + 0.4 * vnoise(px.x / (l * 0.45) + 3.1, px.y / (l * 1.3) + t * 4.3);
     let tip = s * (0.4 + 1.1 * n);
     let k = clamp(1.0 - max(z, 0.0) / max(tip, 1e-3), 0.0, 1.0);
-    let hot = fx_heat(0.55 + 0.45 * k, p.x);
+    let hot = fx_heat(0.55 + 0.45 * k, fire);
     let tint = smoothstep(0.0, 0.35, k) * (0.6 + 0.35 * s);
     let letter = mix(col, hot, tint);
     let along = smoothstep(box.x, box.x + high * 0.4, px.x)
         * (1.0 - smoothstep(box.z - high * 0.4, box.z, px.x));
     let bed_a = smoothstep(0.05, 0.4, k) * (0.4 + 0.6 * n) * LYRIC_FIRE_BED * s * along * smoothstep(0.0, 0.25, z);
-    let bed = fx_heat(0.2 + 0.55 * k, p.x);
+    let bed = fx_heat(0.2 + 0.55 * k, fire);
     let under_a = a + bed_a * (1.0 - a);
     let under = letter * a + bed * bed_a * (1.0 - a);
     let c = high * 0.12;
@@ -153,7 +157,7 @@ fn lyric_fire(col: vec3<f32>, a: f32, px: vec2<f32>, box: vec4<f32>, time: f32, 
         let big = c * 0.14;
         spark = exp(-d2 / (big * big)) * smoothstep(0.2, 0.6, z) * (1.0 - smoothstep(1.0, 1.4, z)) * s * along;
     }
-    let glow = fx_heat(0.85, p.x);
+    let glow = fx_heat(0.85, fire);
     let out_a = spark + under_a * (1.0 - spark);
     let premul = glow * spark + under * (1.0 - spark);
     let rgb = select(letter, premul / max(out_a, 1e-6), out_a > 1e-6);
@@ -192,20 +196,32 @@ pub(super) fn premultiplied(c: [f32; 4]) -> [f32; 4] {
     [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]]
 }
 
-/// The line on fire at its quad's pixels: the shader's `lyric_fire` as
-/// [`lyric_fire`] (premultiplied).
+/// The line on fire at its quad's pixels, in every theme's fire's
+/// colours: the shader's `lyric_fire` as [`lyric_fire`] (premultiplied).
 pub const REFERENCE: Reference = Reference {
-    samples,
-    ins: 3,
+    samples: || {
+        let shared = samples();
+        (shared.chunks(3).enumerate())
+            .flat_map(|(k, s)| {
+                let fire = THEMES[k % THEMES.len()].fire.uniform();
+                s.iter().copied().chain(fire)
+            })
+            .collect()
+    },
+    ins: 8,
     outs: 1,
     body: "
-    let c = ins[i * 3u];
-    let a = ins[i * 3u + 1u];
+    let j = i * 8u;
+    let c = ins[j];
+    let a = ins[j + 1u];
     let quad = vec4<f32>(800.0, 1300.0, 2200.0, 1440.0);
-    let o = lyric_fire(c.xyz, c.w, a.xy, quad, a.z, a.w, ins[i * 3u + 2u]);
+    var th: Theme;
+    th.fire = array<vec4<f32>, FIRE_STOPS>(ins[j + 3u], ins[j + 4u], ins[j + 5u], ins[j + 6u], ins[j + 7u]);
+    let o = lyric_fire(c.xyz, c.w, a.xy, quad, a.z, a.w, ins[j + 2u], th);
     outs[i] = vec4<f32>(o.rgb * o.a, o.a);",
     cpu: |s| {
         let (c, a) = (s[0], s[1]);
+        let fire = Ramp::of_uniform(&s[3..]);
         let o = lyric_fire(
             [c[0], c[1], c[2]],
             c[3],
@@ -213,7 +229,7 @@ pub const REFERENCE: Reference = Reference {
             QUAD,
             a[2],
             a[3],
-            s[2],
+            (s[2], &fire),
         );
         vec![premultiplied(o)]
     },
@@ -226,6 +242,8 @@ mod tests {
     use super::*;
 
     const BOX: [f32; 4] = [800.0, 1300.0, 2200.0, 1440.0];
+    /// Its look as none, in classic colours.
+    const PLAIN: ([f32; 4], &Ramp) = ([0.0; 4], &crate::theme::CLASSIC.fire);
 
     fn pixels() -> impl Iterator<Item = (f32, f32)> {
         (0..2000).map(|k| {
@@ -243,7 +261,7 @@ mod tests {
             let col = [0.1 + (k % 7) as f32 * 0.1, 0.9, 0.33];
             let a = (k % 11) as f32 / 10.0;
             assert_eq!(
-                lyric_fire(col, a, px, BOX, 1.7, 0.0, [0.0; 4]),
+                lyric_fire(col, a, px, BOX, 1.7, 0.0, PLAIN),
                 [col[0], col[1], col[2], a]
             );
         }
@@ -255,7 +273,7 @@ mod tests {
         for (k, px) in pixels().enumerate() {
             let a = (k % 5) as f32 / 4.0;
             let s = [0.3, 0.6, 1.0][k % 3];
-            let c = lyric_fire([1.0, 1.0, 1.0], a, px, BOX, k as f32 * 0.01, s, [0.0; 4]);
+            let c = lyric_fire([1.0, 1.0, 1.0], a, px, BOX, k as f32 * 0.01, s, PLAIN);
             assert!(c.iter().all(|v| (0.0..=1.0 + 1e-5).contains(v)), "{c:?}");
             // A letter covers as much as it did, more where flames are behind.
             assert!(c[3] >= a - 1e-6, "{c:?} {a}");
@@ -275,7 +293,7 @@ mod tests {
             let mut sum = [0.0; 3];
             for i in 0..200 {
                 let px = (BOX[0] + 100.0 + i as f32 * 6.0, y);
-                let c = lyric_fire([1.0; 3], 1.0, px, BOX, 2.0, 1.0, [0.0; 4]);
+                let c = lyric_fire([1.0; 3], 1.0, px, BOX, 2.0, 1.0, PLAIN);
                 for j in 0..3 {
                     sum[j] += c[j] / 200.0;
                 }
@@ -295,8 +313,8 @@ mod tests {
     fn it_flickers() {
         let changed = pixels()
             .filter(|&px| {
-                let a = lyric_fire([1.0; 3], 0.0, px, BOX, 1.0, 1.0, [0.0; 4]);
-                let b = lyric_fire([1.0; 3], 0.0, px, BOX, 1.2, 1.0, [0.0; 4]);
+                let a = lyric_fire([1.0; 3], 0.0, px, BOX, 1.0, 1.0, PLAIN);
+                let b = lyric_fire([1.0; 3], 0.0, px, BOX, 1.2, 1.0, PLAIN);
                 (a[3] - b[3]).abs() > 0.05
             })
             .count();

@@ -1,10 +1,13 @@
-//! Marquee bulbs round the lane, a screen pass: a row of
-//! round light bulbs just outside the lane's border, as round a casino's
-//! sign, a lit wave chasing round them (a bulb lit, its tail dimming
-//! behind it, every few bulbs), warm white and gold with a soft glow, each
-//! bulb in a dark socket with a gold rim so the row reads on any cover.
-//! At full strength (the top rung) every other bulb also flashes, the two
-//! halves in turn.
+//! Marquee bulbs round the lane, a screen pass: a row of round light
+//! bulbs round the lane ([`super::marquee`]: where they sit), as round a
+//! casino's sign, a lit wave chasing round them (a bulb lit, its tail
+//! dimming behind it, every few bulbs), with a soft glow, each bulb in a
+//! dark socket with a rim so the row reads on any cover. At full strength
+//! (the top rung) every other bulb also flashes, the two halves in turn.
+//! Their colours are the theme's ([`crate::theme::Theme::bulbs`]: warm
+//! white and gold as made), and so is what a bulb is
+//! ([`crate::theme::BulbShape`]: a bulb, or a jack-o'-lantern, [`jack`],
+//! its stalk on top).
 //!
 //! Cheap per pixel: a pixel far from the row is done at once, and one
 //! near it works out its nearest bulb from where it is (the side nearest
@@ -15,11 +18,9 @@
 //! [`bulbs`] is the shader's maths on the processor, held to it on the
 //! GPU ([`REFERENCE`]). The colours are the stage's (sRGB, as the frame
 //! takes them through `out_rgb`), premultiplied, for drawing over. Its
-//! look ([`Spec::params`], `p`): `x` its palette (0 classic gold to 1
-//! spooky: each bulb a jack-o'-lantern, [`jack`], its stalk on top, in a
-//! purple socket), `y` the chase's speed (1 as made), `z` how much it
-//! keeps to the beat (1 as made, 0 not at all). It is drawn only in strips
-//! along the row ([`strips`]).
+//! look ([`Spec::params`], `p`): `y` the chase's speed (1 as
+//! made), `z` how much it keeps to the beat (1 as made, 0 not at all). It
+//! is drawn only in strips along the row ([`strips`]).
 //!
 //! On the beat ([`lit_at`], the shader reading the music's uniform): the
 //! chase steps a bulb a beat, every bulb blinks up hard on each beat and
@@ -30,17 +31,19 @@
 //! Its look's `w` is how hard it blinks (1 as made, 0 not at all).
 //!
 //! Where the lane's flames burn too, they set the bulbs on fire
-//! ([`super::flames`], reading the row: [`row`]): the flames burn behind
-//! the row, round each bulb and up between them, and the bulbs, drawn over
-//! the light, stay crisp on top.
+//! ([`super::flames`], reading the row): the flames burn behind the row,
+//! round each bulb and up between them, and the bulbs, drawn over the
+//! light, stay crisp on top.
 
 use super::helpers::{mix3, sat, smoothstep};
+use super::marquee::{self, bulb_at, Row, DIAMETER, MARGIN, OUT, REACH, SHOWN_FROM, SPACING};
 use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
 use crate::gui::stage::gpu::Instance;
+use crate::theme::{BulbShape, Palette, THEMES};
 
 /// The bulbs: a strip along the row (`quad`), round the lane `shape`
 /// (left, top, right, bottom), `params[1]` their strength (their look the
-/// shaders' `looks`).
+/// shaders' `looks`, their colours and shape the theme's).
 pub const BULBS: f32 = Fx::Bulbs.kind(0);
 
 /// Marquee bulbs round the lane.
@@ -78,7 +81,7 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
 /// along the top and the bottom, down the sides between them; one box
 /// where the row is too low for that.
 pub fn strips(lane: [f32; 4], size: (f32, f32)) -> Vec<[f32; 4]> {
-    let Some(Row { ring, r, .. }) = row(lane, size) else {
+    let Some(Row { ring, r, .. }) = marquee::row(lane, size) else {
         return Vec::new();
     };
     let [x0, y0, x1, y1] = ring;
@@ -95,17 +98,6 @@ pub fn strips(lane: [f32; 4], size: (f32, f32)) -> Vec<[f32; 4]> {
     ]
 }
 
-/// A bulb's size: its width, a share of the lane's height.
-const DIAMETER: f32 = 0.075;
-/// Bulbs this many of their widths apart (round the corners, a whole
-/// number to a side).
-const SPACING: f32 = 1.8;
-/// A bulb's middle this many of its radii outside the lane.
-const OUT: f32 = 1.2;
-/// A bulb's middle at least this many radii inside the screen.
-const MARGIN: f32 = 1.3;
-/// How far a bulb draws (its glow), in its radii.
-const REACH: f32 = 3.2;
 /// The chase's steps a second.
 const RATE: f32 = 12.0;
 /// The chase: a bulb lit every this many.
@@ -129,34 +121,6 @@ const DIP: f32 = 0.55;
 /// beat.
 const OVERDRIVE: f32 = 0.7;
 
-/// A palette: a bulb lit, its glow, a bulb unlit, its socket, the
-/// socket's rim.
-struct Palette {
-    on: [f32; 3],
-    glow: [f32; 3],
-    off: [f32; 3],
-    socket: [f32; 3],
-    rim: [f32; 3],
-}
-
-/// The classic marquee: warm white bulbs on gold.
-const CLASSIC: Palette = Palette {
-    on: [1.0, 0.86, 0.5],
-    glow: [1.0, 0.68, 0.22],
-    off: [0.34, 0.25, 0.16],
-    socket: [0.1, 0.06, 0.03],
-    rim: [0.86, 0.64, 0.28],
-};
-
-/// A spooky one: pumpkin orange bulbs in purple-black sockets.
-const SPOOKY: Palette = Palette {
-    on: [1.0, 0.58, 0.12],
-    glow: [1.0, 0.36, 0.02],
-    off: [0.32, 0.13, 0.03],
-    socket: [0.07, 0.03, 0.09],
-    rim: [0.5, 0.22, 0.6],
-};
-
 /// A jack-o'-lantern's skin, its candle lit and out, unlit and lit, and
 /// its stalk.
 const SKIN_DARK: [f32; 3] = [0.36, 0.13, 0.02];
@@ -164,79 +128,6 @@ const SKIN: [f32; 3] = [1.0, 0.5, 0.06];
 const EMBERS: [f32; 3] = [0.12, 0.04, 0.0];
 const CANDLE: [f32; 3] = [1.0, 0.92, 0.5];
 const STALK: [f32; 3] = [0.28, 0.42, 0.12];
-
-/// The highest any bulb round `lane` (left, top, right, bottom) in a
-/// screen of `size` lights: its top row's middle less its glow's reach
-/// (the lane's top where it has no bulbs). What is over the lane keeps
-/// above it ([`crate::gui::stage::Lane::hud`]).
-pub fn lit_top(lane: [f32; 4], size: (f32, f32)) -> f32 {
-    row(lane, size).map_or(lane[1], |row| row.ring[1] - row.r * REACH)
-}
-
-/// The bulbs' row round a lane ([`row`]).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Row {
-    /// The corners of the bulbs' middles: left, top, right, bottom.
-    pub ring: [f32; 4],
-    /// A bulb's radius.
-    pub r: f32,
-    /// The gaps between bulbs across the row and down it.
-    pub gaps: (i32, i32),
-}
-
-/// The bulbs' row round `lane` (left, top, right, bottom) in a screen of
-/// `size`, whether they show or not; none where the lane is too low for
-/// any or the row has no room.
-pub fn row(lane: [f32; 4], size: (f32, f32)) -> Option<Row> {
-    let r = (lane[3] - lane[1]) * DIAMETER * 0.5;
-    if r <= 0.0 {
-        return None;
-    }
-    let ring = ring(lane, size, r);
-    let (w, h) = (ring[2] - ring[0], ring[3] - ring[1]);
-    if w <= 0.0 || h <= 0.0 {
-        return None;
-    }
-    let gap = r * 2.0 * SPACING;
-    let gaps = (
-        ((w / gap + 0.5).floor() as i32).max(1),
-        ((h / gap + 0.5).floor() as i32).max(1),
-    );
-    Some(Row { ring, r, gaps })
-}
-
-/// How much the bulbs show at `strength` (wholly from a little in).
-pub fn shown(strength: f32) -> f32 {
-    sat(strength / 0.35)
-}
-
-/// The row's corners (left, top, right, bottom) round `lane` in a screen
-/// of `size`, for bulbs of radius `r`.
-fn ring(lane: [f32; 4], size: (f32, f32), r: f32) -> [f32; 4] {
-    let (off, m) = (r * OUT, r * MARGIN);
-    [
-        (lane[0] - off).max(m),
-        (lane[1] - off).max(m),
-        (lane[2] + off).min(size.0 - m),
-        (lane[3] + off).min(size.1 - m),
-    ]
-}
-
-/// Bulb `k`'s middle, of `nw` gaps across the row and `nh` down it,
-/// clockwise from its top left corner.
-fn bulb_at(k: i32, (nw, nh): (i32, i32), ring: [f32; 4]) -> (f32, f32) {
-    let (w, h) = (ring[2] - ring[0], ring[3] - ring[1]);
-    let (fw, fh) = (nw as f32, nh as f32);
-    if k < nw {
-        (ring[0] + k as f32 * w / fw, ring[1])
-    } else if k < nw + nh {
-        (ring[2], ring[1] + (k - nw) as f32 * h / fh)
-    } else if k < 2 * nw + nh {
-        (ring[2] - (k - nw - nh) as f32 * w / fw, ring[3])
-    } else {
-        (ring[0], ring[3] - (k - 2 * nw - nh) as f32 * h / fh)
-    }
-}
 
 /// How lit bulb `k` is (0 to 1) at chase step `step`, the chase `dim`
 /// as lit as it might be, its flashing `flash` strong, on flashing beat
@@ -314,9 +205,9 @@ fn stalk(q: (f32, f32), r: f32) -> f32 {
 }
 
 /// A bulb of radius `r`, `glowing` (lit, its glow overdriven past 1), at
-/// `q` from its middle, `pumpkin` of the way to a jack-o'-lantern
-/// ([`jack`], its stalk on top): what it puts over the frame
-/// (premultiplied) and its glow added.
+/// `q` from its middle, in `pal`'s colours, `pumpkin` of the way to a
+/// jack-o'-lantern ([`jack`], its stalk on top): what it puts over the
+/// frame (premultiplied) and its glow added.
 fn bulb(
     q: (f32, f32),
     r: f32,
@@ -358,16 +249,17 @@ fn bulb(
 /// The bulbs at pixel `px` of a screen of `size` pixels, `time` seconds
 /// on, `strength` strong (0: nothing at all; to 1 fading in; at 1
 /// flashing too), round `lane` (left, top, right, bottom, pixels), with
-/// `p` (its palette, 0 classic gold to 1 spooky orange; the chase's
-/// speed, 1 as made; how much it keeps to the beat) and the music `m`
-/// ([`lit_at`]): premultiplied, as the frame takes it.
+/// `p` (the chase's speed, 1 as made; how much it keeps to the beat; how
+/// hard it blinks) and the music `m` ([`lit_at`]), in `pal`'s colours,
+/// each a `shape` (a theme's dress): premultiplied, as the frame takes
+/// it.
 pub fn bulbs(
     px: (f32, f32),
     size: (f32, f32),
     time: f32,
     strength: f32,
     lane: [f32; 4],
-    p: [f32; 4],
+    (p, pal, shape): ([f32; 4], &Palette, BulbShape),
     m: &Music,
 ) -> [f32; 4] {
     if strength <= 0.0 {
@@ -377,7 +269,7 @@ pub fn bulbs(
         ring,
         r,
         gaps: (nw, nh),
-    }) = row(lane, size)
+    }) = marquee::row(lane, size)
     else {
         return [0.0; 4];
     };
@@ -418,14 +310,7 @@ pub fn bulbs(
         }
     }
     let k0 = (best.1 + 0.5).floor() as i32;
-    let t = p[0].clamp(0.0, 1.0);
-    let pal = Palette {
-        on: mix3(CLASSIC.on, SPOOKY.on, t),
-        glow: mix3(CLASSIC.glow, SPOOKY.glow, t),
-        off: mix3(CLASSIC.off, SPOOKY.off, t),
-        socket: mix3(CLASSIC.socket, SPOOKY.socket, t),
-        rim: mix3(CLASSIC.rim, SPOOKY.rim, t),
-    };
+    let pumpkin = shape.pumpkin();
     let flash = ((strength - FLASH_FROM) / (1.0 - FLASH_FROM)).clamp(0.0, 1.0);
     let (mut over, mut glow) = ([0.0f32; 4], [0.0f32; 3]);
     for j in -1..=1 {
@@ -434,8 +319,8 @@ pub fn bulbs(
         let (o, g) = bulb(
             (px.0 - at.0, px.1 - at.1),
             r,
-            (lit_at(k, time, flash, p, m), t),
-            &pal,
+            (lit_at(k, time, flash, p, m), pumpkin),
+            pal,
         );
         for i in 0..4 {
             over[i] += o[i];
@@ -444,7 +329,7 @@ pub fn bulbs(
             glow[i] += g[i];
         }
     }
-    let shown = shown(strength);
+    let shown = marquee::shown(strength);
     let bright = 0.55 + 0.45 * strength.min(1.0);
     [
         (over[0] + glow[0] * bright) * shown,
@@ -455,12 +340,9 @@ pub fn bulbs(
 }
 
 /// [`bulbs`] in WGSL: `fx_bulbs` and what it needs (its names begun
-/// `bulbs_`), and its strips drawn with it (`bulbs_shape`).
+/// `bulbs_`), and its strips drawn with it (`bulbs_shape`, in the theme's
+/// colours and shape: `theme.bulbs`, `theme.bulb`).
 pub fn wgsl() -> String {
-    let pal = |p: &Palette| {
-        let v = |c: [f32; 3]| format!("vec3<f32>({:?}, {:?}, {:?})", c[0], c[1], c[2]);
-        [p.on, p.glow, p.off, p.socket, p.rim].map(v).join(", ")
-    };
     format!(
         "
 const BULBS_DIAMETER: f32 = {DIAMETER:?};
@@ -468,6 +350,7 @@ const BULBS_SPACING: f32 = {SPACING:?};
 const BULBS_OUT: f32 = {OUT:?};
 const BULBS_MARGIN: f32 = {MARGIN:?};
 const BULBS_REACH: f32 = {REACH:?};
+const BULBS_SHOWN_FROM: f32 = {SHOWN_FROM:?};
 const BULBS_RATE: f32 = {RATE:?};
 const BULBS_PERIOD: i32 = {PERIOD};
 const BULBS_TAIL: f32 = {TAIL:?};
@@ -478,12 +361,8 @@ const BULBS_GLOW: f32 = {GLOW:?};
 const BULBS_BLINK: f32 = {BLINK:?};
 const BULBS_DIP: f32 = {DIP:?};
 const BULBS_OVERDRIVE: f32 = {OVERDRIVE:?};
-const BULBS_CLASSIC = array<vec3<f32>, 5>({});
-const BULBS_SPOOKY = array<vec3<f32>, 5>({});
 const BULBS_JACK = array<vec3<f32>, 5>({});
 {SHADER}",
-        pal(&CLASSIC),
-        pal(&SPOOKY),
         [SKIN_DARK, SKIN, EMBERS, CANDLE, STALK]
             .map(|c| format!("vec3<f32>({:?}, {:?}, {:?})", c[0], c[1], c[2]))
             .join(", ")
@@ -492,7 +371,7 @@ const BULBS_JACK = array<vec3<f32>, 5>({});
 
 const SHADER: &str = r"
 fn bulbs_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let c = fx_bulbs(p, screen.size, screen.time, o.params.y, o.shape, looks[FX_BULBS], music);
+    let c = fx_bulbs(p, screen.size, screen.time, o.params.y, o.shape, looks[FX_BULBS], theme.bulbs, theme.bulb, music);
     return vec4<f32>(out_rgb(c.rgb), c.a);
 }
 
@@ -568,7 +447,7 @@ fn bulbs_stalk(q: vec2<f32>, r: f32) -> f32 {
     return clamp(0.5 - d * r, 0.0, 1.0);
 }
 
-fn bulbs_one(q: vec2<f32>, r: f32, glowing: f32, pumpkin: f32, pal: array<vec3<f32>, 5>) -> BulbsLight {
+fn bulbs_one(q: vec2<f32>, r: f32, glowing: f32, pumpkin: f32, pal: array<vec4<f32>, BULB_COLORS>) -> BulbsLight {
     var o: BulbsLight;
     let lit = min(glowing, 1.0);
     let dd = length(q);
@@ -576,23 +455,23 @@ fn bulbs_one(q: vec2<f32>, r: f32, glowing: f32, pumpkin: f32, pal: array<vec3<f
     let rim = clamp(1.0 - abs(dd - r * 1.14) / (r * 0.08), 0.0, 1.0) * sock;
     let glass = clamp(r - dd + 0.5, 0.0, 1.0);
     let core = exp(-dd * dd / (r * r * 0.3));
-    let deep = mix(pal[0], pal[1], smoothstep(0.5, 1.0, dd / r) * 0.7);
+    let deep = mix(pal[0].rgb, pal[1].rgb, smoothstep(0.5, 1.0, dd / r) * 0.7);
     let on = mix(deep, vec3<f32>(1.0), core * 0.9 * lit);
     let hl = q + vec2<f32>(0.35 * r, 0.4 * r);
     let spec = exp(-dot(hl, hl) / (r * r * 0.03)) * 0.55;
-    let classic = mix(pal[2], on, lit) + vec3<f32>(spec);
-    let col = mix(classic, bulbs_jack(q, r, lit) + vec3<f32>(spec * 0.6), pumpkin);
-    let under = mix(pal[3], pal[4], rim);
+    let plain = mix(pal[2].rgb, on, lit) + vec3<f32>(spec);
+    let col = mix(plain, bulbs_jack(q, r, lit) + vec3<f32>(spec * 0.6), pumpkin);
+    let under = mix(pal[3].rgb, pal[4].rgb, rim);
     let over = vec4<f32>(col * glass + under * sock * (1.0 - glass), glass + sock * (1.0 - glass));
     let st = bulbs_stalk(q, r) * pumpkin;
     o.over = vec4<f32>(BULBS_JACK[4] * st + over.rgb * (1.0 - st), st + over.a * (1.0 - st));
     let x = max(dd - r * 0.5, 0.0) / (r * 1.3);
     let fade = clamp(1.0 - dd / (r * BULBS_REACH), 0.0, 1.0);
-    o.glow = pal[1] * (glowing * BULBS_GLOW * exp(-x * x) * fade * fade);
+    o.glow = pal[1].rgb * (glowing * BULBS_GLOW * exp(-x * x) * fade * fade);
     return o;
 }
 
-fn fx_bulbs(px: vec2<f32>, size: vec2<f32>, time: f32, strength: f32, lane: vec4<f32>, p: vec4<f32>, mu: Music) -> vec4<f32> {
+fn fx_bulbs(px: vec2<f32>, size: vec2<f32>, time: f32, strength: f32, lane: vec4<f32>, p: vec4<f32>, pal: array<vec4<f32>, BULB_COLORS>, bulb: vec4<f32>, mu: Music) -> vec4<f32> {
     if strength <= 0.0 {
         return vec4<f32>(0.0);
     }
@@ -637,47 +516,43 @@ fn fx_bulbs(px: vec2<f32>, size: vec2<f32>, time: f32, strength: f32, lane: vec4
         along = f32(2 * nw + nh) + (ring.w - c.y) / h * f32(nh);
     }
     let k0 = i32(floor(along + 0.5));
-    let t = clamp(p.x, 0.0, 1.0);
-    let pal = array<vec3<f32>, 5>(
-        mix(BULBS_CLASSIC[0], BULBS_SPOOKY[0], t),
-        mix(BULBS_CLASSIC[1], BULBS_SPOOKY[1], t),
-        mix(BULBS_CLASSIC[2], BULBS_SPOOKY[2], t),
-        mix(BULBS_CLASSIC[3], BULBS_SPOOKY[3], t),
-        mix(BULBS_CLASSIC[4], BULBS_SPOOKY[4], t),
-    );
     let flash = clamp((strength - BULBS_FLASH_FROM) / (1.0 - BULBS_FLASH_FROM), 0.0, 1.0);
     var over = vec4<f32>(0.0);
     var glow = vec3<f32>(0.0);
     for (var j = -1; j <= 1; j++) {
         let k = ((k0 + j) % n + n) % n;
-        let b = bulbs_one(px - bulbs_at(k, nw, nh, ring), r, bulbs_lit_at(k, time, flash, p, mu), t, pal);
+        let b = bulbs_one(px - bulbs_at(k, nw, nh, ring), r, bulbs_lit_at(k, time, flash, p, mu), bulb.x, pal);
         over += b.over;
         glow += b.glow;
     }
-    let shown = min(strength / 0.35, 1.0);
+    let shown = min(strength / BULBS_SHOWN_FROM, 1.0);
     let bright = 0.55 + 0.45 * min(strength, 1.0);
     return vec4<f32>(over.rgb + glow * bright, over.a) * shown;
 }
 ";
 
 /// The bulbs at pixels round and off the row, at strengths and times, in
-/// both palettes, round lanes of three screens: the shader's `fx_bulbs` as
-/// [`bulbs`].
+/// every theme's colours and shape, round lanes of three screens: the
+/// shader's `fx_bulbs` as [`bulbs`].
 pub const REFERENCE: Reference = Reference {
     samples,
-    ins: 9,
+    ins: 15,
     outs: 1,
     body: "
-    let a = ins[i * 9u];
-    let b = ins[i * 9u + 1u];
-    let p = vec4<f32>(b.z, b.w, ins[i * 9u + 3u].x, 0.0);
-    let m = Music(ins[i * 9u + 4u], ins[i * 9u + 5u], ins[i * 9u + 6u], ins[i * 9u + 7u], ins[i * 9u + 8u]);
-    outs[i] = fx_bulbs(a.xy, a.zw, b.x, b.y, ins[i * 9u + 2u], p, m);",
+    let j = i * 15u;
+    let a = ins[j];
+    let b = ins[j + 1u];
+    let p = vec4<f32>(0.0, b.w, ins[j + 3u].x, 0.0);
+    let m = Music(ins[j + 4u], ins[j + 5u], ins[j + 6u], ins[j + 7u], ins[j + 8u]);
+    let pal = array<vec4<f32>, BULB_COLORS>(ins[j + 9u], ins[j + 10u], ins[j + 11u], ins[j + 12u], ins[j + 13u]);
+    outs[i] = fx_bulbs(a.xy, a.zw, b.x, b.y, ins[j + 2u], p, pal, ins[j + 14u], m);",
     cpu: |s| {
         let (a, b) = (s[0], s[1]);
-        let p = [b[2], b[3], s[3][0], 0.0];
+        let p = [0.0, b[3], s[3][0], 0.0];
         let m = Music::from_uniform(&[s[4], s[5], s[6], s[7], s[8]]);
-        vec![bulbs((a[0], a[1]), (a[2], a[3]), b[0], b[1], s[2], p, &m)]
+        let pal = Palette::of_uniform(&s[9..14]);
+        let look = (p, &pal, BulbShape::of_uniform(s[14]));
+        vec![bulbs((a[0], a[1]), (a[2], a[3]), b[0], b[1], s[2], look, &m)]
     },
     near: (3e-3, 3e-3),
     shows: |o| o[0][3] > 0.1,
@@ -732,16 +607,14 @@ fn samples() -> Vec<[f32; 4]> {
             };
             let ins = [
                 [x + 0.013, y + 0.029, size.0, size.1],
-                [
-                    fr(0.291) * 30.0 + 0.0123,
-                    strength,
-                    fr(0.53),
-                    0.5 + fr(0.71),
-                ],
+                [fr(0.291) * 30.0 + 0.0123, strength, 0.0, 0.5 + fr(0.71)],
                 lane,
                 [[0.0, 1.0, fr(0.643) * 1.4][k % 3], 0.0, 0.0, 0.0],
             ];
-            ins.into_iter().chain(music.uniform())
+            let dress = THEMES[(k / 7) % THEMES.len()].uniform();
+            (ins.into_iter().chain(music.uniform()))
+                .chain(dress.bulbs)
+                .chain([dress.bulb])
         })
         .collect()
 }
@@ -751,9 +624,13 @@ mod tests {
 
     const SIZE: (f32, f32) = (1600.0, 1000.0);
     const LANE: [f32; 4] = [80.0, 150.0, 1520.0, 600.0];
-    /// Their look as made: classic, the chase as fast, on the beat,
-    /// blinking with it.
-    const CLASSIC_P: [f32; 4] = SPEC.params;
+    /// Their look as made (the chase as fast, on the beat, blinking with
+    /// it), classic.
+    const CLASSIC_P: ([f32; 4], &Palette, BulbShape) = (
+        SPEC.params,
+        &crate::theme::CLASSIC.bulbs,
+        crate::theme::CLASSIC.bulb,
+    );
     /// No music.
     const STILL: &Music = &Music::NEUTRAL;
 
@@ -811,10 +688,9 @@ mod tests {
     /// the lit bulbs move along the row; the strength fades them in.
     #[test]
     fn the_chase_moves_and_the_strength_fades_in() {
-        let r = (LANE[3] - LANE[1]) * DIAMETER * 0.5;
+        let Row { ring, r, gaps } = marquee::row(LANE, SIZE).expect("a row");
         let y = LANE[1] - r * OUT;
-        let ring = ring(LANE, SIZE, r);
-        let gap = (ring[2] - ring[0]) / ((ring[2] - ring[0]) / (r * 2.0 * SPACING) + 0.5).floor();
+        let gap = (ring[2] - ring[0]) / gaps.0 as f32;
         let light = |k: f32, t: f32, s: f32| {
             bulbs((ring[0] + k * gap, y), SIZE, t, s, LANE, CLASSIC_P, STILL)[1]
         };
@@ -903,7 +779,7 @@ mod tests {
     /// flashing `flash`.
     fn row(time: f32, flash: f32, m: &Music) -> Vec<f32> {
         (0..12)
-            .map(|k| lit_at(k, time, flash, CLASSIC_P, m))
+            .map(|k| lit_at(k, time, flash, CLASSIC_P.0, m))
             .collect()
     }
 
@@ -986,5 +862,19 @@ mod tests {
         let a = bulbs(px, SIZE, 1.03, 0.6, LANE, CLASSIC_P, STILL);
         let b = bulbs(px, SIZE, 1.03, 0.6, LANE, CLASSIC_P, &on_beat(8.0, 1.0));
         assert_ne!(a, b);
+    }
+
+    /// Dressed as the theme has them: Spooky's jack-o'-lanterns other than
+    /// Classic's bulbs on the same bulb, as much of it covered.
+    #[test]
+    fn they_are_dressed_as_the_theme_has_them() {
+        let Row { ring, .. } = marquee::row(LANE, SIZE).expect("a row");
+        let px = (ring[0], ring[1]);
+        let s = &crate::theme::SPOOKY;
+        let spooky = (SPEC.params, &s.bulbs, s.bulb);
+        let a = bulbs(px, SIZE, 1.03, 1.0, LANE, CLASSIC_P, STILL);
+        let b = bulbs(px, SIZE, 1.03, 1.0, LANE, spooky, STILL);
+        assert_ne!(a, b);
+        assert!(a[3] > 0.9 && b[3] > 0.9, "{a:?} {b:?}");
     }
 }

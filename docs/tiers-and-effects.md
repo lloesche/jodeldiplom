@@ -33,8 +33,17 @@ first, the top last. A tier is `Tier(u8)`, its place in the table
 | `fx` | the effects it lists ([below](#the-effects-library-playersrcguifx)) |
 | `backdrop_glow`, `backdrop_rays`, `backdrop_beat` | how the backdrop lights its subject, its spotlight rays, and how hard it moves with the beat |
 | `mark` | the size of its phrases' marks on the song's progress |
-| `sticker` | its sticker on the diploma (glints, prismatic, a halo) |
+| `sticker` | its sticker on the diploma (glints, a halo) |
+| `prismatic` | it shines in the rainbow: its sticker's colour runs through it, its slammed word's face is it |
 | `layers` | the layers of its sounds ([below](#the-sounds-playersrcsfx)) |
+| `call` | the word the announcer calls a phrase reaching it out with, its name (its rung's is its multiplier's: `call::times`) |
+
+A phrase reaching a row whose `fx.on_phrase` fires the jackpot's burst
+hits the jackpot's sound too (`TierSpec::jackpot`). Where a row's moment
+(`tiers::Landing`) lands is one rule (`tiers::lands`): a rung's on the
+next beat, with its stinger; a phrase's on a bar's first beat with room
+for `MOMENT_BEATS` before a sung line, with the jackpot. The slam, the
+jackpot's sound and the announcer all land by it.
 
 The rows today:
 
@@ -79,8 +88,8 @@ in WGSL.
 
 `every_row_is_in_order` holds the rows to their order: each bar, streak,
 glow, band count and backdrop light above the row before, each held look
-no less, each row looking other than the one before, its streak's sound
-layers the row before's and more, its chime's other. Adding a row is
+no less, each row looking other than the one before, its rung adding
+sound layers no row below adds, its chime's other. Adding a row is
 adding a line to `TIERS` and seeing that test pass.
 
 ## The effects library: `player/src/gui/fx/`
@@ -225,10 +234,11 @@ sits on fixed notes high over the song.
 A row's `layers` (`sfx/conductor/layers.rs`) say what its sounds add over
 the base ones:
 
-- the streak's at its rung (`Streak`): a glint over each pop, the
+- the streak's its rung adds (`Streak`, `Layers::adds`; a rung plays its
+  own and every rung's below, `at_rung`): a glint over each pop, the
   stinger's octave and bell, the register's ka-ching, a coin's clink after
   each word, the reels running down when it is lost, a brass chord, a
-  riser, the shimmer pad, glitter, the payout;
+  riser, the shimmer pad, glitter, the payout, the multiplier called;
 - a phrase's chime reaching it (`Chime`): plucks up the chord, a short
   brass hit or a "ta-daa", a choir.
 
@@ -270,25 +280,35 @@ machines, without the deceit:
 
 ## Themes: `player/src/theme.rs`
 
-A theme overrides, by key, how the tiers, their effects and their sounds
-look and sound, and may grade the picture. Whatever it leaves out is as
-the tier's row, the effect's spec or the palette has it. Everything that
-has a colour, a look or a patch a theme may change reads it through the
-theme in force; the setting `karaoke_theme` in the settings file picks it
+A theme is one data file under `player/src/theme/`: how the tiers, their
+effects and their sounds look and sound, and how the picture is graded.
+What it overrides (a tier's colour, the count-in's accent, an atom's
+patch) it may leave out, and that is as the tier's row or the palette has
+it; how it dresses the effects it always says. Everything that has a
+colour, a dress or a patch a theme may change reads it through the theme
+in force; the setting `karaoke_theme` in the settings file picks it
 (`"classic"`, the default, or `"spooky"`).
 
-| Field of `Theme` | What it overrides | Read through |
+| Field of `Theme` | What it says | Read through |
 |---|---|---|
-| `colors` | a tier's colour, by the tier's name (its badge, verdict, marks, stickers, the slam) | `Theme::color` |
+| `colors` | the tiers' colours, one a tier, Good first (their badge, verdict, marks, stickers, the slam) | `Theme::color` |
 | `accent` | the count-in's accent | `Theme::accent` |
-| `looks` | an effect's look, its four numbers (`Spec::params`) | `Theme::fx_params`, `Theme::looks` |
+| `fire` | the fire's colours (`Ramp`: the screen's edges, the lane's flames, the line sung) | the shaders' `theme.fire` |
+| `bulbs`, `bulb` | the marquee's bulbs' colours (`Palette`) and what a bulb is (`BulbShape`: a bulb, a jack-o'-lantern) | the shaders' `theme.bulbs`, `theme.bulb` |
+| `coins` | the colours the coins come in (none: gold) | `fx::coins::candied` |
+| `angels` | what comes down at the top (`Flight`: angels, ghosts) | `fx::angels` |
 | `sounds` | the synth's patch for one of the sounds' atoms | `Theme::patch` |
 | `always` | effects held throughout, whatever the singing (screen passes only) | `Theme::holds` |
-| `grade` | the backdrop's grade: the tint its colours take once desaturated, and how much | the backdrop's shader |
+| `grade` | the backdrop's grade (`Grade`: the tint its colours take once desaturated, and how much) | the backdrop's shader |
 
-- **Classic** (`theme::CLASSIC`) overrides nothing: the game as made. With
-  it the stage's digest, the frame_cost scenes and every conductor sound
-  are the same as before themes, to the byte.
+The shaders read a theme's dress from one uniform (`Theme::uniform`, its
+WGSL `struct Theme` generated by `theme::wgsl`), apart from the effects'
+looks (`Spec::params`, which the music moves): no mod of a look changes a
+theme.
+
+- **Classic** (`theme::CLASSIC`, `theme/classic.rs`) is the game as made.
+  With it the stage's digest, the frame_cost scenes and every conductor
+  sound are the same as before themes, to the byte.
 - **Spooky** (`theme/spooky.rs`) is its Halloween. The tiers are slime
   green, pumpkin, witch's purple, a ghostly mint and moonlight, and the
   count-in is pumpkin. The fire burns green (the screen's edges, the
@@ -300,21 +320,19 @@ theme in force; the setting `karaoke_theme` in the settings file picks it
   are sweets in a jar, the chimes toll as bells, the choir sings a
   ghost's "ooh", and a streak lost wails down like a theremin.
 
-An effect takes a theme by its look's numbers: the module names what each
-one does (for the bulbs, `x` is the palette, from classic gold to
-pumpkins). A theme that needs a look the effect cannot make yet adds that
-to the effect's module, as one more number of its look, with the classic
-value its default.
+A theme that needs a dress an effect cannot wear yet adds it to `Theme`
+as a typed field (and to its uniform where the shaders read it), every
+theme saying its own.
 
 ### Adding a theme
 
 1. A `static` `Theme` in a module of its own under `player/src/theme/`,
-   with its name and only what it changes.
+   with its name, its dress, and the overrides it makes.
 2. Its place in `theme::THEMES`. The setting reads it by its name.
-3. `every_theme_overrides_what_there_is_once` checks that each key is a
-   real tier, effect or atom and is overridden once, and that what it
-   holds throughout is a screen pass. A test of its own (as
-   `spooky_is_its_own`) says what makes it other than classic.
+3. `every_theme_overrides_what_there_is_once` checks that each atom is
+   overridden once and that what it holds throughout is a screen pass. A
+   test of its own (as `spooky_is_its_own`) says what makes it other than
+   classic.
 4. Look at it with `examples/frame_cost.rs --theme NAME` (it must stay
    within the frame budget) and hear it with `examples/conductor.rs
    OUT_DIR --theme NAME`.

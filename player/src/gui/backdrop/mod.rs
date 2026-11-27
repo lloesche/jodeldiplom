@@ -91,11 +91,11 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// The mode for `config`'s settings: with the game (`karaoke_game`) or
-    /// the notes (`karaoke_notes`) on, the cover; with neither (plain
-    /// lyrics karaoke), the blur alone.
+    /// The mode for `config`'s settings: the cover where they show it
+    /// ([`crate::core::karaoke::Show::cover`]); else (plain lyrics
+    /// karaoke) the blur alone.
     pub fn of(config: &Config) -> Mode {
-        if config.karaoke_game || config.karaoke_notes {
+        if crate::core::karaoke::Show::of(config).cover {
             Mode::Cover
         } else {
             Mode::Blur
@@ -351,7 +351,7 @@ impl Visualiser {
             heard > was && heard - was < 0.5 && s.section_between(was, heard)
         });
         let singing = &state.karaoke.singing;
-        let game = state.config.karaoke_game;
+        let game = state.show().scored;
         // A phrase landed on a tier: the last one ended elsewhere than the
         // last seen (none on the first frame: it was there before).
         let last = singing.last_phrase().filter(|_| game);
@@ -381,7 +381,7 @@ impl Visualiser {
                 phrase,
                 music,
             },
-            grade: state.theme().grade,
+            grade: state.theme().grade.uniform(),
             look,
             story: self.showing.clone(),
             at: heard,

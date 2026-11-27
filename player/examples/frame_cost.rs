@@ -441,7 +441,7 @@ impl Rig<'_> {
                 phrase,
                 music: steady(now),
             },
-            grade: self.theme.grade,
+            grade: self.theme.grade.uniform(),
             look: self.look.as_ref().map(|(look, curves)| LookCue {
                 look: Arc::clone(look),
                 strength: 1.0,

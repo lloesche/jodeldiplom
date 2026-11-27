@@ -49,6 +49,7 @@ mod lyrics;
 pub mod pointer;
 mod ready;
 pub mod result;
+mod show;
 mod story;
 pub use countdown::{
     countdown_for, counts_from, first_sung, resume_count, title_shown, Countdown, COUNT,
@@ -60,6 +61,7 @@ pub use lyrics::{
     HEARD_WARNING,
 };
 pub(crate) use lyrics::{lyrics_arrived, want_lyrics};
+pub use show::Show;
 pub(crate) use story::want_stories;
 pub use story::{stories_wanted, StorySong};
 
@@ -235,8 +237,7 @@ pub fn live(state: &State, heard: f64, signals: &mut jodel_looks::Signals) {
         .collect();
     let hits = recent.iter().filter(|&&h| h).count();
     signals.set(Driver::Accuracy, hits as f32 / recent.len().max(1) as f32);
-    let game = state.config.karaoke_game;
-    signals.set(Driver::Tier, singing.glow(game));
+    signals.set(Driver::Tier, singing.glow(state.show().scored));
     let top = crate::tiers::Tier::TOP.spec().streak.max(1);
     signals.set(
         Driver::Streak,

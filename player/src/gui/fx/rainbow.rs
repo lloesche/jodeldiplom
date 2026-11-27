@@ -82,7 +82,7 @@ fn count(s: &Glow) -> f32 {
     let mut below = 0.0;
     for t in &TIERS {
         if x >= (below + t.glow) * 0.5 {
-            n = t.bands;
+            n = t.bands as f32;
         }
         below = t.glow;
     }
@@ -272,7 +272,7 @@ const NO_BANDS: f32 = {NO_BANDS:?};
 const BANDS: array<f32, TIERS> = {};
 const LANE_LIGHTS: array<f32, TIERS> = {};
 {SHADER}",
-        wgsl_array(TIERS.iter().map(|t| t.bands)),
+        wgsl_array(TIERS.iter().map(|t| t.bands as f32)),
         wgsl_array(TIERS.iter().map(|t| t.lane_light)),
     )
 }
@@ -374,7 +374,7 @@ fn rainbow_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
 }
 
 // Text in the rainbow, running along it as strongly as it shines.
-fn lyric_rainbow(col: vec3<f32>, a: f32, px: vec2<f32>, box: vec4<f32>, time: f32, strength: f32, look: vec4<f32>) -> vec4<f32> {
+fn lyric_rainbow(col: vec3<f32>, a: f32, px: vec2<f32>, box: vec4<f32>, time: f32, strength: f32, look: vec4<f32>, th: Theme) -> vec4<f32> {
     return vec4<f32>(mix(col, hue(px.x * 0.01 - time * 0.6), 0.85 * min(strength / WHOLE, 1.0)), a);
 }
 ";
@@ -402,7 +402,7 @@ pub const REFERENCE: Reference = Reference {
     outs[i * 7u + 4u] = vec4<f32>(rim(c.w, b.x, c.z * 0.2, s, a.w), 0.0);
     outs[i * 7u + 5u] = vec4<f32>(rim_at(b.xy, b.zw, bar, s, a.w), 0.0);
     let k = shine_at(s, a.w).x;
-    outs[i * 7u + 6u] = vec4<f32>(lyric_rainbow(h.yzw, 1.0, b.xy, vec4<f32>(0.0), a.w, k, vec4<f32>(0.0)).xyz, 0.0);",
+    outs[i * 7u + 6u] = vec4<f32>(lyric_rainbow(h.yzw, 1.0, b.xy, vec4<f32>(0.0), a.w, k, vec4<f32>(0.0), Theme()).xyz, 0.0);",
     cpu,
     near: (2e-3, 2e-3),
     shows: |outs| outs[2].iter().sum::<f32>() > 0.01,

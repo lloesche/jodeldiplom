@@ -369,7 +369,7 @@ impl MicSession {
         let Some(waveform) = waveform.filter(|w| w.melody.is_some()) else {
             return;
         };
-        let game = state.config.karaoke_game;
+        let game = state.show().scored;
         let sung_now = state.karaoke.lag.sung_clock(state.heard());
         // Estimated even with a delay measured: the singing corrects it
         // ([`crate::core::lag::correction`]).

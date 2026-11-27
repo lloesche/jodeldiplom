@@ -80,7 +80,7 @@ pub(super) fn track_started(state: &mut State) {
 /// was scored of it: nothing where its notes were never made or sung
 /// ([`crate::core::karaoke::result::Verdict::Silent`]).
 pub(crate) fn ended(state: &mut State, index: usize) {
-    if !in_mode(state) || !state.config.karaoke_game {
+    if !in_mode(state) || !state.show().scored {
         return;
     }
     let Some(path) = state.queue.paths.get(index).cloned() else {

@@ -10,9 +10,9 @@
 //! what a row holds by its [`super::Mod`]s ([`Music::get`]): its strength
 //! and its look ([`Looks`], which the shaders read every frame).
 //!
-//! All of it in a theme ([`Theme`]): the looks start from the theme's,
-//! and what the theme holds throughout is held at its strength whatever
-//! the singing.
+//! All of it in a theme ([`Theme`]): what the theme holds throughout is
+//! held at its strength whatever the singing (how it dresses the effects
+//! the shaders read from it apart: [`Theme::uniform`]).
 
 use super::music::Music;
 use super::{strength, At, By, Effects, Fx, Looks, Out, Param, Slot, Use};
@@ -47,16 +47,18 @@ pub struct Frame {
 }
 
 /// An effect in a frame, as it draws: the singing's clock, its strength
-/// now (as it fired, if it did), the strength it is going to, the strength
-/// its rows list for the glow's change, whether it fired this frame (and
-/// what fired it), the tiers the phrase rose, the singing's glow, the music,
-/// its look and the theme.
+/// now (as it fired, if it did) and every other effect's ([`Live::of`]),
+/// the strength it is going to, the strength its rows list for the glow's
+/// change, whether it fired this frame (and what fired it), the tiers the
+/// phrase rose, the singing's glow, the music, its look and the theme.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Live {
     /// The singing's clock.
     pub clock: f64,
     /// Its strength now.
     pub strength: f32,
+    /// Every effect's strength now.
+    strengths: [f32; Fx::COUNT],
     /// The strength it is going to.
     pub aim: f32,
     /// The strength listed where the glow comes from or goes to, the more:
@@ -86,6 +88,7 @@ impl Frame {
         Live {
             clock: self.clock,
             strength: self.now[i],
+            strengths: self.now,
             aim: self.aim[i],
             listed: self.listed[i],
             fired: self.fired[i],
@@ -110,6 +113,14 @@ impl Frame {
             let i = fx.index();
             self.fired[i] && matches!(self.by[i], Some(By::Phrase(_))) && fx.spec().shouts
         })
+    }
+}
+
+impl Live {
+    /// How strong `fx` is now in its frame: what one effect that goes
+    /// with another reads of it (the flames, how much the bulbs show).
+    pub fn of(&self, fx: Fx) -> f32 {
+        self.strengths[fx.index()]
     }
 }
 
@@ -191,7 +202,7 @@ impl Board {
             fired: [false; Fx::COUNT],
             by: [None; Fx::COUNT],
             rose: 0,
-            looks: self.theme.looks(),
+            looks: Looks::SPECS,
             music: *music,
             theme: self.theme,
         };

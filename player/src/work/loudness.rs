@@ -17,14 +17,13 @@
 //! written over.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
 
 use jodel_playback::stems::{Stem, RATE};
 use jodel_rhythm::loudness::Meter;
 
 use crate::store::cache::LOUDNESS;
 use crate::work::outbox::Notify;
+use crate::work::Latest;
 
 /// What a song's loudness was measured from.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -238,70 +237,52 @@ pub struct Found {
     pub lufs: Option<f64>,
 }
 
-/// The thread measuring songs' loudness, the last asked for at a time.
-pub struct LoudnessWorker {
-    tx: Sender<PathBuf>,
-    rx: Receiver<Found>,
-    /// What was last asked for.
-    asked: Option<PathBuf>,
-}
+/// The thread measuring songs' loudness, the last asked for at a time
+/// ([`Latest`]).
+pub struct LoudnessWorker(Latest<PathBuf, Found>);
 
 impl LoudnessWorker {
     /// A worker reading and keeping in `folders`, calling `notify` as each
     /// is done.
     pub fn new(folders: Folders, notify: Notify) -> LoudnessWorker {
-        let (tx, wants) = mpsc::channel::<PathBuf>();
-        let (found, rx) = mpsc::channel();
-        thread::spawn(move || {
-            while let Ok(mut path) = wants.recv() {
-                // Only the last asked for.
-                while let Ok(later) = wants.try_recv() {
-                    path = later;
-                }
-                let started = std::time::Instant::now();
-                let lufs = match loudness_of(&folders, &path) {
-                    Ok(m) => {
-                        crate::trace::note(format!(
-                            "loudness: {} at {} as played ({:?}), in {:.1} s",
-                            path.display(),
-                            m.lufs
-                                .map_or_else(|| "silence".to_owned(), |l| format!("{l:.1} LUFS")),
-                            m.from,
-                            started.elapsed().as_secs_f64()
-                        ));
-                        m.lufs
-                    }
-                    Err(e) => {
-                        crate::trace::note(format!("loudness: none for {}: {e}", path.display()));
-                        None
-                    }
-                };
-                if found.send(Found { path, lufs }).is_err() {
-                    return;
-                }
-                notify();
-            }
-        });
-        LoudnessWorker {
-            tx,
-            rx,
-            asked: None,
-        }
+        LoudnessWorker(Latest::new(
+            move || move |path| measure(&folders, path),
+            notify,
+        ))
     }
 
     /// The loudness wanted for `path` (asked once in a row).
     pub fn want(&mut self, path: &Path) {
-        if self.asked.as_deref() == Some(path) {
-            return;
-        }
-        self.asked = Some(path.to_owned());
-        let _ = self.tx.send(path.to_owned());
+        self.0.want(|a| a == path, || path.to_owned());
     }
 
     /// A loudness found since the last call, if one was.
     pub fn take(&self) -> Option<Found> {
-        self.rx.try_recv().ok()
+        self.0.take()
     }
+}
+
+/// `path`'s loudness, read or measured and kept in `folders`.
+fn measure(folders: &Folders, path: PathBuf) -> Found {
+    let started = std::time::Instant::now();
+    let lufs = match loudness_of(folders, &path) {
+        Ok(m) => {
+            crate::trace::note(format!(
+                "loudness: {} at {} as played ({:?}), in {:.1} s",
+                path.display(),
+                m.lufs
+                    .map_or_else(|| "silence".to_owned(), |l| format!("{l:.1} LUFS")),
+                m.from,
+                started.elapsed().as_secs_f64()
+            ));
+            m.lufs
+        }
+        Err(e) => {
+            crate::trace::note(format!("loudness: none for {}: {e}", path.display()));
+            None
+        }
+    };
+    Found { path, lufs }
 }
 
 #[cfg(test)]

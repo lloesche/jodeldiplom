@@ -433,12 +433,14 @@ bloom 5.6 ms in one run, 0.8 in the other; the light 6.7 and 0.9 with
 every effect): the machine's, as the diploma's spike above.
 
 **Themes.** A theme (`theme.rs`) costs the GPU nothing of its own but
-what it holds and grades. Its looks are the effects' look numbers the
-shaders read anyway (the pumpkins, the green fire and the ghosts are
-the same pipelines, mixed by a look); the backdrop's grade is a few
-operations a pixel in the backdrop's own shader, nothing at all in the
-classic theme (its amount 0: classic's `frame_cost` pictures are byte
-for byte as before, and so are its sounds). The fog Spooky holds is a
+what it holds and grades. How it dresses the effects is one small
+uniform the shaders read anyway (`theme`: the fire's colours, the
+bulbs' and what a bulb is; the pumpkins and the green fire are the same
+pipelines, the ghosts and the candy the same bursts); the backdrop's
+grade is a few operations a pixel in the backdrop's own shader, nothing
+at all in the classic theme (its amount 0: classic's `frame_cost`
+pictures are byte for byte as before, and so are its sounds). The fog
+Spooky holds is a
 screen pass in four strips along the edges (0.36 of the screen at
 3024 × 1964 with no music, deeper as it breathes), two octaves of noise
 and a lattice cell for its eyes a pixel, nothing past its reach. On the

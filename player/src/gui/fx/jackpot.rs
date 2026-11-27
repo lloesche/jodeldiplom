@@ -5,8 +5,7 @@
 //! the light that blooms: [`crate::gui::bloom`]). The diploma throws them
 //! too.
 //!
-//! Its look's `x` ([`Spec::params`]): 0 gold, 1 candy
-//! ([`super::coins::candied`]).
+//! Its coins are the theme's ([`super::coins::candied`]).
 //!
 //! [`coin`] is the shader's maths on the processor ([`wgsl`]), held to it
 //! on the GPU (`crate::gui::shader_check`).
@@ -38,7 +37,7 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
         At::Mark { at, size, line } => jackpot(at, size * s, live.clock, line),
         _ => return,
     };
-    out.sprays.push(super::coins::candied(spray, live.look));
+    out.sprays.push(super::coins::candied(spray, live.theme));
 }
 
 /// A jackpot from `at`, its coins `size` across, at `clock`, scattered by

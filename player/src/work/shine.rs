@@ -13,9 +13,7 @@
 //! 16 kHz), as its words were timed.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
-use std::thread;
 
 use jodel_lyrics::Lyrics;
 use jodel_rhythm::waveform::Waveform;
@@ -25,6 +23,7 @@ use crate::core::shine::Reference;
 use crate::core::singing::Notes;
 use crate::store::cache::SHINE;
 use crate::work::outbox::Notify;
+use crate::work::Latest;
 
 /// A reference as the file holds it, its header in front.
 pub fn to_text(reference: &Reference) -> String {
@@ -197,67 +196,42 @@ pub struct Found {
     pub reference: Option<Arc<Reference>>,
 }
 
-/// The thread working out references, the last asked for at a time.
-pub struct ShineWorker {
-    tx: Sender<Made>,
-    rx: Receiver<Found>,
-    /// What was last asked for.
-    asked: Option<Made>,
-}
+/// The thread working out references, the last asked for at a time
+/// ([`Latest`]).
+pub struct ShineWorker(Latest<Made, Found>);
 
 impl ShineWorker {
-    /// A worker reading and keeping in `folders`, calling `notify` as
-    /// each is done.
+    /// A worker reading and keeping in `folders`, calling `notify` as each
+    /// is done. Its GPU work (separating a song without kept stems) gives
+    /// way to the window's frames, and is for the song being sung: it
+    /// loads its model while the song is sung.
     pub fn new(folders: Folders, notify: Notify) -> ShineWorker {
-        let (tx, wants) = mpsc::channel::<Made>();
-        let (found, rx) = mpsc::channel();
-        thread::spawn(move || {
-            // Its GPU work (separating a song without kept stems) gives way
-            // to the window's frames, and is for the song being sung: it
-            // loads its model while the song is sung.
-            jodel_gpu::pace::background();
-            crate::work::stages::for_the_song_sung();
-            while let Ok(mut want) = wants.recv() {
-                // Only the last asked for.
-                while let Ok(later) = wants.try_recv() {
-                    want = later;
-                }
-                let done = work(&folders, want);
-                if found.send(done).is_err() {
-                    return;
-                }
-                notify();
-            }
-        });
-        ShineWorker {
-            tx,
-            rx,
-            asked: None,
-        }
+        ShineWorker(Latest::new(
+            move || {
+                jodel_gpu::pace::background();
+                crate::work::stages::for_the_song_sung();
+                move |made| work(&folders, made)
+            },
+            notify,
+        ))
     }
 
     /// The reference wanted for `path`'s notes made from `lyrics` and
     /// `waveform` (asked once).
     pub fn want(&mut self, path: &Path, lyrics: &Arc<Lyrics>, waveform: &Arc<Waveform>) {
-        if self
-            .asked
-            .as_ref()
-            .is_some_and(|a| a.is(path, lyrics, waveform))
-        {
-            return;
-        }
-        let made = Made {
-            path: path.to_owned(),
-            lyrics: Arc::clone(lyrics),
-            waveform: Arc::clone(waveform),
-        };
-        self.asked = Some(made.clone());
-        let _ = self.tx.send(made);
+        self.0.want(
+            |a| a.is(path, lyrics, waveform),
+            || Made {
+                path: path.to_owned(),
+                lyrics: Arc::clone(lyrics),
+                waveform: Arc::clone(waveform),
+            },
+        );
     }
 
     /// A reference worked out since the last call, if one was.
     pub fn take(&self) -> Option<Found> {
-        self.rx.try_recv().ok()
+        self.0.take()
     }
 }
 

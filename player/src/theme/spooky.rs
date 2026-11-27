@@ -13,8 +13,9 @@ use jodel_synth::engines::{analog, fm, formant, modal, AnyParams};
 use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
 use jodel_synth::Patch;
 
-use super::Theme;
+use super::{BulbShape, Flight, Grade, Palette, Ramp, Theme};
 use crate::gui::fx::{Fx, Use};
+use crate::gui::stage::palette::Rgb;
 use crate::sfx::conductor::Atom;
 
 /// The Halloween theme.
@@ -22,28 +23,33 @@ pub static SPOOKY: Theme = Theme {
     name: "spooky",
     title: "Spooky",
     about: "Halloween: green fire, pumpkins, candy, ghosts and fog",
-    colors: &[
-        ("Good", [0.55, 1.0, 0.3]),
-        ("Great", [1.0, 0.55, 0.1]),
-        ("Awesome", [0.74, 0.46, 1.0]),
-        ("Amazing", [0.3, 1.0, 0.78]),
-        ("Diva", [0.9, 1.0, 0.94]),
-    ],
-    accent: Some([255, 140, 26]),
-    looks: &[
-        // Green fire, its pulse and breath as made.
-        (Fx::EdgeFire, [1.0, 1.0, 1.0, 1.0]),
-        (Fx::LyricFire, [1.0, 1.0, 0.0, 0.0]),
-        (Fx::Flames, [1.0, 0.0, 1.0, 0.0]),
-        // Jack-o'-lanterns, chasing and blinking as made.
-        (Fx::Bulbs, [1.0, 1.0, 1.0, 1.0]),
-        // Candy and ghosts.
-        (Fx::Fountain, [1.0, 0.0, 0.0, 0.0]),
-        (Fx::Rain, [1.0, 0.0, 0.0, 0.0]),
-        (Fx::Flick, [1.0, 0.0, 0.0, 0.0]),
-        (Fx::Jackpot, [1.0, 0.0, 0.0, 0.0]),
-        (Fx::Angels, [1.0, 0.0, 0.0, 0.0]),
-    ],
+    colors: Some([
+        [0.55, 1.0, 0.3],
+        [1.0, 0.55, 0.1],
+        [0.74, 0.46, 1.0],
+        [0.3, 1.0, 0.78],
+        [0.9, 1.0, 0.94],
+    ]),
+    accent: Some([1.0, 140.0 / 255.0, 26.0 / 255.0]),
+    // The classic fire's heats in greens.
+    fire: Ramp([
+        [0.0155, 0.45, 0.0185],
+        [0.066, 1.0, 0.1],
+        [0.2015, 1.0, 0.2875],
+        [0.5, 1.0, 0.571],
+        [0.925, 1.0, 0.866],
+    ]),
+    // Pumpkin orange in purple-black sockets.
+    bulbs: Palette {
+        on: [1.0, 0.58, 0.12],
+        glow: [1.0, 0.36, 0.02],
+        off: [0.32, 0.13, 0.03],
+        socket: [0.07, 0.03, 0.09],
+        rim: [0.5, 0.22, 0.6],
+    },
+    bulb: BulbShape::Jack,
+    coins: Some(&CANDY),
+    angels: Flight::Ghosts,
     sounds: &[
         (Atom::Pop, BLOOP),
         (Atom::PopBody, BONES),
@@ -58,9 +64,23 @@ pub static SPOOKY: Theme = Theme {
         (Atom::Singer, GHOST),
     ],
     always: &[Use::of(Fx::Fog, 0.8)],
-    grade: [0.5, 0.66, 0.95, 0.8],
+    grade: Grade {
+        tint: [0.5, 0.66, 0.95],
+        amount: 0.8,
+    },
     look: None,
 };
+
+/// The sweets' colours the coins come in (sRGB): strawberry, mint, lime,
+/// grape, orange, blue raspberry.
+const CANDY: [Rgb; 6] = [
+    [1.0, 0.42, 0.72],
+    [0.4, 1.0, 0.7],
+    [0.7, 1.0, 0.25],
+    [0.72, 0.45, 1.0],
+    [1.0, 0.55, 0.15],
+    [0.35, 0.85, 1.0],
+];
 
 /// A word's pop: a bubble of a cauldron, a sine welling up an octave into
 /// its note.

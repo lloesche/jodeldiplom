@@ -51,7 +51,6 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
             pill,
             area,
             band,
-            ..
         },
         s,
     ) = (at, live.strength)
@@ -65,7 +64,7 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
     // Never over the HUD's band (no higher than the bulbs light) nor into
     // the lyric band: it reaches no further than either, and is gone
     // before it ([`glow_at`]), its quad holding all of it.
-    let hud = super::bulbs::lit_top(lane.rect(), super::far_corner(area));
+    let hud = super::marquee::lit_top(lane.rect(), super::far_corner(area));
     let reach = (pill * 1.6)
         .min(cy - hy - hud)
         .min(band.0 - cy - hy)

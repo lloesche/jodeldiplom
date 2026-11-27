@@ -6,9 +6,9 @@
 //! at the top (its glow's aim, not yet its eased strength), then one every
 //! [`ANGELS_EVERY`]; sought back before the last, the next comes at once.
 //!
-//! Its look's `x` ([`Spec::params`]): 0 angels, 1 ghosts instead
-//! ([`Kind::Ghosts`]: the same flight, each a little sheet ghost wailing
-//! "ooh", its hem waving: [`DRAW_GHOST`]).
+//! In a theme of ghosts ([`crate::theme::Flight::Ghosts`]: Spooky's),
+//! ghosts instead ([`Kind::Ghosts`]: the same flight, each a little sheet
+//! ghost wailing "ooh", its hem waving: [`DRAW_GHOST`]).
 //!
 //! [`angel`] is the shader's maths on the processor ([`wgsl`]), held to it
 //! on the GPU (`crate::gui::shader_check`).
@@ -17,6 +17,7 @@ use super::{At, Layer, Live, Out, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
 use crate::gui::shine::hue;
 use crate::gui::sparks::{rand, TAU};
+use crate::theme::Flight;
 use jodel_looks::math::mix3;
 
 /// How long a flight of angels takes to come down, in seconds.
@@ -44,8 +45,10 @@ fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
         slot.last = clock;
         let seed = (live.clock * 1000.0) as u32 ^ 0x5EED;
         let s = flight(w, h * 0.75, h * 0.12 * live.listed, live.clock, seed);
-        out.sprays
-            .push(if live.look[0] >= 0.5 { haunted(s) } else { s });
+        out.sprays.push(match live.theme.angels {
+            Flight::Angels => s,
+            Flight::Ghosts => haunted(s),
+        });
     }
 }
 

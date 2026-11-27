@@ -246,7 +246,7 @@ pub fn with_effects(
     );
     draw(
         &mut board,
-        (&Stage::lane_at(area, &lane, &drawn), &drawn),
+        (&Stage::lane_at(area, &lane), &drawn),
         &mut f.lights,
         &mut Vec::new(),
     );

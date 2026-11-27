@@ -89,6 +89,13 @@ pub fn front(b: &Liquid, at: &Laid) -> f32 {
 /// How much further and larger the bits of a bubble burst the biggest
 /// fly, a share of any's ([`Liquid::size`]).
 pub const BIGGER: f32 = 0.6;
+/// From how big a bubble bursts ([`Liquid::size`]) it throws two sprays a
+/// stretch rather than one.
+const DOUBLED: f32 = 0.5;
+/// How a bubble held full pumps at its most: its edge this share of the
+/// way to white, its glow reaching this many of its heights further.
+const PUMP_LIGHT: f32 = 0.5;
+const PUMP_GLOW: f32 = 0.4;
 
 /// Bubble `b`'s bursts for the GPU, laid as `at`, `px` high, at `clock`,
 /// the lane going across at `pps`: while it bursts, one spray a stretch of
@@ -105,7 +112,7 @@ pub fn sprays(b: &Liquid, at: &Laid, px: f32, (clock, pps): (f64, f32)) -> Vec<S
     let r = r * b.pump() as f32;
     let wide = (x1 - x0) / n as f32;
     let size = b.size() as f32;
-    let each = 1 + usize::from(size >= 0.5);
+    let each = 1 + usize::from(size >= DOUBLED);
     // Where it was as it burst: it has gone by with the lane since.
     let back = pps * (clock - start) as f32;
     (0..n * each)
@@ -184,10 +191,10 @@ pub fn draw(
 /// `px` high: its edge lighter and its glow reaching further.
 fn pumping(skin: &Skin, glow: f32, px: f32) -> Skin {
     let edge = skin.edge;
-    let light = |c: f32| c + (1.0 - c) * 0.5 * glow;
+    let light = |c: f32| c + (1.0 - c) * PUMP_LIGHT * glow;
     Skin {
         edge: [light(edge[0]), light(edge[1]), light(edge[2]), edge[3]],
-        glow: skin.glow + px * 0.4 * glow,
+        glow: skin.glow + px * PUMP_GLOW * glow,
         ..*skin
     }
 }

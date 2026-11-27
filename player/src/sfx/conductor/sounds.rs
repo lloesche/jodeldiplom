@@ -42,16 +42,13 @@
 use jodel_synth::{Command, Commands, Cue, NoteOn, Tag};
 
 use super::key::{Pentatonic, DEGREES};
-use super::ladder::Step;
-use super::layers::{chime_brass, chime_has, tier_share, Chime, Streak};
+use super::layers::{chime_brass, chime_has, share, Chime, Streak, StreakSet};
 use super::palette::{self, Atom, BRASS, COINS, SLAM};
 use super::tags::{PAYOUT, RISER, SHIMMER, STREAK};
-use crate::tiers::Tier;
+use crate::tiers::{Tier, MOMENT_BEATS};
 
-/// How long the jackpot and the payout are, beats (bars of `bar` beats),
-/// and the beat the payout's whoosh leads into it with: what they ask
-/// room for between the lines.
-pub(crate) const JACKPOT_BEATS: f64 = 3.0;
+/// How long the payout is, beats (bars of `bar` beats), and the beat its
+/// whoosh leads into it with: what it asks room for between the lines.
 pub(super) fn payout_beats(bar: u32) -> f64 {
     2.0 * f64::from(bar.max(2))
 }
@@ -312,22 +309,21 @@ impl Score<'_> {
     }
 }
 
-/// A word's bubble at `at`, on the ladder's `step`, `share` of the rungs
+/// A word's bubble at `at`, on the ladder's `degree`, `share` of the rungs
 /// reached (a glint over it where `glinted`), at `pan`, `size` big (0 as
 /// any to 1, held full the longest): the bigger, the louder, with a body
 /// an octave under it.
 pub(super) fn pop(
     s: &mut Score,
     at: u64,
-    step: Step,
-    share: f32,
-    glinted: bool,
+    degree: i32,
+    (share, glinted): (f32, bool),
     pan: f32,
     size: f32,
 ) {
     let glint = 0.3 + 0.5 * share;
     let big = size.clamp(0.0, 1.0);
-    match s.deg(step.degree, POP_HOME) {
+    match s.deg(degree, POP_HOME) {
         Some(note) => {
             s.play(Note::new(at, Atom::Pop, note).vel(0.8 + 0.2 * big).pan(pan));
             let body = Note::new(at, Atom::PopBody, note);
@@ -343,7 +339,7 @@ pub(super) fn pop(
         }
         None => {
             // Brighter, not higher.
-            let bright = (0.45 + 0.1 * step.degree as f32) * (1.0 + 0.3 * big);
+            let bright = (0.45 + 0.1 * degree as f32) * (1.0 + 0.3 * big);
             s.play(Note::new(at, Atom::Pop, HIGH_NOTES[0]).vel(bright).pan(pan));
             let over = Note::new(at, Atom::Glint, HIGH_NOTES[1]);
             s.play(over.vel(glint * bright).pan(pan));
@@ -527,9 +523,9 @@ fn ka_ching(s: &mut Score, at: u64) {
 
 /// A rung's stinger: from `now`, its hit at `hit`, `share` of the rungs
 /// up (1: the top), with the rung's `layers`; where it ends.
-pub(super) fn stinger(s: &mut Score, now: u64, hit: u64, share: f32, layers: &[Streak]) -> u64 {
+pub(super) fn stinger(s: &mut Score, now: u64, hit: u64, share: f32, layers: StreakSet) -> u64 {
     let v = 0.6 + 0.4 * share;
-    let octave = layers.contains(&Streak::Octave);
+    let octave = layers.contains(Streak::Octave);
     pickup(s, now, hit, Atom::Pluck, STING_HOME);
     if let Some(tonic) = s.tonal(0, STING_HOME) {
         s.play(Note::new(hit, Atom::Pluck, tonic).vel(v));
@@ -547,16 +543,16 @@ pub(super) fn stinger(s: &mut Score, now: u64, hit: u64, share: f32, layers: &[S
     }
     let n = 1 + (5.0 * share).round() as i32;
     let end = arpeggio(s, hit, n, Atom::Pluck, STING_HOME, v).max(hit + s.beats(0.5));
-    if layers.contains(&Streak::Register) {
+    if layers.contains(Streak::Register) {
         let bells = (8.0 * share).round() as i32;
         tremolo(s, hit + s.beats(0.25), bells, 0.35);
         ka_ching(s, hit + s.secs(0.06));
     }
-    if layers.contains(&Streak::Brass) {
+    if layers.contains(Streak::Brass) {
         let held = s.beats(1.0);
         brass(s, horn(hit, 0.55, held), 3);
     }
-    if layers.contains(&Streak::Glitter) {
+    if layers.contains(Streak::Glitter) {
         glitter(s, hit + s.beats(0.5), 6, 0.5, Tag::NONE);
     }
     end + s.beats(0.5)
@@ -566,7 +562,7 @@ pub(super) fn stinger(s: &mut Score, now: u64, hit: u64, share: f32, layers: &[S
 /// first): from `now`, its hit at `hit`, with the tier's layers, bigger
 /// the higher it is; where it ends.
 pub(super) fn chime(s: &mut Score, now: u64, hit: u64, tier: Option<Tier>) -> u64 {
-    let share = tier_share(tier);
+    let share = share(tier);
     let has = |layer| chime_has(tier, layer);
     let v = 0.5 + 0.4 * share;
     pickup(s, now, hit, Atom::Chime, BELL_HOME);
@@ -667,12 +663,12 @@ pub(super) fn payout(s: &mut Score, now: u64, at: u64, bar: u32, lead: bool) {
     coins(s, win, 2, bar, 0.45, PAYOUT);
 }
 
-/// The top tier's jackpot on the downbeat `at`, within [`JACKPOT_BEATS`].
+/// The top tier's jackpot on the downbeat `at`, within [`MOMENT_BEATS`].
 pub(super) fn jackpot(s: &mut Score, at: u64) {
     for atom in SLAM {
         s.play(Note::new(at, atom, 60.0));
     }
-    let long = s.beats(JACKPOT_BEATS - 0.5);
+    let long = s.beats(MOMENT_BEATS - 0.5);
     let choir = Note::new(at, Atom::Choir, 0.0).vel(0.75).hold(long);
     chord(s, choir, 4, STING_HOME);
     let held = s.beats(1.0);

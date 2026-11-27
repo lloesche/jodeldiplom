@@ -40,16 +40,14 @@ impl Stage {
     }
 
     /// Where the effects draw their light round the lane on a stage in the
-    /// window's `area` round `lane` with `effects`: the lane's glass, a
-    /// pill's height, the area, the lyric band, and how strongly the
-    /// marquee's bulbs show round it (the flames set them on fire).
-    pub fn lane_at(area: (f32, f32, f32, f32), lane: &Lane, effects: &fx::Frame) -> At {
+    /// window's `area` round `lane`: the lane's glass, a pill's height, the
+    /// area and the lyric band.
+    pub fn lane_at(area: (f32, f32, f32, f32), lane: &Lane) -> At {
         At::Lane {
             lane: lane.glass(area),
             pill: lane.pill,
             area,
             band: lines::band(area),
-            bulbs: effects.live(fx::Fx::Bulbs).strength,
         }
     }
 
@@ -349,7 +347,7 @@ mod tests {
             let area = (0.0, 0.0, w, h);
             let lane = Lane::new(area, 0.0);
             let (top, bottom) = lane.hud(area);
-            let lit = crate::gui::fx::bulbs::lit_top(lane.glass(area).rect(), (w, h));
+            let lit = crate::gui::fx::marquee::lit_top(lane.glass(area).rect(), (w, h));
             assert!(top >= 0.0 && bottom < lit && top < bottom, "{w}x{h}");
             let Clear {
                 score,
@@ -427,12 +425,14 @@ mod tests {
                 stage.effects_at(&at, &frame, (&mut shapes, &mut Vec::new()));
                 assert!(!shapes.is_empty(), "{fx:?} draws");
                 let look = fx.spec().params;
+                let theme = &crate::theme::CLASSIC;
                 for i in &shapes {
                     let light = |px: (f32, f32), time: f32| -> [f32; 4] {
                         let s = i.params[1];
                         match i.params[0] {
                             k if k == bulbs::BULBS => {
-                                bulbs::bulbs(px, (w, h), time, s, i.shape, look, &music)
+                                let dress = (look, &theme.bulbs, theme.bulb);
+                                bulbs::bulbs(px, (w, h), time, s, i.shape, dress, &music)
                             }
                             k if k == edge_fire::EDGE_FIRE => edge_fire::edge_fire(
                                 px,
@@ -440,7 +440,7 @@ mod tests {
                                 time,
                                 (s, (i.shape[0], i.shape[1])),
                                 &clear,
-                                look,
+                                (look, &theme.fire),
                                 &music,
                             ),
                             k if k == fog::FOG => fog::fog(
@@ -499,7 +499,7 @@ mod tests {
         let area = (0.0, 0.0, size.0, size.1);
         let lane = Lane::new(area, 0.0);
         let frame = (stage.board).frame_of([(1.0, &row)].into_iter(), &step, music, 10.0);
-        let at = Stage::lane_at(area, &lane, &frame);
+        let at = Stage::lane_at(area, &lane);
         let mut shapes = Vec::new();
         stage.effects_at(&at, &frame, (&mut shapes, &mut Vec::new()));
         (shapes, lane.hud(area).1, lines::band(area))
@@ -519,7 +519,8 @@ mod tests {
         use crate::gui::fx::{flames, glow};
         match i.params[0] {
             k if k == flames::BLAZE => {
-                let c = flames::flames_at(p, i.shape, i.params, i.color, i.color2, (time, 0.0));
+                let fire = &crate::theme::CLASSIC.fire;
+                let c = flames::flames_at(p, i.shape, i.params, i.color, i.color2, (time, fire));
                 c[0] + c[1] + c[2]
             }
             k if k == glow::GLOW => {

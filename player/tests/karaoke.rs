@@ -979,11 +979,11 @@ fn a_theme_changed_mid_song_is_the_next_frame_s() {
     let fog = |f: &StageFrame| {
         (f.screen.iter()).any(|i| Fx::of_kind(i.params[0]).is_some_and(|(fx, _)| fx == Fx::Fog))
     };
-    let fire = |f: &StageFrame| f.looks.0[Fx::EdgeFire.index()];
+    let dressed = |f: &StageFrame| f.feed().theme.uniform();
     let (theme, classic) = frame(&state, 1.5);
     assert_eq!(theme, &CLASSIC);
     assert!(!fog(&classic));
-    assert_eq!(fire(&classic), CLASSIC.fx_params(Fx::EdgeFire));
+    assert_eq!(dressed(&classic), CLASSIC.uniform());
     let row = SettingsRow::ALL
         .iter()
         .position(|r| *r == SettingsRow::Theme)
@@ -993,12 +993,17 @@ fn a_theme_changed_mid_song_is_the_next_frame_s() {
     assert_eq!(theme, &SPOOKY);
     assert_ne!(theme.color(Tier::TOP), CLASSIC.color(Tier::TOP));
     assert!(fog(&spooky), "the fog held from the next frame");
-    assert_eq!(fire(&spooky), SPOOKY.fx_params(Fx::EdgeFire));
+    assert_eq!(
+        dressed(&spooky),
+        SPOOKY.uniform(),
+        "dressed from the next frame"
+    );
+    assert_eq!(spooky.looks, classic.looks, "the looks the effects' own");
     assert_eq!(state.theme().grade, SPOOKY.grade, "the backdrop's grade");
     // And back.
     update(&mut state, Action::SettingsClick(row, -1));
     let (theme, back) = frame(&state, 1.5 + 2.0 / 60.0);
     assert_eq!(theme, &CLASSIC);
     assert!(!fog(&back));
-    assert_eq!(fire(&back), CLASSIC.fx_params(Fx::EdgeFire));
+    assert_eq!(dressed(&back), CLASSIC.uniform());
 }

@@ -37,6 +37,7 @@ use std::time::Instant;
 
 use jodel_gpu::vision::{Depth, Matte};
 use jodeldiplom::config::Config;
+use jodeldiplom::core::karaoke::Show;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::backdrop::music::{Hearing, Levels};
@@ -548,6 +549,7 @@ fn main() {
             }
             let showing = usize::from(scene.next.is_some_and(|n| now >= n));
             let config = scene.config(now);
+            let show = Show::of(&config);
             let layers = (now >= scene.arrives).then(|| [&first, &next][showing].clone());
             let music = if scene.beat {
                 Music::steady(now * 2.0, 120.0, 4, 0.9, now)
@@ -559,24 +561,24 @@ fn main() {
                 layers: Mode::of(&config).cover(layers),
                 heard: Hearing {
                     levels: (scene.music)(now),
-                    glow: singing.glow(config.karaoke_game),
+                    glow: singing.glow(show.scored),
                     section: scene.section.is_some_and(|s| (now - s).abs() < 0.5 / FPS),
-                    phrase: landed.is_some() && config.karaoke_game,
+                    phrase: landed.is_some() && show.scored,
                     music,
                 },
-                grade: config.karaoke_theme.grade,
+                grade: config.karaoke_theme.grade.uniform(),
                 ..Cue::default()
             };
             frame = Some(visualiser.step(&cue, (w as u32, h as u32), (1.0 / FPS) as f32));
-            let p = picture_at(&sung, now, &singing, config.karaoke_game);
+            let p = picture_at(&sung, now, &singing, show.scored);
             if !bare {
                 // The lane with the notes shown, else the lyrics set in
                 // the middle.
                 let mut song = Song::new(&singing, sung.clone(), Some(LENGTH));
-                song.game = config.karaoke_game;
+                song.game = show.scored;
                 let area = (0.0, 0.0, w as f32, h as f32);
                 let at = (now, (1.0 / FPS) as f32);
-                let lane = config.karaoke_notes;
+                let lane = show.lane;
                 let frame = stage.scene((&song, lane), &p, area, at, &Tint::STAGE);
                 // Every frame: the text it puts into the atlas is sent once.
                 gpu.set_stage(frame.as_ref(), w as u32, h as u32);

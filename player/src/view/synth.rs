@@ -147,7 +147,7 @@ impl Synth {
     /// The tab as `state` has it.
     pub fn of(state: &State) -> Synth {
         let tab = &state.synth;
-        let theme = synth_tab::theme(state);
+        let theme = state.bench_theme();
         let book = &state.patches;
         let edited = |a: Atom| book.status(theme, a) != PatchStatus::AsBuilt;
         let moments = (bench::moments())
