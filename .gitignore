@@ -9,3 +9,5 @@ dist/
 /target/
 
 /.claude/worktrees/
+# The GPU probe's report (`cargo run -p jodel-gpu --example probe`).
+gpu-probe.txt

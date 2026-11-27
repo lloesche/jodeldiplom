@@ -52,19 +52,24 @@ the 5080.
    a time into a `vec4` where that is what the maths wants
    (`flash4`, `step_p4`, `gemm_a4`, `dst_put4`). A vector written whole by
    one invocation is fine. `scripts/check-rules.sh` fails on a store into
-   a vector's lane by index (`a[i][j] = v`, `a[i].x = v`) in any WGSL.
-2. **Never feed `exp` or `tanh` an argument far out of range.** Metal
-   compiles with fast maths: its `exp` turns the exponent's whole part
-   into an integer, which overflows for a huge argument (garbage, not 0),
-   and its `tanh` goes through `exp(2x)` (∞ / ∞ = NaN for a large `x`).
-   The -1e30 that stands for "no score" in an online softmax made
-   `exp(best − next)` such an argument on the first chunk; GELU's tanh
-   took `x³`. Use the held forms in `common.wgsl` (every program has
-   them): `exp_held` (`exp_held4` for a vec4; held to -87 first,
-   exp(-87) = 1.6e-38, so what it weighs is gone either way) and
-   `tanh_held` (held to ±10, tanh is ±1 in f32 past ±9.1); an `exp` that
-   can grow (SiLU's `exp(-x)`) is held below 87. On Vulkan they give the
-   same numbers as before.
+   a vector's lane by index (`a[i][j] = v`, `a[i].x = v`) in any tracked
+   `.wgsl` file; the probe's deliberately racy kernels are made as text in
+   `gpu/src/probe/lanes.rs`. The probe on the M4 Max lost 75 % of the
+   lanes of `vec4`s written so, 50 % of `vec2`s'.
+2. **Never feed `tanh` an argument far out of range, and hold `exp`'s
+   too.** Metal compiles with fast maths. The probe on the M4 Max (its
+   section 4) found its `tanh` NaN for every argument from 88 up (it goes
+   through `exp(2x)`: ∞ / ∞), and its `exp` and `exp2` right at every
+   huge argument, ±1e30 included (only results below f32's normal range
+   flush to 0). GELU's tanh took `x³`, so Gemma's logits were NaN. Use
+   the held forms in `common.wgsl` (every program has them): `tanh_held`
+   (held to ±10, tanh is ±1 in f32 past ±9.1) and `exp_held`
+   (`exp_held4` for a vec4; held to -87 first, exp(-87) = 1.6e-38, so
+   what it weighs is gone either way), e.g. against the -1e30 that
+   stands for "no score" in an online softmax; an `exp` that can grow
+   (SiLU's `exp(-x)`) is held below 87. `exp_held` is a guard for GPUs
+   not yet probed, whose fast `exp` may not meet its limits as the M4
+   Max's does. On Vulkan they give the same numbers as before.
 3. **A change to a kernel is tested on the Mac before it lands.** The
    kernel tests (`cargo test --release -p jodel-gpu --lib`) hold every
    kernel to a processor reference on whatever GPU runs them; on Windows
@@ -75,31 +80,122 @@ the 5080.
 4. **A buffer read as vectors holds whole vectors.** A binding of
    `array<vec4<f32>>` is as long as the whole vectors in it, so a buffer
    of 777 f32s is 194 vectors and value 776 lies past its end. `wgpu`
-   clamps an index past the end to the last element on Metal (value 776
-   read as value 772 there), where Vulkan happened to read the value.
-   klein's buffers are rounded up to whole vectors (`whole_vectors`), and
-   their sizes are counted so too; a network that reads its buffers as
-   vectors does the same.
+   clamps an index past the end to the last element on Metal, for reads
+   *and writes*: the probe on the M4 Max (its section 3) read every index
+   past the end of an `array<f32>` or `array<vec4<f32>>` as the last
+   element (value 776 read as value 772), and a write past the end wrote
+   the last element, so it silently overwrites real data. On the 5080
+   (Vulkan) the same reads gave 0 and the writes were dropped. klein's
+   buffers are rounded up to whole vectors (`whole_vectors`), and their
+   sizes are counted so too; a network that reads its buffers as vectors
+   does the same, and no kernel writes past its binding's end.
 5. **The Mac runs the plain paths.** Metal through `wgpu` has no
-   cooperative matrices and Gemma picks its f32 path there (`Full`), so
-   the plain multiply, the plain attention and the f32 matrix paths are
-   what an Apple user runs. An optimisation made only to the fast
-   (tensor-core, int8) paths does nothing for them, and one that breaks
-   the plain paths breaks the Mac while the 5080's tests stay green.
+   cooperative matrices of the 16 × 16 tiles klein's tensor-core kernels
+   take. It does have experimental 8 × 8 ones (f32, f16 → f16 and
+   f16 → f32), and the probe on the M4 Max found their products right
+   (section 8), but no kernel uses them yet. Gemma picks its f32 path
+   there (`Full`), so the plain multiply, the plain attention and the
+   f32 matrix paths are what an Apple user runs. An optimisation made
+   only to the fast (tensor-core, int8) paths does nothing for them, and
+   one that breaks the plain paths breaks the Mac while the 5080's tests
+   stay green.
 6. **Workgroup memory is not zeroed: write it before reading it.** WGSL
-   zeroes a kernel's workgroup memory at each dispatch's start by
-   default, and on Metal that cost a fixed ~0.3 ms a dispatch for a
-   kernel holding a large array (Gemma's 16 KB `staged`: its residual,
-   quant and join took three quarters of the GPU's time, and the Mac
-   decoded at 10 tokens a second; without the zeroing, 48). No program's
-   pipelines zero it (`engine::Program`), so every kernel writes every
-   place of its workgroup memory that it reads before reading it (a
-   tile's places past the edge written as 0, or never read: its loop
-   bounded to the places written; a reduction reads only the places its
-   invocations wrote), in every case: edges, partial tiles, idle
-   invocations. A new kernel is checked against this before it lands. The profile (`JODEL_GEMMA_PROFILE=1` with
+   zeroes a kernel's workgroup memory at the start of each workgroup by
+   default, and on Metal that costs time for every workgroup a dispatch
+   runs: the probe on the M4 Max (section 9) measured 1,878 µs for a
+   dispatch of 1024 workgroups of 16 KB (about 1.8 µs a workgroup),
+   against 5.6 µs without the zeroing; for Gemma's 16 KB `staged` that
+   was about 0.3 ms a dispatch (its residual, quant and join took three
+   quarters of the GPU's time, and the Mac decoded at 10 tokens a
+   second; without the zeroing, 48). No
+   program's pipelines zero it (`engine::Program`), so every kernel
+   writes every place of its workgroup memory that it reads before
+   reading it (a tile's places past the edge written as 0, or never
+   read: its loop bounded to the places written; a reduction reads only
+   the places its invocations wrote), in every case: edges, partial
+   tiles, idle invocations. A new kernel is checked against this before
+   it lands. The profile (`JODEL_GEMMA_PROFILE=1` with
    `--example gemma`) shows a kernel that is slow out of proportion to
    its work: compare its time a call on the Mac with the 5080's.
+7. **A kernel change for a new GPU starts with the probe's report**
+   ([below](#the-probe-what-a-gpu-really-does)). Run the probe there
+   first and choose kernels from what it measured, not from what the
+   adapter claims or what the 5080 does: its summary says whether lane
+   writes race, whether an index past a binding's end reads the last
+   element, whether `exp`/`exp2`/`tanh` miss their limits or WGSL's
+   bound, whether `dot4I8Packed` is native, and which path Gemma takes;
+   its throughput section what zeroing workgroup memory costs. A
+   finding is quoted from the report as `section: line` with the GPU and
+   backend from its first line, for example `RTX 5080 (Vulkan), 2. Lane
+   writes: workgroup vec4<f32> neighbours v[j][l] = x  0 of 2097152`; a
+   rule made from a finding names the probe's section.
+
+## The probe: what a GPU really does
+
+`jodel_gpu::probe::run()` runs small compute kernels on the GPU every
+network here uses (`chosen`, the same device choice) and returns a
+`Report` of what it *measured*, with the adapter's claims beside it
+where there are both; its `Display` is the readable report, and its
+summary (`lane_writes_race`, `out_of_bounds_clamps`,
+`fast_maths_breaks`, `dot4_native`) is for choosing kernels per GPU. A
+probe a GPU cannot run says "not supported" and why (no `SHADER_F16`, no
+`SUBGROUP`), one that fails says how, and the others go on. It takes
+about two seconds on the 5080.
+
+```
+cargo run --release -p jodel-gpu --example probe            # writes gpu-probe.txt here (ignored by git)
+cargo run --release -p jodel-gpu --example probe -- out.txt
+```
+
+Its sections:
+
+1. **Identity**: the adapter, backend and driver; the limits that
+   matter (largest buffer and storage binding, workgroup storage,
+   invocations, the subgroup sizes claimed); the features (`SHADER_F16`,
+   `SUBGROUP`, cooperative matrices and their tiles, timestamp queries)
+   and how naga writes `dot4I8Packed` on this backend.
+2. **Lane writes**: each invocation writes one lane of a `vec4<f32>`,
+   `vec2<f32>` or `vec4<u32>` whose other lanes other invocations write
+   (neighbours, or a workgroup's vectors apart in other subgroups: 64 for
+   a `vec4`, 128 for a `vec2`), by index and by name, in workgroup memory
+   and in a storage buffer, over 2 million lanes a case; and the rules'
+   way (`f32`s written whole) as the control. Its
+   kernels are made as text in `probe/lanes.rs`, not a `.wgsl` file, so
+   `scripts/check-rules.sh` holds every project kernel to rule 1 without
+   an exception for them.
+3. **Out of bounds**: what a read past a binding's end gives (zero, the
+   last element, the bytes really there) for `array<f32>` and
+   `array<vec4<f32>>`, the binding 777 words of a larger buffer or a
+   buffer of 777 words whole; and whether a write past it is dropped or
+   lands on the last element (rule 4).
+4. **Maths at the edges**: `exp`, `exp2` and `tanh` at ±1e30, ±1e4,
+   ±100, ±89, ±88 and ±10 (and the held `exp_held`, `tanh_held`, taken
+   from `common.wgsl`, at ±1e30 and ±100), an online softmax's
+   `exp(a - b)` against -1e30, `log` at 0 and below, infinities and NaN
+   through arithmetic, `min`/`max`/`clamp`/`select` with NaN, division
+   by zero, denormals; each against IEEE's value, the `exp`s within
+   WGSL's 3 + 2|x| ulps. The inputs come from a buffer, so nothing is
+   folded.
+5. **f32 accuracy**: the largest error (ulps and absolute) of `exp`,
+   `exp2`, `tanh`, `log`, `sqrt`, `inverseSqrt`, `sin`, `cos`, `pow` over
+   ranges against the processor's f64, beside what WGSL allows.
+6. **f16**: the range's edges, overflow and subnormals, accuracy in f16
+   ulps, and an `array<f16>` written a value an invocation.
+7. **Subgroups**: the size measured, and `subgroupAdd`, the exclusive
+   sum, shuffle, broadcast, ballot and a sum in a branch checked.
+8. **Fast-path features**: `dot4I8Packed`/`dot4U8Packed` checked and
+   timed against the bytes unpacked by hand (native or emulated); each
+   square cooperative matrix tile of 8 or 16 in f16 or f32 the adapter
+   lists multiplied, and timed where one subgroup size was measured (a
+   workgroup is a subgroup; the other tiles say they were not tried, a
+   tile not timed says why); which path Gemma takes here (`llm::q8_on`)
+   and what its fast path would gain.
+9. **Throughput**: f32 and f16 multiply-adds, the packed dot, workgroup
+   memory, device memory read, written and copied (256 MB), and what
+   wgpu's zeroing of a 16 KB `var<workgroup>` costs a dispatch of 1024
+   workgroups (`zero_initialize_workgroup_memory` on and off: rule 6).
+10. **Barriers and atomics**: message passing across `workgroupBarrier`
+    and `storageBarrier`, a flag set by an atomic, `atomicAdd` counts.
 
 ## The stem separator
 

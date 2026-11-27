@@ -8,8 +8,10 @@
 #   in random bytes;
 # - every text file is stored with LF line endings (in the index: as it
 #   is committed);
-# - no shader writes one lane of a vector by index (Apple's GPUs may write
-#   the whole vector back: gpu/README.md, "Rules for kernels");
+# - no tracked .wgsl shader writes one lane of a vector by index (Apple's
+#   GPUs may write the whole vector back: gpu/README.md, "Rules for
+#   kernels"); the GPU probe's deliberately racy kernels are made as
+#   text in gpu/src/probe/lanes.rs;
 # - big source files are reported, not failed: over 1000 lines of code is
 #   a question for review (split by concern where that helps), not a limit.
 #

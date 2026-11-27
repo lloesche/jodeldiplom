@@ -404,9 +404,16 @@ enum Wanted {
 }
 
 /// Whether the matrices take their rows at 8 bits with `precision` on
-/// `device`: where it is fast and `dot4I8Packed` is native (not Metal).
+/// `device`: where it is fast and `dot4I8Packed` is native ([`q8_on`]).
 fn q8_here(device: &wgpu::Device, precision: Precision) -> bool {
-    precision == Precision::Fast && device.adapter_info().backend != wgpu::Backend::Metal
+    precision == Precision::Fast && q8_on(device.adapter_info().backend)
+}
+
+/// Whether [`Precision::Fast`] takes the rows at 8 bits on `backend`:
+/// every one but Metal, where `dot4I8Packed` is emulated (the probe,
+/// [`crate::probe`], measures it).
+pub(crate) fn q8_on(backend: wgpu::Backend) -> bool {
+    backend != wgpu::Backend::Metal
 }
 
 impl Inner {

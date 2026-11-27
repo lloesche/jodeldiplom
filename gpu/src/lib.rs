@@ -38,7 +38,9 @@
 //! choice does not list them again for each model; a failed choice (no
 //! GPU) is kept too. Setups and teardowns take turns ([`setting_up`]).
 //! [`report`] says what the GPU side finds on this machine (`diag.rs`),
-//! and [`memory::budget`] what the card's memory allows this process now.
+//! [`probe::run`] what the GPU really does (lane writes, maths at the
+//! edges, the fast paths' features, throughput: `probe/`), and
+//! [`memory::budget`] what the card's memory allows this process now.
 //! Each network the process keeps is a [`Resident`] ([`Kept`]): what it
 //! takes on the GPU is worked out from its shapes before it is set up
 //! (its [`Footprint`]), and the player's scheduler may let it go.
@@ -64,6 +66,7 @@ mod net;
 pub mod pace;
 mod packer;
 mod precision;
+pub mod probe;
 pub mod profile;
 mod resident;
 mod separator;
