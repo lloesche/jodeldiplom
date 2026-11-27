@@ -3,7 +3,9 @@
 //! Each model the background work runs has a queue of its own (a
 //! [`Stage`]): the separator of the stems in the background, the beat
 //! network, the speech recogniser, the speech model that times the
-//! words, and the cover's depth and cut-out. A job waits in the queues of
+//! words, the cover's depth and cut-out, and the karaoke story's three
+//! (its language model, its image model's text encoder, the image model
+//! itself). A job waits in the queues of
 //! the models it needs, first in first out (the song playing next goes
 //! before no other), one job a model at a time, and runs on the thread
 //! that queued it once its turn comes ([`run`]).
@@ -84,16 +86,25 @@ pub enum Stage {
     Timing,
     /// The cover's depth and cut-out.
     Cover,
+    /// The karaoke story's language model writing a song's plan.
+    StoryPlan,
+    /// The story's image model's text encoder, a song's prompts.
+    StoryEncode,
+    /// The story's image model drawing a song's pictures.
+    StoryDraw,
 }
 
 impl Stage {
     /// Every stage.
-    pub const ALL: [Stage; 5] = [
+    pub const ALL: [Stage; 8] = [
         Stage::Stems,
         Stage::Beats,
         Stage::Hearing,
         Stage::Timing,
         Stage::Cover,
+        Stage::StoryPlan,
+        Stage::StoryEncode,
+        Stage::StoryDraw,
     ];
 }
 

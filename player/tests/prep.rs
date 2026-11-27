@@ -295,7 +295,7 @@ fn a_rows_caption_follows_the_step_running() {
 /// ready. Its song waiting for the rest of its work with nothing new, it
 /// rests (the window draws no frames for it, and nothing is due), as it
 /// does once its song has been ready a while (the view goes). Its story
-/// slot, the seam for what is to come, shows what is told of it.
+/// slot shows what is told of it, the scene drawn last its headline.
 #[test]
 fn an_idle_preparation_view_rests() {
     let (mut state, path) = on_the_queue(1_000);
@@ -318,17 +318,19 @@ fn an_idle_preparation_view_rests() {
         Story::Words(" a time".into()),
         Story::Scene {
             index: 0,
-            done: 0.5,
+            of: 3,
             picture,
         },
     ] {
         heard(&mut state, &path, Heard::Story(part));
     }
-    let Hero::Story(story) = PrepView::of(&state).unwrap().hero else {
+    let view = PrepView::of(&state).unwrap();
+    let Hero::Story(story) = view.hero else {
         panic!("the story shown");
     };
     assert_eq!(story.text, "Once upon a time");
     assert_eq!(story.scenes.len(), 1);
+    assert_eq!(view.headline, "Scene 1 of 3 drawn");
     // Every step done: it shows for a while (and moves), then goes.
     let now = 1_000 + 2 * HOLD_MS;
     at(&mut state, now);

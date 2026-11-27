@@ -32,6 +32,11 @@ impl App {
             Effect::WantDetails(paths) => self.details.want(paths),
             Effect::WantRhythm(paths, recipe) => self.rhythm.want(paths, recipe),
             Effect::WantLyrics(paths) => self.lyrics.want(paths),
+            Effect::WantStories(songs) => {
+                if let Some(stories) = &self.stories {
+                    stories.want(songs);
+                }
+            }
             Effect::SaveLyricEdits(path, edits) => self.lyrics.edited(path, edits),
             Effect::VoiceCurve(curve) => {
                 if let Some(engine) = &self.engine {

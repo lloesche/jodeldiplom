@@ -675,10 +675,10 @@ pub(super) fn tick(s: &mut Score, at: u64, k: u32, of: u32) {
 }
 
 /// A step of a song's preparation found something at `at`, the `step`th
-/// (0 to 4): a soft pluck up the pentatonic for each later step, a glint
-/// an octave over it a moment after.
+/// (0 to [`crate::core::prep::LAST_STEP`]): a soft pluck up the pentatonic
+/// for each later step, a glint an octave over it a moment after.
 pub(super) fn found(s: &mut Score, at: u64, step: u32) {
-    let k = 2 + step.min(4) as i32;
+    let k = 2 + step.min(crate::core::prep::LAST_STEP) as i32;
     let note = s.bright(k, BELL_HOME - 12);
     s.play(Note::new(at, Atom::Pluck, note).vel(0.45));
     let glint = Note::new(at + s.secs(0.05), Atom::Glint, note + 12.0);

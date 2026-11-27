@@ -13,8 +13,8 @@ use crate::core::{
 
 /// The files on screen whose details are not known yet.
 pub fn visible_missing(state: &State) -> Vec<PathBuf> {
-    // Karaoke (the tab or the mode): the song it shows and the next two,
-    // their titles and artists shown before they play.
+    // Karaoke (the tab or the mode): the song it shows and the next
+    // [`karaoke::SONGS_AHEAD`], their titles and artists shown before they play.
     if state.screen == Screen::Karaoke || state.showing(Side::Karaoke) {
         let Some(index) = karaoke::song_index(state) else {
             return Vec::new();
@@ -24,7 +24,7 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
             .paths
             .iter()
             .skip(index)
-            .take(3)
+            .take(1 + karaoke::SONGS_AHEAD)
             .filter(|p| !state.details.contains_key(*p))
             .cloned()
             .collect();
@@ -315,9 +315,8 @@ pub fn job_done(state: &State, path: &Path, job: Job) -> bool {
         }
         Job::Lyrics => {
             told || match state.karaoke.lyrics.get(path) {
-                Some(karaoke::SongLyrics::Found { shown, .. }) => {
-                    shown.timing.detail == jodel_lyrics::Detail::Words
-                        || state.karaoke.model == karaoke::ModelState::Missing
+                Some(karaoke::SongLyrics::Found { .. }) => {
+                    karaoke::lyrics_settled(state, path).is_some()
                 }
                 Some(karaoke::SongLyrics::Pending) | None => false,
                 Some(_) => true,

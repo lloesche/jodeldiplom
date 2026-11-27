@@ -510,7 +510,8 @@ fn story_of(layers: &CoverLayers, picture: &image::RgbImage) -> Arc<Story> {
         .map(|span| Ready::new(span, picture, &parts))
         .to_vec();
     let hashes = ["cover".to_owned(), "cover".to_owned(), "cover".to_owned()];
-    Arc::new(Story::new(&hashes, scenes))
+    let look = jodel_looks::presets::all()[0].clone();
+    Arc::new(Story::new(&hashes, scenes, look))
 }
 
 /// How a scene's frames are judged against the budgets: by its worst

@@ -3,8 +3,6 @@
 //! job on the model, end to end, where it is here.
 
 use std::cell::RefCell;
-use std::sync::mpsc;
-use std::sync::Arc;
 
 use super::*;
 use crate::core::story::tests::{song, GOOD};
@@ -179,39 +177,33 @@ fn a_plan_is_kept_with_what_made_it() {
     );
 }
 
-/// A job runs its plan, tells it on the outbox and keeps it, found again
-/// for the song as it is asked (other words: planned again); a song that
-/// has no story is kept as such, a model that failed is not kept.
+/// A job runs its plan, tells it and keeps it, found again for the song
+/// as it is asked (other words: planned again); a song that has no story
+/// is kept as such, a model that failed is not kept.
 #[test]
 fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
     let dir = jodel_testkit::TempDir::new("story");
     let file = dir.join("song.flac");
     durable::write_atomic(&file, b"not really a song").unwrap();
-    let (tx, rx) = mpsc::channel();
-    let outbox = Outbox::new(tx, Arc::new(|| {}));
+    let mut told = Vec::new();
+    let tell = &mut |story: Story| told.push(story);
     let job = StoryJob::new(file.clone(), song(), dir.join("stories"));
     assert_eq!(job.kept(), None, "none kept yet");
     let failed = Fake::new(vec![Err(Failure::Model("device lost".into()))]);
-    assert!(matches!(job.run(&failed, &outbox), Err(Failure::Model(_))));
+    assert!(matches!(job.run(&failed, tell), Err(Failure::Model(_))));
     assert_eq!(job.kept(), None, "a model's failure is not kept");
-    let plan = job.run(&Fake::new(vec![says(GOOD)]), &outbox).unwrap();
+    let plan = job.run(&Fake::new(vec![says(GOOD)]), tell).unwrap();
     assert_eq!(job.kept(), Some(Kept::Plan(Box::new(plan))));
-    assert!(rx.try_iter().any(|a| matches!(
-        a,
-        Action::Heard {
-            part: Heard::Story(Story::Words(_)),
-            ..
-        }
-    )));
     let mut other = song();
     other.lines[0].text = "I ran down to the harbour".into();
     let other = StoryJob::new(file, other, dir.join("stories"));
     assert_eq!(other.kept(), None, "other words, another ask");
     let refused = Fake::new(vec![says(&broken()), says(&broken())]);
     assert!(matches!(
-        other.run(&refused, &outbox),
+        other.run(&refused, tell),
         Err(Failure::Refused(_))
     ));
+    assert!(told.iter().any(|s| matches!(s, Story::Words(_))));
     assert!(matches!(other.kept(), Some(Kept::NoStory(_))));
 }
 

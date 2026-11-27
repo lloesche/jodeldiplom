@@ -3,7 +3,8 @@
 //!
 //! The story's drawing step leaves a song's scenes in its folder in the
 //! data folder's `scenes/` ([`SceneStore::folder`]): a picture a scene and
-//! their description ([`Scenes`], [`FILE`]). As the song plays, the covers'
+//! their description with the song's look ([`Scenes`], [`FILE`]),
+//! `crate::work::story::draw`'s. As the song plays, the covers'
 //! thread makes them ready after its cover ([`story`], from
 //! `crate::work::cover::CoverWorker`, with the cover's models): each
 //! picture taken apart once (`split.rs`: its depth and the matte of its
@@ -18,6 +19,8 @@ mod job;
 mod split;
 mod store;
 
+use std::sync::Arc;
+
 use image::RgbImage;
 
 pub use describe::{Scene, Scenes, FILE};
@@ -25,6 +28,8 @@ pub use job::{prepare, story, Asked, SceneNets, Took};
 pub use split::{alphas, half, Cuts, Derived, Head, Split};
 pub use store::{from_bytes, to_bytes, SceneStore};
 
+#[cfg(test)]
+pub(crate) use describe::tests::look;
 #[cfg(test)]
 pub(crate) use job::tests::{drawn, ByRed};
 
@@ -167,18 +172,22 @@ fn focus(parts: &Derived) -> [f32; 2] {
 }
 
 /// A song's scenes ready for the backdrop: which they are (a hash of
-/// their pictures' and their spans) and each scene, in the song's order.
+/// their pictures' and their spans), each scene, in the song's order, and
+/// the song's look over them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Story {
     /// Which they are: what tells two stories apart.
     pub id: u64,
     /// The scenes.
     pub scenes: Vec<Ready>,
+    /// The look over them, the song's own
+    /// ([`crate::core::karaoke::KaraokeState::look`] while it plays).
+    pub look: Arc<jodel_looks::Look>,
 }
 
 impl Story {
-    /// The `scenes`, of pictures of `hashes`.
-    pub fn new(hashes: &[String], scenes: Vec<Ready>) -> Story {
+    /// The `scenes`, of pictures of `hashes`, with `look` over them.
+    pub fn new(hashes: &[String], scenes: Vec<Ready>, look: jodel_looks::Look) -> Story {
         let spans: Vec<String> = (scenes.iter())
             .map(|s| format!("{} {}", s.span.0, s.span.1))
             .collect();
@@ -186,6 +195,7 @@ impl Story {
         Story {
             id: jodel_dsp::fnv1a(which.as_bytes()),
             scenes,
+            look: Arc::new(look),
         }
     }
 }

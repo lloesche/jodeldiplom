@@ -4,7 +4,12 @@
 //! knobs moved, the music moving what was asked (on top of what moves
 //! each pass already, a knob asked for anew moved only as asked), the
 //! mood among its tags; held to the catalogue strictly
-//! ([`jodel_looks::Look::faults`]).
+//! ([`jodel_looks::Look::faults`]) but for one thing: over the budget,
+//! the dearest passes not kept go ([`Look::within_budget`]), as the
+//! catalogue tells the model, since a plan that is otherwise right should
+//! not be asked for again for the shaders' cost alone. Every other way
+//! off the catalogue, a number out of its range too, is refused, and the
+//! model asked again with the error.
 
 use std::collections::BTreeMap;
 
@@ -122,6 +127,9 @@ impl Shader {
             }));
             layer.drive = Some(drive);
         }
+        // Over the budget, the dearest passes not kept go, as the catalogue
+        // tells the model they do: its faults are the fitted look's.
+        look.within_budget();
         faults.extend(look.faults());
         if faults.is_empty() {
             Ok(look)

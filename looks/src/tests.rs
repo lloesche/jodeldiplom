@@ -195,11 +195,23 @@ fn over_the_budget_the_dearest_optional_pass_goes() {
     assert_eq!(c.dropped, vec!["glow", "halftone_cmyk"]);
     assert_eq!(look.check(), c, "the same every time");
     assert!(c.layers.iter().any(|l| l.pass.name == "halation"));
+    // Within the budget, the look itself loses those very passes, by their
+    // place (and a pass there is none of stays for its fault).
+    let mut fitted = look.clone();
+    fitted.layers.insert(1, Layer::of("no-such-pass"));
+    fitted.within_budget();
+    let kept: Vec<&str> = fitted.layers.iter().map(|l| l.pass.as_str()).collect();
+    assert_eq!(kept, ["halation", "no-such-pass", "diffusion", "grain"]);
     let many = Look {
         layers: (0..9).map(|_| Layer::of("grain")).collect(),
         ..look
     };
     assert_eq!(many.check().layers.len(), guard::MOST_LAYERS);
+    // By place: of nine alike, the last ones go.
+    let mut fitted = many.clone();
+    fitted.within_budget();
+    assert_eq!(fitted.layers.len(), guard::MOST_LAYERS);
+    assert!(fitted.faults().is_empty(), "{:?}", fitted.faults());
 }
 
 /// The music moving a look is scaled down to the flash limits: however

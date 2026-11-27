@@ -236,8 +236,8 @@ really found, as its workers tell it: never a progress they did not tell.
   pulse on each beat the play head passes, the key's chord on a keyboard,
   the stems' lanes filling, the words lit in time, the cover's subject
   lifting off it. A story's slot shows a story of the song as it is
-  written and its scenes as they are drawn, once anything tells them
-  (nothing does yet: `Heard::Story` is the seam).
+  written and its scenes as they are drawn (K29), "Scene N of M drawn"
+  its headline as each lands.
   - `partial_results_fill_the_songs_preparation_and_its_view`
   - `an_idle_preparation_view_rests`
 - **P4.** The preparation view moves only while it shows and something
@@ -1107,6 +1107,39 @@ really found, as its workers tell it: never a progress they did not tell.
   - `a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing`
     (conductor)
   - `the_synth_tab_plays_the_theme_it_compares` (sfx)
+- **K29.** In the mode, where the GPU has the story's models, the song
+  held and the next two get a story once their words are timed, in
+  rounds by model, each turn a job of the GPU's stages (P6): the
+  language model plans every song wanted, then the image model's text
+  encoder encodes their prompts, then the image model draws them (a
+  portrait of each character, then a picture of each scene with the
+  portraits of those in it), each picture kept in the song's folder as it
+  lands and the scenes described last (once the prompts encoded in a
+  round hold `ENCODED_AHEAD_MB`, the songs after wait for the next
+  round). A song no longer wanted (another
+  song, or its lyrics changed) is given up before its turns and between
+  its pictures, what is drawn kept; nothing new is loaded while a song is
+  sung. The scenes then show behind the lyrics instead of the cover
+  (taken up at once if they land while the song plays, its cover not
+  taken again), the plan's look over them as the song's. A plan kept is
+  not asked again, a song drawn is not drawn again nor told of, a picture
+  kept is not drawn again (a new plan draws only what it changed);
+  without the models, or without timed words, the cover shows as before.
+  - `stories_are_wanted_in_the_mode_once_the_words_are_timed`
+  - `a_round_plans_every_song_then_encodes_then_draws`,
+    `a_song_drawn_is_not_drawn_again`,
+    `a_song_no_longer_wanted_is_given_up_between_its_pictures`,
+    `without_models_or_timed_lines_there_is_no_story`,
+    `a_song_is_still_wanted_with_its_very_lyrics`,
+    `the_worker_takes_up_the_songs_wanted_and_their_new_lyrics`,
+    `the_worker_gives_up_a_song_no_longer_wanted`,
+    `a_plan_written_again_tells_only_its_words_past_those_told`
+    (`work::story`)
+  - `shaders_over_the_budget_lose_their_dearest_passes` (`core::story`)
+  - `a_story_drawn_while_its_song_plays_is_taken_up` (`work::cover`)
+  - `the_song_s_look_follows_its_story` (`app`)
+  - `a_song_played_in_karaoke_mode_gets_its_story_drawn` (on the real
+    models, `--ignored`)
 ## Mixer
 
 - **M1.** The file as it is is the default: every start has each strip

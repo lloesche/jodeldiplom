@@ -625,6 +625,7 @@ fn story_scene_files_are_pinned() {
     };
     let dir = Path::new("story");
     let scenes = Scenes {
+        made: "0123456789abcdef".into(),
         scenes: vec![
             Scene {
                 start: 12.5,
@@ -637,6 +638,17 @@ fn story_scene_files_are_pinned() {
                 picture: dir.join("01.png"),
             },
         ],
+        look: {
+            let mut grain = jodel_looks::Layer::of("grain");
+            grain.knobs.insert("amount".into(), 0.45);
+            jodel_looks::Look {
+                id: "folk.song".into(),
+                name: String::new(),
+                about: String::new(),
+                tags: vec!["rain".into()],
+                layers: vec![grain],
+            }
+        },
     };
     let kept = pinned(&cache::STORY_SCENES, "txt", scenes.to_text(dir).as_bytes());
     let kept = String::from_utf8(kept).unwrap();

@@ -221,6 +221,12 @@ impl TextEncoder {
     }
 }
 
+impl crate::OnDevice for TextEncoder {
+    fn lost(&self) -> bool {
+        self.is_lost()
+    }
+}
+
 impl Resident for TextEncoder {
     /// Its weights, and its plan's buffers (every prompt's are as large).
     fn footprint(&self) -> Footprint {

@@ -135,7 +135,7 @@ pub struct Switch {
 }
 
 /// What is known of a song's lyrics: the song playing first, then the
-/// next two.
+/// next [`karaoke::SONGS_AHEAD`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LyricsRow {
     /// The song.
@@ -202,7 +202,8 @@ pub struct Tab {
     pub controls: Vec<Control>,
     /// The game's settings.
     pub switches: Vec<Switch>,
-    /// What is known of the lyrics of the song and the next two.
+    /// What is known of the lyrics of the song and the next
+    /// [`karaoke::SONGS_AHEAD`].
     pub lyrics: Vec<LyricsRow>,
     /// The microphone.
     pub mic: Mic,
@@ -356,12 +357,14 @@ fn switches(state: &State) -> Vec<Switch> {
     ]
 }
 
-/// What is known of the lyrics of the song and the next two.
+/// What is known of the lyrics of the song and the next
+/// [`karaoke::SONGS_AHEAD`].
 fn lyrics(state: &State) -> Vec<LyricsRow> {
     let Some(first) = karaoke::song_index(state) else {
         return Vec::new();
     };
-    (state.queue.paths.iter().enumerate().skip(first).take(3))
+    (state.queue.paths.iter().enumerate().skip(first))
+        .take(1 + karaoke::SONGS_AHEAD)
         .map(|(k, path)| {
             let known = karaoke::lyrics_of(state, k);
             LyricsRow {

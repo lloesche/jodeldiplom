@@ -187,7 +187,7 @@ pub fn preparing(state: &State, step: &str) -> State {
         &mut s,
         Heard::Story(Story::Scene {
             index: 0,
-            done: 0.6,
+            of: 4,
             picture: Arc::new(scene),
         }),
     );

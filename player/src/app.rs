@@ -44,6 +44,8 @@ use crate::work::rhythm::RhythmWorker;
 mod effects;
 mod frame;
 pub mod mic;
+#[cfg(test)]
+mod tests;
 
 use mic::{MicLister, MicOpener, MicSession};
 
@@ -111,6 +113,10 @@ pub struct AppOptions {
     /// The covers' models, as setup found them ([`crate::setup::Found`]);
     /// `None`: covers are not taken apart.
     pub covers: Option<crate::work::cover::CoverModels>,
+    /// Karaoke story mode's models, as setup found them
+    /// ([`crate::setup::Found`]); `None`: no stories are made (the covers
+    /// show, as without).
+    pub story: Option<crate::work::story_models::StoryModels>,
     /// What the app times by ([`AppClock`]): the wall clock but in tests
     /// that step it.
     pub clock: AppClock,
@@ -143,6 +149,7 @@ impl AppOptions {
             mover: None,
             separator: gpu_separator,
             covers: None,
+            story: None,
             clock: AppClock::default(),
         }
     }
@@ -194,6 +201,10 @@ pub struct App {
     /// the song playing's layers: none without a data folder or the
     /// covers' models.
     covers: Option<crate::work::cover::CoverWorker>,
+    /// The stories of the songs Karaoke mode plays, planned and drawn
+    /// ([`crate::work::story::worker`]): none without the story's models,
+    /// or without the covers' worker that shows them.
+    stories: Option<crate::work::story::worker::StoryWorker>,
     /// When the app started, on its clock ([`AppClock`]): every time it
     /// keeps but the trace's is on that clock.
     started: Instant,
@@ -318,14 +329,13 @@ impl App {
         // There is always a lyrics worker (one without the web or a cache
         // where the options give none): the queue waits for it too.
         state.preparing.push(core::Job::Lyrics);
-        // Covers are taken apart where there is a data folder to keep them.
-        let covers = options
-            .data
-            .as_ref()
-            .zip(options.covers.clone())
-            .map(|(data, models)| {
-                let scenes =
-                    crate::work::scenes::SceneStore::new(data.scenes(), data.scene_parts());
+        // Covers are taken apart where there is a data folder to keep them,
+        // and the songs' story scenes are there.
+        let scenes = (options.data.as_ref())
+            .map(|d| crate::work::scenes::SceneStore::new(d.scenes(), d.scene_parts()));
+        let covers = (options.data.as_ref().zip(options.covers.clone()))
+            .zip(scenes.clone())
+            .map(|((data, models), scenes)| {
                 crate::work::cover::CoverWorker::start(
                     data.covers(),
                     models,
@@ -336,6 +346,19 @@ impl App {
         if covers.is_some() {
             state.preparing.push(core::Job::Cover);
         }
+        // Stories are made where their scenes are shown: by the covers'
+        // worker, told of each one drawn.
+        let stories = (options.data.as_ref().zip(options.story.clone()))
+            .zip(scenes.zip(covers.as_ref()))
+            .map(|((data, files), (scenes, covers))| {
+                use crate::work::story::worker::{GpuModels, Places, StoryWorker};
+                let places = Places {
+                    stories: data.stories(),
+                    scenes,
+                };
+                let models = Arc::new(GpuModels::new(&files));
+                StoryWorker::start(models, places, outbox.clone(), Arc::new(covers.on_drawn()))
+            });
         state.karaoke.model = match &options.model {
             Some(path) if path.is_file() => core::karaoke::ModelState::Ready,
             Some(_) => core::karaoke::ModelState::Coming,
@@ -379,6 +402,7 @@ impl App {
             search: None,
             spectrum: SpectrumGate::new(),
             covers,
+            stories,
             started: options.clock.now(),
             clock: options.clock.clone(),
             session: SessionKeeper::new(options.session.clone(), restored.clone()),
@@ -648,6 +672,7 @@ impl App {
         }
         any |= self.moving.pump(&mut self.state.data_move);
         any |= self.art.pump();
+        any |= self.follow_story();
         let now = self.now_ms();
         // A tick every 250 ms, and one as soon as something is due (which
         // then shows).
@@ -698,6 +723,18 @@ impl App {
         self.covers
             .as_ref()
             .and_then(crate::work::cover::CoverWorker::story)
+    }
+
+    /// The song's own look follows its story: the look of the story held
+    /// for the track heard, or none (the theme's). Whether it changed.
+    fn follow_story(&mut self) -> bool {
+        let look = self.story().map(|s| Arc::clone(&s.look));
+        let held = &mut self.state.karaoke.look;
+        let changed = look.as_ref().map(Arc::as_ptr) != held.as_ref().map(Arc::as_ptr);
+        if changed {
+            *held = look;
+        }
+        changed
     }
 
     /// Sets the cover directly, or none (tests and screenshots).

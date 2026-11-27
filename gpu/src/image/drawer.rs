@@ -320,6 +320,12 @@ impl Drawer {
     }
 }
 
+impl crate::OnDevice for Drawer {
+    fn lost(&self) -> bool {
+        self.is_lost()
+    }
+}
+
 impl Resident for Drawer {
     /// Its weights, and the buffers of the largest picture it has made
     /// (none before one; [`Drawer::planned`] says before it is loaded).

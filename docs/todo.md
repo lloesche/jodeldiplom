@@ -53,6 +53,9 @@ Work agreed on but not started, roughly in the order it was raised.
   cut on the downbeats, the look's shaders over it. No second language-model pass to judge the pictures.
   Dropped after trying: every layer drawn apart (a collage, bad faces),
   an upscaling model, Gemma's audio input (useless for music).
+- **The story's text check:** a scene picture with lettering in it
+  anyway is to be found (an OCR detector with the face veto, in Rust)
+  and drawn again with another seed; the drawing step does not check yet.
 - **The song's objects in the game, not in the story:** a few objects
   per song (from the look's motifs) replacing the game's generic
   graphics where it already puts things: the coin out of a word hit,

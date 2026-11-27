@@ -49,13 +49,20 @@ mod lyrics;
 pub mod pointer;
 mod ready;
 pub mod result;
+mod story;
 pub use countdown::{
     countdown_for, counts_from, first_sung, resume_count, title_shown, Countdown, COUNT,
     COUNT_STEP, TITLE_FADE, TITLE_HOLD,
 };
 use countdown::{in_lead, note_heard};
 pub(crate) use lyrics::{lyrics_arrived, want_lyrics};
-pub use lyrics::{lyrics_of, lyrics_wanted, ModelState, SongLyrics, HEARD_WARNING};
+pub use lyrics::{lyrics_of, lyrics_settled, lyrics_wanted, ModelState, SongLyrics, HEARD_WARNING};
+pub(crate) use story::want_stories;
+pub use story::{stories_wanted, StorySong};
+
+/// The songs after the one sung that Karaoke gets ready ahead: their
+/// titles shown, their lyrics looked up, their stories made.
+pub const SONGS_AHEAD: usize = 2;
 pub(crate) use ready::start_when_ready;
 pub use ready::{no_karaoke, not_singable, NotSingable};
 pub(crate) use result::ended;
@@ -114,6 +121,9 @@ pub struct KaraokeState {
     pub lyrics: HashMap<PathBuf, SongLyrics>,
     /// The files whose lyrics were last wanted, in order.
     pub lyrics_wanted: Vec<PathBuf>,
+    /// The songs whose stories were last wanted, in order
+    /// ([`stories_wanted`]).
+    pub stories_wanted: Vec<StorySong>,
     /// The slider the arrow keys move on the tab.
     pub focus: Slider,
     /// The slider being dragged with the mouse.
@@ -168,8 +178,9 @@ pub struct KaraokeState {
     /// Whether the best scores changed since they were last saved.
     pub bests_changed: bool,
     /// The song's own look over the backdrop (owned data, with its own
-    /// id: one made for the song, or given with `--look`), drawn instead
-    /// of the theme's; none: the theme's.
+    /// id: the one its story's plan made, which comes with its scenes:
+    /// [`crate::work::scenes::Story::look`]), drawn instead of the
+    /// theme's; none: the theme's.
     pub look: Option<Arc<jodel_looks::Look>>,
 }
 

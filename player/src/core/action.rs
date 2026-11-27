@@ -450,6 +450,10 @@ pub enum Effect {
     /// with [`Action::Lyrics`]); what was asked for before and not started
     /// is dropped.
     WantLyrics(Vec<PathBuf>),
+    /// Get the stories of exactly these songs planned and drawn, in this
+    /// order, from their lyrics as shown (told with [`Heard::Story`]);
+    /// what was asked for before and not started is dropped.
+    WantStories(Vec<crate::core::karaoke::StorySong>),
     /// Keep a song's lyrics as edited by hand (`None`: forget its edits),
     /// and time it again with them (answered with [`Action::Lyrics`] once
     /// timed).

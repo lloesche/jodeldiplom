@@ -22,6 +22,7 @@ use crate::work::picture::codec::{near_from, near_png, palette_from, palette_tex
 /// A data folder's story scenes and their parts kept: while the data
 /// folder moves, each file read where it is and written where it goes
 /// ([`crate::store::mover`]).
+#[derive(Clone, Debug)]
 pub struct SceneStore {
     scenes: PathBuf,
     parts: PathBuf,

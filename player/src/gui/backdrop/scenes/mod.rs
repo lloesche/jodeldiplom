@@ -364,6 +364,7 @@ mod tests {
                 scene((20.0, 30.0), Some(Cuts::Three(0.3, 0.6)), 20),
                 scene((40.0, 50.0), None, 200),
             ],
+            crate::work::scenes::look(),
         ));
         let showing = Showing::new(Arc::clone(&story), None);
         assert!(showing.is_of(&story, None));

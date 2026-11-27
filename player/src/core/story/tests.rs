@@ -208,10 +208,6 @@ fn a_broken_answer_is_refused_precisely() {
         (bad("\"add\": [\"grain\"]", "\"add\": []"), "grain is moved, but the look has no grain (its passes: watercolor, canvas, liquid; add it to \"add\")"),
         (bad("\"add\": [\"grain\"]", "\"add\": [\"grain\", \"laser\"]"), "there is no pass \"laser\""),
         (
-            bad("\"add\": [\"grain\"]", "\"add\": [\"grain\", \"glow\", \"halation\"]"),
-            "6 passes costing 11.7: at most 6 costing 8",
-        ),
-        (
             bad("\"add\": [\"grain\"], \"knobs\": {", "\"add\": [\"grain\", \"cutout\"], \"knobs\": {\"cutout\": {\"layers\": 3.5}, "),
             "cutout.layers is 3.5: a count, a whole number",
         ),
@@ -412,6 +408,46 @@ fn the_shaders_make_a_valid_look() {
     let checked = look.check();
     assert!(checked.notes.is_empty(), "{:?}", checked.notes);
     assert_eq!(checked.layers.len(), look.layers.len());
+}
+
+/// A shot is told to the image model by the name the model writes it
+/// with.
+#[test]
+fn a_shot_is_named_as_the_model_writes_it() {
+    for shot in [Shot::Wide, Shot::Medium, Shot::CloseUp] {
+        let written = serde_json::to_string(&shot).unwrap();
+        assert_eq!(written, format!("\"{}\"", shot.name()));
+    }
+}
+
+/// Shaders over the budget are taken without their dearest passes (as the
+/// catalogue tells the model), none of them kept: what went cost more
+/// than anything that stayed; the look within the budget, nothing more
+/// dropped.
+#[test]
+fn shaders_over_the_budget_lose_their_dearest_passes() {
+    let asked = [
+        "watercolor",
+        "canvas",
+        "liquid",
+        "grain",
+        "glow",
+        "halation",
+    ];
+    let answer = bad(
+        "\"add\": [\"grain\"]",
+        "\"add\": [\"grain\", \"glow\", \"halation\"]",
+    );
+    let look = read(&answer, &song()).expect("taken").look;
+    let kept: Vec<&str> = look.layers.iter().map(|l| l.pass.as_str()).collect();
+    assert_eq!(kept, ["watercolor", "canvas", "liquid", "grain"]);
+    let cost = |p: &str| jodel_looks::passes::named(p).unwrap().cost;
+    let gone = asked.iter().filter(|p| !kept.contains(p));
+    for g in gone {
+        assert!(kept.iter().all(|&k| cost(g) >= cost(k)), "{g}");
+    }
+    assert!(look.faults().is_empty(), "{:?}", look.faults());
+    assert!(look.check().dropped.is_empty());
 }
 
 /// A song from a file's tags and its lyrics: the title, artist and album;

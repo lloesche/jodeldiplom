@@ -17,9 +17,9 @@
 //!   first lines, with their words' times, for a preview);
 //! - the cover once taken apart ([`Heard::Cover`]: its layers, as they
 //!   were made);
-//! - and, for what is to come, a story of the song written as a language
-//!   model writes it ([`crate::work::story`]) and its scenes as an image
-//!   model draws them ([`Heard::Story`]): nothing draws them yet.
+//! - in Karaoke mode, a story of the song written as a language model
+//!   writes it and its scenes as an image model draws them, one by one
+//!   ([`Heard::Story`], from [`crate::work::story`]).
 //!
 //! Each result found is counted ([`Prep::found`]), so a sound can follow
 //! it ([`crate::sfx`]).
@@ -268,24 +268,22 @@ impl PartialEq for CoverCut {
     }
 }
 
-/// The seam for a story of the song ([`Heard::Story`]): written by a
-/// language model and told as it writes it, its scenes drawn by an image
-/// model and told step by step. The plan's job tells its words
-/// ([`crate::work::story`]); nothing draws the scenes yet. A worker that
-/// writes or draws them sends them on its outbox, and the preparation
+/// A story of the song ([`Heard::Story`]) as its jobs tell it
+/// (`crate::work::story`): written by a language model and told as it
+/// writes it, its scenes drawn by an image model and told one by one as
+/// each lands (each a result found: [`Found::Scene`]). The preparation
 /// view shows them ([`crate::view::prep::StoryView`]).
 #[derive(Clone)]
 pub enum Story {
     /// The next words of the story, as the model writes them.
     Words(String),
-    /// A scene drawn so far: which, how far it is (0 to 1), and the
-    /// picture as it is now.
+    /// A scene drawn: which, of how many, and its picture.
     Scene {
         /// Which scene, from 0.
         index: usize,
-        /// How far it is drawn, 0 to 1.
-        done: f32,
-        /// The picture so far.
+        /// How many scenes the story has.
+        of: usize,
+        /// Its picture.
         picture: Arc<image::RgbaImage>,
     },
 }
@@ -294,7 +292,7 @@ impl fmt::Debug for Story {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Story::Words(words) => write!(f, "Words({words:?})"),
-            Story::Scene { index, done, .. } => write!(f, "Scene({index}, {done})"),
+            Story::Scene { index, of, .. } => write!(f, "Scene({index} of {of})"),
         }
     }
 }
@@ -306,30 +304,28 @@ impl PartialEq for Story {
             (
                 Story::Scene {
                     index: a,
-                    done: d,
+                    of: m,
                     picture: p,
                 },
                 Story::Scene {
                     index: b,
-                    done: e,
+                    of: n,
                     picture: q,
                 },
-            ) => a == b && d == e && Arc::ptr_eq(p, q),
+            ) => a == b && m == n && Arc::ptr_eq(p, q),
             _ => false,
         }
     }
 }
 
-/// A scene of the story as drawn so far.
+/// A scene of the story as drawn.
 #[derive(Clone, Debug)]
 pub struct Scene {
     /// Which, from 0.
     pub index: usize,
-    /// How far it is drawn, 0 to 1.
-    pub done: f32,
-    /// The picture so far.
+    /// Its picture.
     pub picture: Arc<image::RgbaImage>,
-    /// When it was told last.
+    /// When it was told.
     pub at: u64,
 }
 
@@ -348,6 +344,13 @@ pub enum Found {
     Timed,
     /// The cover taken apart.
     Cover,
+    /// A scene of the story drawn: which (from 1), of how many.
+    Scene {
+        /// Which.
+        n: usize,
+        /// Of how many.
+        of: usize,
+    },
 }
 
 impl Found {
@@ -362,11 +365,12 @@ impl Found {
             Found::Words(_) => "words found ✓".into(),
             Found::Timed => "words timed ✓".into(),
             Found::Cover => "cover cut ✓".into(),
+            Found::Scene { n, of } => format!("scene {n} of {of} ✓"),
         }
     }
 
-    /// Its place among the steps (the beat 0 … the cover 4): the found
-    /// sound's pitch climbs with it.
+    /// Its place among the steps (the beat 0 … the story's scenes
+    /// [`LAST_STEP`]): the found sound's pitch climbs with it.
     pub fn step(&self) -> u32 {
         match self {
             Found::Tempo(_) => 0,
@@ -374,9 +378,14 @@ impl Found {
             Found::Stems => 2,
             Found::Words(_) | Found::Timed => 3,
             Found::Cover => 4,
+            Found::Scene { .. } => LAST_STEP,
         }
     }
 }
+
+/// The last step a result is found at ([`Found::step`]): the story's
+/// scenes.
+pub const LAST_STEP: u32 = 5;
 
 /// What a song's work found so far, told as it came.
 #[derive(Clone, Debug, Default)]
@@ -399,7 +408,7 @@ pub struct SongPrep {
     pub cover: Option<CoverCut>,
     /// The story so far.
     pub story: String,
-    /// Its scenes so far, in order.
+    /// Its first scenes drawn so far ([`SCENES`] at most), in order.
     pub scenes: Vec<Scene>,
     /// The last result found, and when ([`State::now_ms`]).
     pub found: Option<(Found, u64)>,
@@ -561,20 +570,20 @@ pub(crate) fn heard(state: &mut State, path: &Path, part: &Heard) {
                         song.story.drain(..at);
                     }
                 }
-                Story::Scene {
-                    index,
-                    done,
-                    picture,
-                } => {
+                Story::Scene { index, of, picture } => {
                     song.scenes.retain(|s| s.index != *index);
                     song.scenes.push(Scene {
                         index: *index,
-                        done: done.clamp(0.0, 1.0),
                         picture: Arc::clone(picture),
                         at: now,
                     });
                     song.scenes.sort_by_key(|s| s.index);
                     song.scenes.truncate(SCENES);
+                    let scene = Found::Scene {
+                        n: index + 1,
+                        of: *of,
+                    };
+                    found(prep, path, now, scene);
                 }
             }
         }

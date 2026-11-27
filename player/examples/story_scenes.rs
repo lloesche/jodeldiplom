@@ -42,6 +42,7 @@ fn main() {
     let dir = store().folder(&jodeldiplom::work::cover::song_key(&song));
     std::fs::create_dir_all(&dir).expect("the song's folder");
     let scenes = Scenes {
+        made: made.made.clone(),
         scenes: made
             .scenes
             .iter()
@@ -55,6 +56,7 @@ fn main() {
                 }
             })
             .collect(),
+        look: made.look.clone(),
     };
     scenes.write(&dir).expect("the scenes described");
     println!("{} scenes in {}", scenes.scenes.len(), dir.display());

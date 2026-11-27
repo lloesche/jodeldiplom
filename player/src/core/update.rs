@@ -218,6 +218,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     }
     work::want_rhythm(state, &mut fx);
     karaoke::want_lyrics(state, &mut fx);
+    karaoke::want_stories(state, &mut fx);
     super::stems::follow(state, &mut fx);
     super::sync::follow(state, &mut fx);
     desk::settle(state, &mut fx);

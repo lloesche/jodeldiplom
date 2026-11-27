@@ -6,10 +6,11 @@
 //! cover, its story scenes made ready with the same models
 //! ([`crate::work::scenes::story`], told as the cover's work while its
 //! models run, given up as soon as another song is wanted; held for the
-//! app: [`CoverWorker::story`]). Its GPU work is a job of the GPU's
-//! stages ([`Stage::Cover`]: a cover, or a song's story scenes, each one
-//! turn) and gives way to the window's frames ([`jodel_gpu::pace`]); the
-//! models are set up on the first cover and let go as the stages plan.
+//! app: [`CoverWorker::story`]; a story drawn while its song plays is
+//! taken up then: [`CoverWorker::on_drawn`]). Its GPU work is a job of the
+//! GPU's stages ([`Stage::Cover`]: a cover, or a song's story scenes, each
+//! one turn) and gives way to the window's frames ([`jodel_gpu::pace`]);
+//! the models are set up on the first cover and let go as the stages plan.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -156,6 +157,7 @@ impl Splitter for GpuSplitter {
 }
 
 /// The song playing, whose layers the app wants.
+#[derive(Clone)]
 struct Wanted {
     path: PathBuf,
     cover: Option<Cover>,
@@ -172,17 +174,28 @@ struct Held {
     layers: Layers,
 }
 
-/// What the worker is asked for: the song playing first, then the songs
-/// to get ready.
+/// What the song playing asks for afresh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fresh {
+    /// Its cover, then its story: it has just started.
+    Song,
+    /// Its story alone: drawn since it started.
+    Story,
+}
+
+/// What the worker is asked for: the song playing, and what of it afresh
+/// (first, until taken up); then the songs to get ready.
 #[derive(Default)]
 struct Asked {
-    wanted: Option<Wanted>,
+    playing: Option<Wanted>,
+    fresh: Option<Fresh>,
     prepare: VecDeque<PathBuf>,
 }
 
-/// The next song to take apart: the one playing, or one to get ready.
+/// The next song to take apart: the one playing (what of it), or one to
+/// get ready.
 enum Ask {
-    Playing(Box<Wanted>),
+    Playing(Box<Wanted>, Fresh),
     Prepare(PathBuf),
 }
 
@@ -265,13 +278,28 @@ impl CoverWorker {
                 *current = None;
             }
             *self.shared.story.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            asked.wanted = Some(Wanted {
+            asked.playing = Some(Wanted {
                 path: info.path.clone(),
                 cover: info.cover.clone(),
                 tags: info.tags.clone(),
                 bytes,
             });
+            asked.fresh = Some(Fresh::Song);
         });
+    }
+
+    /// What to tell when a song's story is drawn (its scenes are in its
+    /// folder now): where it is the song playing, its story is made ready
+    /// and held for the app then, as it is after its cover.
+    pub fn on_drawn(&self) -> impl Fn(&Path) + Send + Sync + 'static {
+        let shared = Arc::clone(&self.shared);
+        move |path: &Path| {
+            shared.queue.change(|asked| {
+                if asked.playing.as_ref().is_some_and(|p| p.path == path) {
+                    asked.fresh.get_or_insert(Fresh::Story);
+                }
+            });
+        }
     }
 
     /// The song playing's story scenes, once ready (none: it has none).
@@ -427,118 +455,156 @@ fn work(
 ) {
     loop {
         let next = shared.queue.next(|asked| {
-            (asked.wanted.take().map(|w| Ask::Playing(Box::new(w))))
+            let fresh = asked.fresh.take();
+            (fresh.zip(asked.playing.clone()))
+                .map(|(fresh, w)| Ask::Playing(Box::new(w), fresh))
                 .or_else(|| asked.prepare.pop_front().map(Ask::Prepare))
         });
-        let Some(ask) = next else {
+        let told = match next {
+            None => return,
+            Some(Ask::Prepare(path)) => cover(shared, store, splitter, outbox, &path, None),
+            Some(Ask::Playing(w, Fresh::Song)) => {
+                cover(shared, store, splitter, outbox, &w.path, Some(&w))
+                    && story(shared, scenes, splitter, outbox, &w.path)
+            }
+            Some(Ask::Playing(w, Fresh::Story)) => story(shared, scenes, splitter, outbox, &w.path),
+        };
+        if !told {
             return;
-        };
-        let (path, given, bytes) = match ask {
-            Ask::Playing(w) => (w.path, Some((w.cover, w.tags)), w.bytes),
-            Ask::Prepare(p) => (p, None, None),
-        };
-        let playing = given.is_some();
-        let held = shared
-            .current
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .map(|h| Arc::clone(&h.layers));
-        let mut working = |on: bool| {
-            outbox.send(Action::Working {
-                path: path.clone(),
-                job: Job::Cover,
-                on,
-            });
-        };
-        let back = if playing {
-            Back::Yes(held.as_ref())
-        } else {
-            Back::No
-        };
-        let taken = take_apart(store, splitter, &path, given, back, &mut working);
-        let has = match taken {
-            Taken::Done { layers, has, split } => {
-                if let Some(took) = split {
-                    crate::trace::note(format_args!(
-                        "covers: {} taken apart in {:.1} s",
-                        crate::work::song_name(&path),
-                        took.as_secs_f64()
-                    ));
-                    // Taken apart now: its layers, as they were made.
-                    if let Some(made) = &layers {
-                        let cut = crate::core::prep::CoverCut(Arc::clone(made));
-                        if !outbox.send(Action::Heard {
-                            path: path.clone(),
-                            part: crate::core::Heard::Cover(cut),
-                        }) {
-                            return;
-                        }
-                    }
-                }
-                if playing {
-                    // Still the song playing (no other wanted since: held
-                    // under the queue's lock, as `want` lets go).
-                    let asked = shared.queue.lock();
-                    if asked.wanted.is_none() {
-                        *shared.current.lock().unwrap_or_else(|e| e.into_inner()) =
-                            layers.map(|layers| Held { bytes, layers });
-                    }
-                }
-                has
-            }
-            Taken::Failed(why) => {
-                crate::trace::note(format_args!("covers: {why}"));
-                false
-            }
-        };
-        if !outbox.send(Action::Ready {
-            path: path.clone(),
-            job: Job::Cover,
-            facts: Some(Facts::Cover(has)),
-        }) {
-            return;
-        }
-        // The song playing's story scenes, after its cover, with its
-        // models (told as the cover's work while they run), given up as
-        // soon as another song is wanted; held while it is still the song
-        // playing (under the queue's lock, as `want` lets go). Where it has
-        // scenes, one job of the cover's stage, for the song sung (it loads
-        // its models while the song is sung).
-        if playing {
-            let still = || shared.queue.lock().wanted.is_none();
-            let mut ran = false;
-            let mut running = || {
-                if !ran {
-                    ran = true;
-                    working(true);
-                }
-            };
-            let nets = splitter.nets();
-            let mut story =
-                || crate::work::scenes::story(scenes, &path, nets, (&still, &mut running));
-            let story = if nets.is_some() && scenes.scenes_of(&path).is_some() {
-                let name = crate::work::song_name(&path);
-                stages::run_for_the_song_sung(&[Stage::Cover], &name, story)
-            } else {
-                story()
-            };
-            if ran {
-                working(false);
-            }
-            let held = {
-                let asked = shared.queue.lock();
-                let held = asked.wanted.is_none();
-                if held {
-                    *shared.story.lock().unwrap_or_else(|e| e.into_inner()) = story;
-                }
-                held
-            };
-            if held {
-                (outbox.notify())();
-            }
         }
     }
+}
+
+/// The cover's step for the song at `path`: its cover and tags as
+/// `playing` brings them (the song playing: its layers then held for the
+/// app while it is still the song playing) or read from its file; told on
+/// `outbox`. Whether the app is still there to tell.
+fn cover(
+    shared: &Shared,
+    store: &CoverStore,
+    splitter: &dyn Splitter,
+    outbox: &Outbox,
+    path: &Path,
+    playing: Option<&Wanted>,
+) -> bool {
+    let bytes = playing.and_then(|w| w.bytes);
+    let held = shared
+        .current
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|h| Arc::clone(&h.layers));
+    let mut working = |on: bool| {
+        outbox.send(Action::Working {
+            path: path.to_owned(),
+            job: Job::Cover,
+            on,
+        });
+    };
+    let back = if playing.is_some() {
+        Back::Yes(held.as_ref())
+    } else {
+        Back::No
+    };
+    let given = playing.map(|w| (w.cover.clone(), w.tags.clone()));
+    let taken = take_apart(store, splitter, path, given, back, &mut working);
+    let has = match taken {
+        Taken::Done { layers, has, split } => {
+            if let Some(took) = split {
+                crate::trace::note(format_args!(
+                    "covers: {} taken apart in {:.1} s",
+                    crate::work::song_name(path),
+                    took.as_secs_f64()
+                ));
+                // Taken apart now: its layers, as they were made.
+                if let Some(made) = &layers {
+                    let cut = crate::core::prep::CoverCut(Arc::clone(made));
+                    if !outbox.send(Action::Heard {
+                        path: path.to_owned(),
+                        part: crate::core::Heard::Cover(cut),
+                    }) {
+                        return false;
+                    }
+                }
+            }
+            if playing.is_some() {
+                // Still the song playing (no other since: held under the
+                // queue's lock, as `want` lets go).
+                let asked = shared.queue.lock();
+                if asked.fresh != Some(Fresh::Song) {
+                    *shared.current.lock().unwrap_or_else(|e| e.into_inner()) =
+                        layers.map(|layers| Held { bytes, layers });
+                }
+            }
+            has
+        }
+        Taken::Failed(why) => {
+            crate::trace::note(format_args!("covers: {why}"));
+            false
+        }
+    };
+    outbox.send(Action::Ready {
+        path: path.to_owned(),
+        job: Job::Cover,
+        facts: Some(Facts::Cover(has)),
+    })
+}
+
+/// The story scenes of the song playing, at `path`, made ready with the
+/// cover's models (told as the cover's work while they run), given up as
+/// soon as anything of the song playing is asked for afresh; held while it
+/// is still the song playing (under the queue's lock, as `want` lets go).
+/// Where it has scenes, one job of the cover's stage, for the song sung
+/// (it loads its models while the song is sung). Whether the app is still
+/// there to tell.
+fn story(
+    shared: &Shared,
+    scenes: &SceneStore,
+    splitter: &dyn Splitter,
+    outbox: &Outbox,
+    path: &Path,
+) -> bool {
+    let still = || shared.queue.lock().fresh.is_none();
+    let mut ran = false;
+    let mut running = || {
+        if !ran {
+            ran = true;
+            outbox.send(Action::Working {
+                path: path.to_owned(),
+                job: Job::Cover,
+                on: true,
+            });
+        }
+    };
+    let nets = splitter.nets();
+    let mut story = || crate::work::scenes::story(scenes, path, nets, (&still, &mut running));
+    let story = if nets.is_some() && scenes.scenes_of(path).is_some() {
+        let name = crate::work::song_name(path);
+        stages::run_for_the_song_sung(&[Stage::Cover], &name, story)
+    } else {
+        story()
+    };
+    if ran
+        && !outbox.send(Action::Working {
+            path: path.to_owned(),
+            job: Job::Cover,
+            on: false,
+        })
+    {
+        return false;
+    }
+    let held = {
+        let asked = shared.queue.lock();
+        let held = asked.fresh.is_none();
+        if held {
+            *shared.story.lock().unwrap_or_else(|e| e.into_inner()) = story;
+        }
+        held
+    };
+    if held {
+        (outbox.notify())();
+    }
+    true
 }
 
 #[cfg(test)]
@@ -697,6 +763,43 @@ mod tests {
         worker.want(&other);
         assert!(worker.story().is_none());
         ready(&rx, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A story drawn while its song plays is taken up then, its cover not
+    /// taken again; one drawn for another song is not.
+    #[test]
+    fn a_story_drawn_while_its_song_plays_is_taken_up() {
+        let dir = temp("drawn");
+        let p = dir.join("01.wav");
+        durable::write_atomic(&p, &jodel_dsp::wav::pcm16(44_100, 1, &[0i16; 4410])).unwrap();
+        let song = jodel_playback::source::probe(&p).unwrap();
+        let scenes = SceneStore::new(dir.join("scenes"), dir.join("scene-parts"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let splitter = WithNets(Counting::default(), ByRed::default());
+        let worker = CoverWorker::start_with(
+            CoverStore::new(dir.join("covers")),
+            SceneStore::new(dir.join("scenes"), dir.join("scene-parts")),
+            Box::new(splitter),
+            Outbox::new(tx, Arc::new(|| {})),
+        );
+        worker.want(&song);
+        ready(&rx, 1);
+        // Nothing drawn yet, and news of another song's story: none.
+        let on_drawn = worker.on_drawn();
+        on_drawn(&dir.join("02.wav"));
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        assert!(worker.story().is_none());
+        drawn(&scenes, &song.path);
+        on_drawn(&song.path);
+        let started = Instant::now();
+        while worker.story().is_none() {
+            assert!(started.elapsed() < Duration::from_secs(20), "no story");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(worker.story().unwrap().scenes.len(), 2);
+        let again = rx.try_iter().any(|a| matches!(a, Action::Ready { .. }));
+        assert!(!again, "the cover not taken again");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -349,6 +349,12 @@ impl Gemma {
     }
 }
 
+impl crate::OnDevice for Gemma {
+    fn lost(&self) -> bool {
+        self.is_lost()
+    }
+}
+
 impl Resident for Gemma {
     /// Its weights, and the room for the context last reserved at its most
     /// (none before one is).

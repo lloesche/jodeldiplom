@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::plan::{Plan, Step, IDLE};
 use super::*;
+use crate::work::story_models::StoryModels;
 
 const GB: u64 = 1 << 30;
 
@@ -27,7 +28,7 @@ fn model(gb: u64) -> Footprint {
 }
 
 /// A plan of models of 4 GB each (two do not fit together on 8 GB, all
-/// five do not on 16 GB, three do).
+/// of them do not on 16 GB, three do).
 fn plan() -> Plan {
     let mut plan = Plan::default();
     for stage in Stage::ALL {
@@ -190,7 +191,7 @@ fn a_model_whose_footprint_is_not_known_runs_alone() {
 fn models_that_fit_stay_loaded_together() {
     let (mut plan, t) = (plan(), Instant::now());
     for stage in Stage::ALL {
-        plan.declare(stage, model(2));
+        plan.declare(stage, model(1));
     }
     for _song in 0..2 {
         for stage in Stage::ALL {
@@ -513,7 +514,8 @@ fn a_job_that_panicked_lets_the_next_go() {
 /// The models that run today register themselves where they are made: the
 /// background separator and the beat network with the analyses' worker,
 /// the speech recogniser and the speech model with the word timer, the
-/// cover's two with its splitter; their footprints said before loading.
+/// cover's two with its splitter, the story's three with its models;
+/// their footprints said before loading.
 #[test]
 fn the_models_register_themselves_where_they_are_made() {
     crate::work::rhythm::register_networks();
@@ -522,6 +524,12 @@ fn the_models_register_themselves_where_they_are_made() {
     let _covers = crate::work::cover::GpuSplitter::new(crate::work::cover::CoverModels {
         depth: "depth".into(),
         matte: "matte".into(),
+    });
+    let _story = crate::work::story::worker::GpuModels::new(&StoryModels {
+        language: "gemma.gguf".into(),
+        transformer: "transformer".into(),
+        pipeline: "pipeline".into(),
+        encoder: "encoder".into(),
     });
     let inner = Stages::global().lock();
     for stage in Stage::ALL {

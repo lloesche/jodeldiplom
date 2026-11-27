@@ -10,10 +10,10 @@
 //! subject lifting off it. Only what the work found is shown, never a
 //! progress it did not tell.
 //!
-//! A slot for what is to come: a story of the song typed out as a
-//! language model writes it, its scenes fading in as an image model draws
-//! them ([`Hero::Story`], [`StoryView`]), shown big once anything tells
-//! one.
+//! The story of a song in Karaoke mode: typed out as a language model
+//! writes it, its scenes fading in as an image model draws them, each
+//! told as "Scene N of M drawn" ([`Hero::Story`], [`StoryView`]), shown
+//! big once anything tells one.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -460,9 +460,10 @@ fn stages(state: &State, path: &Path, song: &SongPrep, now: u64) -> Vec<Stage> {
 }
 
 /// What the view shows big, and its headline where it is a result: the
-/// result found last while it is held ([`HOLD_MS`]); else the stems as they
-/// are separated; else the story, where one is told; else the cover taken
-/// apart; else the last result found that can be shown; else nothing yet.
+/// result found last while it is held ([`HOLD_MS`]; a scene drawn shows
+/// the story); else the stems as they are separated; else the story,
+/// where one is told; else the cover taken apart; else the last result
+/// found that can be shown; else nothing yet.
 fn hero(
     state: &State,
     path: &Path,
@@ -514,6 +515,10 @@ fn hero(
                 Hero::Cover(cover_view(song, now, moves)?),
                 headline("Cut out: the cover".to_owned()),
             )),
+            Found::Scene { n, of } => Some((
+                Hero::Story(story_view(song, now, moves)?),
+                headline(format!("Scene {n} of {of} drawn")),
+            )),
         }
     };
     if let Some(found) = held.and_then(|(f, _)| shown(f)) {
@@ -522,19 +527,7 @@ fn hero(
     if let Some(s) = separating {
         return (Hero::Stems(stems_view(s, s.share)), None);
     }
-    if !song.story.is_empty() || !song.scenes.is_empty() {
-        let story = StoryView {
-            text: song.story.clone(),
-            caret: moves && (now / 500).is_multiple_of(2),
-            scenes: (song.scenes.iter())
-                .map(|s| {
-                    (
-                        Arc::clone(&s.picture),
-                        s.done * reveal(now, Some(s.at), REVEAL_MS),
-                    )
-                })
-                .collect(),
-        };
+    if let Some(story) = story_view(song, now, moves) {
         return (Hero::Story(story), None);
     }
     if let Some(cover) = cover_view(song, now, moves) {
@@ -552,6 +545,19 @@ fn hero(
         }
     }
     (Hero::Waiting, None)
+}
+
+/// The story of `song` as written and drawn so far, by `now` (its caret
+/// blinking while the view `moves`, each scene fading in as it came);
+/// none where nothing of it is told.
+fn story_view(song: &SongPrep, now: u64, moves: bool) -> Option<StoryView> {
+    (!song.story.is_empty() || !song.scenes.is_empty()).then(|| StoryView {
+        text: song.story.clone(),
+        caret: moves && (now / 500).is_multiple_of(2),
+        scenes: (song.scenes.iter())
+            .map(|s| (Arc::clone(&s.picture), reveal(now, Some(s.at), REVEAL_MS)))
+            .collect(),
+    })
 }
 
 /// The beat of `beats` (found at `at`) by `now`: its ticks coming in left

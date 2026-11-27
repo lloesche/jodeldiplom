@@ -25,8 +25,14 @@
 //! it (the story, the characters, what each scene shows) is told as it
 //! comes ([`prose::Prose`]). The job that asks it, keeps its plan and
 //! tells the preparation view is `crate::work::story`.
+//!
+//! What the image model is asked for the plan's pictures (a portrait of
+//! each character, then each scene with those portraits as its reference
+//! pictures) is [`pictures::pictures`]; the job that draws them is
+//! `crate::work::story::draw`.
 
 pub mod check;
+pub mod pictures;
 pub mod prompt;
 pub mod prose;
 pub mod rules;
@@ -322,6 +328,17 @@ pub enum Shot {
     Medium,
     /// A face, a hand, a thing.
     CloseUp,
+}
+
+impl Shot {
+    /// Its name, as the model writes it and the image model is told it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Shot::Wide => "wide",
+            Shot::Medium => "medium",
+            Shot::CloseUp => "close-up",
+        }
+    }
 }
 
 /// How sure the model is of what it knows of the song.

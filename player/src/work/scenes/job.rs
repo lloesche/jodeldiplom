@@ -101,7 +101,8 @@ pub fn prepare(
         took.push(t);
         hashes.push(hash);
     }
-    Ok((Arc::new(Story::new(&hashes, ready)), took))
+    let story = Story::new(&hashes, ready, scenes.look.clone());
+    Ok((Arc::new(story), took))
 }
 
 /// The story of the song at `song`: its scenes in `store`, made ready
@@ -209,10 +210,12 @@ pub(crate) mod tests {
             picture: picture.clone(),
         };
         Scenes {
+            made: "drawn by hand".into(),
             scenes: vec![
                 scenes((0.0, 8.0), &paths[0]),
                 scenes((8.0, 20.0), &paths[1]),
             ],
+            look: crate::work::scenes::look(),
         }
         .write(&folder)
         .unwrap();

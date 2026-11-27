@@ -312,12 +312,13 @@ pub fn start_setup(
 /// Gives the app the models setup found (each known by its path in the
 /// store: [`crate::setup::Found`]): the speech models to the lyrics (the voice
 /// from the stems kept in the data folder), the covers' models to the
-/// covers' step.
+/// covers' step, the story's to the stories' thread.
 pub fn set_models(options: &mut AppOptions, paths: &[(String, PathBuf)]) {
     let Some(found) = crate::setup::Found::of(paths) else {
         return;
     };
     options.covers = found.covers.clone();
+    options.story = found.story.clone();
     let (speech, asr) = (found.speech, found.asr);
     let models = crate::work::lyrics::models::Models::new(speech.clone(), asr);
     options.model = Some(speech);
@@ -417,8 +418,8 @@ mod tests {
     }
 
     /// What setup gives (every needed model's path, in the manifest's
-    /// order) sets the speech model, the timer and the covers'
-    /// models, with or without the covers' files.
+    /// order) sets the speech model, the timer, the covers' and the
+    /// story's models, with or without the GPU's models.
     #[test]
     fn the_models_setup_found_reach_the_app() {
         use crate::setup::{manifest_for, Found};
@@ -437,6 +438,7 @@ mod tests {
             );
             assert!(options.lyrics.as_ref().unwrap().timer.is_some());
             assert_eq!(options.covers.is_some(), gpu);
+            assert_eq!(options.story.is_some(), gpu);
             let found = Found::of(&paths).unwrap();
             assert_eq!(found.asr, dir.join(crate::work::lyrics::models::ASR_FILE));
         }

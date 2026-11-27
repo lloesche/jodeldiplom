@@ -2,12 +2,12 @@
 //! known of each ([`SongLyrics`]), and the speech model that times their
 //! words ([`ModelState`]).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use jodel_lyrics::{Detail, Lyrics, Source};
 
-use super::{in_mode, song_index};
+use super::{in_mode, song_index, SONGS_AHEAD};
 use crate::core::{Effect, Side, State};
 use crate::work::lyrics::Answer;
 
@@ -97,8 +97,8 @@ impl SongLyrics {
 }
 
 /// The songs whose lyrics are wanted: while the tab or the mode shows, the one
-/// playing (or held), then the next two in the queue (the lyrics editor's song
-/// before them while it shows); while the Transition tab
+/// playing (or held), then the next [`SONGS_AHEAD`] in the queue (the lyrics
+/// editor's song before them while it shows); while the Transition tab
 /// shows, its tracks' ([`crate::core::transition::tab::lyrics_wanted`]).
 pub fn lyrics_wanted(state: &State) -> Vec<PathBuf> {
     if let Some(paths) = crate::core::transition::tab::lyrics_wanted(state) {
@@ -116,7 +116,7 @@ pub fn lyrics_wanted(state: &State) -> Vec<PathBuf> {
     }
     let mut out: Vec<PathBuf> = editing.into_iter().collect();
     if let Some(first) = song_index(state) {
-        for path in state.queue.paths.iter().skip(first).take(3) {
+        for path in state.queue.paths.iter().skip(first).take(1 + SONGS_AHEAD) {
             if !out.contains(path) {
                 out.push(path.clone());
             }
@@ -172,6 +172,21 @@ pub(crate) fn lyrics_arrived(state: &mut State, path: PathBuf, answer: Answer) {
 /// The lyrics of the song at `index`, when known.
 pub fn lyrics_of(state: &State, index: usize) -> Option<&SongLyrics> {
     state.karaoke.lyrics.get(state.queue.paths.get(index)?)
+}
+
+/// The lyrics shown for `path` once they are as they stay: found, their
+/// words timed by the speech model (or as found, where there is no model
+/// to time them); none before, or with no lyrics.
+pub fn lyrics_settled<'a>(state: &'a State, path: &Path) -> Option<&'a Arc<Lyrics>> {
+    match state.karaoke.lyrics.get(path)? {
+        SongLyrics::Found { shown, .. }
+            if shown.timing.detail == Detail::Words
+                || state.karaoke.model == ModelState::Missing =>
+        {
+            Some(shown)
+        }
+        _ => None,
+    }
 }
 
 /// The speech model that times the words. Setup gets it before the player

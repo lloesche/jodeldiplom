@@ -10,7 +10,7 @@
 //!
 //! The model writes the plan greedily, so the same song always gives the
 //! same plan ([`plan`]), its prose told as it comes for the preparation
-//! view ([`Heard::Story`]). An answer that does not hold
+//! view ([`crate::core::Heard::Story`]). An answer that does not hold
 //! ([`crate::core::story::check::read`]) is asked again once, the error
 //! said with the prompt; a second that does not hold either leaves the
 //! song with no story (told, and noted in the trace): the karaoke shows
@@ -24,6 +24,13 @@
 //! again. A song whose answers did not hold is kept as having no story
 //! (it would get none again); a model that failed, or an answer cut off
 //! at its length, is not (the song is not to blame).
+//!
+//! The plan's pictures are drawn by the image model's two jobs
+//! ([`draw`]), and the songs Karaoke mode wants are planned and drawn on a
+//! thread of their own, the models taking turns ([`worker`]).
+
+pub mod draw;
+pub mod worker;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -35,15 +42,14 @@ use crate::core::prep::Story;
 use crate::core::story::prose::Prose;
 use crate::core::story::rules::MOST_ANSWER;
 use crate::core::story::{check, prompt, Plan, Song};
-use crate::core::{Action, Heard};
 use crate::store::cache::{self, STORY_PLAN};
-use crate::work::outbox::Outbox;
 
 /// What makes a plan, as the files say it: the model (Gemma 4 E4B-it,
 /// its weights) written greedily, and how its answer is read. A new
 /// model, other weights or another reading raise it, and every song is
 /// planned again; a new prompt does so by itself (its hash is kept).
-pub const VERSION: u32 = 1;
+/// Version 1 refused shaders over the budget.
+pub const VERSION: u32 = 2;
 
 /// The positions a plan takes at most, its prompt and its answer: as
 /// many as the model has room for.
@@ -287,17 +293,12 @@ impl StoryJob {
         from_text(&std::fs::read_to_string(file).ok()?, &self.hash())
     }
 
-    /// Plans the song with `writer` ([`plan`]), its news told on `outbox`
-    /// ([`Heard::Story`]), and keeps the plan, or that it has none where
-    /// that is the song's ([`Failure::Refused`]).
-    pub fn run(&self, writer: &dyn Writer, outbox: &Outbox) -> Result<Plan, Failure> {
-        let planned = plan(writer, &self.song, &self.asked, &mut |story| {
-            outbox.send(Action::Heard {
-                path: self.path.clone(),
-                part: Heard::Story(story),
-            });
-        });
-        let name = self.path.file_name().unwrap_or_default().to_string_lossy();
+    /// Plans the song with `writer` ([`plan`]), its news told to `tell`,
+    /// and keeps the plan, or that it has none where that is the song's
+    /// ([`Failure::Refused`]).
+    pub fn run(&self, writer: &dyn Writer, tell: &mut dyn FnMut(Story)) -> Result<Plan, Failure> {
+        let planned = plan(writer, &self.song, &self.asked, tell);
+        let name = crate::work::song_name(&self.path);
         for t in &planned.tries {
             let w = &t.written;
             crate::trace::note(format_args!(

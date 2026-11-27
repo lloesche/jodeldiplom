@@ -121,6 +121,23 @@ impl Layer {
 }
 
 impl Look {
+    /// It within the budget: the passes [`Look::check`] would drop for it
+    /// let go (the dearest not kept first, the later of equals, one at a
+    /// time until it is within; a pass there is none of costs nothing and
+    /// stays, for [`Look::faults`] to say).
+    pub fn within_budget(&mut self) {
+        loop {
+            let known: Vec<(usize, (f32, bool))> = (self.layers.iter().enumerate())
+                .filter_map(|(i, l)| passes::named(&l.pass).map(|p| (i, (p.cost, l.keep))))
+                .collect();
+            let stack: Vec<(f32, bool)> = known.iter().map(|&(_, s)| s).collect();
+            let Some(k) = over_budget(&stack) else {
+                return;
+            };
+            self.layers.remove(known[k].0);
+        }
+    }
+
     /// The look written as `json`.
     pub fn from_json(json: &str) -> Result<Look, String> {
         serde_json::from_str(json).map_err(|e| e.to_string())
@@ -197,19 +214,7 @@ impl Look {
             });
         }
         let mut dropped = Vec::new();
-        while guard::over(layers.len(), cost(&layers)) {
-            let dearest = (0..layers.len())
-                .filter(|&i| !layers[i].keep)
-                .max_by(|&a, &b| {
-                    layers[a]
-                        .pass
-                        .cost
-                        .total_cmp(&layers[b].pass.cost)
-                        .then(a.cmp(&b))
-                });
-            let Some(i) = dearest.or(layers.len().checked_sub(1)) else {
-                break;
-            };
+        while let Some(i) = over_budget(&stack_of(&layers)) {
             let gone = layers.remove(i);
             notes.push(format!("{} dropped: over the budget", gone.pass.name));
             dropped.push(gone.pass.name);
@@ -231,6 +236,27 @@ pub const MIX: usize = 8;
 /// What a stack of checked layers costs.
 fn cost(layers: &[CheckedLayer]) -> f32 {
     layers.iter().map(|l| l.pass.cost).sum()
+}
+
+/// A stack of checked layers as the budget sees it: each pass's cost, and
+/// whether the budget must keep it.
+fn stack_of(layers: &[CheckedLayer]) -> Vec<(f32, bool)> {
+    layers.iter().map(|l| (l.pass.cost, l.keep)).collect()
+}
+
+/// The pass of `stack` (each its cost and whether the budget must keep
+/// it) that goes first while the stack is over the budget
+/// ([`guard::over`]): the dearest not kept (the later of equals), else the
+/// last; none within the budget.
+fn over_budget(stack: &[(f32, bool)]) -> Option<usize> {
+    let cost: f32 = stack.iter().map(|&(cost, _)| cost).sum();
+    if !guard::over(stack.len(), cost) {
+        return None;
+    }
+    (0..stack.len())
+        .filter(|&i| !stack[i].1)
+        .max_by(|&a, &b| stack[a].0.total_cmp(&stack[b].0).then(a.cmp(&b)))
+        .or(stack.len().checked_sub(1))
 }
 
 /// A look made safe to draw ([`Look::check`]): its id, its passes as

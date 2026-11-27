@@ -20,7 +20,7 @@
 //! | [`COVER_ALBUM`] | an album's covers taken apart, with their perceptual hashes (`covers/albums/*.txt`) |
 //! | [`PATCH`] | a game sound's patch kept on the Synth tab (`patches/*.txt`) |
 //! | [`STORY_PLAN`] | a song's story planned for the karaoke (`stories/*.txt`) |
-//! | [`STORY_SCENES`] | a song's story scenes: each one's span and picture (`scenes/<song>/scenes.txt`, beside the pictures) |
+//! | [`STORY_SCENES`] | a song's story scenes: what made them, the look over them, each one's span and picture (`scenes/<song>/scenes.txt`, beside the pictures) |
 //! | [`SCENE_PARTS`] | what is derived from a story scene's picture for the backdrop (`scene-parts/<picture>.parts`, binary: `JDLS` and the version byte) |
 //!
 //! A text file starts with a header naming its schema and the version of
@@ -218,11 +218,12 @@ pub const STORY_PLAN: Schema = Schema {
     user_data: false,
 };
 
-/// A song's story scenes as the story's drawing step leaves them: a line a
-/// scene, its span and its picture.
+/// A song's story scenes as the story's drawing step leaves them: what
+/// made them (a hash of what they hold), the song's look over them, then a
+/// line a scene, its span and its picture. Version 1 had neither.
 pub const STORY_SCENES: Schema = Schema {
     name: "story-scenes",
-    version: 1,
+    version: 2,
     user_data: false,
 };
 

@@ -203,7 +203,8 @@ pub enum Event {
     /// A moment of the diploma.
     Diploma(Diploma),
     /// A step of a song's preparation found something: its place among
-    /// the steps (the beat 0 … the cover 4, [`crate::core::prep::Found::step`]).
+    /// the steps (the beat 0 … the story's scenes,
+    /// [`crate::core::prep::Found::step`]).
     Found {
         /// The step.
         step: u32,

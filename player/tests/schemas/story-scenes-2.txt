@@ -1,0 +1,5 @@
+jodeldiplom-cache story-scenes 2 by jodeldiplom x
+made 0123456789abcdef
+look {"id":"folk.song","tags":["rain"],"layers":[{"pass":"grain","knobs":{"amount":0.45}}]}
+scene 12.500 30.250 00.png
+scene 30.250 41.000 01.png
