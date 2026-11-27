@@ -6,7 +6,40 @@ use jodel_tensors::SafeTensors;
 
 use super::gpu::{Gpu, Made};
 use super::plan::{At, Buf, Conv, Mat, Norm, Plan, Rope, Tail};
-use super::weights::{Fp8, Packing};
+use super::weights::{Fp8, Packing, Source};
+
+/// A slot handed over is caught where its next use reads it (as an input,
+/// or adding into it) and passes where that use writes it (no GPU).
+#[test]
+fn a_slot_handed_over_and_read_is_caught() {
+    let check = |build: &dyn Fn(&mut Plan)| {
+        let mut p = Plan::new(false);
+        for _ in 0..3 {
+            p.slot(16);
+        }
+        p.silu(16, At::new(2, 0), At::new(0, 0));
+        build(&mut p);
+        p.check()
+    };
+    let at = |s| At::new(s, 0);
+    assert_eq!(check(&|_| ()), None);
+    let read = |p: &mut Plan| {
+        p.hand_over(0);
+        p.silu(16, at(0), at(1));
+    };
+    assert_eq!(check(&read), Some((0, 1)));
+    let added = |p: &mut Plan| {
+        p.hand_over(1);
+        p.euler(16, at(1), at(2), 0.5);
+    };
+    assert_eq!(check(&added), Some((1, 1)));
+    let written = |p: &mut Plan| {
+        p.hand_over(1);
+        p.silu(16, at(0), at(1));
+        p.euler(16, at(1), at(2), 0.5);
+    };
+    assert_eq!(check(&written), None);
+}
 
 /// The kernels validate, and (without the tensor-core ones) write for
 /// Metal and DirectX; with them, they validate.
@@ -15,7 +48,8 @@ fn the_kernels_validate() {
     use crate::engine::Kernels;
     let entries: Vec<&str> = <super::Kernel as Kernels>::ALL
         .iter()
-        .map(|k| crate::engine::Kernels::entry(*k))
+        .filter(|k| k.available(wgpu::Features::empty()))
+        .map(|k| k.entry())
         .collect();
     crate::engine::check_source(
         &super::source(false),
@@ -30,6 +64,44 @@ fn the_kernels_validate() {
     )
     .validate(&module)
     .unwrap_or_else(|e| panic!("{e:?}"));
+}
+
+/// A few weights of each kind packed from `src` (the FP8 matrix's bytes
+/// `fp8`).
+fn packed<'a>(src: Source<'a>, fp8: Option<&'a [u8]>) -> Packing<'a> {
+    let mut pack = Packing::new();
+    pack.linear(src, "w", (64, 96)).unwrap();
+    pack.conv(src, "c", (4, 8, 3), 4).unwrap();
+    pack.fp8(&Fp8 {
+        bytes: fp8,
+        n: 64,
+        k: 64,
+        scales: vec![0.5],
+    });
+    pack.vector(&[1.0, 2.0, 3.0]);
+    pack
+}
+
+/// A packing of shapes alone places what the checkpoint's does: what a
+/// part says it takes before it is loaded is what it takes once loaded.
+#[test]
+fn shapes_alone_measure_what_is_loaded() {
+    let t = bf16_file(&[
+        ("w.weight", vec![96, 64], values(1, 96 * 64)),
+        ("w.bias", vec![96], values(2, 96)),
+        ("c.weight", vec![8, 4, 3, 3], values(3, 288)),
+        ("c.bias", vec![8], values(4, 8)),
+    ]);
+    let w8 = fp8_bytes(5, 64 * 64);
+    let measured = packed(Source::Shapes, None).bytes();
+    let full = packed(Source::Checkpoint(&t), Some(&w8));
+    assert_eq!(full.bytes(), measured);
+    if let Err(e) = &crate::chosen().adapter {
+        eprintln!("no GPU for the picture kernels: {e}");
+        return;
+    }
+    assert_eq!(full.upload("test").unwrap().bytes(), measured);
+    assert!(packed(Source::Shapes, None).upload("test").is_err());
 }
 
 /// Values in -1..1 from `seed`.
@@ -122,6 +194,10 @@ fn run(
     Gpu::shared().expect("the picture kernels set up on the GPU");
     let loaded = pack.upload("test").unwrap();
     let mut p = Plan::new(fast && coop());
+    // The tests' slots: 0 to 3.
+    for _ in 0..4 {
+        p.slot(0);
+    }
     for (slot, at, v) in inputs {
         p.need(*slot, at + v.len());
     }
@@ -192,7 +268,7 @@ fn the_matrix_multiply_matches_the_processor() {
         for tail in [Tail::Store, Tail::Add, Tail::Gated(At::new(2, 0))] {
             let mut pack = Packing::new();
             let w = pack.fp8(&Fp8 {
-                bytes: &w8,
+                bytes: Some(&w8),
                 n: n8,
                 k,
                 scales: scales.clone(),
@@ -234,13 +310,13 @@ fn the_matrix_multiply_matches_the_processor() {
         let mut pack = Packing::new();
         let w = pack.fp8_pairs(
             &Fp8 {
-                bytes: &gate,
+                bytes: Some(&gate),
                 n: 128,
                 k,
                 scales: s1.clone(),
             },
             &Fp8 {
-                bytes: &up,
+                bytes: Some(&up),
                 n: 128,
                 k,
                 scales: s1.clone(),
@@ -282,7 +358,7 @@ fn the_matrix_multiply_matches_the_processor() {
             ("w.bias", vec![nb], bias.clone()),
         ]);
         let mut pack = Packing::new();
-        let w = pack.linear(&t, "w", (k, nb)).unwrap();
+        let w = pack.linear(Source::Checkpoint(&t), "w", (k, nb)).unwrap();
         let wbf: Vec<f32> = wb.iter().map(|&x| bf(x)).collect();
         let bbf: Vec<f32> = bias.iter().map(|&x| bf(x)).collect();
         let want = mm(&wbf, nb, Some(&bbf));
@@ -384,7 +460,9 @@ fn convolutions_match_the_processor() {
             ("c.bias", vec![cout], bias.clone()),
         ]);
         let mut pack = Packing::new();
-        let mat = pack.conv(&t, "c", (cin, cout, 3), cin).unwrap();
+        let mat = pack
+            .conv(Source::Checkpoint(&t), "c", (cin, cout, 3), cin)
+            .unwrap();
         let gwa = pack.vector(&gw);
         let gba = pack.vector(&gb);
         // The groups' means and spreads on the processor.
@@ -470,7 +548,9 @@ fn convolutions_match_the_processor() {
             ("c.bias", vec![cout], bias.clone()),
         ]);
         let mut pack = Packing::new();
-        let mat = pack.conv(&t, "c", (cin, cout, 3), 4).unwrap();
+        let mat = pack
+            .conv(Source::Checkpoint(&t), "c", (cin, cout, 3), 4)
+            .unwrap();
         let wbf: Vec<f32> = wt.iter().map(|&v| bf(v)).collect();
         let bbf: Vec<f32> = bias.iter().map(|&v| bf(v)).collect();
         let want = conv_cpu(
@@ -515,7 +595,9 @@ fn convolutions_match_the_processor() {
             ("c.bias", vec![cout], bias.clone()),
         ]);
         let mut pack = Packing::new();
-        let mat = pack.conv(&t, "c", (cin, cout, 3), cin).unwrap();
+        let mat = pack
+            .conv(Source::Checkpoint(&t), "c", (cin, cout, 3), cin)
+            .unwrap();
         let wbf: Vec<f32> = wt.iter().map(|&v| bf(v)).collect();
         let bbf: Vec<f32> = bias.iter().map(|&v| bf(v)).collect();
         let conv = Conv {

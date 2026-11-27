@@ -6,8 +6,8 @@
 
 // A's tile as [16 k][128 rows] and W's as [16 k][128 columns], four
 // values a vector.
-var<workgroup> mm_a: array<vec4<f32>, 512>;
-var<workgroup> mm_b: array<vec4<f32>, 512>;
+var<workgroup> gemm_tile_a: array<vec4<f32>, 512>;
+var<workgroup> gemm_tile_b: array<vec4<f32>, 512>;
 
 fn gemm_f32(wg: vec3<u32>, li: u32) {
     let tx = li % 16u;
@@ -28,7 +28,7 @@ fn gemm_f32(wg: vec3<u32>, li: u32) {
     var na0 = mm_a4(row0 + ar, aq);
     var na1 = mm_a4(row0 + ar + 64u, aq);
     var nw = mm_w8(col0 + wc, wh);
-    let steps = (p.n2 + 15u) / 16u;
+    let steps = (mm_k() + 15u) / 16u;
     let ra = ar / 4u;
     let ca = ar % 4u;
     let rb = wc / 4u;
@@ -36,22 +36,22 @@ fn gemm_f32(wg: vec3<u32>, li: u32) {
     for (var s = 0u; s < steps; s++) {
         workgroupBarrier();
         // Transposed: value j of A's four is k = aq + j.
-        mm_a[(aq + 0u) * 32u + ra][ca] = na0.x;
-        mm_a[(aq + 1u) * 32u + ra][ca] = na0.y;
-        mm_a[(aq + 2u) * 32u + ra][ca] = na0.z;
-        mm_a[(aq + 3u) * 32u + ra][ca] = na0.w;
-        mm_a[(aq + 0u) * 32u + ra + 16u][ca] = na1.x;
-        mm_a[(aq + 1u) * 32u + ra + 16u][ca] = na1.y;
-        mm_a[(aq + 2u) * 32u + ra + 16u][ca] = na1.z;
-        mm_a[(aq + 3u) * 32u + ra + 16u][ca] = na1.w;
-        mm_b[(wh + 0u) * 32u + rb][cb] = nw.lo.x;
-        mm_b[(wh + 1u) * 32u + rb][cb] = nw.lo.y;
-        mm_b[(wh + 2u) * 32u + rb][cb] = nw.lo.z;
-        mm_b[(wh + 3u) * 32u + rb][cb] = nw.lo.w;
-        mm_b[(wh + 4u) * 32u + rb][cb] = nw.hi.x;
-        mm_b[(wh + 5u) * 32u + rb][cb] = nw.hi.y;
-        mm_b[(wh + 6u) * 32u + rb][cb] = nw.hi.z;
-        mm_b[(wh + 7u) * 32u + rb][cb] = nw.hi.w;
+        gemm_tile_a[(aq + 0u) * 32u + ra][ca] = na0.x;
+        gemm_tile_a[(aq + 1u) * 32u + ra][ca] = na0.y;
+        gemm_tile_a[(aq + 2u) * 32u + ra][ca] = na0.z;
+        gemm_tile_a[(aq + 3u) * 32u + ra][ca] = na0.w;
+        gemm_tile_a[(aq + 0u) * 32u + ra + 16u][ca] = na1.x;
+        gemm_tile_a[(aq + 1u) * 32u + ra + 16u][ca] = na1.y;
+        gemm_tile_a[(aq + 2u) * 32u + ra + 16u][ca] = na1.z;
+        gemm_tile_a[(aq + 3u) * 32u + ra + 16u][ca] = na1.w;
+        gemm_tile_b[(wh + 0u) * 32u + rb][cb] = nw.lo.x;
+        gemm_tile_b[(wh + 1u) * 32u + rb][cb] = nw.lo.y;
+        gemm_tile_b[(wh + 2u) * 32u + rb][cb] = nw.lo.z;
+        gemm_tile_b[(wh + 3u) * 32u + rb][cb] = nw.lo.w;
+        gemm_tile_b[(wh + 4u) * 32u + rb][cb] = nw.hi.x;
+        gemm_tile_b[(wh + 5u) * 32u + rb][cb] = nw.hi.y;
+        gemm_tile_b[(wh + 6u) * 32u + rb][cb] = nw.hi.z;
+        gemm_tile_b[(wh + 7u) * 32u + rb][cb] = nw.hi.w;
         workgroupBarrier();
         if (s + 1u < steps) {
             let k1 = (s + 1u) * 16u;
@@ -60,10 +60,10 @@ fn gemm_f32(wg: vec3<u32>, li: u32) {
             nw = mm_w8(col0 + wc, k1 + wh);
         }
         for (var kk = 0u; kk < 16u; kk++) {
-            let a0 = mm_a[kk * 32u + ty];
-            let a1 = mm_a[kk * 32u + ty + 16u];
-            let b0 = mm_b[kk * 32u + tx];
-            let b1 = mm_b[kk * 32u + tx + 16u];
+            let a0 = gemm_tile_a[kk * 32u + ty];
+            let a1 = gemm_tile_a[kk * 32u + ty + 16u];
+            let b0 = gemm_tile_b[kk * 32u + tx];
+            let b1 = gemm_tile_b[kk * 32u + tx + 16u];
             acc0 = fma(vec4<f32>(a0.x), b0, acc0);
             acc1 = fma(vec4<f32>(a0.x), b1, acc1);
             acc2 = fma(vec4<f32>(a0.y), b0, acc2);
@@ -86,7 +86,7 @@ fn gemm_f32(wg: vec3<u32>, li: u32) {
     let r1 = r0 + 64u;
     let c0 = col0 + tx * 4u;
     let c1 = c0 + 64u;
-    if ((p.n9 & MM_SWIGLU) != 0u) {
+    if ((mm_flags() & MM_SWIGLU) != 0u) {
         // Gates in columns 0..63 of the tile, their ups 64 further.
         let oc = col0 / 2u + tx * 4u;
         mm_swiglu4(r0, oc, acc0, acc1);

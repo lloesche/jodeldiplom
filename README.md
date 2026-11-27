@@ -127,7 +127,7 @@ its `make.py` with FFmpeg) and two PCM FLAC files (`pcm`, made by its
 | `jodel-output` | [output](output) | shared PCM output through the system's mixer (WASAPI, Core Audio HAL, ALSA default), the mixer, microphone input with echo cancellation and singer isolation |
 | `jodel-playback` | [playback](playback) | the playback engine: files to the device, the rate policy, the resampler, gapless track changes, seeks, jumps, stems, transitions, events timed to what is heard |
 | `jodel-rhythm` | [rhythm](rhythm) | beat, downbeat, tempo, key and pitch analysis, and the stem separator on the CPU, in plain Rust |
-| `jodel-tensors` | [tensors](tensors) | the networks' numeric base: a `.safetensors` checkpoint's tensors as f32 or as stored (for the speech, depth, cut-out and picture models), half floats, a small JSON reader, and what the CPU kernels share (threads, the AVX2 builds) |
+| `jodel-tensors` | [tensors](tensors) | the networks' numeric base: a `.safetensors` checkpoint's tensors as f32 or as stored (for the speech, depth, cut-out and picture models), a GGUF file's metadata and tensors (for the story's language model), half floats, a small JSON reader, and what the CPU kernels share (threads, the AVX2 builds) |
 | `jodel-dsp` | [dsp](dsp) | the signal tools the audio crates share: the FFTs, the windows, the mel scale, xorshift, FNV-1a, WAV files and the 24-bit full scale |
 | `jodel-testkit` | [testkit](testkit) | what the tests share (a dev-dependency only): one real-time test at a time, the PCM fixtures, a temporary folder that goes, an allocator that counts |
 | `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network, the speech recogniser, the covers' depth and cut-out models and the story's picture model (FLUX.2 klein) on the GPU, through `wgpu` |
@@ -168,11 +168,14 @@ take covers apart for karaoke's background, downloaded the same way at fixed
 revisions: `depth-anything/DA3-SMALL` (Depth Anything 3 Small, Apache 2.0)
 as `da3-small.safetensors` and `PramaLLC/BEN2` (BEN2 Base, MIT) as
 `ben2-base.safetensors`. Nor is karaoke story mode's language model,
-`google/gemma-4-E4B-it` (Gemma 4 E4B, Apache 2.0), whose text decoder
-`jodel_gpu::llm::pack` packs from its checkpoint at 4 bits into a
-`.jdlgemma` file (`gpu/examples/gemma.rs pack`). Nor are the models that
-draw the karaoke story's pictures (`jodel_gpu::image`; the example takes
-their folder), all Apache 2.0: FLUX.2 [klein] 4B from Black Forest Labs,
-its transformer as `black-forest-labs/FLUX.2-klein-4b-fp8` and its
-autoencoder from `black-forest-labs/FLUX.2-klein-4B`, and its text encoder
-`Qwen/Qwen3-4B-FP8`. Setup does not fetch the story's models yet.
+Gemma 4 E4B-it (Google's `google/gemma-4-E4B-it`, Apache 2.0) as Unsloth
+quantised it: `gemma-4-E4B-it-Q4_K_M.gguf` from `unsloth/gemma-4-E4B-it-GGUF`
+(Apache 2.0) at revision `bfc15c382204943c3a8fff0c750b94ae2364d7a3` (4.98 GB,
+SHA-256 `85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87`),
+which `jodel_gpu::Gemma` reads as it is, its text decoder and its tokeniser;
+setup downloads it directly. Nor are the models that draw the karaoke
+story's pictures (`jodel_gpu::image`; the example takes their folder), all
+Apache 2.0: FLUX.2 [klein] 4B from Black Forest Labs, its transformer as
+`black-forest-labs/FLUX.2-klein-4b-fp8` and its autoencoder from
+`black-forest-labs/FLUX.2-klein-4B`, and its text encoder `Qwen/Qwen3-4B-FP8`;
+setup does not fetch those yet.

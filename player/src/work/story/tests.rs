@@ -239,7 +239,7 @@ fn a_song_is_planned_on_the_model() {
         serde_json::from_str(&std::fs::read_to_string(&input).expect("the song")).expect("a song");
     let asked = prompt::prompt(&song);
     let started = std::time::Instant::now();
-    let gemma = Gemma::open(&model).expect("the model");
+    let gemma = Gemma::open(&model, jodel_gpu::Precision::Fast).expect("the model");
     let loaded = started.elapsed();
     let mut runs = Vec::new();
     for _ in 0..2 {
@@ -256,10 +256,8 @@ fn a_song_is_planned_on_the_model() {
     let mut report = format!(
         "model loaded in {:.1} s on {}; GPU memory held {:.0} MB\n",
         loaded.as_secs_f64(),
-        gemma.name(),
-        gemma
-            .memory()
-            .map_or(0.0, |m| m.total() as f64 / f64::from(1 << 20))
+        gemma.gpu_name(),
+        gemma.held().total() as f64 / f64::from(1 << 20)
     );
     for (k, (planned, _, took)) in runs.iter().enumerate() {
         report.push_str(&format!("run {k}: {:.1} s\n", took.as_secs_f64()));

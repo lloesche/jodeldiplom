@@ -8,6 +8,23 @@ fn linear_id(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
     return gid.x + gid.y * groups.x * 256u;
 }
 
+var<workgroup> red256: array<f32, 256>;
+
+// The sum of `v` over a workgroup of 256 (every invocation calls it, and
+// gets it), in a tree.
+fn sum256(li: u32, v: f32) -> f32 {
+    workgroupBarrier();
+    red256[li] = v;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s >>= 1u) {
+        if (li < s) {
+            red256[li] += red256[li + s];
+        }
+        workgroupBarrier();
+    }
+    return red256[0];
+}
+
 // The tiled matrix multiplies' tiles: 64 × 64 through k in steps of 16;
 // each invocation keeps 4 rows × 4 columns in four vectors. The tiles hold
 // vectors: a step of k reads one of A (its four rows) and one of B (its

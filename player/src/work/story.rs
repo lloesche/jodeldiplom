@@ -28,8 +28,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use jodel_gpu::llm::Memory;
-use jodel_gpu::Gemma;
+use jodel_gpu::llm::MOST_CONTEXT;
+use jodel_gpu::{Footprint, Gemma};
 
 use crate::core::prep::Story;
 use crate::core::story::prose::Prose;
@@ -47,11 +47,12 @@ pub const VERSION: u32 = 1;
 
 /// The positions a plan takes at most, its prompt and its answer: as
 /// many as the model has room for.
-pub const CONTEXT: usize = 16_368;
+pub const CONTEXT: usize = MOST_CONTEXT;
 
-/// What the job needs on the GPU: the model, with room for [`CONTEXT`].
-pub fn memory() -> Memory {
-    Memory::of(CONTEXT)
+/// What the job needs on the GPU: the model in the file at `model`, with
+/// room for [`CONTEXT`] (only the file's header read).
+pub fn memory(model: &Path) -> Result<Footprint, String> {
+    Gemma::planned(model, CONTEXT)
 }
 
 /// A language model that writes after a prompt (one user turn): the
@@ -86,8 +87,6 @@ pub struct Written {
     pub answer_time: Duration,
 }
 
-// To be switched to jodel_gpu's MOST_CONTEXT and its text streaming once
-// they land (the decoding and the trimming here go then).
 impl Writer for Gemma {
     fn write(
         &self,
@@ -95,8 +94,7 @@ impl Writer for Gemma {
         most: usize,
         seen: &mut dyn FnMut(&str),
     ) -> Result<Written, Failure> {
-        let tokens = self.tokens();
-        let ids = tokens.chat(prompt);
+        let ids = self.tokens().chat(prompt);
         if ids.len() + most > CONTEXT {
             return Err(Failure::Refused(format!(
                 "its words are too long for the model ({} tokens asked, at most {})",
@@ -105,27 +103,17 @@ impl Writer for Gemma {
             )));
         }
         self.reserve(CONTEXT).map_err(Failure::Model)?;
-        let mut written: Vec<u32> = Vec::new();
-        let mut shown = 0;
         let out = self
-            .generate(&ids, most, |new| {
-                written.extend_from_slice(new);
-                let text = tokens.decode(&written);
-                // A character whose bytes are not all written yet waits.
-                let whole = text.trim_end_matches('\u{FFFD}');
-                if whole.len() > shown && whole.is_char_boundary(shown) {
-                    seen(&whole[shown..]);
-                    shown = whole.len();
-                }
-            })
+            .generate_text(&ids, most, |piece| seen(piece))
             .map_err(Failure::Model)?;
+        let generated = out.generated;
         Ok(Written {
-            text: tokens.decode(&out.tokens),
-            stopped: out.stopped,
-            prompt_tokens: out.prompt_tokens,
-            prompt_time: out.prompt_time,
-            answer_tokens: out.tokens.len(),
-            answer_time: out.step_time,
+            text: out.text,
+            stopped: generated.stopped,
+            prompt_tokens: generated.prompt_tokens,
+            prompt_time: generated.prompt_time,
+            answer_tokens: generated.tokens.len(),
+            answer_time: generated.step_time,
         })
     }
 }

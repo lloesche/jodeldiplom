@@ -2,61 +2,54 @@
 // written for a matrix multiply, the residual stream's step between them,
 // the per-layer inputs, and the next token.
 
-// Each row's token's embeddings, scaled: an invocation a value. Numbers:
-// rows, the first position, whether it is the decoder's, where they go,
-// the embeddings in `wq`, the scale (f32 bits), the width, the tokens.
+// Each row's token's embeddings, scaled, from dst's start: an invocation a
+// value. The embeddings are in `wq` (`at` in words), the scale is f32
+// bits.
 @compute @workgroup_size(256)
 fn embed(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let i = gid.x + gid.y * groups.x * 256u;
-    let width = p.f6;
-    if (i >= p.f0 * width) {
+    let i = linear_id(gid, groups);
+    let width = embed_width();
+    if (i >= embed_rows() * width) {
         return;
     }
     let row = i / width;
-    let token = ints[TOKENS + first_position(p.f2, p.f1) + row];
-    dst[p.f3 + i] = q4_value(p.f4, p.f7, width, token, i % width) * bitcast<f32>(p.f5);
+    let token = ints[TOKENS + first_position(embed_stated(), embed_first()) + row];
+    dst[i] = value(embed_kind(), embed_at() * 4u + token * row_bytes(embed_kind(), width), i % width) * bitcast<f32>(embed_scale());
 }
 
-// Rows of src written for a matrix multiply (`put_block`), each value
-// times src's at the same place of other rows where those are given: an
-// invocation a block of 32. Numbers: rows, their values, their place,
-// their stride, the rows' values and scales in `ints`, the path, the
-// other rows' place (NONE: none) and stride.
+// Rows of src (from its start) written for a matrix multiply
+// (`put_block`), each value times src's at the same place of other rows
+// where those are given (`times`; NONE: none): an invocation a block of
+// Q8_BLOCK. The rows' values and scales go in `ints`.
 @compute @workgroup_size(256)
 fn quant(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let i = gid.x + gid.y * groups.x * 256u;
-    let blocks = p.f1 / 32u;
-    if (i >= p.f0 * blocks) {
+    let i = linear_id(gid, groups);
+    let blocks = quant_width() / Q8_BLOCK;
+    if (i >= quant_rows() * blocks) {
         return;
     }
     let row = i / blocks;
     let block = i % blocks;
-    let at = p.f2 + row * p.f3 + block * 32u;
+    let at = row * quant_stride() + block * Q8_BLOCK;
     var times = NONE;
-    if (p.f7 != NONE) {
-        times = p.f7 + row * p.f8 + block * 32u;
+    if (quant_times() != NONE) {
+        times = quant_times() + row * quant_times_stride() + block * Q8_BLOCK;
     }
-    put_block(true, at, times, row, block, blocks, p.f4, p.f5, p.f6);
+    put_block(true, at, times, row, block, blocks, quant_qa(), quant_qs(), quant_mode());
 }
 
 // The residual stream's step between matrices, a workgroup a row of
 // dst: src's row RMS-normed and added (ADD), the row scaled (SCALE), then
 // written for a matrix multiply (OUT), RMS-normed first where it has a
-// norm. Numbers: the width (at most 4096), the rows' place in dst, src's
-// place and stride, the added norm, the scalar, the written norm (NONE:
-// none), the row's values and scales in `ints`, the path, the flags, the
-// first row in dst.
-const ADD: u32 = 1u;
-const SCALE: u32 = 2u;
-const OUT: u32 = 4u;
-
+// norm (NONE: none). The width is at most 4096; src's stride is from its
+// start; the row's values and scales go in `ints`.
 @compute @workgroup_size(256)
 fn residual(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: vec3<u32>) {
     let r = wid.x;
-    let k = p.f0;
-    let flags = p.f10;
-    let x = p.f1 + (p.f11 + r) * k;
-    let h = p.f2 + r * p.f3;
+    let k = residual_width();
+    let flags = residual_flags();
+    let x = (residual_x_row() + r) * k;
+    let h = r * residual_stride();
     for (var i = lid; i < k; i += 256u) {
         staged[i] = dst[x + i];
     }
@@ -65,13 +58,13 @@ fn residual(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wi
         for (var i = lid; i < k; i += 256u) {
             ss += src[h + i] * src[h + i];
         }
-        let inv = pow(wg_sum(lid, ss) / f32(k) + EPS, -0.5);
+        let inv = pow(sum256(lid, ss) / f32(k) + EPS, -0.5);
         for (var i = lid; i < k; i += 256u) {
-            staged[i] = staged[i] + src[h + i] * inv * aux[p.f4 + i];
+            staged[i] = staged[i] + src[h + i] * inv * aux[residual_add() + i];
         }
     }
     if ((flags & SCALE) != 0u) {
-        let s = aux[p.f5];
+        let s = aux[residual_scalar()];
         for (var i = lid; i < k; i += 256u) {
             staged[i] = staged[i] * s;
         }
@@ -84,51 +77,48 @@ fn residual(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wi
     if ((flags & OUT) == 0u) {
         return;
     }
-    if (p.f6 != NONE) {
+    if (residual_norm() != NONE) {
         var ss = 0.0;
         for (var i = lid; i < k; i += 256u) {
             ss += staged[i] * staged[i];
         }
-        let inv = pow(wg_sum(lid, ss) / f32(k) + EPS, -0.5);
+        let inv = pow(sum256(lid, ss) / f32(k) + EPS, -0.5);
         for (var i = lid; i < k; i += 256u) {
-            staged[i] = staged[i] * inv * aux[p.f6 + i];
+            staged[i] = staged[i] * inv * aux[residual_norm() + i];
         }
     }
     workgroupBarrier();
-    let blocks = k / 32u;
+    let blocks = k / Q8_BLOCK;
     for (var b = lid; b < blocks; b += 256u) {
-        put_block(false, b * 32u, NONE, r, b, blocks, p.f7, p.f8, p.f9);
+        put_block(false, b * Q8_BLOCK, NONE, r, b, blocks, residual_qa(), residual_qs(), residual_mode());
     }
 }
 
 // The per-layer inputs of rows, a workgroup a row, an invocation a value:
 // the layer's slice of the embeddings' projection scaled and RMS-normed,
-// plus the token's per-layer embedding scaled, times 1/√2. Numbers: rows,
-// the first position, whether it is the decoder's, the projection's
-// place (src) and stride, the layer's slice in it, the norm, the per-layer
-// embeddings in `wq`, where they go, the width, the projection's first
-// row, its scale and the embeddings' (f32 bits), the tokens.
+// plus the token's per-layer embedding scaled, times 1/√2. The projection
+// is src (its stride from its start), the per-layer embeddings are in
+// `wq`, the scales are f32 bits.
 @compute @workgroup_size(256)
 fn per_layer(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: vec3<u32>) {
     let r = wid.x;
-    let width = p.f9;
+    let width = per_layer_width();
     var v = 0.0;
     if (lid < width) {
-        v = src[p.f3 + (p.f10 + r) * p.f4 + p.f5 + lid] * bitcast<f32>(p.f11);
+        v = src[(per_layer_x_row() + r) * per_layer_stride() + per_layer_slice() + lid] * bitcast<f32>(per_layer_scale());
     }
-    let inv = pow(wg_sum(lid, v * v) / f32(width) + EPS, -0.5);
+    let inv = pow(sum256(lid, v * v) / f32(width) + EPS, -0.5);
     if (lid >= width) {
         return;
     }
-    let token = ints[TOKENS + first_position(p.f2, p.f1) + r];
-    let e = q4_value(p.f7, p.f13, width, token, lid) * bitcast<f32>(p.f12);
-    dst[p.f8 + r * width + lid] = (v * inv * aux[p.f6 + lid] + e) * 0.70710678;
+    let token = ints[TOKENS + first_position(per_layer_stated(), per_layer_first()) + r];
+    let e = value(per_layer_kind(), per_layer_at() * 4u + token * row_bytes(per_layer_kind(), width), lid) * bitcast<f32>(per_layer_embed_scale());
+    dst[per_layer_out() + r * width + lid] = (v * inv * aux[per_layer_norm() + lid] + e) * HALF_SQRT2;
 }
 
 // The next token: the largest of the head's workgroups' largest (the
 // first of equals), put after the decoder's position, which moves on to
-// it (not past the cache's last). Numbers: the workgroups, their largest
-// in `ints`, the cache's positions.
+// it (not past the cache's last). The workgroups' largest are in `ints`.
 var<workgroup> next_value: array<f32, 256>;
 var<workgroup> next_token: array<u32, 256>;
 
@@ -136,9 +126,9 @@ var<workgroup> next_token: array<u32, 256>;
 fn argmax(@builtin(local_invocation_index) lid: u32) {
     var v = -3.4e38;
     var t = 0xFFFFFFFFu;
-    for (var j = lid; j < p.f0; j += 256u) {
-        let x = bitcast<f32>(ints[p.f1 + 2u * j]);
-        let i = ints[p.f1 + 2u * j + 1u];
+    for (var j = lid; j < argmax_groups(); j += 256u) {
+        let x = bitcast<f32>(ints[argmax_best() + 2u * j]);
+        let i = ints[argmax_best() + 2u * j + 1u];
         if (x > v || (x == v && i < t)) {
             v = x;
             t = i;
@@ -159,7 +149,7 @@ fn argmax(@builtin(local_invocation_index) lid: u32) {
     }
     if (lid == 0u) {
         let pos = ints[0];
-        if (pos + 1u < p.f2) {
+        if (pos + 1u < argmax_positions()) {
             ints[TOKENS + pos + 1u] = next_token[0];
             ints[0] = pos + 1u;
         }

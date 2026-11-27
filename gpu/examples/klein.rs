@@ -23,7 +23,7 @@
 //! holds the tokens, the noise, the encoder's hidden states, the
 //! references' latents, the transformer's first step, the decoder and the
 //! whole picture against the reference's f32 dumps in `DIR/rust/ref/`.
-//! `--full` runs the painter in f32 throughout (no tensor cores; the text
+//! `--full` runs the drawer in f32 throughout (no tensor cores; the text
 //! encoder always is: its f16 inputs cost the picture ten times its own
 //! rounding, for 0.1 s a prompt); `--profile` prints each kernel's GPU
 //! time for one picture.
@@ -31,8 +31,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use jodel_gpu::image::{noise, Embeds, Painter, Part, Picture, Precision, TextEncoder, Tokenizer};
+use jodel_gpu::image::{noise, Drawer, Embeds, Part, Picture, TextEncoder, Tokenizer};
 use jodel_gpu::profile;
+use jodel_gpu::Precision;
 use jodel_tensors::json::Json;
 use jodel_tensors::SafeTensors;
 
@@ -158,15 +159,14 @@ fn single(a: &Args) {
     drop(encoder);
     println!("prompt encoded in {:.1} s", t.elapsed().as_secs_f64());
     let t = Instant::now();
-    let mut painter =
-        Painter::load(&a.models.join(KLEIN), &a.models.join(VAE), a.precision).unwrap();
-    println!("painter loaded in {:.1} s", t.elapsed().as_secs_f64());
+    let mut drawer = Drawer::load(&a.models.join(KLEIN), &a.models.join(VAE), a.precision).unwrap();
+    println!("drawer loaded in {:.1} s", t.elapsed().as_secs_f64());
     let refs: Vec<Picture> = a.refs.iter().map(|p| read_png(p)).collect();
     let t = Instant::now();
     if a.profile {
         profile::start(profile::Detail::Kernels);
     }
-    let picture = painter.paint(&embeds, a.seed, a.size, &refs).unwrap();
+    let picture = drawer.paint(&embeds, a.seed, a.size, &refs).unwrap();
     if a.profile {
         print_profile();
     }
@@ -243,11 +243,11 @@ fn bakeoff(a: &Args, dir: &Path) {
     let scenes = scenes(dir);
     let mut peak = Peak(0);
     println!(
-        "planned: encoder {} + {} working; painter {} + {} working at {}x{} with a 512² reference",
-        gb(TextEncoder::footprint().resident),
-        gb(TextEncoder::footprint().working),
-        gb(Painter::footprint(a.size.0, a.size.1, &[(512, 512)]).resident),
-        gb(Painter::footprint(a.size.0, a.size.1, &[(512, 512)]).working),
+        "planned: encoder {} + {} working; drawer {} + {} working at {}x{} with a 512² reference",
+        gb(TextEncoder::planned().resident),
+        gb(TextEncoder::planned().working),
+        gb(Drawer::planned(a.size.0, a.size.1, &[(512, 512)]).resident),
+        gb(Drawer::planned(a.size.0, a.size.1, &[(512, 512)]).working),
         a.size.0,
         a.size.1
     );
@@ -260,7 +260,7 @@ fn bakeoff(a: &Args, dir: &Path) {
         .map(|s| encoder.encode(&s.1).unwrap())
         .collect();
     let encoding = t.elapsed().as_secs_f64() / scenes.len() as f64;
-    let encoder_bytes = encoder.bytes();
+    let encoder_bytes = encoder.held();
     peak.sample(encoder.reserved());
     let mut kept = None;
     if a.turns {
@@ -269,25 +269,24 @@ fn bakeoff(a: &Args, dir: &Path) {
         kept = Some(encoder);
     }
     let t = Instant::now();
-    let mut painter =
-        Painter::load(&a.models.join(KLEIN), &a.models.join(VAE), a.precision).unwrap();
+    let mut drawer = Drawer::load(&a.models.join(KLEIN), &a.models.join(VAE), a.precision).unwrap();
     let painter_load = t.elapsed();
     println!(
         "{} ({}), {}",
-        painter.gpu_name(),
-        if painter.tensor_cores() {
+        drawer.gpu_name(),
+        if drawer.tensor_cores() {
             "tensor cores"
         } else {
             "f32"
         },
         if a.turns {
-            "the encoder freed before the painter loaded"
+            "the encoder freed before the drawer loaded"
         } else {
             "both kept loaded"
         }
     );
     println!(
-        "load: text encoder {:.1} s ({} on the GPU), painter {:.1} s",
+        "load: text encoder {:.1} s ({} on the GPU), drawer {:.1} s",
         encoder_load.as_secs_f64(),
         gb(encoder_bytes.resident),
         painter_load.as_secs_f64()
@@ -299,22 +298,22 @@ fn bakeoff(a: &Args, dir: &Path) {
         .collect();
     // Warm-up: the first scene once.
     let t = Instant::now();
-    painter
+    drawer
         .paint(&embeds[0], scenes[0].2, a.size, &pictures[0])
         .unwrap();
     println!("warm-up picture: {:.2} s", t.elapsed().as_secs_f64());
-    peak.sample(painter.reserved());
+    peak.sample(drawer.reserved());
     for (i, (tag, _, seed, _)) in scenes.iter().enumerate() {
         let t = Instant::now();
-        let picture = painter
+        let picture = drawer
             .paint(&embeds[i], *seed, a.size, &pictures[i])
             .unwrap();
         let took = t.elapsed().as_secs_f64();
-        peak.sample(painter.reserved());
+        peak.sample(drawer.reserved());
         // Again with each submission stamped: the GPU's own time (the wall
         // time also counts other work on the machine and the GPU).
         profile::start(profile::Detail::Submissions);
-        painter
+        drawer
             .paint(&embeds[i], *seed, a.size, &pictures[i])
             .unwrap();
         let gpu: f64 = profile::take()
@@ -341,22 +340,22 @@ fn bakeoff(a: &Args, dir: &Path) {
             path.display()
         );
     }
-    let bytes = painter.bytes();
+    let bytes = drawer.held();
     println!(
-        "GPU memory: painter {} + {} working{}; the device's allocator at its peak {}",
+        "GPU memory: drawer {} + {} working{}; the device's allocator at its peak {}",
         gb(bytes.resident),
         gb(bytes.working),
         kept.as_ref().map_or(String::new(), |e| format!(
             ", text encoder {} + {}",
-            gb(e.bytes().resident),
-            gb(e.bytes().working)
+            gb(e.held().resident),
+            gb(e.held().working)
         )),
         gb(peak.0)
     );
     if a.profile {
         profile::start(profile::Detail::Kernels);
         let t = Instant::now();
-        painter
+        drawer
             .paint(&embeds[0], scenes[0].2, a.size, &pictures[0])
             .unwrap();
         println!("profiled picture: {:.2} s", t.elapsed().as_secs_f64());
@@ -399,7 +398,7 @@ fn check(a: &Args, dir: &Path) {
     // The tokens.
     let tok = Tokenizer::open(&a.models.join(QWEN)).unwrap();
     for (tag, prompt, _, _) in &scenes {
-        let (ids, real) = tok.prompt(prompt).unwrap();
+        let (ids, real) = tok.prompt(prompt);
         let want: Vec<u32> = tokens
             .get(tag)
             .and_then(|v| v.get("ids"))
@@ -423,7 +422,7 @@ fn check(a: &Args, dir: &Path) {
             .iter()
             .map(|v| v.as_f64().unwrap() as u32)
             .collect();
-        let got = tok.tokens(s).unwrap();
+        let got = tok.tokens(s);
         println!(
             "tokens {s:?}: {}",
             if got == want {
@@ -485,15 +484,14 @@ fn check(a: &Args, dir: &Path) {
         });
     }
     drop(encoder);
-    // The painter's parts, from the reference's inputs.
-    let mut painter =
-        Painter::load(&a.models.join(KLEIN), &a.models.join(VAE), a.precision).unwrap();
+    // The drawer's parts, from the reference's inputs.
+    let mut drawer = Drawer::load(&a.models.join(KLEIN), &a.models.join(VAE), a.precision).unwrap();
     let size = (1344, 768);
     for (i, (tag, _, seed, refs)) in scenes.iter().enumerate() {
         let pictures: Vec<Picture> = refs.iter().map(|p| read_png(p)).collect();
         let start = n.get(&format!("{tag}_bf16"), &[1, 128, 48, 84]).unwrap();
         let rf = open(&format!("refs_{tag}.safetensors"));
-        let got = painter
+        let got = drawer
             .run(
                 Part::References,
                 &reference_embeds[i],
@@ -522,7 +520,7 @@ fn check(a: &Args, dir: &Path) {
             .collect();
         println!("references' latents {tag}: {}", error(&got, &want));
         let run = open(&format!("run_{tag}.safetensors"));
-        let got = painter
+        let got = drawer
             .run(
                 Part::FirstStep,
                 &reference_embeds[i],
@@ -534,12 +532,12 @@ fn check(a: &Args, dir: &Path) {
         let want = run.get("step0_pred", &[4032, 128]).unwrap();
         println!("first step {tag}: {}", error(&got, &want));
         let latents = run.get("final_packed", &[4032, 128]).unwrap();
-        let got = painter
+        let got = drawer
             .run(Part::Decode, &reference_embeds[i], &latents, size, &[])
             .unwrap();
         let want = transposed(&run.get("image", &[3, 768, 1344]).unwrap(), 3, 768 * 1344);
         println!("decoder {tag}: {}", error(&got, &want));
-        let picture = painter
+        let picture = drawer
             .paint(&reference_embeds[i], *seed, size, &pictures)
             .unwrap();
         let f32_ref = read_png(&r.join(format!("f32_{tag}.png")));

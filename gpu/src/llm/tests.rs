@@ -1,13 +1,16 @@
 //! The language model's kernels: through naga's validation and its Metal
 //! and HLSL writers (on any machine), and each on small shapes against a
-//! reference on the processor, on both paths (where there is a usable GPU:
-//! skipped with a note where there is none).
+//! reference on the processor, on both paths and for every kind of
+//! matrix (where there is a usable GPU: skipped with a note where there
+//! is none). The blocks' reference is llama.cpp's `dequantize_row_*`, as
+//! written there.
 
-use super::pack::{put, Matrix};
-use super::plan::TOKENS;
+use super::kernels::{PLAIN_KINDS, Q8_KINDS, TOKENS};
+use super::model::Matrix;
 use super::*;
-use crate::engine::{params, Op, PARAM_STRIDE};
-use jodel_tensors::half::f16_to_f32;
+use crate::engine::{params, Kernels, Op, PARAM_STRIDE};
+use jodel_tensors::gguf::Kind;
+use jodel_tensors::half::{bf16_to_f32, f16_to_f32, f32_to_f16};
 
 /// The kernels parse and validate, and Metal's and DirectX's writers take
 /// them (as wgpu would, on a Mac and through DirectX 12).
@@ -123,22 +126,183 @@ impl Rig {
     }
 }
 
-/// `values` (`rows × cols`) as a 4-bit matrix at word `at` of a buffer,
-/// and what it holds (dequantised).
-fn matrix(values: &[f32], rows: usize, cols: usize, at: usize) -> (Vec<u32>, Matrix, Vec<f32>) {
-    let m = Matrix { at, rows, cols };
-    let mut words = vec![0u32; at + rows * cols / 32 * 5 + 4];
-    put(&mut words, m, values);
-    let mut held = vec![0.0; rows * cols];
-    for g in 0..rows * cols / 32 {
-        let s = words[m.scales() + g];
-        let (scale, offset) = (f16_to_f32(s as u16), f16_to_f32((s >> 16) as u16));
-        for j in 0..32 {
-            let n = (words[at + g * 4 + j / 8] >> (4 * (j % 8))) & 15;
-            held[g * 32 + j] = offset + n as f32 * scale;
+/// The half at `b[i..]`.
+fn half(b: &[u8], i: usize) -> f32 {
+    f16_to_f32(u16::from_le_bytes([b[i], b[i + 1]]))
+}
+
+/// A Q4_K or Q5_K block's sub-block `j`'s scale and minimum (llama.cpp's
+/// `get_scale_min_k4`).
+fn scale_min_k4(j: usize, q: &[u8]) -> (f32, f32) {
+    if j < 4 {
+        (f32::from(q[j] & 63), f32::from(q[j + 4] & 63))
+    } else {
+        (
+            f32::from((q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4)),
+            f32::from((q[j + 4] >> 4) | ((q[j] >> 6) << 4)),
+        )
+    }
+}
+
+/// The values of one block `b` of `kind`.
+fn dequantise(kind: Kind, b: &[u8]) -> Vec<f32> {
+    let mut y = vec![0.0f32; kind.block().0];
+    match kind {
+        Kind::F32 => y[0] = f32::from_le_bytes(b[..4].try_into().unwrap()),
+        Kind::Bf16 => y[0] = bf16_to_f32(u16::from_le_bytes([b[0], b[1]])),
+        Kind::Q4K | Kind::Q5K => {
+            let (d, min) = (half(b, 0), half(b, 2));
+            let scales = &b[4..16];
+            let (qh, qs) = if kind == Kind::Q5K {
+                (&b[16..48], &b[48..176])
+            } else {
+                (&b[..0], &b[16..144])
+            };
+            let fifth = |l: usize, bit: usize| {
+                if qh.is_empty() || qh[l] & (1 << bit) == 0 {
+                    0.0
+                } else {
+                    16.0
+                }
+            };
+            for j in 0..4 {
+                let (sc1, m1) = scale_min_k4(2 * j, scales);
+                let (sc2, m2) = scale_min_k4(2 * j + 1, scales);
+                let (d1, m1, d2, m2) = (d * sc1, min * m1, d * sc2, min * m2);
+                for l in 0..32 {
+                    let q = qs[32 * j + l];
+                    y[64 * j + l] = d1 * (f32::from(q & 0xF) + fifth(l, 2 * j)) - m1;
+                    y[64 * j + 32 + l] = d2 * (f32::from(q >> 4) + fifth(l, 2 * j + 1)) - m2;
+                }
+            }
+        }
+        Kind::Q6K => {
+            let d = half(b, 208);
+            for n in 0..2 {
+                let (ql, qh) = (&b[64 * n..], &b[128 + 32 * n..]);
+                let sc = |i: usize| f32::from(b[192 + 8 * n + i] as i8);
+                for l in 0..32 {
+                    let is = l / 16;
+                    let q1 = i32::from((ql[l] & 0xF) | ((qh[l] & 3) << 4)) - 32;
+                    let q2 = i32::from((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+                    let q3 = i32::from((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+                    let q4 = i32::from((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+                    y[128 * n + l] = d * sc(is) * q1 as f32;
+                    y[128 * n + l + 32] = d * sc(is + 2) * q2 as f32;
+                    y[128 * n + l + 64] = d * sc(is + 4) * q3 as f32;
+                    y[128 * n + l + 96] = d * sc(is + 6) * q4 as f32;
+                }
+            }
         }
     }
+    y
+}
+
+/// A random block of `kind`: random bytes, its scales small halves (as
+/// a quantiser would write them for weights of about a tenth), or random
+/// values.
+fn block(noise: &mut Noise, kind: Kind) -> Vec<u8> {
+    let bytes = kind.block().1;
+    let mut b: Vec<u8> = (0..bytes)
+        .map(|_| ((noise.next() + 1.0) * 128.0) as u8)
+        .collect();
+    let put_half = |b: &mut [u8], at: usize, v: f32| {
+        b[at..at + 2].copy_from_slice(&f32_to_f16(v).to_le_bytes());
+    };
+    match kind {
+        Kind::F32 => b.copy_from_slice(&(noise.next() * 0.2).to_le_bytes()),
+        Kind::Bf16 => {
+            let bits = (noise.next() * 0.2).to_bits() >> 16;
+            b.copy_from_slice(&(bits as u16).to_le_bytes());
+        }
+        Kind::Q4K | Kind::Q5K => {
+            put_half(&mut b, 0, 0.0002 + noise.next().abs() * 0.0002);
+            put_half(&mut b, 2, 0.0002 + noise.next().abs() * 0.0002);
+        }
+        Kind::Q6K => put_half(&mut b, 208, 0.00005 + noise.next().abs() * 0.00005),
+    }
+    b
+}
+
+/// A random matrix of `rows × cols` of `kind` at word `at` of a buffer:
+/// its words, its place, and the values it holds.
+fn matrix(
+    noise: &mut Noise,
+    kind: Kind,
+    (rows, cols): (usize, usize),
+    at: usize,
+) -> (Vec<u32>, Matrix, Vec<f32>) {
+    let m = Matrix {
+        at,
+        rows,
+        cols,
+        kind,
+    };
+    let mut bytes = vec![0u8; at * 4];
+    let mut held = Vec::with_capacity(rows * cols);
+    for _ in 0..rows * cols / kind.block().0 {
+        let b = block(noise, kind);
+        held.extend(dequantise(kind, &b));
+        bytes.extend(b);
+    }
+    bytes.resize(bytes.len().next_multiple_of(4) + 4, 0);
+    let words = bytes
+        .chunks_exact(4)
+        .map(|w| u32::from_le_bytes(w.try_into().unwrap()))
+        .collect();
     (words, m, held)
+}
+
+/// Every kind a matrix multiply takes, with its paths (q8 where it has
+/// one).
+fn kinds_and_paths() -> Vec<(Kind, bool)> {
+    PLAIN_KINDS
+        .iter()
+        .flat_map(|&k| {
+            let q8 = Q8_KINDS.contains(&k).then_some((k, true));
+            q8.into_iter().chain([(k, false)])
+        })
+        .collect()
+}
+
+/// A Q4_K, Q5_K and Q6_K block of known values: llama.cpp's layout as its
+/// reference reads it, on a block written by hand.
+#[test]
+fn blocks_hold_what_llama_cpp_reads_from_them() {
+    // Q4_K: d 1, dmin 0.5, sub-block 0 scale 2 and minimum 3, sub-block 5
+    // (scales' high bits in bytes 1 and 5, low ones in byte 9) scale 33
+    // and minimum 18; value 0 a 7 (low nibble of byte 0), value 32 + 2 of
+    // sub-block 5 (chunk 2, high nibble of its byte 2) a 9.
+    let mut b = vec![0u8; 144];
+    b[..2].copy_from_slice(&f32_to_f16(1.0).to_le_bytes());
+    b[2..4].copy_from_slice(&f32_to_f16(0.5).to_le_bytes());
+    b[4] = 2;
+    b[8] = 3;
+    b[4 + 9] = (33 & 15) | ((18 & 15) << 4);
+    b[4 + 1] = (33 >> 4) << 6;
+    b[4 + 5] = (18 >> 4) << 6;
+    b[16] = 7;
+    b[16 + 64 + 2] = 9 << 4;
+    let y = dequantise(Kind::Q4K, &b);
+    assert_eq!(
+        (y[0], y[1], y[5 * 32 + 2]),
+        (14.0 - 1.5, -1.5, 33.0 * 9.0 - 9.0)
+    );
+    // Q5_K: the same, value 0's fifth bit set (bit 0 of qh's byte 0).
+    let mut b5 = b[..16].to_vec();
+    b5.extend([1u8].iter().chain(&[0u8; 31]));
+    b5.extend(&b[16..]);
+    let y = dequantise(Kind::Q5K, &b5);
+    assert_eq!(y[0], 2.0 * 23.0 - 1.5);
+    // Q6_K: d 0.5; value 64 + 3 of the first half (high nibble of ql's
+    // byte 3, qh's byte 3 bits 4 and 5) of 6 bits 0b10_0101 = 37, its
+    // scale (index 4) -3: 0.5 · -3 · (37 − 32).
+    let mut b = vec![0u8; 210];
+    b[208..].copy_from_slice(&f32_to_f16(0.5).to_le_bytes());
+    b[3] = 0b0101 << 4;
+    b[128 + 3] = 0b10 << 4;
+    b[192 + 4] = (-3i8) as u8;
+    assert_eq!(dequantise(Kind::Q6K, &b)[67], -7.5);
 }
 
 /// Rows as the GPU writes them for a matrix multiply (`put_block`): the
@@ -165,15 +329,11 @@ fn written(rows: &[f32], q8: bool, qs: usize) -> (Vec<u32>, Vec<f32>) {
                 }
             })
             .collect();
-        for w in 0..4 {
-            let o = w * 8;
-            let pack = |a: [usize; 4]| {
-                a.iter().enumerate().fold(0u32, |acc, (i, &j)| {
-                    acc | ((q[o + j] as u32 & 255) << (8 * i))
-                })
-            };
-            words[b * 8 + 2 * w] = pack([0, 2, 4, 6]);
-            words[b * 8 + 2 * w + 1] = pack([1, 3, 5, 7]);
+        for (w, four) in q.chunks_exact(4).enumerate() {
+            words[b * 8 + w] = four
+                .iter()
+                .rev()
+                .fold(0u32, |acc, &n| (acc << 8) | (n as u32 & 255));
         }
         words[qs + 2 * b] = d.to_bits();
         words[qs + 2 * b + 1] = (d * q.iter().sum::<i32>() as f32).to_bits();
@@ -221,7 +381,7 @@ fn rows_written_for_a_matrix_multiply_are_the_references() {
         };
         let got = rig.run(
             Kernel::Quant,
-            &[rows, k, 0, k, 0, qs, usize::from(q8), rows * k, k],
+            &[rows, k, k, 0, qs, usize::from(q8), rows * k, k],
             crate::engine::spread(rows * k / 32),
             &data,
         );
@@ -229,14 +389,17 @@ fn rows_written_for_a_matrix_multiply_are_the_references() {
     }
 }
 
+/// Each kind's rows of 768 (three blocks: a Q6_K row's second block, and
+/// every odd row, start halfway into a word), on each of its paths; 48
+/// sixteens a row over 32 invocations leave a tail.
 #[test]
-fn a_row_through_a_matrix_is_the_reference_for_every_tail() {
+fn a_row_through_a_matrix_is_the_reference_for_every_kind_and_tail() {
     let Some(rig) = rig() else { return };
     let mut noise = Noise(2);
-    let (n, k, at) = (64, 160, 6);
-    let (wq, m, held) = matrix(&noise.values(n * k, 0.2), n, k, at);
+    let (n, k, at) = (64, 768, 6);
     let x = noise.values(k, 2.0);
-    for q8 in PATHS {
+    for (kind, q8) in kinds_and_paths() {
+        let (wq, m, held) = matrix(&mut noise, kind, (n, k), at);
         let qs = k;
         let (ints, xs) = written(&x, q8, qs);
         let products: Vec<f32> = (0..n)
@@ -258,7 +421,11 @@ fn a_row_through_a_matrix_is_the_reference_for_every_tail() {
                 ints: [ints.clone(), vec![0; 2 * n / 16]].concat(),
                 ..Data::default()
             };
-            let kernel = if q8 { Kernel::GemvQ8 } else { Kernel::GemvF32 };
+            let kernel = if q8 {
+                Kernel::GemvQ8(kind)
+            } else {
+                Kernel::GemvF32(kind)
+            };
             let got = rig.run(
                 kernel,
                 &[1, n, k, 0, k, m.at, 0, n, 0, flags, qs, best],
@@ -266,7 +433,7 @@ fn a_row_through_a_matrix_is_the_reference_for_every_tail() {
                 &data,
             );
             let e = off(&got.dst[..want.len()], &want);
-            assert!(e < 1e-5, "q8 {q8}, flags {flags}: {e}");
+            assert!(e < 1e-5, "{kind:?}, q8 {q8}, flags {flags}: {e}");
             if flags == 128 {
                 for g in 0..n / 16 {
                     let part = &want[g * 16..g * 16 + 16];
@@ -279,13 +446,13 @@ fn a_row_through_a_matrix_is_the_reference_for_every_tail() {
 }
 
 #[test]
-fn rows_through_a_matrix_are_the_reference() {
+fn rows_through_a_matrix_are_the_reference_for_every_kind() {
     let Some(rig) = rig() else { return };
     let mut noise = Noise(3);
-    let (rows, n, k, at) = (70, 128, 96, 2);
-    let (wq, m, held) = matrix(&noise.values(n * k, 0.2), n, k, at);
+    let (rows, n, k, at) = (70, 128, 768, 2);
     let x = noise.values(rows * k, 2.0);
-    for q8 in PATHS {
+    for (kind, q8) in kinds_and_paths() {
+        let (wq, m, held) = matrix(&mut noise, kind, (n, k), at);
         let qs = rows * k;
         let (ints, xs) = written(&x, q8, qs);
         let products: Vec<f32> = (0..rows * n)
@@ -306,7 +473,11 @@ fn rows_through_a_matrix_are_the_reference() {
                 ints: ints.clone(),
                 ..Data::default()
             };
-            let kernel = if q8 { Kernel::GemmQ8 } else { Kernel::GemmF32 };
+            let kernel = if q8 {
+                Kernel::GemmQ8(kind)
+            } else {
+                Kernel::GemmF32(kind)
+            };
             let got = rig.run(
                 kernel,
                 &[rows, n, k, 0, k, m.at, 0, width, 0, flags, qs],
@@ -314,7 +485,7 @@ fn rows_through_a_matrix_are_the_reference() {
                 &data,
             );
             let e = off(&got.dst, &want);
-            assert!(e < 1e-5, "q8 {q8}, flags {flags}: {e}");
+            assert!(e < 1e-5, "{kind:?}, q8 {q8}, flags {flags}: {e}");
         }
     }
 }
@@ -351,7 +522,7 @@ fn the_residual_step_is_the_reference() {
         };
         let got = rig.run(
             Kernel::Residual,
-            &[k, 0, 0, k, 0, 2 * k, k, 0, qs, usize::from(q8), 7, 0],
+            &[k, k, 0, 2 * k, k, 0, qs, usize::from(q8), 7, 0],
             [rows as u32, 1, 1],
             &data,
         );
@@ -373,8 +544,7 @@ fn held(words: &[u32], n: usize, q8: bool, qs: usize) -> Vec<f32> {
     (0..n)
         .map(|i| {
             let (b, j) = (i / 32, i % 32);
-            let word = words[b * 8 + (j / 8) * 2 + (j % 2)];
-            let byte = (word >> (8 * ((j % 8) / 2))) as u8 as i8;
+            let byte = (words[b * 8 + j / 4] >> (8 * (j % 4))) as u8 as i8;
             f32::from(byte) * f32::from_bits(words[qs + 2 * b])
         })
         .collect()
@@ -384,33 +554,44 @@ fn held(words: &[u32], n: usize, q8: bool, qs: usize) -> Vec<f32> {
 fn embeddings_and_per_layer_inputs_are_the_references() {
     let Some(rig) = rig() else { return };
     let mut noise = Noise(5);
-    let (vocab, width, at) = (32, 64, 4);
-    let (wq, m, table) = matrix(&noise.values(vocab * width, 0.5), vocab, width, at);
+    let (vocab, width, at) = (32, 256, 4);
     let tokens = [7u32, 3, 31];
     let mut ints = vec![0u32; TOKENS];
     ints[0] = 1;
     ints.extend(tokens);
-    // From position 1 (the decoder's), two rows.
-    let data = Data {
-        dst: vec![0.0; 2 * width],
-        wq: wq.clone(),
-        ints: ints.clone(),
-        ..Data::default()
-    };
-    let got = rig.run(
-        Kernel::Embed,
-        &[2, 0, 1, 0, m.at, 3.0f32.to_bits() as usize, width, vocab],
-        crate::engine::spread(2 * width),
-        &data,
-    );
-    let want: Vec<f32> = [3usize, 31]
-        .iter()
-        .flat_map(|&t| table[t * width..(t + 1) * width].iter().map(|v| v * 3.0))
-        .collect();
-    assert!(off(&got.dst, &want) < 1e-7);
+    // From position 1 (the decoder's), two rows, from a table of each kind.
+    for kind in [Kind::Q4K, Kind::Q5K, Kind::Q6K, Kind::Bf16, Kind::F32] {
+        let (wq, m, table) = matrix(&mut noise, kind, (vocab, width), at);
+        let data = Data {
+            dst: vec![0.0; 2 * width],
+            wq,
+            ints: ints.clone(),
+            ..Data::default()
+        };
+        let got = rig.run(
+            Kernel::Embed,
+            &[
+                2,
+                0,
+                1,
+                m.at,
+                3.0f32.to_bits() as usize,
+                width,
+                kind.id() as usize,
+            ],
+            crate::engine::spread(2 * width),
+            &data,
+        );
+        let want: Vec<f32> = [3usize, 31]
+            .iter()
+            .flat_map(|&t| table[t * width..(t + 1) * width].iter().map(|v| v * 3.0))
+            .collect();
+        assert!(off(&got.dst, &want) < 1e-6, "{kind:?}");
+    }
     // The per-layer inputs of rows 0 and 1 (projection rows 1 and 2), a
-    // layer's slice from 32 of 96.
-    let (stride, col, scale, embed_scale) = (96, 32, 0.25f32, 2.0f32);
+    // layer's slice from 256 of 768, its embeddings Q5_K.
+    let (wq, m, table) = matrix(&mut noise, Kind::Q5K, (vocab, width), at);
+    let (stride, col, scale, embed_scale) = (768, 256, 0.25f32, 2.0f32);
     let pp = noise.values(3 * stride, 3.0);
     let norm = noise.values(width, 1.0);
     let data = Data {
@@ -426,7 +607,6 @@ fn embeddings_and_per_layer_inputs_are_the_references() {
             2,
             0,
             0,
-            0,
             stride,
             col,
             0,
@@ -436,7 +616,7 @@ fn embeddings_and_per_layer_inputs_are_the_references() {
             1,
             scale.to_bits() as usize,
             embed_scale.to_bits() as usize,
-            vocab,
+            Kind::Q5K.id() as usize,
         ],
         [2, 1, 1],
         &data,
@@ -593,7 +773,6 @@ fn prepare(rig: &Rig, heads: &Heads, rows: usize, positions: usize, base: f32) -
             0,
             0,
             d,
-            0,
             12 * d,
             0,
             d,
@@ -661,7 +840,7 @@ fn a_steps_attention_and_a_prompts_are_the_reference() {
         let per_block = 256 / (d / 16);
         let got = rig.run(
             Kernel::Flash,
-            &[rows, 0, d, window, q_at, k_at, v_at, positions, 0, 8, 4],
+            &[rows, 0, d, window, q_at, k_at, v_at, positions, 8, 4],
             [rows.div_ceil(per_block) as u32, 8, 1],
             &data,
         );
@@ -690,7 +869,7 @@ fn a_steps_attention_and_a_prompts_are_the_reference() {
         };
         let parts = rig.run(
             Kernel::Attend,
-            &[d, window, q_at, k_at, v_at, positions, 0, splits],
+            &[d, window, q_at, k_at, v_at, positions, splits],
             [splits as u32, 2, 1],
             &data,
         );
@@ -704,7 +883,7 @@ fn a_steps_attention_and_a_prompts_are_the_reference() {
             };
             let got = rig.run(
                 Kernel::Join,
-                &[d, splits, 0, 0, qs, usize::from(q8), 8],
+                &[d, splits, 0, qs, usize::from(q8), 8],
                 [1, 1, 1],
                 &data,
             );

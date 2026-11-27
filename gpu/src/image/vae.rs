@@ -12,10 +12,8 @@
 //! change) its shortcut's; the attention's queries, keys and values, the
 //! values transposed, the scores and the output.
 
-use jodel_tensors::SafeTensors;
-
 use super::plan::{At, Conv, Mat, Norm, Plan, Tail};
-use super::weights::Packing;
+use super::weights::{Packing, Source};
 
 const GROUPS: usize = 32;
 const EPS: f32 = 1e-6;
@@ -84,19 +82,11 @@ pub(crate) struct Vae {
     bn: (usize, usize),
 }
 
-/// What makes the weights: a convolution's (name, cin, cout, size), a
-/// linear layer's as a 1 × 1 convolution, a vector's (name, length).
-trait Source {
-    fn conv(&mut self, name: &str, shape: (usize, usize, usize)) -> Result<Mat, String>;
-    fn linear(&mut self, name: &str, shape: (usize, usize)) -> Result<Mat, String>;
-    fn vector(&mut self, name: &str, len: usize) -> Result<usize, String>;
-    fn values(&mut self, values: &[f32]) -> usize;
-    fn get(&mut self, name: &str, len: usize) -> Result<Vec<f32>, String>;
-}
-
-/// The checkpoint into a part's packing.
-struct Checkpoint<'p, 'a> {
-    t: &'a SafeTensors,
+/// The checkpoint (or its shapes alone) into a part's packing: a
+/// convolution's weights (name, cin, cout, size), a linear layer's as a
+/// 1 × 1 convolution, a vector's (name, length).
+struct Weights<'p, 'a> {
+    src: Source<'a>,
     pack: &'p mut Packing<'a>,
 }
 
@@ -106,21 +96,22 @@ fn padded(cin: usize) -> usize {
     cin.next_multiple_of(4)
 }
 
-impl Source for Checkpoint<'_, '_> {
+impl Weights<'_, '_> {
     fn conv(
         &mut self,
         name: &str,
         (cin, cout, size): (usize, usize, usize),
     ) -> Result<Mat, String> {
-        self.pack.conv(self.t, name, (cin, cout, size), padded(cin))
+        self.pack
+            .conv(self.src, name, (cin, cout, size), padded(cin))
     }
 
     fn linear(&mut self, name: &str, (cin, cout): (usize, usize)) -> Result<Mat, String> {
-        self.pack.linear(self.t, name, (cin, cout))
+        self.pack.linear(self.src, name, (cin, cout))
     }
 
     fn vector(&mut self, name: &str, len: usize) -> Result<usize, String> {
-        self.pack.bf16_vector(self.t, name, len)
+        self.pack.bf16_vector(self.src, name, len)
     }
 
     fn values(&mut self, values: &[f32]) -> usize {
@@ -128,58 +119,18 @@ impl Source for Checkpoint<'_, '_> {
     }
 
     fn get(&mut self, name: &str, len: usize) -> Result<Vec<f32>, String> {
-        self.t.get(name, &[len])
+        self.src.get(name, len)
     }
 }
 
-/// The weights' shapes alone (for a plan's footprint before loading), and
-/// the bytes they would take.
-struct Shapes {
-    bytes: u64,
-}
-
-impl Source for Shapes {
-    fn conv(&mut self, _: &str, (cin, cout, size): (usize, usize, usize)) -> Result<Mat, String> {
-        let k = size * size * padded(cin);
-        self.bytes += (cout * k.next_multiple_of(32) * 2 + cout * 4) as u64;
-        Ok(Mat {
-            buf: super::plan::Buf::W(0),
-            at: 0,
-            n: cout,
-            k,
-            ldw: k.next_multiple_of(32),
-            format: super::plan::Format::Bf16,
-            bias: Some(0),
-        })
-    }
-
-    fn linear(&mut self, name: &str, (cin, cout): (usize, usize)) -> Result<Mat, String> {
-        self.conv(name, (cin, cout, 1))
-    }
-
-    fn vector(&mut self, _: &str, len: usize) -> Result<usize, String> {
-        self.bytes += (len * 4) as u64;
-        Ok(0)
-    }
-
-    fn values(&mut self, values: &[f32]) -> usize {
-        self.bytes += (values.len() * 4) as u64;
-        0
-    }
-
-    fn get(&mut self, _: &str, len: usize) -> Result<Vec<f32>, String> {
-        Ok(vec![1.0; len])
-    }
-}
-
-fn norm(s: &mut dyn Source, name: &str, c: usize) -> Result<(usize, usize), String> {
+fn norm(s: &mut Weights, name: &str, c: usize) -> Result<(usize, usize), String> {
     Ok((
         s.vector(&format!("{name}.weight"), c)?,
         s.vector(&format!("{name}.bias"), c)?,
     ))
 }
 
-fn resnet(s: &mut dyn Source, name: &str, cin: usize, cout: usize) -> Result<Resnet, String> {
+fn resnet(s: &mut Weights, name: &str, cin: usize, cout: usize) -> Result<Resnet, String> {
     Ok(Resnet {
         cin,
         cout,
@@ -195,7 +146,7 @@ fn resnet(s: &mut dyn Source, name: &str, cin: usize, cout: usize) -> Result<Res
     })
 }
 
-fn middle(s: &mut dyn Source, name: &str) -> Result<Middle, String> {
+fn middle(s: &mut Weights, name: &str) -> Result<Middle, String> {
     let a = format!("{name}.attentions.0");
     Ok(Middle {
         first: resnet(s, &format!("{name}.resnets.0"), MID, MID)?,
@@ -211,19 +162,12 @@ fn middle(s: &mut dyn Source, name: &str) -> Result<Middle, String> {
 }
 
 impl Vae {
-    /// The weights from the checkpoint into `pack`.
-    pub(crate) fn pack<'a>(t: &'a SafeTensors, pack: &mut Packing<'a>) -> Result<Vae, String> {
-        Vae::from(&mut Checkpoint { t, pack })
+    /// The weights from the checkpoint (or its shapes alone) into `pack`.
+    pub(crate) fn pack<'a>(src: Source<'a>, pack: &mut Packing<'a>) -> Result<Vae, String> {
+        Vae::from(&mut Weights { src, pack })
     }
 
-    /// The weights' shapes alone, and the bytes they take.
-    pub(crate) fn shapes() -> (Vae, u64) {
-        let mut s = Shapes { bytes: 0 };
-        let vae = Vae::from(&mut s).expect("shapes alone do not fail");
-        (vae, s.bytes)
-    }
-
-    fn from(s: &mut dyn Source) -> Result<Vae, String> {
+    fn from(s: &mut Weights) -> Result<Vae, String> {
         let mut blocks = Vec::new();
         let mut cin = BLOCKS[0];
         for (i, &c) in BLOCKS.iter().enumerate() {

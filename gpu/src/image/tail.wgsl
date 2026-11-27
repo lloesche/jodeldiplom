@@ -8,46 +8,39 @@
 //
 // Numbers: the engine's `Mul`'s ten (n0 m, n1 n, n2 k, n3 a_off, n4 lda,
 // n5 W's first vector of four words, n6 c_off, n7 ldc, n8 the bias's
-// offset in `small`, n9 its flags: `MM_*`), then n10 the scales' offset in
-// `small`, n11 the scales a row group has, n12 the gates' offset in
-// `src2`, n13 ldw (a multiple of 32), n27 `MX_*`. A convolution's: n14 the
-// input's rows, n15 its columns, n16 its channels (a multiple of 4), n17
-// the output's columns, n18 the kernel's size, n19 its stride, n20 its
-// padding, n21 1 where the input is first doubled (nearest), n22 the group
-// norm's means and inverse spreads in `src2` (a pair per group), n23 its
-// weights' and n24 its biases' offsets in `small`, n25 its channels a
-// group, n26 `GN_*`.
-
-// The engine's flags: the bias added, the products added to what is
-// there, and SwiGLU (here each tile's 128 columns as 64 gates and their
-// 64 ups, silu(gate) · up written at column tile/2 + j); W's values bf16
-// or f32 (else FP8).
-const MM_BIAS: u32 = 1u;
-const MM_ADD: u32 = 2u;
-const MM_SWIGLU: u32 = 64u;
-const MM_BF16: u32 = 4096u;
-const MM_F32: u32 = 8192u;
-// Patches of a convolution for A; the products added times a gate per
-// column.
-const MX_CONV: u32 = 1u;
-const MX_GATED: u32 = 2u;
-// A convolution's input normalized by its groups first, then SiLU.
-const GN_NORM: u32 = 1u;
-const GN_SILU: u32 = 2u;
+// offset in `small`, n9 its flags: `MM_*`), then the plan's own, read
+// through the functions the plan declares (`plan::MM_NUMBERS`): the
+// scales' offset in `small` (`mm_scales`), the scales a row group has
+// (`mm_per`), the gates' offset in `src2` (`mm_gates`), ldw (`mm_ldw`, a
+// multiple of 32), `MX_*` (`mx_flags`). A convolution's: the input's rows
+// and columns (`cv_h`, `cv_w`), its channels (`cv_c`, a multiple of 4),
+// the output's columns (`cv_ow`), the kernel's size, stride and padding
+// (`cv_size`, `cv_stride`, `cv_pad`), 1 where the input is first doubled
+// (`cv_up`, nearest); the group norm's means and inverse spreads in
+// `src2` (`gn_at`, a pair per group), its weights' and biases' offsets in
+// `small` (`gn_weight`, `gn_bias`), its channels a group (`gn_group`),
+// `GN_*` (`gn_flags`).
+//
+// The flags (declared by the plan): the engine's (the bias added, the
+// products added to what is there, and SwiGLU: here each tile's 128
+// columns as 64 gates and their 64 ups, silu(gate) · up written at column
+// tile/2 + j); W's values bf16 or f32 (else FP8); a convolution's patches
+// for A, the products added times a gate per column; a convolution's input
+// normalized by its groups first, then SiLU.
 
 // The tail of one value: the bias, then written, added or gated.
 fn mm_put(row: u32, col: u32, v0: f32) {
-    if (row >= p.n0 || col >= p.n1) {
+    if (row >= mm_m() || col >= mm_n()) {
         return;
     }
     var v = v0;
-    if ((p.n9 & MM_BIAS) != 0u) {
-        v += small[p.n8 + col];
+    if ((mm_flags() & MM_BIAS) != 0u) {
+        v += small[mm_bias() + col];
     }
-    let at = p.n6 + row * p.n7 + col;
-    if ((p.n27 & MX_GATED) != 0u) {
-        dst_put(at, dst_at(at) + src2[p.n12 + col] * v);
-    } else if ((p.n9 & MM_ADD) != 0u) {
+    let at = mm_c() + row * mm_ldc() + col;
+    if ((mx_flags() & MX_GATED) != 0u) {
+        dst_put(at, dst_at(at) + src2[mm_gates() + col] * v);
+    } else if ((mm_flags() & MM_ADD) != 0u) {
         dst_put(at, dst_at(at) + v);
     } else {
         dst_put(at, v);
@@ -65,47 +58,47 @@ fn mm_put4(row: u32, col: u32, v: vec4<f32>) {
 // Four gates `g` and their ups `u` of one row: silu(g) · u written at
 // column `col` (of four).
 fn mm_swiglu4(row: u32, col: u32, g: vec4<f32>, u: vec4<f32>) {
-    if (row >= p.n0) {
+    if (row >= mm_m()) {
         return;
     }
-    let at = p.n6 + row * p.n7 + col;
+    let at = mm_c() + row * mm_ldc() + col;
     dst[at >> 2u] = vec4<f32>(silu(g.x), silu(g.y), silu(g.z), silu(g.w)) * u;
 }
 
 // A's values k0.. k0 + 3 of row `row` (k0 a multiple of 4; zeros past m
 // and k).
 fn mm_a4(row: u32, k0: u32) -> vec4<f32> {
-    if (row >= p.n0 || k0 >= p.n2) {
+    if (row >= mm_m() || k0 >= mm_k()) {
         return vec4<f32>(0.0);
     }
-    if ((p.n27 & MX_CONV) == 0u) {
-        return src[(p.n3 + row * p.n4 + k0) >> 2u];
+    if ((mx_flags() & MX_CONV) == 0u) {
+        return src[(mm_a() + row * mm_lda() + k0) >> 2u];
     }
     // The output pixel, the kernel's tap and the input's channels.
-    let cin = p.n16;
-    let oy = row / p.n17;
-    let ox = row % p.n17;
+    let cin = cv_c();
+    let oy = row / cv_ow();
+    let ox = row % cv_ow();
     let tap = k0 / cin;
     let ci = k0 % cin;
-    let ky = tap / p.n18;
-    let kx = tap % p.n18;
-    let up = p.n21;
-    let iy = i32(oy * p.n19 + ky) - i32(p.n20);
-    let ix = i32(ox * p.n19 + kx) - i32(p.n20);
-    if (iy < 0 || ix < 0 || u32(iy) >= (p.n14 << up) || u32(ix) >= (p.n15 << up)) {
+    let ky = tap / cv_size();
+    let kx = tap % cv_size();
+    let up = cv_up();
+    let iy = i32(oy * cv_stride() + ky) - i32(cv_pad());
+    let ix = i32(ox * cv_stride() + kx) - i32(cv_pad());
+    if (iy < 0 || ix < 0 || u32(iy) >= (cv_h() << up) || u32(ix) >= (cv_w() << up)) {
         return vec4<f32>(0.0);
     }
     let sy = u32(iy) >> up;
     let sx = u32(ix) >> up;
-    var v = src[(p.n3 + (sy * p.n15 + sx) * cin + ci) >> 2u];
-    if ((p.n26 & GN_NORM) != 0u) {
-        let g = ci / p.n25;
-        let mean = src2[p.n22 + 2u * g];
-        let rstd = src2[p.n22 + 2u * g + 1u];
-        let w = vec4<f32>(small[p.n23 + ci], small[p.n23 + ci + 1u], small[p.n23 + ci + 2u], small[p.n23 + ci + 3u]);
-        let b = vec4<f32>(small[p.n24 + ci], small[p.n24 + ci + 1u], small[p.n24 + ci + 2u], small[p.n24 + ci + 3u]);
+    var v = src[(mm_a() + (sy * cv_w() + sx) * cin + ci) >> 2u];
+    if ((gn_flags() & GN_NORM) != 0u) {
+        let g = ci / gn_group();
+        let mean = src2[gn_at() + 2u * g];
+        let rstd = src2[gn_at() + 2u * g + 1u];
+        let w = vec4<f32>(small[gn_weight() + ci], small[gn_weight() + ci + 1u], small[gn_weight() + ci + 2u], small[gn_weight() + ci + 3u]);
+        let b = vec4<f32>(small[gn_bias() + ci], small[gn_bias() + ci + 1u], small[gn_bias() + ci + 2u], small[gn_bias() + ci + 3u]);
         v = (v - mean) * rstd * w + b;
-        if ((p.n26 & GN_SILU) != 0u) {
+        if ((gn_flags() & GN_SILU) != 0u) {
             v = v / (1.0 + exp(-v));
         }
     }
@@ -114,7 +107,7 @@ fn mm_a4(row: u32, k0: u32) -> vec4<f32> {
 
 // The scale of W's row `col` at k0 (FP8).
 fn mm_scale(col: u32, k0: u32) -> f32 {
-    return small[p.n10 + (col / 64u) * p.n11 + k0 / 128u];
+    return small[mm_scales() + (col / 64u) * mm_per() + k0 / 128u];
 }
 
 // Eight values of W's row `col` from k0 (a multiple of 8; zeros past n).
@@ -124,18 +117,18 @@ struct W8 {
 }
 
 fn mm_w8(col: u32, k0: u32) -> W8 {
-    if (col >= p.n1) {
+    if (col >= mm_n()) {
         return W8(vec4<f32>(0.0), vec4<f32>(0.0));
     }
-    let i = col * p.n13 + k0;
-    if ((p.n9 & MM_BF16) != 0u) {
-        let w = wts[p.n5 + i / 8u];
+    let i = col * mm_ldw() + k0;
+    if ((mm_flags() & MM_BF16) != 0u) {
+        let w = wts[mm_w() + i / 8u];
         return W8(vec4<f32>(bf16x2(w.x), bf16x2(w.y)), vec4<f32>(bf16x2(w.z), bf16x2(w.w)));
     }
-    if ((p.n9 & MM_F32) != 0u) {
-        return W8(bitcast<vec4<f32>>(wts[p.n5 + i / 4u]), bitcast<vec4<f32>>(wts[p.n5 + i / 4u + 1u]));
+    if ((mm_flags() & MM_F32) != 0u) {
+        return W8(bitcast<vec4<f32>>(wts[mm_w() + i / 4u]), bitcast<vec4<f32>>(wts[mm_w() + i / 4u + 1u]));
     }
-    let w = wts[p.n5 + i / 16u];
+    let w = wts[mm_w() + i / 16u];
     let pair = select(w.xy, w.zw, (i & 8u) != 0u);
     let s = mm_scale(col, k0);
     return W8(e4m3x4(pair.x) * s, e4m3x4(pair.y) * s);

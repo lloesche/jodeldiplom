@@ -39,7 +39,8 @@ pub(crate) struct Recorded<K> {
 }
 
 impl<K: Kernels> Program<K> {
-    /// `source`'s kernels (every one of `K::ALL`) on the device, labelled
+    /// `source`'s kernels (those of `K::ALL` the device has:
+    /// [`Kernels::available`]) on the device, labelled
     /// `label`, on the layout `K` says; the device watched for its loss.
     pub(crate) fn new(
         device: wgpu::Device,
@@ -94,8 +95,10 @@ impl<K: Kernels> Program<K> {
             label: Some(label),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
+        let features = device.features();
         let pipelines = K::ALL
             .iter()
+            .filter(|k| k.available(features))
             .map(|&k| {
                 let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(k.entry()),
@@ -399,11 +402,65 @@ impl<K: Kernels> Program<K> {
         }
     }
 
+    /// Writes of a model's weights to its buffers ([`Upload::write`]).
+    pub(crate) fn upload(&self) -> Upload<'_, K> {
+        Upload {
+            program: self,
+            staged: 0,
+        }
+    }
+
     /// Waits for everything sent to the GPU so far.
     pub(crate) fn wait(&self) -> Result<(), String> {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .map(|_| ())
             .map_err(|e| e.to_string())
+    }
+}
+
+/// The bytes written to the GPU between waits as weights go up: wgpu
+/// stages each write until it is sent, so without a wait the staging of a
+/// whole model would be held at once.
+const UPLOAD_BATCH: u64 = 256 << 20;
+
+/// A model's weights going up to its buffers, the copies waited for every
+/// [`UPLOAD_BATCH`] bytes and at the end ([`Upload::finish`]).
+pub(crate) struct Upload<'a, K> {
+    program: &'a Program<K>,
+    staged: u64,
+}
+
+impl<K: Kernels> Upload<'_, K> {
+    /// `data` into `buffer` from byte `at` (a multiple of 4; a last part
+    /// word written with zeros after it).
+    pub(crate) fn write(
+        &mut self,
+        buffer: &wgpu::Buffer,
+        at: u64,
+        data: &[u8],
+    ) -> Result<(), String> {
+        debug_assert!(at.is_multiple_of(4), "an upload to byte {at}");
+        let queue = &self.program.queue;
+        let whole = data.len() & !3;
+        queue.write_buffer(buffer, at, &data[..whole]);
+        if whole < data.len() {
+            let mut tail = [0u8; 4];
+            tail[..data.len() - whole].copy_from_slice(&data[whole..]);
+            queue.write_buffer(buffer, at + whole as u64, &tail);
+        }
+        self.staged += data.len() as u64;
+        if self.staged >= UPLOAD_BATCH {
+            self.staged = 0;
+            queue.submit([]);
+            self.program.wait()?;
+        }
+        Ok(())
+    }
+
+    /// Every write sent and waited for.
+    pub(crate) fn finish(self) -> Result<(), String> {
+        self.program.queue.submit([]);
+        self.program.wait()
     }
 }

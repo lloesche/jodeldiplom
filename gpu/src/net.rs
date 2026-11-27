@@ -20,7 +20,7 @@ use jodel_rhythm::net::{NetRunner, Network, BLOCKS, DIM, LAYERS, PIECE_FRAMES, S
 use jodel_rhythm::nn::layers::HEAD;
 
 use crate::engine::{
-    self, guarded, kernels_source, params, rotary_table, spread, Access, After, Kept, Kernels,
+    self, guarded, kernels_source, params, rotary, spread, Access, After, Angles, Kept, Kernels,
     Model, Mul, OnDevice, Program, SetUp,
 };
 use crate::pace::{self, Pieces};
@@ -486,7 +486,7 @@ impl Inner {
         );
         let model = Model::new(program, &sizes, 2 * f, pieces)?;
         model.write(Buf::Weights, &values);
-        model.write(Buf::Table, &rotary_table(f));
+        model.write(Buf::Table, &rotary(0..f, engine::HEAD_32, Angles::F32));
         Ok(Inner { model, weights })
     }
 

@@ -104,7 +104,7 @@ fn gemm16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
     var nw1 = mm_w8(col0 + wc, wq + 8u);
     var nw2 = mm_w8(col0 + wc, wq + 16u);
     var nw3 = mm_w8(col0 + wc, wq + 24u);
-    let steps = (p.n2 + CM_K - 1u) / CM_K;
+    let steps = (mm_k() + CM_K - 1u) / CM_K;
     for (var s = 0u; s < steps; s++) {
         workgroupBarrier();
         cm_puta(ar * CM_S + aq, na0);
@@ -159,7 +159,7 @@ fn gemm16(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
     }
     let r0 = row0 + wm;
     let r1 = r0 + 16u;
-    if ((p.n9 & MM_SWIGLU) != 0u) {
+    if ((mm_flags() & MM_SWIGLU) != 0u) {
         let oc = col0 / 2u + wn;
         cm_swiglu(c00, c02, sg, lane, r0, oc);
         cm_swiglu(c01, c03, sg, lane, r0, oc + 16u);

@@ -21,7 +21,7 @@ use jodel_rhythm::stems::{
 };
 
 use crate::engine::{
-    self, guarded, kernels_source, params, rotary_table, spread, Access, After, Kept, Kernels,
+    self, guarded, kernels_source, params, rotary, spread, Access, After, Angles, Kept, Kernels,
     Model, Mul, OnDevice, Program, SetUp,
 };
 use crate::pace::{self, Pieces};
@@ -420,7 +420,10 @@ impl Inner {
         let program = Program::new(device, queue, limits, "jodel-gpu", &kernels_source(&[]));
         let model = Model::new(program, &sizes, STEMS * MAX_FRAMES * FRAME, pieces)?;
         model.write(Buf::Weights, &values);
-        model.write(Buf::Table, &rotary_table(MAX_FRAMES + REGISTERS));
+        model.write(
+            Buf::Table,
+            &rotary(0..MAX_FRAMES + REGISTERS, engine::HEAD_32, Angles::F32),
+        );
         Ok(Inner { model, weights })
     }
 

@@ -10,10 +10,8 @@
 //! final norm and projection of the picture's latent tokens (not the
 //! references'), and the sampler's step on them.
 
-use jodel_tensors::SafeTensors;
-
 use super::plan::{At, Buf, Mat, Plan, Rope, Tail};
-use super::weights::{Fp8, Packing};
+use super::weights::{Fp8, Packing, Source};
 
 pub(crate) const DIM: usize = 3072;
 const HEADS: usize = 24;
@@ -65,38 +63,22 @@ pub(crate) struct Transformer {
     single: Vec<Single>,
 }
 
-/// The FP8 matrices' and bf16 matrices' values (for the footprint).
-pub(crate) const FP8_VALUES: usize =
-    DOUBLE * 2 * (3 * DIM * DIM + DIM * DIM + 2 * FF * DIM + DIM * FF)
-        + SINGLE * ((3 * DIM + 2 * FF) * DIM + DIM * (DIM + FF));
-pub(crate) const BF16_VALUES: usize = DIM * CHANNELS
-    + DIM * TEXT
-    + DIM * TIME
-    + DIM * DIM
-    + 2 * MOD2 * DIM
-    + MOD1 * DIM
-    + MODF * DIM
-    + CHANNELS * DIM;
-
 impl Transformer {
     /// The weights from BFL's checkpoint into `pack`.
-    pub(crate) fn pack<'a>(
-        t: &'a SafeTensors,
-        pack: &mut Packing<'a>,
-    ) -> Result<Transformer, String> {
+    pub(crate) fn pack<'a>(src: Source<'a>, pack: &mut Packing<'a>) -> Result<Transformer, String> {
         let bf = |pack: &mut Packing<'a>, name: &str, shape| {
-            pack.bf16(t, &format!("{name}.weight"), shape)
+            pack.bf16(src, &format!("{name}.weight"), shape)
         };
         let stream = |pack: &mut Packing<'a>, b: &str| -> Result<Stream, String> {
-            let fp8 = |n: &str, shape| Fp8::per_tensor(t, &format!("{b}_{n}"), shape);
+            let fp8 = |n: &str, shape| Fp8::per_tensor(src, &format!("{b}_{n}"), shape);
             let mlp = fp8("mlp.0", (2 * FF, DIM))?;
             Ok(Stream {
                 qkv: pack.fp8(&fp8("attn.qkv", (3 * DIM, DIM))?),
                 proj: pack.fp8(&fp8("attn.proj", (DIM, DIM))?),
                 mlp_in: pack.fp8_pairs(&mlp.rows(0, FF), &mlp.rows(FF, FF)),
                 mlp_out: pack.fp8(&fp8("mlp.2", (DIM, FF))?),
-                q_norm: pack.bf16_vector(t, &format!("{b}_attn.norm.query_norm.scale"), HEAD)?,
-                k_norm: pack.bf16_vector(t, &format!("{b}_attn.norm.key_norm.scale"), HEAD)?,
+                q_norm: pack.bf16_vector(src, &format!("{b}_attn.norm.query_norm.scale"), HEAD)?,
+                k_norm: pack.bf16_vector(src, &format!("{b}_attn.norm.key_norm.scale"), HEAD)?,
             })
         };
         let double = (0..DOUBLE)
@@ -110,17 +92,17 @@ impl Transformer {
         let single = (0..SINGLE)
             .map(|i| {
                 let b = format!("single_blocks.{i}");
-                let l1 = Fp8::per_tensor(t, &format!("{b}.linear1"), (3 * DIM + 2 * FF, DIM))?;
+                let l1 = Fp8::per_tensor(src, &format!("{b}.linear1"), (3 * DIM + 2 * FF, DIM))?;
                 Ok(Single {
                     qkv: pack.fp8(&l1.rows(0, 3 * DIM)),
                     mlp_in: pack.fp8_pairs(&l1.rows(3 * DIM, FF), &l1.rows(3 * DIM + FF, FF)),
                     out: pack.fp8(&Fp8::per_tensor(
-                        t,
+                        src,
                         &format!("{b}.linear2"),
                         (DIM, DIM + FF),
                     )?),
-                    q_norm: pack.bf16_vector(t, &format!("{b}.norm.query_norm.scale"), HEAD)?,
-                    k_norm: pack.bf16_vector(t, &format!("{b}.norm.key_norm.scale"), HEAD)?,
+                    q_norm: pack.bf16_vector(src, &format!("{b}.norm.query_norm.scale"), HEAD)?,
+                    k_norm: pack.bf16_vector(src, &format!("{b}.norm.key_norm.scale"), HEAD)?,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -185,19 +167,16 @@ impl Tokens {
     /// place's axis, θ = 2000 over 32), reckoned in f64 as the pipeline
     /// does, then f32.
     pub(crate) fn rope(&self) -> Vec<f32> {
-        let mut out = Vec::with_capacity(self.all() * 128);
-        for id in self.ids() {
-            for (axis, &pos) in id.iter().enumerate() {
-                let _ = axis;
-                for j in 0..16 {
-                    let freq = 1.0 / 2000f64.powf((2 * j) as f64 / 32.0);
-                    let angle = pos as f32 as f64 * freq;
-                    out.push(angle.cos() as f32);
-                    out.push(angle.sin() as f32);
-                }
-            }
-        }
-        out
+        let freqs = crate::engine::Freqs {
+            base: 2000.0,
+            dim: 32,
+            turned: 16,
+        };
+        crate::engine::rotary(
+            self.ids().into_iter().flatten(),
+            freqs,
+            crate::engine::Angles::F64,
+        )
     }
 }
 
@@ -213,23 +192,27 @@ pub(crate) fn time_sinusoids(t: f32) -> Vec<f32> {
         .collect()
 }
 
-/// The transformer's slots.
-pub(crate) const X: u8 = 0;
-pub(crate) const H: u8 = 1;
-pub(crate) const QKV: u8 = 2;
-pub(crate) const HEADS_SLOT: u8 = 3;
-pub(crate) const CAT: u8 = 4;
-/// The latents and the references' latents (tokens of 128).
-pub(crate) const LAT: u8 = 5;
-/// The prompt's embeddings.
-pub(crate) const TXT: u8 = 6;
-/// The four steps' sinusoids, and their SiLUs.
-pub(crate) const TIMES: u8 = 7;
-const TEMB: u8 = 8;
-const MODS: u8 = 9;
-/// The rotary table.
-pub(crate) const ROPE: u8 = 10;
-pub(crate) const PRED: u8 = 11;
+/// The transformer's slots: the hidden state, its norm, the queries' keys'
+/// and values' rows, the heads, the attention's output beside the
+/// feed-forward's; the latents and the references' latents (tokens of
+/// 128), the prompt's embeddings, the steps' sinusoids (and their SiLUs),
+/// the timesteps' embeddings, the modulations, the rotary table, the
+/// prediction.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Slots {
+    pub(crate) x: u8,
+    pub(crate) h: u8,
+    pub(crate) qkv: u8,
+    pub(crate) heads: u8,
+    pub(crate) cat: u8,
+    pub(crate) lat: u8,
+    pub(crate) txt: u8,
+    pub(crate) times: u8,
+    temb: u8,
+    mods: u8,
+    pub(crate) rope: u8,
+    pub(crate) pred: u8,
+}
 
 /// Where the four steps' modulations lie in their slot: double-stream
 /// picture's, text's, single-stream, final.
@@ -241,30 +224,39 @@ fn mods(steps: usize) -> [usize; 4] {
     [img, txt, single, fin]
 }
 
-/// The slots `tokens` takes (for a plan without weights: its footprint).
-pub(crate) fn need(p: &mut Plan, tokens: &Tokens, steps: usize) {
-    let l = tokens.all();
-    p.need(X, l * DIM);
-    p.need(H, l * DIM);
-    p.need(QKV, l * 3 * DIM);
-    p.need(HEADS_SLOT, 3 * l * DIM);
-    p.need(CAT, l * (DIM + FF));
-    p.need(LAT, tokens.picture() * CHANNELS);
-    p.need(TXT, tokens.text() * TEXT);
-    p.need(TIMES, steps * (TIME + 2 * DIM));
-    p.need(TEMB, steps * 2 * DIM);
-    p.need(MODS, mods(steps)[3] + steps * MODF);
-    p.need(ROPE, l * 128);
-    p.need(PRED, tokens.latent() * CHANNELS);
+impl Slots {
+    /// The slots `tokens` takes over `steps`, handed out by `p`.
+    pub(crate) fn new(p: &mut Plan, tokens: &Tokens, steps: usize) -> Slots {
+        let l = tokens.all();
+        Slots {
+            x: p.slot(l * DIM),
+            h: p.slot(l * DIM),
+            qkv: p.slot(l * 3 * DIM),
+            heads: p.slot(3 * l * DIM),
+            cat: p.slot(l * (DIM + FF)),
+            lat: p.slot(tokens.picture() * CHANNELS),
+            txt: p.slot(tokens.text() * TEXT),
+            times: p.slot(steps * (TIME + 2 * DIM)),
+            temb: p.slot(steps * 2 * DIM),
+            mods: p.slot(mods(steps)[3] + steps * MODF),
+            rope: p.slot(l * 128),
+            pred: p.slot(tokens.latent() * CHANNELS),
+        }
+    }
+
+    /// The large ones, which the autoencoder takes in turns with it.
+    pub(crate) fn large(&self) -> [u8; 5] {
+        [self.cat, self.qkv, self.heads, self.h, self.x]
+    }
 }
 
 impl Transformer {
-    /// The steps' modulations, from their sinusoids (in `TIMES`).
-    pub(crate) fn plan_mods(&self, p: &mut Plan, steps: usize) {
-        let times = At::new(TIMES, 0);
+    /// The steps' modulations, from their sinusoids (in `times`).
+    pub(crate) fn plan_mods(&self, p: &mut Plan, s: &Slots, steps: usize) {
+        let times = At::new(s.times, 0);
         let s1 = times.plus(steps * TIME);
         let s2 = s1.plus(steps * DIM);
-        let t1 = At::new(TEMB, 0);
+        let t1 = At::new(s.temb, 0);
         let temb = t1.plus(steps * DIM);
         p.gemm((times, TIME), steps, &self.time_in, (t1, DIM), Tail::Store);
         p.silu(steps * DIM, t1, s1);
@@ -277,42 +269,48 @@ impl Transformer {
             (&self.mod_single, single, MOD1),
             (&self.mod_final, fin, MODF),
         ] {
-            p.gemm((s2, DIM), steps, w, (At::new(MODS, at), width), Tail::Store);
+            p.gemm(
+                (s2, DIM),
+                steps,
+                w,
+                (At::new(s.mods, at), width),
+                Tail::Store,
+            );
         }
     }
 
-    /// Step `step` of `steps`: the prediction for the latents (in `LAT`),
+    /// Step `step` of `steps`: the prediction for the latents (in `lat`),
     /// and the sampler's step of `dt` on them.
     pub(crate) fn plan_step(
         &self,
         p: &mut Plan,
-        tokens: &Tokens,
+        (s, tokens): (&Slots, &Tokens),
         (step, steps): (usize, usize),
         dt: f32,
     ) {
         let (t, n) = (tokens.text(), tokens.picture());
         let l = t + n;
-        let x = At::new(X, 0);
-        let h = At::new(H, 0);
-        let qkv = At::new(QKV, 0);
-        let heads = At::new(HEADS_SLOT, 0);
-        let (q, k, v) = (heads, heads.plus(l * DIM), heads.plus(2 * l * DIM));
-        let cat = At::new(CAT, 0);
+        let x = At::new(s.x, 0);
+        let h = At::new(s.h, 0);
+        let qkv = At::new(s.qkv, 0);
+        let heads = At::new(s.heads, 0);
+        let qkv_heads = (heads, heads.plus(l * DIM), heads.plus(2 * l * DIM));
+        let cat = At::new(s.cat, 0);
         let wide = DIM + FF;
-        let rope = Some((Rope::Pairs, Buf::Slot(ROPE), 0));
+        let rope = Some((Rope::Pairs, Buf::Slot(s.rope), 0));
         let [img_at, txt_at, single_at, fin_at] = mods(steps);
         let m =
-            |at: usize, width: usize, part: usize| At::new(MODS, at + step * width + part * DIM);
+            |at: usize, width: usize, part: usize| At::new(s.mods, at + step * width + part * DIM);
         // The inputs.
         p.gemm(
-            (At::new(LAT, 0), CHANNELS),
+            (At::new(s.lat, 0), CHANNELS),
             n,
             &self.img_in,
             (x.plus(t * DIM), DIM),
             Tail::Store,
         );
         p.gemm(
-            (At::new(TXT, 0), TEXT),
+            (At::new(s.txt, 0), TEXT),
             t,
             &self.txt_in,
             (x, DIM),
@@ -333,48 +331,32 @@ impl Transformer {
                     EPS,
                 );
             }
-            for &(r, rows, _, s) in &streams {
+            for &(r, rows, _, w) in &streams {
+                let src = qkv.plus(r * 3 * DIM);
                 p.gemm(
                     (h.plus(r * DIM), DIM),
                     rows,
-                    &s.qkv,
-                    (qkv.plus(r * 3 * DIM), 3 * DIM),
+                    &w.qkv,
+                    (src, 3 * DIM),
                     Tail::Store,
                 );
-                let src = qkv.plus(r * 3 * DIM);
-                p.qk_prep(
-                    (rows, HEADS),
+                p.heads(
+                    (rows, HEADS, HEADS),
                     (src, 3 * DIM),
-                    (q, l, r),
-                    Some(s.q_norm),
-                    rope,
-                    EPS,
-                );
-                p.qk_prep(
-                    (rows, HEADS),
-                    (src.plus(DIM), 3 * DIM),
-                    (k, l, r),
-                    Some(s.k_norm),
+                    (qkv_heads, l, r),
+                    (w.q_norm, w.k_norm),
                     rope,
                     EPS,
                 );
             }
-            p.qk_prep(
-                (l, HEADS),
-                (qkv.plus(2 * DIM), 3 * DIM),
-                (v, l, 0),
-                None,
-                None,
-                EPS,
-            );
-            p.attention((l, l, l), (HEADS, HEADS), (q, k, v), (cat, wide), false);
-            for &(r, rows, at, s) in &streams {
+            p.attention((l, l, l), (HEADS, HEADS), qkv_heads, (cat, wide), false);
+            for &(r, rows, at, w) in &streams {
                 let rx = x.plus(r * DIM);
                 let rc = cat.plus(r * wide);
                 p.gemm(
                     (rc, wide),
                     rows,
-                    &s.proj,
+                    &w.proj,
                     (rx, DIM),
                     Tail::Gated(m(at, MOD2, 2)),
                 );
@@ -390,20 +372,20 @@ impl Transformer {
                 p.gemm(
                     (h.plus(r * DIM), DIM),
                     rows,
-                    &s.mlp_in,
+                    &w.mlp_in,
                     (rc.plus(DIM), wide),
                     Tail::SwiGlu,
                 );
                 p.gemm(
                     (rc.plus(DIM), wide),
                     rows,
-                    &s.mlp_out,
+                    &w.mlp_out,
                     (rx, DIM),
                     Tail::Gated(m(at, MOD2, 5)),
                 );
             }
         }
-        for s in &self.single {
+        for w in &self.single {
             p.layernorm_mod(
                 l,
                 DIM,
@@ -413,37 +395,21 @@ impl Transformer {
                 m(single_at, MOD1, 1),
                 EPS,
             );
-            p.gemm((h, DIM), l, &s.qkv, (qkv, 3 * DIM), Tail::Store);
-            p.gemm((h, DIM), l, &s.mlp_in, (cat.plus(DIM), wide), Tail::SwiGlu);
-            p.qk_prep(
-                (l, HEADS),
+            p.gemm((h, DIM), l, &w.qkv, (qkv, 3 * DIM), Tail::Store);
+            p.gemm((h, DIM), l, &w.mlp_in, (cat.plus(DIM), wide), Tail::SwiGlu);
+            p.heads(
+                (l, HEADS, HEADS),
                 (qkv, 3 * DIM),
-                (q, l, 0),
-                Some(s.q_norm),
+                (qkv_heads, l, 0),
+                (w.q_norm, w.k_norm),
                 rope,
                 EPS,
             );
-            p.qk_prep(
-                (l, HEADS),
-                (qkv.plus(DIM), 3 * DIM),
-                (k, l, 0),
-                Some(s.k_norm),
-                rope,
-                EPS,
-            );
-            p.qk_prep(
-                (l, HEADS),
-                (qkv.plus(2 * DIM), 3 * DIM),
-                (v, l, 0),
-                None,
-                None,
-                EPS,
-            );
-            p.attention((l, l, l), (HEADS, HEADS), (q, k, v), (cat, wide), false);
+            p.attention((l, l, l), (HEADS, HEADS), qkv_heads, (cat, wide), false);
             p.gemm(
                 (cat, wide),
                 l,
-                &s.out,
+                &w.out,
                 (x, DIM),
                 Tail::Gated(m(single_at, MOD1, 2)),
             );
@@ -459,7 +425,7 @@ impl Transformer {
             m(fin_at, MODF, 1),
             EPS,
         );
-        let pred = At::new(PRED, 0);
+        let pred = At::new(s.pred, 0);
         p.gemm(
             (h, DIM),
             lat,
@@ -467,6 +433,6 @@ impl Transformer {
             (pred, CHANNELS),
             Tail::Store,
         );
-        p.euler(lat * CHANNELS, At::new(LAT, 0), pred, dt);
+        p.euler(lat * CHANNELS, At::new(s.lat, 0), pred, dt);
     }
 }

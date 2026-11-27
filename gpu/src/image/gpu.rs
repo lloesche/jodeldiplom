@@ -4,12 +4,12 @@
 //! ([`Made`]: its buffers, its dispatches recorded, run in short
 //! submissions).
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::plan::{Buf, Plan};
 use super::{source, Kernel};
-use crate::engine::{bytes, guarded, Program, Recorded};
-use crate::Turned;
+use crate::engine::{bytes, guarded, OnDevice, Program, Recorded, SharedDevice};
+use crate::{Precision, Turned};
 
 /// The workgroup memory the f32 kernels take at most (the attention's,
 /// 24 KB), and the tensor-core ones (the matrix multiply's, 44 KB).
@@ -17,7 +17,7 @@ const WORKGROUP_MEMORY: u32 = 32 * 1024;
 const COOP_MEMORY: u32 = 44 * 1024;
 
 /// The features the tensor-core kernels need.
-const COOP: wgpu::Features =
+pub(crate) const COOP: wgpu::Features =
     wgpu::Features::SHADER_F16.union(wgpu::Features::EXPERIMENTAL_COOPERATIVE_MATRIX);
 
 /// The picture models' GPU.
@@ -31,7 +31,13 @@ pub(crate) struct Gpu {
 
 /// The GPU while set up (never torn down once set up: the parts hold their
 /// own memory), until its device is lost.
-static GPU: Mutex<Option<Arc<Turned<Gpu>>>> = Mutex::new(None);
+static GPU: SharedDevice<Gpu> = SharedDevice::new(Gpu::open);
+
+impl OnDevice for Gpu {
+    fn lost(&self) -> bool {
+        self.program.lost()
+    }
+}
 
 /// Whether `adapter` has what the tensor-core kernels need: f16,
 /// cooperative matrices of 16 × 16 × 16 in f16 with f32 sums, subgroups
@@ -52,30 +58,35 @@ fn has_tensor_cores(adapter: &wgpu::Adapter) -> bool {
 impl Gpu {
     /// The picture models' GPU, set up when first asked for (and again once
     /// its device is lost: the parts on the lost one say so); why not where
-    /// it cannot be (asked again, it tries again).
+    /// it cannot be (a failed setup stands for a while).
     pub(crate) fn shared() -> Result<Arc<Turned<Gpu>>, String> {
-        let mut slot = GPU.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(gpu) = slot.as_ref().filter(|gpu| !gpu.program.lost()) {
-            return Ok(Arc::clone(gpu));
-        }
-        let gpu = std::panic::catch_unwind(|| {
-            crate::device::open_with(
-                "jodel-gpu image",
-                |adapter| {
-                    if has_tensor_cores(adapter) {
-                        COOP
-                    } else {
-                        wgpu::Features::empty()
-                    }
-                },
-                Gpu::on,
-            )
-        })
-        .map_err(|_| "setting the GPU up panicked".to_owned())??;
-        let (mut gpu, name) = gpu;
+        GPU.get()
+    }
+
+    /// The device, with tensor cores where the adapter has them.
+    fn open() -> Result<Gpu, String> {
+        let (mut gpu, name) = crate::device::open_with(
+            "jodel-gpu image",
+            |adapter| {
+                if !has_tensor_cores(adapter) {
+                    return (
+                        wgpu::Features::empty(),
+                        wgpu::ExperimentalFeatures::disabled(),
+                    );
+                }
+                // SAFETY: wgpu's cooperative matrices are experimental: its
+                // checks of what a kernel does with them may be incomplete,
+                // so a wrong kernel could misbehave on the device instead of
+                // failing validation. That risk is accepted for the two
+                // tensor-core kernels, and only on adapters that pass
+                // `has_tensor_cores` (the matrices' shape and types, the
+                // subgroup size and workgroup memory they are written for);
+                // the tests hold them to the f32 kernels on such a GPU.
+                (COOP, unsafe { wgpu::ExperimentalFeatures::enabled() })
+            },
+            Gpu::on,
+        )?;
         gpu.name = name;
-        let gpu = Arc::new(Turned::new(gpu));
-        *slot = Some(Arc::clone(&gpu));
         Ok(gpu)
     }
 
@@ -127,6 +138,12 @@ impl Loaded {
     pub(crate) fn lost(&self) -> bool {
         self.gpu.program.lost()
     }
+
+    /// Whether its plans run the fast kernels on tensor cores with
+    /// `precision`: where it is fast and the GPU has them.
+    pub(crate) fn fast(&self, precision: Precision) -> bool {
+        precision == Precision::Fast && self.gpu.coop
+    }
 }
 
 /// A plan made on the device: its buffers, its dispatches recorded, and
@@ -141,6 +158,7 @@ pub(crate) struct Made {
 impl Made {
     /// `plan` on `loaded`'s device, `read` f32s to be read back from a run.
     pub(crate) fn new(loaded: &Loaded, plan: &Plan, read: usize) -> Result<Made, String> {
+        debug_assert_eq!(plan.check(), None, "a slot read after it was handed over");
         let program = &loaded.gpu.program;
         guarded(&program.device, || {
             let slots = plan

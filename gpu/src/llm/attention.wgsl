@@ -6,49 +6,31 @@
 // the rows under way are kept with it (`[row][head][value]`). There is no
 // scaling of the scores (the queries and keys are normed) and no cap.
 
-var<workgroup> red: array<f32, 256>;
-
-// The sum of every invocation's `v` (all must call it), in a tree.
-fn wg_sum(lid: u32, v: f32) -> f32 {
-    workgroupBarrier();
-    red[lid] = v;
-    for (var s = 128u; s > 0u; s >>= 1u) {
-        workgroupBarrier();
-        if (lid < s) {
-            red[lid] += red[lid + s];
-        }
-    }
-    workgroupBarrier();
-    return red[0];
-}
-
 // The queries, keys and values of rows normed and turned: a workgroup a
 // row and head (queries, then keys, then values), an invocation a pair of
 // values (`i`, `i + D/2`, turned together). The queries go to their place
-// by the cache, the keys and values into it at their positions. Numbers:
-// rows, the first position, whether it is the decoder's, D, the rows'
-// place in src and their stride, the queries' and keys' norms, the
-// queries' place, the keys', the values', the cache's positions, the
-// rotary table in `wq` (a cosine and sine a pair and position), the
-// key/value heads (none where the layer shares another's), the heads.
+// by the cache, the keys and values into it at their positions. The rows'
+// stride in src is from its start; the rotary table is `wq` (a cosine and
+// sine a pair and position); `kv` is 0 where the layer shares another's
+// keys and values.
 @compute @workgroup_size(256)
 fn prep(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: vec3<u32>) {
     let row = wid.x;
     let slot = wid.y;
-    let d = p.f3;
+    let d = prep_d();
     let half = d / 2u;
-    let heads = p.f14;
-    let kv = p.f13;
-    let positions = p.f11;
-    let pos = first_position(p.f2, p.f1) + row;
-    let base = p.f4 + row * p.f5 + slot * d;
+    let heads = prep_heads();
+    let kv = prep_kv();
+    let positions = prep_positions();
+    let pos = first_position(prep_stated(), prep_first()) + row;
+    let base = row * prep_stride() + slot * d;
     var x = 0.0;
     var y = 0.0;
     if (lid < half) {
         x = src[base + lid];
         y = src[base + lid + half];
     }
-    let total = wg_sum(lid, x * x + y * y);
+    let total = sum256(lid, x * x + y * y);
     let inv = pow(total / f32(d) + EPS, -0.5);
     if (lid >= half) {
         return;
@@ -56,10 +38,10 @@ fn prep(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: v
     var a = x * inv;
     var b = y * inv;
     if (slot < heads + kv) {
-        let w = select(p.f7, p.f6, slot < heads) + lid;
+        let w = select(prep_k_norm(), prep_q_norm(), slot < heads) + lid;
         a *= aux[w];
         b *= aux[w + half];
-        let t = p.f12 + (pos * half + lid) * 2u;
+        let t = prep_rope() + (pos * half + lid) * 2u;
         let c = bitcast<f32>(word(t));
         let s = bitcast<f32>(word(t + 1u));
         let ta = a * c - b * s;
@@ -68,15 +50,15 @@ fn prep(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: v
         b = tb;
     }
     if (slot < heads) {
-        let q = p.f8 + (row * heads + slot) * d;
+        let q = prep_queries() + (row * heads + slot) * d;
         dst[q + lid] = a;
         dst[q + lid + half] = b;
     } else if (slot < heads + kv) {
-        let k = p.f9 + (slot - heads) * d * positions;
+        let k = prep_keys() + (slot - heads) * d * positions;
         dst[k + lid * positions + pos] = a;
         dst[k + (lid + half) * positions + pos] = b;
     } else {
-        let v = p.f10 + ((slot - heads - kv) * positions + pos) * d;
+        let v = prep_values() + ((slot - heads - kv) * positions + pos) * d;
         dst[v + lid] = a;
         dst[v + lid + half] = b;
     }
@@ -90,8 +72,8 @@ fn prep(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: v
 // every head. Each split's largest score, its sum of exp(score − largest)
 // and its values so weighted are kept for `join`. The positions are the
 // decoder's own back to the window (all of them where there is none).
-// Numbers: D, the window (0: none), the queries' place (src), the keys',
-// the values', the cache's positions, where the splits go, the splits.
+// The window is 0 for none; the queries are in src; the splits are
+// written from dst's start.
 var<workgroup> step_q: array<vec4<f32>, 512>;
 var<workgroup> step_s: array<vec4<f32>, 256>;
 var<workgroup> step_p: array<vec4<f32>, 64>;
@@ -120,11 +102,11 @@ fn step_values(v: u32, d: u32, count: u32) -> vec4<f32> {
 
 @compute @workgroup_size(256)
 fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: vec3<u32>) {
-    let d = p.f0;
-    let window = p.f1;
-    let positions = p.f5;
+    let d = attend_d();
+    let window = attend_window();
+    let positions = attend_positions();
     let split = wid.x;
-    let splits = p.f7;
+    let splits = attend_splits();
     let g = wid.y;
     if (lid == 0u) {
         step_pos = ints[0];
@@ -140,13 +122,13 @@ fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid:
     let chunks = (pos - lo) / 64u + 1u;
     // The queries, a value's four heads a vector.
     for (var i = lid; i < d; i += 256u) {
-        let q = p.f2 + g * 4u * d + i;
+        let q = attend_queries() + g * 4u * d + i;
         step_q[i] = vec4<f32>(src[q], src[q + d], src[q + 2u * d], src[q + 3u * d]);
     }
     let j = lid % 64u;
     let quarter = lid / 64u;
     let part = d / 4u;
-    let keys = p.f3 + g * d * positions;
+    let keys = attend_keys() + g * d * positions;
     // The values this invocation sums: `lid` (and `lid + 256` for heads of
     // 512).
     var oa = vec4<f32>(0.0);
@@ -190,7 +172,7 @@ fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid:
             step_fade[lid] = fade;
         }
         workgroupBarrier();
-        let v = p.f4 + (g * positions + first) * d;
+        let v = attend_values() + (g * positions + first) * d;
         if (lid < d) {
             oa = oa * step_fade + step_values(v + lid, d, count);
         }
@@ -200,7 +182,7 @@ fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid:
     }
     workgroupBarrier();
     let stride = d + 2u;
-    let out = p.f6 + (g * 4u * splits + split) * stride;
+    let out = (g * 4u * splits + split) * stride;
     let head = splits * stride;
     for (var h = 0u; h < 4u; h++) {
         if (lid < d) {
@@ -218,28 +200,28 @@ fn attend(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid:
 
 // The splits of every head put together (exp(largest − all's largest)
 // each) into the step's attention, written for the output matrix (in
-// blocks of 32, as `put_block`). Numbers: D, the splits, their place (src),
-// the row's values and scales in `ints`, the path, the heads.
+// blocks of Q8_BLOCK, as `put_block`). The splits are src from its
+// start; the row's values and scales go in `ints`.
 var<workgroup> join_weight: array<f32, 256>;
 var<workgroup> join_total: array<f32, 8>;
 
 @compute @workgroup_size(256)
 fn join(@builtin(local_invocation_index) lid: u32) {
-    let d = p.f0;
-    let splits = p.f1;
-    let heads = p.f6;
+    let d = join_d();
+    let splits = join_splits();
+    let heads = join_heads();
     let stride = d + 2u;
     if (lid < heads) {
         var best = -1e30;
         for (var c = 0u; c < splits; c++) {
-            let at = p.f2 + (lid * splits + c) * stride;
+            let at = (lid * splits + c) * stride;
             if (src[at + 1u] > 0.0) {
                 best = max(best, src[at]);
             }
         }
         var total = 0.0;
         for (var c = 0u; c < splits; c++) {
-            let at = p.f2 + (lid * splits + c) * stride;
+            let at = (lid * splits + c) * stride;
             var w = 0.0;
             if (src[at + 1u] > 0.0) {
                 w = exp(src[at] - best);
@@ -256,26 +238,25 @@ fn join(@builtin(local_invocation_index) lid: u32) {
         for (var c = 0u; c < splits; c++) {
             let w = join_weight[h * splits + c];
             if (w > 0.0) {
-                o += w * src[p.f2 + (h * splits + c) * stride + 2u + i % d];
+                o += w * src[(h * splits + c) * stride + 2u + i % d];
             }
         }
         staged[i] = o / join_total[h];
     }
     workgroupBarrier();
-    let blocks = heads * d / 32u;
+    let blocks = heads * d / Q8_BLOCK;
     for (var b = lid; b < blocks; b += 256u) {
-        put_block(false, b * 32u, NONE, 0u, b, blocks, p.f3, p.f4, p.f5);
+        put_block(false, b * Q8_BLOCK, NONE, 0u, b, blocks, join_qa(), join_qs(), join_mode());
     }
 }
 
 // A prompt's attention, flash: a workgroup a head and block of queries
-// (256 / (D/16) of them), each query's D/16 invocations holding 16 of its
-// values' weighted sums, over tiles of 8 keys (in workgroup memory, the
-// keys, then the values) with an online softmax. Its keys are its own
-// position's and those before it, back to the window. Numbers: rows, the
-// first's position, D, the window (0: none), the queries' place (src),
-// the keys', the values', the cache's positions, where it is written (a
-// row's heads side by side), the heads, the query heads a key/value head.
+// (FLASH_LANES / (D/16) of them), each query's D/16 invocations holding 16
+// of its values' weighted sums, over tiles of 8 keys (in workgroup memory,
+// the keys, then the values) with an online softmax. Its keys are its own
+// position's and those before it, back to the window (0: none). The
+// queries are in src; `group` is the query heads a key/value head; the
+// output is written from dst's start, a row's heads side by side.
 var<workgroup> flash_tile: array<vec4<f32>, 1024>;
 var<workgroup> flash_part: array<f32, 256>;
 
@@ -293,30 +274,30 @@ fn tile_mix(at: u32, d4: u32, pa: vec4<f32>, pb: vec4<f32>) -> vec4<f32> {
     return o;
 }
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(FLASH_LANES)
 fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: vec3<u32>) {
-    let rows = p.f0;
-    let d = p.f2;
-    let window = p.f3;
-    let positions = p.f7;
-    let heads = p.f9;
+    let rows = flash_rows();
+    let d = flash_d();
+    let window = flash_window();
+    let positions = flash_positions();
+    let heads = flash_heads();
     let lanes = d / 16u;
-    let per_block = 256u / lanes;
+    let per_block = FLASH_LANES / lanes;
     let qi = lid / lanes;
     let lane = lid % lanes;
     let h = wid.y;
-    let g = h / p.f10;
+    let g = h / flash_group();
     let row = wid.x * per_block + qi;
     let real = row < rows;
-    let pos = p.f1 + row;
-    let block_first = p.f1 + wid.x * per_block;
-    let block_last = p.f1 + min(wid.x * per_block + per_block, rows) - 1u;
+    let pos = flash_first() + row;
+    let block_first = flash_first() + wid.x * per_block;
+    let block_last = flash_first() + min(wid.x * per_block + per_block, rows) - 1u;
     var lo = 0u;
     if (window > 0u) {
         lo = max(block_first + 1u, window) - window;
     }
-    let keys = p.f5 + g * d * positions;
-    let values = p.f6 + g * positions * d;
+    let keys = flash_keys() + g * d * positions;
+    let values = flash_values() + g * positions * d;
     let d4 = d / 4u;
     var best = -1e30;
     var total = 0.0;
@@ -326,7 +307,7 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
     var o3 = vec4<f32>(0.0);
     for (var k0 = lo; k0 <= block_last; k0 += 8u) {
         // The keys: neighbours take neighbouring positions.
-        for (var i = lid; i < 8u * d; i += 256u) {
+        for (var i = lid; i < 8u * d; i += FLASH_LANES) {
             let j = i % 8u;
             let e = i / 8u;
             var v = 0.0;
@@ -341,7 +322,7 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
         let part = lane / 8u;
         var s = 0.0;
         if (real) {
-            let q = p.f4 + (row * heads + h) * d + part * 128u;
+            let q = flash_queries() + (row * heads + h) * d + part * 128u;
             let t = (j * d + part * 128u) / 4u;
             for (var i = 0u; i < 32u; i++) {
                 let qv = vec4<f32>(src[q + 4u * i], src[q + 4u * i + 1u], src[q + 4u * i + 2u], src[q + 4u * i + 3u]);
@@ -377,7 +358,7 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
         best = next;
         workgroupBarrier();
         // The values: neighbours take neighbouring values.
-        for (var i = lid; i < 8u * d; i += 256u) {
+        for (var i = lid; i < 8u * d; i += FLASH_LANES) {
             let jj = i / d;
             var v = 0.0;
             if (k0 + jj <= block_last) {
@@ -394,7 +375,7 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
         workgroupBarrier();
     }
     if (real) {
-        let out = p.f8 + row * heads * d + h * d + lane * 16u;
+        let out = row * heads * d + h * d + lane * 16u;
         let o = array<vec4<f32>, 4>(o0 / total, o1 / total, o2 / total, o3 / total);
         for (var i = 0u; i < 4u; i++) {
             dst[out + 4u * i] = o[i].x;

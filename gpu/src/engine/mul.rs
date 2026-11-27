@@ -9,7 +9,7 @@ use super::{params, Op};
 
 /// The kernels' flags: the bias added, the products added to what is
 /// there, GELU taken, the gated products, the head's largest.
-const BIAS: usize = 1;
+pub(crate) const BIAS: usize = 1;
 const ADD: usize = 2;
 const GELU: usize = 4;
 pub(crate) const SWIGLU: usize = 64;
@@ -40,7 +40,9 @@ pub(crate) enum After {
 }
 
 impl After {
-    fn flag(self) -> usize {
+    /// Its flag in a matrix kernel's numbers (the kernels' sources take
+    /// them from here: `engine::wgsl_consts`).
+    pub(crate) fn flag(self) -> usize {
         match self {
             After::Store => 0,
             After::Add => ADD,
@@ -69,6 +71,11 @@ impl Matrix for usize {
         0
     }
 }
+
+/// The names of the numbers every matrix kernel takes first
+/// ([`Mul::numbers`]), as the kernels read them ([`super::wgsl_numbers`]).
+pub(crate) const MUL_NUMBERS: [&str; 10] =
+    ["m", "n", "k", "a", "lda", "w", "c", "ldc", "bias", "flags"];
 
 /// A matrix multiply: `to`'s rows (`m × n`, from its offset, its stride
 /// apart) (+)= `from`'s rows (`k` values from its offset, its stride
@@ -115,10 +122,10 @@ impl<B: Copy, W: Matrix> Mul<B, W> {
         self.w.flag() | bias | self.after.flag()
     }
 
-    /// The numbers every matrix kernel takes first: `m`, `n`, `k`, `from`'s
-    /// offset and stride, the weights' offset, `to`'s offset and stride,
-    /// the bias's offset, the flags.
-    pub(crate) fn numbers(&self) -> [usize; 10] {
+    /// The numbers every matrix kernel takes first ([`MUL_NUMBERS`]): `m`,
+    /// `n`, `k`, `from`'s offset and stride, the weights' offset, `to`'s
+    /// offset and stride, the bias's offset, the flags.
+    pub(crate) fn numbers(&self) -> [usize; MUL_NUMBERS.len()] {
         let (_, a_off, lda) = self.from;
         let (_, c_off, ldc) = self.to;
         [

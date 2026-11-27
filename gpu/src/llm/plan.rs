@@ -2,7 +2,9 @@
 //! at a time ([`Plan::chunk`]), and a step ([`Plan::step`]), whose
 //! dispatches never change (every kernel of a step reads the position it
 //! decodes at from the GPU, and the last moves it on), so a step is
-//! recorded once and run again and again.
+//! recorded once and run again and again; and the room a context takes
+//! ([`ContextPlan`]: what [`super::Gemma::planned`] says and
+//! [`super::Gemma::reserve`] makes).
 //!
 //! A prompt's chunk runs the layers that have keys and values of their own
 //! over all its rows, through the tiled matrix multiplies and flash
@@ -10,16 +12,23 @@
 //! write no keys or values), which goes through them as a step does.
 //!
 //! Every matrix multiply is the engine's [`Mul`]: from the rows written
-//! for it in `ints` (at 8 bits or as f32s, [`Precision`]), through a 4-bit
-//! matrix, to its products as [`After`] says.
+//! for it in `ints` (at 8 bits or as f32s: [`Plan::mode`]), through a
+//! matrix as the file holds it, to its products as [`After`] says. Each
+//! kernel's numbers are written by one helper here, by name
+//! ([`super::kernels::named`]: the kernels read them by the same names,
+//! `prep_rows()`).
 
-use super::pack::{Layout, Matrix};
-use super::{
-    head_of, is_global, kv_of, shares, Buf, Kernel, DIM, EMBED_SCALE, FF, HEADS, KV_HEADS, LAYERS,
-    OWN_KV, PER_LAYER, PER_LAYERS, PER_LAYER_EMBED_SCALE, PER_LAYER_PROJECTION_SCALE, VOCAB,
-    WINDOW,
+use super::kernels::{
+    fields, named, Kernel, ADD, FLASH_LANES, GEMM_TILE, GEMV_ROWS, NONE, OUT, Q8, Q8_BLOCK,
+    Q8_KINDS, SCALE, TOKENS,
 };
-use crate::engine::{self, params, spread, After, Mul};
+use super::model::{Layout, Matrix};
+use super::{
+    head_of, is_global, kv_of, shares, Buf, DIM, EMBED_SCALE, FF, GLOBAL_BASE, GLOBAL_HEAD,
+    GLOBAL_TURNED, HEADS, KV_HEADS, LAYERS, LOCAL_BASE, LOCAL_HEAD, OWN_KV, PER_LAYER, PER_LAYERS,
+    PER_LAYER_EMBED_SCALE, PER_LAYER_PROJECTION_SCALE, STEPS_A_READ, VOCAB, WINDOW,
+};
+use crate::engine::{self, params, spread, After, Mul, PARAM_STRIDE};
 
 /// One dispatch: its kernel, its buffers (src, dst and wq: aux is always
 /// the small values, `ints` the ints), its numbers, its workgroups.
@@ -33,46 +42,39 @@ pub(super) struct Bind {
     pub(super) wq: Buf,
 }
 
+impl Bind {
+    /// `src` read and `dst` written, no weights (the rotary tables bound
+    /// in their place, unread).
+    fn rows(src: Buf, dst: Buf) -> Bind {
+        Bind {
+            src,
+            dst,
+            wq: Buf::Rope,
+        }
+    }
+}
+
 /// The rows of a prompt a chunk takes at most.
 pub(super) const CHUNK: usize = 512;
 /// The splits of a step's attention (`attend`, each taking every so
 /// many chunks of 64 positions): a sliding layer's window is 8 chunks.
 const LOCAL_SPLITS: usize = 8;
 const GLOBAL_SPLITS: usize = 16;
-/// The head's workgroups (16 rows each).
-const HEAD_GROUPS: usize = VOCAB / 16;
+/// The head's workgroups.
+const HEAD_GROUPS: usize = VOCAB / GEMV_ROWS;
 /// The most positions of a context.
-pub(super) const MOST_POSITIONS: usize = 16_384;
-/// The words before the tokens in `ints` (the state).
-pub(super) const TOKENS: usize = 16;
-/// No norm (`residual`), no other rows (`quant`).
-const NONE: usize = u32::MAX as usize;
-/// `residual`'s flags.
-const ADD: usize = 1;
-const SCALE: usize = 2;
-const OUT: usize = 4;
+const MOST_POSITIONS: usize = 16_384;
+/// The positions past a context the steps may run (those made after a
+/// stop, before it is read: two runs of steps).
+const PAST: usize = 2 * STEPS_A_READ;
+/// The largest context [`super::Gemma::reserve`] takes (a prompt and what
+/// it writes): the most positions, less those the steps may run past it.
+pub const MOST_CONTEXT: usize = MOST_POSITIONS - PAST;
+/// The words of a staging buffer (the logits, or a run's tokens).
+pub(super) const STAGING_WORDS: usize = VOCAB;
+const _: () = assert!(VOCAB >= STEPS_A_READ);
 
-/// How a matrix multiply takes its rows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Precision {
-    /// At 8 bits, a block of 32 a scale, multiplied four at a time with
-    /// `dot4I8Packed` (where the GPU has it natively).
-    Q8,
-    /// As f32s (where `dot4I8Packed` would be emulated, as on Metal).
-    Plain,
-}
-
-impl Precision {
-    /// The producers' mode number.
-    fn mode(self) -> usize {
-        match self {
-            Precision::Q8 => 1,
-            Precision::Plain => 0,
-        }
-    }
-}
-
-/// A 4-bit matrix's place for the engine (one format: no flag).
+/// A matrix's place for the engine (its kind is the kernel's: no flag).
 impl engine::Matrix for Matrix {
     fn at(self) -> usize {
         self.at
@@ -119,17 +121,17 @@ impl Sizes {
         let cache: usize = (0..OWN_KV).map(|l| kv_words(l) * positions).sum();
         let qa = TOKENS + positions;
         let qs = qa + CHUNK * FF;
-        let best = qs + CHUNK * FF / 32 * 2;
+        let best = qs + CHUNK * FF / Q8_BLOCK * 2;
         Sizes {
             positions,
-            cache: cache + CHUNK * HEADS * head_of(5),
+            cache: cache + CHUNK * HEADS * GLOBAL_HEAD,
             queries: cache,
-            rope: positions * (head_of(0) / 2 + head_of(5) / 2) * 2,
+            rope: positions * (LOCAL_HEAD / 2 + GLOBAL_HEAD / 2) * 2,
             x: CHUNK * DIM,
             h: CHUNK * (FF + PER_LAYER),
             pli: CHUNK * FF,
             per_layer: CHUNK * PER_LAYERS,
-            parts: HEADS * GLOBAL_SPLITS * (head_of(5) + 2),
+            parts: HEADS * GLOBAL_SPLITS * (GLOBAL_HEAD + 2),
             ints: best + HEAD_GROUPS * 2,
             qa,
             qs,
@@ -163,7 +165,7 @@ impl Sizes {
     /// Where the rotary table of a layer's kind is.
     fn rope_at(&self, l: usize) -> usize {
         if is_global(l) {
-            self.positions * head_of(0)
+            self.positions * LOCAL_HEAD
         } else {
             0
         }
@@ -171,51 +173,110 @@ impl Sizes {
 
     /// The rotary tables: for each position, a layer kind's cosine and sine
     /// of each pair (a sliding layer's 128 pairs, then a global layer's
-    /// 256, of which the first 64 turn), as f32 bits.
-    pub(super) fn rope(&self) -> Vec<u32> {
+    /// 256, of which the first 64 turn).
+    pub(super) fn rope(&self) -> Vec<f32> {
         let mut table = Vec::with_capacity(self.rope);
-        for global in [false, true] {
-            let d = head_of(if global { 5 } else { 0 });
-            let (base, turned) = if global {
-                (super::GLOBAL_BASE, super::GLOBAL_TURNED)
-            } else {
-                (super::LOCAL_BASE, d / 2)
-            };
+        for (dim, base, turned) in [
+            (LOCAL_HEAD, LOCAL_BASE, LOCAL_HEAD / 2),
+            (GLOBAL_HEAD, GLOBAL_BASE, GLOBAL_TURNED),
+        ] {
             // As the reference computes them: the frequencies in f32, the
             // angles a position times them in f32.
-            let freq: Vec<f32> = (0..d / 2)
-                .map(|i| {
-                    if i < turned {
-                        1.0 / base.powf((2 * i) as f32 / d as f32)
-                    } else {
-                        0.0
-                    }
-                })
-                .collect();
-            for pos in 0..self.positions {
-                for &f in &freq {
-                    let angle = f64::from(pos as f32 * f);
-                    table.push((angle.cos() as f32).to_bits());
-                    table.push((angle.sin() as f32).to_bits());
-                }
-            }
+            let freqs = engine::Freqs {
+                base: f64::from(base),
+                dim,
+                turned,
+            };
+            table.extend(engine::rotary(
+                0..self.positions,
+                freqs,
+                engine::Angles::F32ThenF64,
+            ));
         }
         table
     }
 }
 
-/// What a plan needs: where the weights are, the context's sizes, how
-/// rows are multiplied.
+/// The room for a context of `context` positions (a prompt and what it
+/// writes) as planned: its buffers' sizes (for the context and the steps
+/// run past a stop), and the dispatches of a step and of a prompt of the
+/// whole context.
+pub(super) struct ContextPlan {
+    pub(super) context: usize,
+    pub(super) sizes: Sizes,
+    step: usize,
+    prompt: usize,
+}
+
+impl ContextPlan {
+    /// The room for `context` positions with the weights of `layout`; an
+    /// error past the most a context may have.
+    pub(super) fn new(layout: &Layout, context: usize) -> Result<ContextPlan, String> {
+        if context > MOST_CONTEXT {
+            return Err(format!(
+                "a context of {context}: at most {MOST_CONTEXT} positions"
+            ));
+        }
+        let sizes = Sizes::new(context + PAST);
+        // Either path's dispatches are as many.
+        let plan = Plan {
+            layout,
+            sizes,
+            q8: true,
+        };
+        let step = plan.step().len();
+        let prompt = (0..context)
+            .step_by(CHUNK)
+            .map(|first| {
+                let rows = CHUNK.min(context - first);
+                plan.chunk(first, rows, first + rows == context).len()
+            })
+            .sum();
+        Ok(ContextPlan {
+            context,
+            sizes,
+            step,
+            prompt,
+        })
+    }
+
+    /// The bytes held while it is reserved: its buffers, the recorded
+    /// step's numbers, the two staging buffers.
+    pub(super) fn held_bytes(&self) -> u64 {
+        let words: usize = self.sizes.buffers().iter().map(|b| b.1.max(1)).sum();
+        words as u64 * 4 + self.step as u64 * PARAM_STRIDE + 2 * STAGING_WORDS as u64 * 4
+    }
+
+    /// The bytes at their most: with a prompt of the whole context's
+    /// numbers recorded too.
+    pub(super) fn peak_bytes(&self) -> u64 {
+        self.held_bytes() + self.prompt as u64 * PARAM_STRIDE
+    }
+}
+
+/// What a plan needs: where the weights are, the context's sizes, whether
+/// the quantised matrices take their rows at 8 bits.
 pub(super) struct Plan<'a> {
     pub(super) layout: &'a Layout,
     pub(super) sizes: Sizes,
-    pub(super) precision: Precision,
+    pub(super) q8: bool,
 }
 
 impl Plan<'_> {
+    /// How the rows for a matrix multiply through `m` are written: at 8
+    /// bits ([`Q8`]) where it is quantised and the plan takes rows so, else
+    /// as f32s (0).
+    fn mode(&self, m: Matrix) -> usize {
+        if self.q8 && Q8_KINDS.contains(&m.kind) {
+            Q8
+        } else {
+            0
+        }
+    }
+
     /// `rows` rows written for a matrix multiply through `m` (in `wq`) to
     /// `dst` (from `at`, rows `ld` apart), as `after` says: a GEMV for a
-    /// row, else the tiled GEMM.
+    /// row, else the tiled GEMM; each of `m`'s kind, on its path.
     fn matmul(
         &self,
         ops: &mut Vec<Op>,
@@ -236,95 +297,108 @@ impl Plan<'_> {
         };
         let mut numbers = mul.numbers().to_vec();
         numbers.extend([self.sizes.qs, self.sizes.best]);
+        debug_assert_eq!(
+            numbers.len(),
+            fields("mm").len(),
+            "a matrix multiply's numbers"
+        );
         let bind = Bind {
             src: Buf::Small,
             dst,
             wq,
         };
-        let q8 = self.precision == Precision::Q8;
+        let q8 = self.mode(m) == Q8;
         if rows == 1 {
-            assert_eq!(m.rows % 16, 0, "a GEMV takes rows in sixteens");
+            assert_eq!(m.rows % GEMV_ROWS, 0, "a GEMV takes rows in sixteens");
             ops.push(Op {
-                kernel: if q8 { Kernel::GemvQ8 } else { Kernel::GemvF32 },
+                kernel: if q8 {
+                    Kernel::GemvQ8(m.kind)
+                } else {
+                    Kernel::GemvF32(m.kind)
+                },
                 buffers: bind,
                 params: params(&numbers),
-                groups: [(m.rows / 16) as u32, 1, 1],
+                groups: [(m.rows / GEMV_ROWS) as u32, 1, 1],
             });
         } else {
-            assert_eq!(m.rows % 64, 0, "a GEMM takes columns in tiles of 64");
+            assert_eq!(m.rows % GEMM_TILE, 0, "a GEMM takes columns in tiles of 64");
             assert!(
                 matches!(after, After::Store | After::Gelu | After::GeGlu),
                 "a GEMM writes, takes GELU or gates"
             );
             ops.push(Op {
-                kernel: if q8 { Kernel::GemmQ8 } else { Kernel::GemmF32 },
+                kernel: if q8 {
+                    Kernel::GemmQ8(m.kind)
+                } else {
+                    Kernel::GemmF32(m.kind)
+                },
                 buffers: bind,
                 params: params(&numbers),
-                groups: [(m.rows / 64) as u32, rows.div_ceil(64) as u32, 1],
+                groups: [
+                    (m.rows / GEMM_TILE) as u32,
+                    rows.div_ceil(GEMM_TILE) as u32,
+                    1,
+                ],
             });
         }
     }
 
-    /// `rows` rows of `width` values of `H` (from the start) written for a
-    /// matrix multiply, each times `H`'s at the same place of the rows at
-    /// `times` (`width` apart) where that is given.
-    fn quant(&self, ops: &mut Vec<Op>, rows: usize, width: usize, times: Option<usize>) {
+    /// `rows` rows of `H` (from its start, as wide as `m`'s inputs) written
+    /// for a matrix multiply through `m`, each times `H`'s at the same place
+    /// of the rows at `times` (as wide) where that is given.
+    fn quant(&self, ops: &mut Vec<Op>, rows: usize, m: Matrix, times: Option<usize>) {
+        let width = m.cols;
         ops.push(Op {
             kernel: Kernel::Quant,
-            buffers: Bind {
-                src: Buf::H,
-                dst: Buf::Spare,
-                wq: Buf::Rope,
-            },
-            params: params(&[
-                rows,
-                width,
-                0,
-                width,
-                self.sizes.qa,
-                self.sizes.qs,
-                self.precision.mode(),
-                times.unwrap_or(NONE),
-                width,
-            ]),
-            groups: spread(rows * width / 32),
+            buffers: Bind::rows(Buf::H, Buf::Spare),
+            params: named(
+                "quant",
+                &[
+                    ("rows", rows),
+                    ("width", width),
+                    ("stride", width),
+                    ("qa", self.sizes.qa),
+                    ("qs", self.sizes.qs),
+                    ("mode", self.mode(m)),
+                    ("times", times.unwrap_or(NONE)),
+                    ("times_stride", width),
+                ],
+            ),
+            groups: spread(rows * width / Q8_BLOCK),
         });
     }
 
     /// The residual stream's step for `rows` rows of `X` from row `x_row`:
     /// `H`'s rows RMS-normed by `add` and added, the rows scaled by
-    /// `scale`, then written for a matrix multiply where `out` (normed by
-    /// it, or as they are where it is `NONE`).
+    /// `scale`, then written for a matrix multiply through the matrix of
+    /// `out` (normed by its norm, or as they are where that is `NONE`).
     fn residual(
         &self,
         ops: &mut Vec<Op>,
         (rows, x_row): (usize, usize),
         add: Option<usize>,
         scale: Option<usize>,
-        out: Option<usize>,
+        out: Option<(usize, Matrix)>,
     ) {
         let flags = add.map_or(0, |_| ADD) | scale.map_or(0, |_| SCALE) | out.map_or(0, |_| OUT);
         ops.push(Op {
             kernel: Kernel::Residual,
-            buffers: Bind {
-                src: Buf::H,
-                dst: Buf::X,
-                wq: Buf::Rope,
-            },
-            params: params(&[
-                DIM,
-                0,
-                0,
-                DIM,
-                add.unwrap_or(0),
-                scale.unwrap_or(0),
-                out.unwrap_or(NONE),
-                self.sizes.qa,
-                self.sizes.qs,
-                self.precision.mode(),
-                flags,
-                x_row,
-            ]),
+            buffers: Bind::rows(Buf::H, Buf::X),
+            params: named(
+                "residual",
+                &[
+                    ("width", DIM),
+                    ("stride", DIM),
+                    ("add", add.unwrap_or(0)),
+                    ("scalar", scale.unwrap_or(0)),
+                    ("norm", out.map_or(NONE, |o| o.0)),
+                    ("qa", self.sizes.qa),
+                    ("qs", self.sizes.qs),
+                    ("mode", out.map_or(0, |o| self.mode(o.1))),
+                    ("flags", flags),
+                    ("x_row", x_row),
+                ],
+            ),
             groups: [rows as u32, 1, 1],
         });
     }
@@ -334,6 +408,7 @@ impl Plan<'_> {
     /// `first`, or the decoder's (`None`).
     fn embed(&self, ops: &mut Vec<Op>, rows: usize, first: Option<usize>) {
         let (stated, first) = (first.is_none(), first.unwrap_or(0));
+        let embed = self.layout.embed;
         ops.push(Op {
             kernel: Kernel::Embed,
             buffers: Bind {
@@ -341,33 +416,227 @@ impl Plan<'_> {
                 dst: Buf::X,
                 wq: Buf::Shared,
             },
-            params: params(&[
-                rows,
-                first,
-                usize::from(stated),
-                0,
-                self.layout.embed.at,
-                EMBED_SCALE.to_bits() as usize,
-                DIM,
-                VOCAB,
-            ]),
+            params: named(
+                "embed",
+                &[
+                    ("rows", rows),
+                    ("first", first),
+                    ("stated", usize::from(stated)),
+                    ("at", embed.at),
+                    ("scale", EMBED_SCALE.to_bits() as usize),
+                    ("width", DIM),
+                    ("kind", embed.kind.id() as usize),
+                ],
+            ),
             groups: spread(rows * DIM),
         });
-        self.residual(ops, (rows, 0), None, None, Some(NONE));
+        let per_layer = self.layout.per_layer;
+        self.residual(ops, (rows, 0), None, None, Some((NONE, per_layer)));
         self.matmul(
             ops,
             rows,
-            (self.layout.per_layer, Buf::Shared),
+            (per_layer, Buf::Shared),
             (Buf::PerLayer, 0, PER_LAYERS),
             After::Store,
         );
+        let first = &self.layout.layers[0];
         self.residual(
             ops,
             (rows, 0),
             None,
             None,
-            Some(self.layout.layers[0].input_norm),
+            Some((first.input_norm, first.q)),
         );
+    }
+
+    /// Layer `l`'s queries, keys and values (as it has them), each run of
+    /// them of one kind one matrix, where each starts in a row of them.
+    fn qkv(&self, l: usize) -> Vec<(Matrix, usize)> {
+        let layer = &self.layout.layers[l];
+        let mut parts = vec![layer.placed(layer.q)];
+        if let Some((k, v)) = layer.kv {
+            parts.extend([layer.placed(k), layer.placed(v)]);
+        }
+        let mut out: Vec<(Matrix, usize)> = Vec::new();
+        let mut row = 0;
+        for m in parts {
+            let joined = out.last().and_then(|&(last, _)| last.and(m));
+            match (joined, out.last_mut()) {
+                (Some(joined), Some(last)) => last.0 = joined,
+                _ => out.push((m, row)),
+            }
+            row += m.rows;
+        }
+        // Their rows are written once, for the queries' mode (the next
+        // layer's `q` in `residual`): every part takes them so.
+        debug_assert!(out.iter().all(|(m, _)| self.mode(*m) == self.mode(layer.q)));
+        out
+    }
+
+    /// Layer `l`'s queries, keys and values of `rows` rows (in `H`, `qkv`
+    /// apart) normed and turned into their places by the cache: at
+    /// position `first`, or the decoder's (`None`).
+    fn prep(&self, ops: &mut Vec<Op>, l: usize, rows: usize, first: Option<usize>, qkv: usize) {
+        let layer = &self.layout.layers[l];
+        let kv = if shares(l) { 0 } else { KV_HEADS };
+        let (k_at, v_at) = self.sizes.kv(l);
+        ops.push(Op {
+            kernel: Kernel::Prep,
+            buffers: Bind::rows(Buf::H, Buf::Cache),
+            params: named(
+                "prep",
+                &[
+                    ("rows", rows),
+                    ("first", first.unwrap_or(0)),
+                    ("stated", usize::from(first.is_none())),
+                    ("d", head_of(l)),
+                    ("stride", qkv),
+                    ("q_norm", layer.q_norm),
+                    // Unread where the layer has no keys of its own (kv 0).
+                    ("k_norm", layer.k_norm.unwrap_or(0)),
+                    ("queries", self.sizes.queries),
+                    ("keys", k_at),
+                    ("values", v_at),
+                    ("positions", self.sizes.positions),
+                    ("rope", self.sizes.rope_at(l)),
+                    ("kv", kv),
+                    ("heads", HEADS),
+                ],
+            ),
+            groups: [rows as u32, (HEADS + 2 * kv) as u32, 1],
+        });
+    }
+
+    /// Layer `l`'s attention for the row at the decoder's position (in
+    /// splits, then joined), written for its output's matrix.
+    fn attend_step(&self, ops: &mut Vec<Op>, l: usize) {
+        let d = head_of(l);
+        let (window, splits) = if is_global(l) {
+            (0, GLOBAL_SPLITS)
+        } else {
+            (WINDOW, LOCAL_SPLITS)
+        };
+        let (k_at, v_at) = self.sizes.kv(l);
+        ops.push(Op {
+            kernel: Kernel::Attend,
+            buffers: Bind::rows(Buf::Cache, Buf::Parts),
+            params: named(
+                "attend",
+                &[
+                    ("d", d),
+                    ("window", window),
+                    ("queries", self.sizes.queries),
+                    ("keys", k_at),
+                    ("values", v_at),
+                    ("positions", self.sizes.positions),
+                    ("splits", splits),
+                ],
+            ),
+            groups: [splits as u32, KV_HEADS as u32, 1],
+        });
+        ops.push(Op {
+            kernel: Kernel::Join,
+            buffers: Bind::rows(Buf::Parts, Buf::Spare),
+            params: named(
+                "join",
+                &[
+                    ("d", d),
+                    ("splits", splits),
+                    ("qa", self.sizes.qa),
+                    ("qs", self.sizes.qs),
+                    ("mode", self.mode(self.layout.layers[l].o)),
+                    ("heads", HEADS),
+                ],
+            ),
+            groups: [1, 1, 1],
+        });
+    }
+
+    /// Layer `l`'s attention for `rows` rows from position `first` (a
+    /// prompt's), into `H`.
+    fn flash(&self, ops: &mut Vec<Op>, l: usize, rows: usize, first: usize) {
+        let d = head_of(l);
+        let window = if is_global(l) { 0 } else { WINDOW };
+        let (k_at, v_at) = self.sizes.kv(l);
+        let per_block = FLASH_LANES / (d / 16);
+        ops.push(Op {
+            kernel: Kernel::Flash,
+            buffers: Bind::rows(Buf::Cache, Buf::H),
+            params: named(
+                "flash",
+                &[
+                    ("rows", rows),
+                    ("first", first),
+                    ("d", d),
+                    ("window", window),
+                    ("queries", self.sizes.queries),
+                    ("keys", k_at),
+                    ("values", v_at),
+                    ("positions", self.sizes.positions),
+                    ("heads", HEADS),
+                    ("group", HEADS / KV_HEADS),
+                ],
+            ),
+            groups: [rows.div_ceil(per_block) as u32, HEADS as u32, 1],
+        });
+    }
+
+    /// Layer `l`'s per-layer inputs of `rows` rows from position `first`
+    /// (or the decoder's, `None`), the projection's from row `x_row`, into
+    /// `H` after the products (at `pli`).
+    fn per_layer(
+        &self,
+        ops: &mut Vec<Op>,
+        l: usize,
+        (rows, x_row): (usize, usize),
+        first: Option<usize>,
+    ) {
+        let layer = &self.layout.layers[l];
+        ops.push(Op {
+            kernel: Kernel::PerLayer,
+            buffers: Bind {
+                src: Buf::PerLayer,
+                dst: Buf::H,
+                wq: Buf::Layers(layer.group),
+            },
+            params: named(
+                "per_layer",
+                &[
+                    ("rows", rows),
+                    ("first", first.unwrap_or(0)),
+                    ("stated", usize::from(first.is_none())),
+                    ("stride", PER_LAYERS),
+                    ("slice", l * PER_LAYER),
+                    ("norm", self.layout.per_layer_norm),
+                    ("at", layer.placed(layer.ple).at),
+                    ("out", self.sizes.pli),
+                    ("width", PER_LAYER),
+                    ("x_row", x_row),
+                    ("scale", PER_LAYER_PROJECTION_SCALE.to_bits() as usize),
+                    ("embed_scale", PER_LAYER_EMBED_SCALE.to_bits() as usize),
+                    ("kind", layer.ple.kind.id() as usize),
+                ],
+            ),
+            groups: [rows as u32, 1, 1],
+        });
+    }
+
+    /// The next token from the head's workgroups' largest, put after the
+    /// decoder's position, which moves on.
+    fn argmax(&self, ops: &mut Vec<Op>) {
+        ops.push(Op {
+            kernel: Kernel::Argmax,
+            buffers: Bind::rows(Buf::Small, Buf::Spare),
+            params: named(
+                "argmax",
+                &[
+                    ("groups", HEAD_GROUPS),
+                    ("best", self.sizes.best),
+                    ("positions", self.sizes.positions),
+                ],
+            ),
+            groups: [1, 1, 1],
+        });
     }
 
     /// Layer `l` for `rows` rows from position `first` (a prompt's, through
@@ -385,114 +654,18 @@ impl Plan<'_> {
     ) {
         let layer = &self.layout.layers[l];
         let w = Buf::Layers(layer.group);
-        let d = head_of(l);
-        let (stated, first_pos) = (first.is_none(), first.unwrap_or(0));
         let kv = if shares(l) { 0 } else { KV_HEADS };
-        let qkv = layer.qkv.rows;
-        let window = if is_global(l) { 0 } else { WINDOW };
-        let (k_at, v_at) = self.sizes.kv(l);
-        let positions = self.sizes.positions;
-        self.matmul(
-            ops,
-            rows,
-            (layer.placed(layer.qkv), w),
-            (Buf::H, 0, qkv),
-            After::Store,
-        );
-        ops.push(Op {
-            kernel: Kernel::Prep,
-            buffers: Bind {
-                src: Buf::H,
-                dst: Buf::Cache,
-                wq: Buf::Rope,
-            },
-            params: params(&[
-                rows,
-                first_pos,
-                usize::from(stated),
-                d,
-                0,
-                qkv,
-                layer.q_norm,
-                layer.k_norm.unwrap_or(0),
-                self.sizes.queries,
-                k_at,
-                v_at,
-                positions,
-                self.sizes.rope_at(l),
-                kv,
-                HEADS,
-            ]),
-            groups: [rows as u32, (HEADS + 2 * kv) as u32, 1],
-        });
-        if stated {
-            let splits = if window > 0 {
-                LOCAL_SPLITS
-            } else {
-                GLOBAL_SPLITS
-            };
-            ops.push(Op {
-                kernel: Kernel::Attend,
-                buffers: Bind {
-                    src: Buf::Cache,
-                    dst: Buf::Parts,
-                    wq: Buf::Rope,
-                },
-                params: params(&[
-                    d,
-                    window,
-                    self.sizes.queries,
-                    k_at,
-                    v_at,
-                    positions,
-                    0,
-                    splits,
-                ]),
-                groups: [splits as u32, KV_HEADS as u32, 1],
-            });
-            ops.push(Op {
-                kernel: Kernel::Join,
-                buffers: Bind {
-                    src: Buf::Parts,
-                    dst: Buf::Spare,
-                    wq: Buf::Rope,
-                },
-                params: params(&[
-                    d,
-                    splits,
-                    0,
-                    self.sizes.qa,
-                    self.sizes.qs,
-                    self.precision.mode(),
-                    HEADS,
-                ]),
-                groups: [1, 1, 1],
-            });
-        } else {
-            let per_block = 256 / (d / 16);
-            ops.push(Op {
-                kernel: Kernel::Flash,
-                buffers: Bind {
-                    src: Buf::Cache,
-                    dst: Buf::H,
-                    wq: Buf::Rope,
-                },
-                params: params(&[
-                    rows,
-                    first_pos,
-                    d,
-                    window,
-                    self.sizes.queries,
-                    k_at,
-                    v_at,
-                    positions,
-                    0,
-                    HEADS,
-                    HEADS / KV_HEADS,
-                ]),
-                groups: [rows.div_ceil(per_block) as u32, HEADS as u32, 1],
-            });
-            self.quant(ops, rows, HEADS * d, None);
+        let qkv = (HEADS + 2 * kv) * head_of(l);
+        for (m, row) in self.qkv(l) {
+            self.matmul(ops, rows, (m, w), (Buf::H, row, qkv), After::Store);
+        }
+        self.prep(ops, l, rows, first, qkv);
+        match first {
+            None => self.attend_step(ops, l),
+            Some(first) => {
+                self.flash(ops, l, rows, first);
+                self.quant(ops, rows, layer.o, None);
+            }
         }
         self.matmul(
             ops,
@@ -506,7 +679,7 @@ impl Plan<'_> {
             (rows, x_row),
             Some(layer.post_attn),
             None,
-            Some(layer.pre_ff),
+            Some((layer.pre_ff, layer.gate_up)),
         );
         self.matmul(
             ops,
@@ -515,7 +688,7 @@ impl Plan<'_> {
             (Buf::H, 0, FF),
             After::GeGlu,
         );
-        self.quant(ops, rows, FF, None);
+        self.quant(ops, rows, layer.down, None);
         self.matmul(
             ops,
             rows,
@@ -523,32 +696,14 @@ impl Plan<'_> {
             (Buf::H, 0, DIM),
             After::Store,
         );
-        self.residual(ops, (rows, x_row), Some(layer.post_ff), None, Some(NONE));
-        ops.push(Op {
-            kernel: Kernel::PerLayer,
-            buffers: Bind {
-                src: Buf::PerLayer,
-                dst: Buf::H,
-                wq: w,
-            },
-            params: params(&[
-                rows,
-                first_pos,
-                usize::from(stated),
-                0,
-                PER_LAYERS,
-                l * PER_LAYER,
-                self.layout.per_layer_norm,
-                layer.placed(layer.ple).at,
-                self.sizes.pli,
-                PER_LAYER,
-                x_row,
-                PER_LAYER_PROJECTION_SCALE.to_bits() as usize,
-                PER_LAYER_EMBED_SCALE.to_bits() as usize,
-                VOCAB,
-            ]),
-            groups: [rows as u32, 1, 1],
-        });
+        self.residual(
+            ops,
+            (rows, x_row),
+            Some(layer.post_ff),
+            None,
+            Some((NONE, layer.gate)),
+        );
+        self.per_layer(ops, l, (rows, x_row), first);
         self.matmul(
             ops,
             rows,
@@ -556,7 +711,7 @@ impl Plan<'_> {
             (Buf::H, 0, PER_LAYER),
             After::Gelu,
         );
-        self.quant(ops, rows, PER_LAYER, Some(self.sizes.pli));
+        self.quant(ops, rows, layer.proj, Some(self.sizes.pli));
         self.matmul(
             ops,
             rows,
@@ -568,7 +723,9 @@ impl Plan<'_> {
             self.layout
                 .layers
                 .get(l + 1)
-                .map_or(self.layout.final_norm, |n| n.input_norm)
+                .map_or((self.layout.final_norm, self.layout.embed), |n| {
+                    (n.input_norm, n.q)
+                })
         });
         self.residual(
             ops,
@@ -593,16 +750,7 @@ impl Plan<'_> {
             (Buf::Logits, 0, VOCAB),
             After::Argmax { stride: 0 },
         );
-        ops.push(Op {
-            kernel: Kernel::Argmax,
-            buffers: Bind {
-                src: Buf::Small,
-                dst: Buf::Spare,
-                wq: Buf::Rope,
-            },
-            params: params(&[HEAD_GROUPS, self.sizes.best, self.sizes.positions]),
-            groups: [1, 1, 1],
-        });
+        self.argmax(ops);
     }
 
     /// A step: the token at the decoder's position through every layer,
@@ -626,15 +774,51 @@ impl Plan<'_> {
             self.layer(&mut ops, l, (rows, 0), Some(first), l + 1 < OWN_KV);
         }
         if last {
+            let next = &self.layout.layers[OWN_KV];
             self.residual(
                 &mut ops,
                 (1, rows - 1),
                 None,
                 None,
-                Some(self.layout.layers[OWN_KV].input_norm),
+                Some((next.input_norm, next.q)),
             );
             self.last_row(&mut ops, OWN_KV, rows - 1);
         }
         ops
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Either path's step and chunks are as many dispatches (the room is
+    /// planned on one); a position more of context holds its keys and
+    /// values in each layer with its own, its rows of both rotary tables
+    /// and its token, and nothing else; a prompt's numbers are recorded on
+    /// top at the most.
+    #[test]
+    fn the_room_is_as_planned_on_either_path() {
+        let layout = super::super::model::tests::gemma();
+        let context = CHUNK + 100;
+        let room = ContextPlan::new(&layout, context).unwrap();
+        let [fast, full] = [true, false].map(|q8| Plan {
+            layout: &layout,
+            sizes: room.sizes,
+            q8,
+        });
+        assert_eq!(fast.step().len(), full.step().len());
+        let mut prompt = 0;
+        for (first, rows, last) in [(0, CHUNK, false), (CHUNK, 100, true)] {
+            let n = full.chunk(first, rows, last).len();
+            assert_eq!(fast.chunk(first, rows, last).len(), n, "chunk at {first}");
+            prompt += n as u64;
+        }
+        let more = ContextPlan::new(&layout, context + 1).unwrap();
+        let kv: usize = (0..OWN_KV).map(|l| 2 * KV_HEADS * head_of(l)).sum();
+        let a_position = (kv + LOCAL_HEAD + GLOBAL_HEAD + 1) as u64 * 4;
+        assert_eq!(more.held_bytes() - room.held_bytes(), a_position);
+        assert_eq!(room.peak_bytes(), room.held_bytes() + prompt * PARAM_STRIDE);
+        assert!(ContextPlan::new(&layout, MOST_CONTEXT + 1).is_err());
     }
 }

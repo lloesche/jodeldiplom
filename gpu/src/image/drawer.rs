@@ -1,11 +1,14 @@
-//! The transformer and the autoencoder together ([`Painter`]): a picture
+//! The transformer and the autoencoder together ([`Drawer`]): a picture
 //! from a prompt's embeddings, a seed and its reference pictures, as one
 //! plan: the references through the encoder into tokens, the steps'
 //! modulations, four steps of the transformer and the sampler, the
-//! latents through the decoder. The autoencoder's buffers are the
-//! transformer's, taken in turns (their uses never overlap).
+//! latents through the decoder. The autoencoder's large buffers are the
+//! transformer's, taken in turns (their uses never overlap), and the
+//! picture's is the first reference's (its pixels taken in before the
+//! picture is written).
 
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 
 use jodel_tensors::SafeTensors;
 
@@ -14,27 +17,22 @@ use super::gpu::{Loaded, Made};
 use super::plan::{At, Plan};
 use super::sampling::{embedded_time, noise, schedule};
 use super::transformer::{self as tr, time_sinusoids, Tokens, Transformer, CHANNELS};
-use super::vae::{Slots, Vae};
-use super::weights::Packing;
-use super::{Footprint, Precision};
+use super::vae::{self, Vae};
+use super::weights::{Packing, Source};
+use crate::{Footprint, Precision, Resident};
 
-/// The transformer's file in its repository, and the autoencoder's in
-/// the diffusers release's.
+/// The files [`Drawer::load`] opens: the transformer's in BFL's FP8
+/// release (`black-forest-labs/FLUX.2-klein-4b-fp8`), the autoencoder's in
+/// the diffusers pipeline's (`black-forest-labs/FLUX.2-klein-4B`), each
+/// within its repository (one each, listed as the encoder's are:
+/// [`super::ENCODER_FILES`]).
 const TRANSFORMER_FILE: &str = "flux-2-klein-4b-fp8.safetensors";
-const VAE_FILE: &str = "vae/diffusion_pytorch_model.safetensors";
+const AUTOENCODER_FILE: &str = "vae/diffusion_pytorch_model.safetensors";
+pub const TRANSFORMER_FILES: &[&str] = &[TRANSFORMER_FILE];
+pub const PIPELINE_FILES: &[&str] = &[AUTOENCODER_FILE];
 
 /// The sampler's steps (klein is distilled for four).
 pub const STEPS: usize = 4;
-
-/// The autoencoder's slots: its large ones are the transformer's.
-const VAE: Slots = Slots {
-    large: [tr::CAT, tr::QKV, tr::HEADS_SLOT, tr::H, tr::X],
-    part: 12,
-    stats: 13,
-};
-/// The picture made, and the first reference's pixels (the others' in the
-/// slots after it).
-const IMAGE: u8 = 14;
 
 /// A picture: RGB, 8 bits a channel, row by row.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,18 +77,28 @@ impl Key {
             refs: self.refs.iter().map(|&(w, h)| (h / 16, w / 16)).collect(),
         }
     }
+}
 
-    /// The f32s read back.
-    fn read(&self) -> (u8, usize, usize) {
-        let t = self.tokens();
-        match self.part {
-            Part::Picture | Part::Decode => (IMAGE, 0, self.width * self.height * 3),
+/// A plan's slots for what goes in and comes out: the transformer's, the
+/// references' pixels, the picture.
+struct Io {
+    tr: tr::Slots,
+    refs: Vec<u8>,
+    picture: u8,
+}
+
+impl Io {
+    /// The f32s `key`'s plan reads back.
+    fn read(&self, key: &Key) -> (u8, usize, usize) {
+        let t = key.tokens();
+        match key.part {
+            Part::Picture | Part::Decode => (self.picture, 0, key.width * key.height * 3),
             Part::References => (
-                tr::LAT,
+                self.tr.lat,
                 t.latent() * CHANNELS,
                 (t.picture() - t.latent()) * CHANNELS,
             ),
-            Part::FirstStep => (tr::PRED, 0, t.latent() * CHANNELS),
+            Part::FirstStep => (self.tr.pred, 0, t.latent() * CHANNELS),
         }
     }
 }
@@ -111,22 +119,35 @@ fn check_size(width: usize, height: usize, what: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The weights of the transformer (from `t`) and the autoencoder (from
+/// `v`) into `pack`.
+fn pack<'a>(
+    (t, v): (Source<'a>, Source<'a>),
+    pack: &mut Packing<'a>,
+) -> Result<(Transformer, Vae), String> {
+    Ok((Transformer::pack(t, pack)?, Vae::pack(v, pack)?))
+}
+
 /// FLUX.2 klein 4B's transformer and its autoencoder on the GPU.
-pub struct Painter {
+pub struct Drawer {
     loaded: Loaded,
     transformer: Transformer,
     vae: Vae,
     precision: Precision,
-    made: Option<(Key, Made)>,
+    /// The plan last made (let go by [`Resident::release`]).
+    made: Mutex<Option<(Key, Io, Made)>>,
+    /// The bytes of the largest plan made.
+    working: u64,
 }
 
-impl Painter {
-    /// The bytes it takes on the GPU while loaded, and while it makes a
-    /// picture of `width × height` with references of these sizes.
-    pub fn footprint(width: usize, height: usize, refs: &[(usize, usize)]) -> Footprint {
-        let fp8 = tr::FP8_VALUES as u64;
-        let (vae, vae_bytes) = Vae::shapes();
-        let resident = fp8 + fp8 / (64 * 128) * 4 + 2 * tr::BF16_VALUES as u64 + vae_bytes;
+impl Drawer {
+    /// What it takes on the GPU while loaded, and while it makes a picture
+    /// of `width × height` with references of these sizes, before it is
+    /// loaded: its weights packed as they would be, nothing read.
+    pub fn planned(width: usize, height: usize, refs: &[(usize, usize)]) -> Footprint {
+        let mut packing = Packing::new();
+        let (transformer, vae) =
+            pack((Source::Shapes, Source::Shapes), &mut packing).expect("shapes alone do not fail");
         let key = Key {
             width,
             height,
@@ -134,8 +155,8 @@ impl Painter {
             part: Part::Picture,
         };
         Footprint {
-            resident,
-            working: plan(None, &vae, &key, false).bytes(),
+            resident: packing.bytes(),
+            working: plan(&transformer, &vae, &key, false).0.bytes(),
         }
     }
 
@@ -144,57 +165,34 @@ impl Painter {
     /// the diffusers release (`klein`: the folder of
     /// `black-forest-labs/FLUX.2-klein-4B`, its `vae/`), each in its
     /// repository's own layout, on the GPU.
-    pub fn load(transformer: &Path, klein: &Path, precision: Precision) -> Result<Painter, String> {
+    pub fn load(transformer: &Path, klein: &Path, precision: Precision) -> Result<Drawer, String> {
         let t = SafeTensors::open(&transformer.join(TRANSFORMER_FILE))?;
-        let v = SafeTensors::open(&klein.join(VAE_FILE))?;
-        let mut pack = Packing::new();
-        let transformer = Transformer::pack(&t, &mut pack)?;
-        let vae = Vae::pack(&v, &mut pack)?;
-        let loaded = pack.upload("jodel-gpu painter")?;
-        Ok(Painter {
+        let v = SafeTensors::open(&klein.join(AUTOENCODER_FILE))?;
+        let mut packing = Packing::new();
+        let (transformer, vae) = pack(
+            (Source::Checkpoint(&t), Source::Checkpoint(&v)),
+            &mut packing,
+        )?;
+        let loaded = packing.upload("jodel-gpu drawer")?;
+        Ok(Drawer {
             loaded,
             transformer,
             vae,
             precision,
-            made: None,
+            made: Mutex::new(None),
+            working: 0,
         })
-    }
-
-    /// The GPU's name.
-    pub fn gpu_name(&self) -> &str {
-        &self.loaded.gpu.name
     }
 
     /// Whether the fast kernels run on tensor cores here.
     pub fn tensor_cores(&self) -> bool {
-        self.loaded.gpu.coop && self.precision == Precision::Fast
-    }
-
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is loaded instead.
-    pub fn is_lost(&self) -> bool {
-        self.loaded.lost()
-    }
-
-    /// What it takes on the GPU now: its weights, and its plan's buffers
-    /// (kept for the next picture of the same size, until
-    /// [`Painter::release`]).
-    pub fn bytes(&self) -> Footprint {
-        Footprint {
-            resident: self.loaded.bytes(),
-            working: self.made.as_ref().map_or(0, |(_, m)| m.bytes()),
-        }
+        self.loaded.fast(self.precision)
     }
 
     /// The bytes the GPU's allocator holds for every part now (where the
     /// backend tells).
     pub fn reserved(&self) -> Option<u64> {
         self.loaded.gpu.reserved()
-    }
-
-    /// Lets the plan's buffers go (the weights stay).
-    pub fn release(&mut self) {
-        self.made = None;
     }
 
     /// A picture of `width × height` for `embeds`, its noise drawn from
@@ -275,24 +273,67 @@ impl Painter {
             .collect();
         let rope = tokens.rope();
         let pictures: Vec<Vec<f32>> = refs.iter().map(pixels).collect();
-        if self.made.as_ref().is_none_or(|(k, _)| *k != key) {
-            self.made = None;
-            let fast = self.precision == Precision::Fast && self.loaded.gpu.coop;
-            let p = plan(Some(&self.transformer), &self.vae, &key, fast);
-            let made = Made::new(&self.loaded, &p, key.read().2)?;
-            self.made = Some((key.clone(), made));
+        let slot = self.made.get_mut().unwrap_or_else(PoisonError::into_inner);
+        if slot.as_ref().is_none_or(|(k, _, _)| *k != key) {
+            *slot = None;
+            let fast = self.loaded.fast(self.precision);
+            let (p, io) = plan(&self.transformer, &self.vae, &key, fast);
+            let made = Made::new(&self.loaded, &p, io.read(&key).2)?;
+            self.working = self.working.max(made.bytes());
+            *slot = Some((key.clone(), io, made));
         }
-        let (_, made) = self.made.as_mut().expect("made");
+        let (_, io, made) = slot.as_mut().expect("made");
         let mut inputs: Vec<(u8, usize, &[f32])> = vec![
-            (tr::LAT, 0, &lat),
-            (tr::TXT, 0, &embeds.values),
-            (tr::TIMES, 0, &times),
-            (tr::ROPE, 0, &rope),
+            (io.tr.lat, 0, &lat),
+            (io.tr.txt, 0, &embeds.values),
+            (io.tr.times, 0, &times),
+            (io.tr.rope, 0, &rope),
         ];
-        for (k, p) in pictures.iter().enumerate() {
-            inputs.push((IMAGE + k as u8, 0, p));
+        for (&slot, p) in io.refs.iter().zip(&pictures) {
+            inputs.push((slot, 0, p));
         }
-        made.run(&self.loaded, &inputs, key.read())
+        let read = io.read(&key);
+        made.run(&self.loaded, &inputs, read)
+    }
+}
+
+impl Drawer {
+    /// What it holds on the GPU now: its weights, and its plan's buffers
+    /// (kept for the next picture of the same size, until released).
+    pub fn held(&self) -> Footprint {
+        let made = self.made.lock().unwrap_or_else(PoisonError::into_inner);
+        Footprint {
+            resident: self.loaded.bytes(),
+            working: made.as_ref().map_or(0, |(_, _, m)| m.bytes()),
+        }
+    }
+
+    /// Whether its device was lost (a driver reset, the GPU gone): it runs
+    /// nothing again, and a new one is loaded instead.
+    pub fn is_lost(&self) -> bool {
+        self.loaded.lost()
+    }
+
+    /// The GPU's name.
+    pub fn gpu_name(&self) -> &str {
+        &self.loaded.gpu.name
+    }
+}
+
+impl Resident for Drawer {
+    /// Its weights, and the buffers of the largest picture it has made
+    /// (none before one; [`Drawer::planned`] says before it is loaded).
+    fn footprint(&self) -> Footprint {
+        Footprint {
+            resident: self.loaded.bytes(),
+            working: self.working,
+        }
+    }
+
+    /// Lets the plan's buffers go (the weights stay); the next picture
+    /// makes them again.
+    fn release(&self) {
+        *self.made.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 }
 
@@ -308,30 +349,40 @@ fn pixels(r: &Reference) -> Vec<f32> {
         .collect()
 }
 
-/// The plan for `key` (without the transformer: its slots only, for a
-/// footprint).
-fn plan(transformer: Option<&Transformer>, vae: &Vae, key: &Key, fast: bool) -> Plan {
+/// The plan for `key`, and its slots for what goes in and comes out.
+fn plan(transformer: &Transformer, vae: &Vae, key: &Key, fast: bool) -> (Plan, Io) {
     let mut p = Plan::new(fast);
     let tokens = key.tokens();
-    tr::need(&mut p, &tokens, STEPS);
+    let slots = tr::Slots::new(&mut p, &tokens, STEPS);
+    let vae_slots = vae::Slots {
+        large: slots.large(),
+        part: p.slot(0),
+        stats: p.slot(0),
+    };
     let latent = tokens.latent();
+    let refs: Vec<u8> = key.refs.iter().map(|&(w, h)| p.slot(w * h * 4)).collect();
+    // The picture is written over the first reference where there is one.
+    let over_ref = !refs.is_empty();
+    let picture = refs.first().copied().unwrap_or_else(|| p.slot(0));
     if key.part != Part::Decode {
         let mut at = latent;
-        for (k, &(w, h)) in key.refs.iter().enumerate() {
-            let image = IMAGE + k as u8;
-            p.need(image, w * h * 4);
+        for (&(w, h), &image) in key.refs.iter().zip(&refs) {
             vae.plan_encode(
                 &mut p,
-                VAE,
+                vae_slots,
                 At::new(image, 0),
                 (h, w),
-                At::new(tr::LAT, at * CHANNELS),
+                At::new(slots.lat, at * CHANNELS),
             );
             at += (h / 16) * (w / 16);
         }
     }
-    if let Some(t) = transformer.filter(|_| matches!(key.part, Part::Picture | Part::FirstStep)) {
-        t.plan_mods(&mut p, STEPS);
+    if matches!(key.part, Part::Picture | Part::FirstStep) {
+        // The transformer takes its large slots back from the autoencoder.
+        for s in slots.large() {
+            p.hand_over(s);
+        }
+        transformer.plan_mods(&mut p, &slots, STEPS);
         let sigmas = schedule(latent, STEPS);
         let steps = if key.part == Part::FirstStep {
             1
@@ -339,18 +390,61 @@ fn plan(transformer: Option<&Transformer>, vae: &Vae, key: &Key, fast: bool) -> 
             STEPS
         };
         for (i, &(s, next)) in sigmas.iter().take(steps).enumerate() {
-            t.plan_step(&mut p, &tokens, (i, STEPS), next - s);
+            transformer.plan_step(&mut p, (&slots, &tokens), (i, STEPS), next - s);
         }
     }
     if matches!(key.part, Part::Picture | Part::Decode) {
-        p.need(IMAGE, key.width * key.height * 3);
+        p.need(picture, key.width * key.height * 3);
+        // The decoder takes the large slots (and the first reference's).
+        for s in slots.large() {
+            p.hand_over(s);
+        }
+        if over_ref {
+            p.hand_over(picture);
+        }
         vae.plan_decode(
             &mut p,
-            VAE,
-            At::new(tr::LAT, 0),
+            vae_slots,
+            At::new(slots.lat, 0),
             (key.height, key.width),
-            At::new(IMAGE, 0),
+            At::new(picture, 0),
         );
     }
-    p
+    let io = Io {
+        tr: slots,
+        refs,
+        picture,
+    };
+    (p, io)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pack, plan, Key, Packing, Part, Source};
+
+    /// Every part's plan, with and without references, writes a slot it
+    /// takes over before it reads it (no GPU: the weights' shapes alone).
+    #[test]
+    fn a_slot_taken_over_is_written_first() {
+        let mut packing = Packing::new();
+        let (transformer, vae) =
+            pack((Source::Shapes, Source::Shapes), &mut packing).expect("shapes alone");
+        for part in [
+            Part::Picture,
+            Part::References,
+            Part::FirstStep,
+            Part::Decode,
+        ] {
+            for refs in [vec![], vec![(256, 256)], vec![(128, 256), (256, 128)]] {
+                let key = Key {
+                    width: 256,
+                    height: 128,
+                    refs,
+                    part,
+                };
+                let (p, _) = plan(&transformer, &vae, &key, false);
+                assert_eq!(p.check(), None, "{key:?}");
+            }
+        }
+    }
 }

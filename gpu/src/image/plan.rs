@@ -5,12 +5,55 @@
 //! adds to what is there reads it through its output.
 
 use super::Kernel;
-use crate::engine::{self, params, spread, After, Matrix, Mul};
+use crate::engine::{self, params, spread, After, Matrix, Mul, MUL_NUMBERS};
 
 /// The matrix kernels' own flags (`tail.wgsl`'s `MX_*`): A as a
 /// convolution's patches, the products added times a gate per column.
-const MX_CONV: usize = 1;
-const MX_GATED: usize = 2;
+pub(crate) const MX_CONV: usize = 1;
+pub(crate) const MX_GATED: usize = 2;
+/// How W's values are held (`MM_*` beside the engine's flags: FP8 none).
+pub(crate) const MM_BF16: usize = 4096;
+pub(crate) const MM_F32: usize = 8192;
+/// A convolution's input group-normed, then SiLU (`GN_*`).
+pub(crate) const GN_NORM: usize = 1;
+pub(crate) const GN_SILU: usize = 2;
+
+/// Where a matrix multiply's numbers after the engine's ten are: the FP8
+/// scales' offset and how many a row group has, the gates', W's row
+/// stride; a convolution's input rows, columns and channels, the output's
+/// columns, the kernel's size, stride and padding, the doubling; the group
+/// norm's statistics, weights, biases, channels a group and flags; the
+/// kernel's own flags.
+const MM_SCALES: usize = MUL_NUMBERS.len();
+const MM_PER: usize = 11;
+const MM_GATES: usize = 12;
+const MM_LDW: usize = 13;
+const CV_H: usize = 14;
+const GN_AT: usize = 22;
+const MX_FLAGS: usize = 27;
+
+/// Those places by the names the kernels read them by (each a function of
+/// the source).
+pub(crate) const MM_NUMBERS: [(&str, usize); 18] = [
+    ("mm_scales", MM_SCALES),
+    ("mm_per", MM_PER),
+    ("mm_gates", MM_GATES),
+    ("mm_ldw", MM_LDW),
+    ("cv_h", CV_H),
+    ("cv_w", CV_H + 1),
+    ("cv_c", CV_H + 2),
+    ("cv_ow", CV_H + 3),
+    ("cv_size", CV_H + 4),
+    ("cv_stride", CV_H + 5),
+    ("cv_pad", CV_H + 6),
+    ("cv_up", CV_H + 7),
+    ("gn_at", GN_AT),
+    ("gn_weight", GN_AT + 1),
+    ("gn_bias", GN_AT + 2),
+    ("gn_group", GN_AT + 3),
+    ("gn_flags", GN_AT + 4),
+    ("mx_flags", MX_FLAGS),
+];
 
 /// The buffers a dispatch binds: a part's matrices, its f32 tensors, and
 /// the plan's slots.
@@ -24,6 +67,15 @@ pub(crate) enum Buf {
 /// One dispatch: its buffers (src, the matrices, dst, the f32 tensors,
 /// src2), its numbers, its workgroups.
 pub(crate) type Op = engine::Op<Kernel, [Buf; 5], 32>;
+
+/// Where a dispatch's buffers bind the one it writes (the others it
+/// reads).
+const DST: usize = 2;
+
+/// Whether `bufs` bind `b` to read.
+fn reads(bufs: &[Buf; 5], b: Buf) -> bool {
+    bufs.iter().enumerate().any(|(k, &x)| k != DST && x == b)
+}
 
 /// A tensor's place: its slot and its first f32 there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,8 +155,8 @@ impl Matrix for Mat {
     fn flag(self) -> usize {
         match self.format {
             Format::Fp8 { .. } => 0,
-            Format::Bf16 => 4096,
-            Format::F32 => 8192,
+            Format::Bf16 => MM_BF16,
+            Format::F32 => MM_F32,
         }
     }
 }
@@ -171,6 +223,11 @@ pub(crate) struct Plan {
     pub(crate) slots: Vec<usize>,
     pub(crate) ops: Vec<Op>,
     pub(crate) fast: bool,
+    /// Slots taken over by another use, and from which dispatch.
+    handovers: Vec<(u8, usize)>,
+    /// The dispatches that read the slot they write (adding into it, or
+    /// in place).
+    in_place: Vec<usize>,
 }
 
 impl Plan {
@@ -181,13 +238,40 @@ impl Plan {
         }
     }
 
-    /// Slot `slot` holds at least `len` f32s.
+    /// A slot of its own of `len` f32s (grown where a later use needs more).
+    pub(crate) fn slot(&mut self, len: usize) -> u8 {
+        self.slots.push(len);
+        u8::try_from(self.slots.len() - 1).expect("at most 256 slots")
+    }
+
+    /// Slot `slot` (handed out by [`Plan::slot`]) holds at least `len`
+    /// f32s.
     pub(crate) fn need(&mut self, slot: u8, len: usize) {
-        let i = usize::from(slot);
-        if self.slots.len() <= i {
-            self.slots.resize(i + 1, 0);
-        }
-        self.slots[i] = self.slots[i].max(len);
+        let held = &mut self.slots[usize::from(slot)];
+        *held = (*held).max(len);
+    }
+
+    /// Slot `slot` taken over from here by another use (a part that takes
+    /// another's buffers in turns, or a result written where its input
+    /// was): what it held is not read again, so its first use from here
+    /// writes it ([`Plan::check`]).
+    pub(crate) fn hand_over(&mut self, slot: u8) {
+        self.handovers.push((slot, self.ops.len()));
+    }
+
+    /// Where a slot taken over is read before the new use writes it: the
+    /// slot and the dispatch, else `None`.
+    pub(crate) fn check(&self) -> Option<(u8, usize)> {
+        self.handovers.iter().find_map(|&(slot, from)| {
+            let b = Buf::Slot(slot);
+            let (i, op) = self.ops[from..]
+                .iter()
+                .enumerate()
+                .find(|(_, op)| op.buffers.contains(&b))?;
+            // It holds `b`: where it does not read it, it writes it.
+            let read = reads(&op.buffers, b) || self.in_place.contains(&(from + i));
+            read.then_some((slot, from + i))
+        })
     }
 
     /// The bytes its slots take.
@@ -196,9 +280,14 @@ impl Plan {
     }
 
     fn push(&mut self, kernel: Kernel, bufs: [Buf; 5], values: &[usize], groups: [u32; 3]) {
+        let out = bufs[DST];
         debug_assert!(
-            !matches!(bufs[2], Buf::W(_) | Buf::Small),
+            !matches!(out, Buf::W(_) | Buf::Small),
             "{kernel:?} writes a model's buffer"
+        );
+        debug_assert!(
+            !reads(&bufs, out),
+            "{kernel:?} binds the slot it writes to read ({out:?})"
         );
         self.ops.push(Op {
             kernel,
@@ -206,6 +295,11 @@ impl Plan {
             params: params(values),
             groups,
         });
+    }
+
+    /// The dispatch just pushed reads the slot it writes too.
+    fn reads_its_output(&mut self) {
+        self.in_place.push(self.ops.len() - 1);
     }
 
     /// A matrix multiply's numbers: the engine's [`Mul`]'s ten (`m` rows
@@ -246,14 +340,14 @@ impl Plan {
             after,
         };
         let mut numbers = [0; 32];
-        numbers[..10].copy_from_slice(&mul.numbers());
-        numbers[10] = scales;
-        numbers[11] = per;
-        numbers[13] = w.ldw;
+        numbers[..MM_SCALES].copy_from_slice(&mul.numbers());
+        numbers[MM_SCALES] = scales;
+        numbers[MM_PER] = per;
+        numbers[MM_LDW] = w.ldw;
         let mut src2 = Buf::Small;
         if let Tail::Gated(g) = tail {
-            numbers[12] = g.off;
-            numbers[27] = MX_GATED;
+            numbers[MM_GATES] = g.off;
+            numbers[MX_FLAGS] = MX_GATED;
             src2 = g.buf();
         }
         (numbers, src2)
@@ -280,6 +374,9 @@ impl Plan {
             &numbers,
             [w.n.div_ceil(128) as u32, m.div_ceil(128) as u32, 1],
         );
+        if matches!(tail, Tail::Add | Tail::Gated(_)) {
+            self.reads_its_output();
+        }
     }
 
     /// The convolution `conv` through `w` (its rows the output channels,
@@ -292,8 +389,8 @@ impl Plan {
         let (oh, ow) = conv.out();
         let m = oh * ow;
         let (mut numbers, mut src2) = self.mm_numbers((conv.input, 0), m, w, (out, w.n), tail);
-        numbers[27] |= MX_CONV;
-        numbers[14..22].copy_from_slice(&[
+        numbers[MX_FLAGS] |= MX_CONV;
+        numbers[CV_H..CV_H + 8].copy_from_slice(&[
             conv.h,
             conv.w,
             conv.cin,
@@ -305,12 +402,12 @@ impl Plan {
         ]);
         if let Some(n) = norm {
             assert_eq!(n.group % 4, 0);
-            numbers[22..27].copy_from_slice(&[
+            numbers[GN_AT..GN_AT + 5].copy_from_slice(&[
                 n.stats.off,
                 n.weight,
                 n.bias,
                 n.group,
-                1 | if n.silu { 2 } else { 0 },
+                GN_NORM | if n.silu { GN_SILU } else { 0 },
             ]);
             src2 = n.stats.buf();
         }
@@ -321,6 +418,9 @@ impl Plan {
             &numbers,
             [w.n.div_ceil(128) as u32, m.div_ceil(128) as u32, 1],
         );
+        if tail == Tail::Add {
+            self.reads_its_output();
+        }
     }
 
     /// RMSNorm of `rows` rows of `d` (from `x`, its stride; to `y`, its
@@ -387,7 +487,6 @@ impl Plan {
     /// heads' layout at `out` (`[head][total][128]`, from token `first`):
     /// RMSNorm where `norm` gives its weights, then the rotation `rope`
     /// (with its table: per token, 64 pairs' cosine and sine).
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn qk_prep(
         &mut self,
         (tokens, heads): (usize, usize),
@@ -420,6 +519,42 @@ impl Plan {
             ],
             [tokens as u32, heads as u32, 1],
         );
+    }
+
+    /// `tokens` tokens' queries, keys and values (`q_heads`, `kv_heads` and
+    /// `kv_heads` heads of 128 side by side, from `x`, its stride) into the
+    /// heads' layout at `q`, `k` and `v` (`[head][total][128]`, from token
+    /// `first`): the queries and keys normed by their weights (`norms`, in
+    /// `small`) and turned by `rope`, the values as they are.
+    pub(crate) fn heads(
+        &mut self,
+        (tokens, q_heads, kv_heads): (usize, usize, usize),
+        (x, xs): (At, usize),
+        ((q, k, v), total, first): ((At, At, At), usize, usize),
+        (q_norm, k_norm): (usize, usize),
+        rope: Option<(Rope, Buf, usize)>,
+        eps: f32,
+    ) {
+        let kx = x.plus(q_heads * 128);
+        let vx = kx.plus(kv_heads * 128);
+        let rows = |n| (tokens, n);
+        self.qk_prep(
+            rows(q_heads),
+            (x, xs),
+            (q, total, first),
+            Some(q_norm),
+            rope,
+            eps,
+        );
+        self.qk_prep(
+            rows(kv_heads),
+            (kx, xs),
+            (k, total, first),
+            Some(k_norm),
+            rope,
+            eps,
+        );
+        self.qk_prep(rows(kv_heads), (vx, xs), (v, total, first), None, None, eps);
     }
 
     /// Attention of `heads` query heads over `kv_heads` (heads of 128,
@@ -472,6 +607,7 @@ impl Plan {
             &[count, x.off, d.off, dt.to_bits() as usize],
             spread(count),
         );
+        self.reads_its_output();
     }
 
     /// y = silu(x), `count` values.
@@ -580,6 +716,7 @@ impl Plan {
             &[rows, n, x.off, xs, scale.to_bits() as usize],
             [rows as u32, 1, 1],
         );
+        self.reads_its_output();
     }
 
     /// y (its stride) = the transpose of `rows × cols` at `x` (its stride).

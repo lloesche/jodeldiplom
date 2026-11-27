@@ -1,11 +1,11 @@
-//! Gemma 4 E4B-it on the GPU ([`jodel_gpu::Gemma`]): packs the checkpoint,
-//! or writes greedily after a prompt (one user turn, the chat template's)
-//! and says how long it took and what it held.
+//! Gemma 4 E4B-it on the GPU ([`jodel_gpu::Gemma`]), from Unsloth's GGUF
+//! (`gemma-4-E4B-it-Q4_K_M.gguf`): writes greedily after a prompt (one
+//! user turn, the chat template's) and says how long it took and what it
+//! held.
 //!
 //! ```text
-//! cargo run --release -p jodel-gpu --example gemma -- pack MODEL_DIR OUT.jdlgemma
-//! cargo run --release -p jodel-gpu --example gemma -- run MODEL.jdlgemma PROMPT.txt OUT.txt [MAX_TOKENS]
-//! cargo run --release -p jodel-gpu --example gemma -- logits MODEL.jdlgemma PROMPT.txt OUT.f32
+//! cargo run --release -p jodel-gpu --example gemma -- run MODEL.gguf PROMPT.txt OUT.txt [MAX_TOKENS]
+//! cargo run --release -p jodel-gpu --example gemma -- logits MODEL.gguf PROMPT.txt OUT.f32
 //! ```
 //!
 //! `run` writes the text to `OUT.txt`, the prompt's and the answer's token
@@ -13,16 +13,25 @@
 //! prompt's and the answer's tokens a second and the GPU memory held;
 //! with `JODEL_GEMMA_PROFILE` set it writes again, profiled
 //! ([`jodel_gpu::profile`]), and prints the kernels' GPU time. `logits`
-//! writes the logits after the prompt (f32s).
+//! writes the logits after the prompt (f32s). `JODEL_GEMMA_PRECISION=full`
+//! runs it in f32 throughout (`Precision::Full`), else fast.
 
 use std::path::Path;
 use std::time::Instant;
 
-use jodel_gpu::llm::{self, Memory};
-use jodel_gpu::{profile, Gemma};
+use jodel_gpu::{profile, Gemma, Precision};
 
 fn write(path: &str, bytes: &[u8]) {
     durable::write_atomic(Path::new(path), bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
+}
+
+/// How it reckons: `JODEL_GEMMA_PRECISION=full` for f32 throughout, else
+/// fast.
+fn precision() -> Precision {
+    match std::env::var("JODEL_GEMMA_PRECISION").as_deref() {
+        Ok("full") => Precision::Full,
+        _ => Precision::Fast,
+    }
 }
 
 fn mb(bytes: u64) -> f64 {
@@ -31,12 +40,12 @@ fn mb(bytes: u64) -> f64 {
 
 fn open(model: &str) -> Gemma {
     let started = Instant::now();
-    let gemma = Gemma::open(Path::new(model)).unwrap();
+    let gemma = Gemma::open(Path::new(model), precision()).unwrap();
     println!(
         "loaded on {} in {:.2} s ({:?})",
-        gemma.name(),
+        gemma.gpu_name(),
         started.elapsed().as_secs_f64(),
-        gemma.precision().unwrap()
+        gemma.precision()
     );
     gemma
 }
@@ -49,13 +58,6 @@ fn prompt(gemma: &Gemma, file: &str) -> Vec<u32> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("pack") => {
-            let started = Instant::now();
-            llm::pack(Path::new(&args[1]), Path::new(&args[2]), |what| {
-                println!("{:7.1} s  {what}", started.elapsed().as_secs_f64());
-            })
-            .unwrap();
-        }
         Some("logits") => {
             let gemma = open(&args[1]);
             let ids = prompt(&gemma, &args[2]);
@@ -70,23 +72,29 @@ fn main() {
             let gemma = open(&args[1]);
             let ids = prompt(&gemma, &args[2]);
             let context = ids.len() + most;
-            let planned = Memory::of(context);
+            let planned = Gemma::planned(Path::new(&args[1]), context).unwrap();
             gemma.reserve(context).unwrap();
-            let held = gemma.memory().unwrap();
+            let held = gemma.held();
             println!(
                 "a context of {context}: weights {:.0} MB, context {:.0} MB (planned {:.0} MB)",
-                mb(held.weights),
-                mb(held.context),
-                mb(planned.context)
+                mb(held.resident),
+                mb(held.working),
+                mb(planned.working)
             );
             let mut written = 0;
-            let out = gemma
-                .generate(&ids, most, |tokens| {
-                    written += tokens.len();
-                    eprint!("\r{written} tokens");
+            let answer = gemma
+                .generate_text(&ids, most, |piece| {
+                    written += piece.len();
+                    eprint!("\r{written} bytes");
                 })
                 .unwrap();
             eprintln!();
+            let out = answer.generated;
+            assert_eq!(
+                answer.text,
+                gemma.tokens().decode(&out.tokens),
+                "streamed whole"
+            );
             let prompt_rate = out.prompt_tokens as f64 / out.prompt_time.as_secs_f64();
             let step_rate = out.tokens.len() as f64 / out.step_time.as_secs_f64();
             println!(
@@ -105,12 +113,8 @@ fn main() {
                     "at the limit"
                 }
             );
-            println!(
-                "GPU memory held: {:.0} MB",
-                mb(gemma.memory().unwrap().total())
-            );
-            let text = gemma.tokens().decode(&out.tokens);
-            write(&args[3], text.as_bytes());
+            println!("GPU memory held: {:.0} MB", mb(gemma.held().total()));
+            write(&args[3], answer.text.as_bytes());
             let lines: Vec<String> = ids
                 .iter()
                 .chain(&out.tokens)
@@ -138,8 +142,6 @@ fn main() {
                 }
             }
         }
-        _ => eprintln!(
-            "gemma pack MODEL_DIR OUT | run MODEL PROMPT OUT [MAX] | logits MODEL PROMPT OUT"
-        ),
+        _ => eprintln!("gemma run MODEL.gguf PROMPT OUT [MAX] | logits MODEL.gguf PROMPT OUT"),
     }
 }

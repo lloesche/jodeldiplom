@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use jodel_tensors::bpe::{Merges, Part, Specials};
 use jodel_tensors::json::Json;
 
 /// The tokens a prompt is padded to.
@@ -20,14 +21,20 @@ pub const TOKENS: usize = 512;
 /// `<|endoftext|>`: the padding.
 const PAD: u32 = 151_643;
 
+/// The tokenizer's files in the checkpoint's folder: its vocabulary, its
+/// merges, its configuration (with the added tokens).
+pub(crate) const VOCAB_FILE: &str = "vocab.json";
+pub(crate) const MERGES_FILE: &str = "merges.txt";
+pub(crate) const CONFIG_FILE: &str = "tokenizer_config.json";
+
 /// Qwen's tokenizer.
 pub struct Tokenizer {
-    vocab: HashMap<String, u32>,
-    ranks: HashMap<(String, String), usize>,
-    /// The added tokens, longest first.
-    added: Vec<(String, u32)>,
-    /// GPT-2's table: each byte as a printable character.
-    chars: [char; 256],
+    /// Each byte's id: its character in GPT-2's table (each byte as a
+    /// printable character) as a piece.
+    bytes: [u32; 256],
+    merges: Merges,
+    /// The added tokens.
+    added: Specials,
 }
 
 impl Tokenizer {
@@ -38,115 +45,95 @@ impl Tokenizer {
             std::fs::read_to_string(dir.join(name))
                 .map_err(|e| format!("{}: {e}", dir.join(name).display()))
         };
-        let Some(Json::Object(vocab)) = Json::parse(&read("vocab.json")?) else {
+        let Some(Json::Object(vocab)) = Json::parse(&read(VOCAB_FILE)?) else {
             return Err("vocab.json is not an object".into());
         };
-        let vocab = vocab
+        let ids = vocab
             .into_iter()
-            .map(|(k, v)| Some((k, v.as_f64()? as u32)))
+            .map(|(k, v)| Some((k.into_bytes(), v.as_f64()? as u32)))
             .collect::<Option<HashMap<_, _>>>()
             .ok_or("vocab.json has a token without an id")?;
-        let ranks = read("merges.txt")?
+        let mut pieces = vec![Vec::new(); ids.values().max().map_or(0, |&m| m as usize + 1)];
+        for (piece, &id) in &ids {
+            pieces[id as usize].clone_from(piece);
+        }
+        let id = |s: &str| {
+            ids.get(s.as_bytes())
+                .copied()
+                .ok_or_else(|| format!("no token for {s:?}"))
+        };
+        let pairs = read(MERGES_FILE)?
             .lines()
             .filter(|l| !l.starts_with("#version") && !l.is_empty())
-            .enumerate()
-            .filter_map(|(i, l)| {
-                let (a, b) = l.split_once(' ')?;
-                Some(((a.to_owned(), b.to_owned()), i))
+            .map(|l| {
+                let (a, b) = l.split_once(' ').ok_or("a merge that is not a pair")?;
+                Ok((id(a)?, id(b)?))
             })
-            .collect();
-        let config = Json::parse(&read("tokenizer_config.json")?)
-            .ok_or("tokenizer_config.json does not parse")?;
+            .collect::<Result<Vec<_>, String>>()?;
+        let merges = Merges::new(&pieces, &ids, &pairs)?;
+        let chars = byte_chars();
+        let mut bytes = [0; 256];
+        for (b, slot) in bytes.iter_mut().enumerate() {
+            *slot = id(&chars[b].to_string())?;
+        }
+        let config =
+            Json::parse(&read(CONFIG_FILE)?).ok_or("tokenizer_config.json does not parse")?;
         let Some(Json::Object(decoder)) = config.get("added_tokens_decoder") else {
             return Err("tokenizer_config.json has no added tokens".into());
         };
-        let mut added: Vec<(String, u32)> = decoder
+        let added = decoder
             .iter()
-            .filter_map(|(id, t)| Some((t.get("content")?.as_str()?.to_owned(), id.parse().ok()?)))
-            .collect();
-        added.sort_by_key(|(s, _)| std::cmp::Reverse(s.len()));
+            .map(|(id, t)| {
+                let content = t.get("content").and_then(Json::as_str);
+                match (content, id.parse()) {
+                    (Some(c), Ok(id)) => Ok((c.as_bytes().to_vec(), id)),
+                    _ => Err(format!("an added token {id} without its content")),
+                }
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         Ok(Tokenizer {
-            vocab,
-            ranks,
-            added,
-            chars: byte_chars(),
+            bytes,
+            merges,
+            added: Specials::new(added),
         })
     }
 
     /// `text`'s tokens: the added tokens where they are, the rest split
     /// into pieces ([`pieces`]) and each merged by BPE.
-    pub fn tokens(&self, text: &str) -> Result<Vec<u32>, String> {
+    pub fn tokens(&self, text: &str) -> Vec<u32> {
         let mut out = Vec::new();
-        let mut rest = text;
-        while !rest.is_empty() {
-            // The first added token in what is left, and where.
-            let next = self
-                .added
-                .iter()
-                .filter_map(|(s, id)| rest.find(s.as_str()).map(|at| (at, s.len(), *id)))
-                .min_by_key(|&(at, len, _)| (at, std::cmp::Reverse(len)));
-            let (plain, special) = match next {
-                Some((at, len, id)) => (&rest[..at], Some((id, at + len))),
-                None => (rest, None),
-            };
-            for piece in pieces(plain) {
-                self.bpe(piece, &mut out)?;
-            }
-            match special {
-                Some((id, end)) => {
-                    out.push(id);
-                    rest = &rest[end..];
+        for part in self.added.split(text) {
+            match part {
+                Part::Text(t) => {
+                    for piece in pieces(t) {
+                        self.bpe(piece, &mut out);
+                    }
                 }
-                None => break,
+                Part::Special(id) => out.push(id),
             }
         }
-        Ok(out)
+        out
     }
 
     /// `prompt` as the text encoder takes it: in the chat template, padded
     /// to [`TOKENS`] (cut there if longer); the tokens, and how many are
     /// the prompt's (the rest padding).
-    pub fn prompt(&self, prompt: &str) -> Result<(Vec<u32>, usize), String> {
+    pub fn prompt(&self, prompt: &str) -> (Vec<u32>, usize) {
         let text = format!(
             "<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
         );
-        let mut ids = self.tokens(&text)?;
+        let mut ids = self.tokens(&text);
         ids.truncate(TOKENS);
         let real = ids.len();
         ids.resize(TOKENS, PAD);
-        Ok((ids, real))
+        (ids, real)
     }
 
-    /// One piece's tokens, by BPE over its bytes' characters.
-    fn bpe(&self, piece: &str, out: &mut Vec<u32>) -> Result<(), String> {
-        let mut parts: Vec<String> = piece
-            .bytes()
-            .map(|b| self.chars[usize::from(b)].to_string())
-            .collect();
-        loop {
-            let best = parts
-                .windows(2)
-                .enumerate()
-                .filter_map(|(i, w)| {
-                    self.ranks
-                        .get(&(w[0].clone(), w[1].clone()))
-                        .map(|&r| (r, i))
-                })
-                .min();
-            let Some((_, i)) = best else { break };
-            let merged = format!("{}{}", parts[i], parts[i + 1]);
-            parts[i] = merged;
-            parts.remove(i + 1);
-        }
-        for p in parts {
-            out.push(
-                *self
-                    .vocab
-                    .get(&p)
-                    .ok_or_else(|| format!("no token for {p:?}"))?,
-            );
-        }
-        Ok(())
+    /// One piece's tokens, by BPE over its bytes' characters
+    /// (`jodel_tensors::bpe`).
+    fn bpe(&self, piece: &str, out: &mut Vec<u32>) {
+        let ids = piece.bytes().map(|b| self.bytes[usize::from(b)]).collect();
+        self.merges.word(ids, out);
     }
 }
 

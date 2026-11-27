@@ -2,22 +2,6 @@
 // attention, the sampler's step, copies, the latents' patches, the group
 // norm's statistics, a softmax and a transpose.
 
-var<workgroup> red: array<f32, 256>;
-
-// The sum of `v` over the workgroup of 256 (every invocation gets it).
-fn sum256(li: u32, v: f32) -> f32 {
-    workgroupBarrier();
-    red[li] = v;
-    workgroupBarrier();
-    for (var s = 128u; s > 0u; s >>= 1u) {
-        if (li < s) {
-            red[li] += red[li + s];
-        }
-        workgroupBarrier();
-    }
-    return red[0];
-}
-
 // RMSNorm of a row (its weights in `small`): n0 rows, n1 width (a
 // multiple of 4), n2 src's offset, n3 its stride, n4 dst's offset, n5 its
 // stride, n6 the weights' offset, n7 epsilon's bits.
@@ -122,7 +106,7 @@ fn qk_prep(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
 // The sampler's step: dst (n1..) += dt · src (n2..), n0 values, n3 dt's bits.
 @compute @workgroup_size(256)
 fn euler(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-    let i = flat_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
+    let i = linear_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
     if (i >= p.n0) {
         return;
     }
@@ -132,7 +116,7 @@ fn euler(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: 
 // SiLU: dst (n2..) = silu(src (n1..)), n0 values.
 @compute @workgroup_size(256)
 fn act(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-    let i = flat_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
+    let i = linear_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
     if (i >= p.n0) {
         return;
     }
@@ -143,7 +127,7 @@ fn act(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: ve
 // apart) to dst (n4, n5 apart).
 @compute @workgroup_size(256)
 fn copy(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-    let i = flat_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
+    let i = linear_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
     let w4 = p.n1 / 4u;
     if (i >= p.n0 * w4) {
         return;
@@ -159,7 +143,7 @@ fn copy(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: v
 // to dst (n4). One invocation a token's channel.
 @compute @workgroup_size(256)
 fn patchify(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-    let i = flat_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
+    let i = linear_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
     if (i >= p.n0 * p.n1 * 128u) {
         return;
     }
@@ -179,7 +163,7 @@ fn patchify(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) group
 // (n4). One invocation a latent value.
 @compute @workgroup_size(256)
 fn unpatchify(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-    let i = flat_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
+    let i = linear_id(vec3<u32>(wg.x * 256u + li, wg.y, 0u), groups);
     if (i >= p.n0 * p.n1 * 128u) {
         return;
     }
@@ -278,15 +262,15 @@ fn softmax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
         best = max(best, dst_at(at + i) * scale);
     }
     workgroupBarrier();
-    red[li] = best;
+    red256[li] = best;
     workgroupBarrier();
     for (var s = 128u; s > 0u; s >>= 1u) {
         if (li < s) {
-            red[li] = max(red[li], red[li + s]);
+            red256[li] = max(red256[li], red256[li + s]);
         }
         workgroupBarrier();
     }
-    let top = red[0];
+    let top = red256[0];
     var total = 0.0;
     for (var i = li; i < p.n1; i += 256u) {
         let e = exp(dst_at(at + i) * scale - top);

@@ -37,12 +37,6 @@ fn dst_put(i: u32, v: f32) {
     dst[i >> 2u][i & 3u] = v;
 }
 
-// The invocation's place in a one-dimensional job spread over a grid of
-// workgroups of 256.
-fn flat_id(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
-    return gid.x + gid.y * groups.x * 256u;
-}
-
 // One FP8 (e4m3) byte's value: its exponent rebased from 7 to f32's 127
 // (a zero exponent is a subnormal, m · 2^-9).
 fn e4m3(b: u32) -> f32 {

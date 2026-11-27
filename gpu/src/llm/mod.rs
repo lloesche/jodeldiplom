@@ -2,13 +2,16 @@
 //! mode's language model, writing a song's storyboard and look from its
 //! lyrics, greedily (the same prompt always gives the same answer).
 //!
-//! Its weights are packed once from the checkpoint ([`pack()`], `pack.rs`:
-//! every matrix at 4 bits, in groups of 32 with a fitted scale and offset)
-//! and kept packed on the GPU, 4.4 GB. Loading them ([`Gemma::open`]) and
-//! the room for a context (the cache of keys and values and the working
-//! buffers, [`Gemma::reserve`]) are separate, and either goes when asked
-//! ([`Gemma::release`], or the model dropped); what each takes is known
-//! before anything is loaded ([`Memory::of`]).
+//! Its weights are read from Unsloth's GGUF of it (Q4_K_M: most matrices
+//! in Q4_K, some in Q6_K, the per-layer embeddings in Q5_K, the per-layer
+//! projection in BF16, its small matrices and norms in F32; `model.rs`)
+//! and kept on the GPU as the file has them, 4.7 GB, the blocks unpacked
+//! by the kernels that read them (`blocks.wgsl`); its tokeniser is the
+//! file's too. Loading them ([`Gemma::open`]) and the room for a context
+//! (the cache of keys and values and the working buffers,
+//! [`Gemma::reserve`]) are separate, and the room goes when asked
+//! ([`Resident::release`], or the model dropped); what each takes is
+//! known before anything is loaded ([`Gemma::planned`]).
 //!
 //! The architecture is exactly the reference's (Hugging Face's
 //! `Gemma4TextModel`): 42 layers of width 2560, five sliding-window layers
@@ -29,16 +32,19 @@
 //! token a step, the step's dispatches recorded once: each kernel reads the
 //! position from the GPU, and the head's largest logit is the next token
 //! there, put after it. Steps go eight at a time between reads, the next
-//! eight made while those run. The matrix multiplies take their rows at 8
-//! bits where the GPU multiplies bytes four at a time (`dot4I8Packed`),
-//! as f32s where that would be emulated (Metal): [`Precision`].
+//! eight made while those run. With [`Precision::Fast`] the matrix
+//! multiplies of quantised matrices take their rows at 8 bits where the
+//! GPU multiplies bytes four at a time natively (`dot4I8Packed`; not
+//! Metal, where it is emulated), else as f32s; those of BF16 and F32 ones
+//! always as f32s.
 //!
 //! Text only for now: a picture (the cover's questions) would come in at
 //! the prompt's embeddings, its soft tokens in the rows of its placeholders
 //! (and the per-layer inputs taking the padding token's there), as the
 //! reference's `Gemma4Model` does; the vision tower is a network of its own.
 
-mod pack;
+mod kernels;
+mod model;
 mod plan;
 #[cfg(test)]
 mod tests;
@@ -46,16 +52,17 @@ mod tokens;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-pub use self::pack::pack;
-use self::pack::{Layout, Reader};
-pub use self::plan::Precision;
-use self::plan::{Bind, Plan, Sizes, CHUNK, MOST_POSITIONS};
-pub use self::tokens::{Tokenizer, STOP};
-use crate::engine::{bytes, guarded, Access, Dispatch, Kernels, Program, Recorded};
-use crate::Turned;
+use self::kernels::{source, Kernel};
+use self::model::Layout;
+pub use self::plan::MOST_CONTEXT;
+use self::plan::{Bind, ContextPlan, Plan, CHUNK};
+pub use self::tokens::{Stream, Tokenizer};
+use crate::engine::{self, bytes, guarded, Dispatch, Program, Recorded};
+use crate::{Footprint, Precision, Resident, Turned};
+use jodel_tensors::gguf::Gguf;
 
 /// The width of the residual stream.
 const DIM: usize = 2560;
@@ -64,6 +71,9 @@ const LAYERS: usize = 42;
 const FF: usize = 10_240;
 const HEADS: usize = 8;
 const KV_HEADS: usize = 2;
+/// The heads of sliding layers and of global ones.
+const LOCAL_HEAD: usize = 256;
+const GLOBAL_HEAD: usize = 512;
 /// A layer's per-layer input.
 const PER_LAYER: usize = 256;
 /// Every layer's.
@@ -96,9 +106,9 @@ fn is_global(l: usize) -> bool {
 /// The width of layer `l`'s heads.
 fn head_of(l: usize) -> usize {
     if is_global(l) {
-        512
+        GLOBAL_HEAD
     } else {
-        256
+        LOCAL_HEAD
     }
 }
 
@@ -119,81 +129,14 @@ fn kv_of(l: usize) -> usize {
         .unwrap_or(0)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Kernel {
-    Embed,
-    Quant,
-    Residual,
-    PerLayer,
-    Argmax,
-    GemvQ8,
-    GemvF32,
-    GemmQ8,
-    GemmF32,
-    Prep,
-    Attend,
-    Join,
-    Flash,
-}
-
-impl Kernels for Kernel {
-    const ALL: &'static [Kernel] = &[
-        Kernel::Embed,
-        Kernel::Quant,
-        Kernel::Residual,
-        Kernel::PerLayer,
-        Kernel::Argmax,
-        Kernel::GemvQ8,
-        Kernel::GemvF32,
-        Kernel::GemmQ8,
-        Kernel::GemmF32,
-        Kernel::Prep,
-        Kernel::Attend,
-        Kernel::Join,
-        Kernel::Flash,
-    ];
-    const PARAM_BYTES: u64 = 64;
-    /// After the parameters: the 4-bit weights (read), the ints.
-    const EXTRA: &'static [Access] = &[Access::Read, Access::Write];
-
-    fn entry(self) -> &'static str {
-        match self {
-            Kernel::Embed => "embed",
-            Kernel::Quant => "quant",
-            Kernel::Residual => "residual",
-            Kernel::PerLayer => "per_layer",
-            Kernel::Argmax => "argmax",
-            Kernel::GemvQ8 => "gemv_q8",
-            Kernel::GemvF32 => "gemv_f32",
-            Kernel::GemmQ8 => "gemm_q8",
-            Kernel::GemmF32 => "gemm_f32",
-            Kernel::Prep => "prep",
-            Kernel::Attend => "attend",
-            Kernel::Join => "join",
-            Kernel::Flash => "flash",
-        }
-    }
-}
-
-/// The kernels' source.
-fn source() -> String {
-    [
-        include_str!("prelude.wgsl"),
-        include_str!("matmul.wgsl"),
-        include_str!("attention.wgsl"),
-        include_str!("rows.wgsl"),
-    ]
-    .join("\n")
-}
-
 /// The buffers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Buf {
     /// The norms and scalars.
     Small,
     /// The embeddings and the per-layer projection.
     Shared,
-    /// Layers' matrices ([`pack::LAYERS_A_BUFFER`] layers a buffer).
+    /// Layers' matrices ([`model::LAYERS_A_BUFFER`] layers a buffer).
     Layers(usize),
     /// The rotary tables.
     Rope,
@@ -213,50 +156,6 @@ enum Buf {
     Spare,
 }
 
-/// What a model takes on the GPU, in bytes: its weights (while it is
-/// loaded), and the room for a context (while it is reserved).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Memory {
-    pub weights: u64,
-    pub context: u64,
-}
-
-impl Memory {
-    /// What the model takes with room for `context` positions (the prompt
-    /// and what it writes): the cache of keys and values, the working
-    /// buffers of a prompt's chunk and a step, the recorded step's numbers
-    /// and the reads.
-    pub fn of(context: usize) -> Memory {
-        let layout = Layout::new();
-        let sizes = Sizes::new(context + 2 * STEPS_A_READ);
-        let plan = Plan {
-            layout: &layout,
-            sizes,
-            precision: Precision::Q8,
-        };
-        let words: usize = sizes.buffers().iter().map(|b| b.1).sum();
-        let step = plan.step().len();
-        let chunks = context.div_ceil(CHUNK);
-        let prompt = chunks * plan.chunk(0, CHUNK, false).len() + step;
-        Memory {
-            weights: layout.bytes(),
-            context: words as u64 * 4
-                + ((step + prompt) as u64 * crate::engine::PARAM_STRIDE)
-                + 2 * staging_bytes(),
-        }
-    }
-
-    /// Both.
-    pub fn total(&self) -> u64 {
-        self.weights + self.context
-    }
-}
-
-/// The bytes of a staging buffer (the logits, or a read's tokens).
-fn staging_bytes() -> u64 {
-    (VOCAB.max(STEPS_A_READ) * 4) as u64
-}
-
 /// What a generation did: the tokens it wrote (its stop token not among
 /// them), the prompt's tokens and time (to its first token), the steps
 /// and their time.
@@ -271,6 +170,14 @@ pub struct Generated {
     pub stopped: bool,
 }
 
+/// What a generation wrote as text ([`Gemma::generate_text`]), and the
+/// generation.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Text {
+    pub text: String,
+    pub generated: Generated,
+}
+
 /// Gemma 4 E4B-it's text decoder on the GPU (see the module's doc).
 pub struct Gemma {
     name: String,
@@ -279,24 +186,37 @@ pub struct Gemma {
 }
 
 impl Gemma {
-    /// The packed model at `path` ([`pack()`]'s) on the best GPU: its
-    /// weights read a buffer at a time and kept there. Its context is not
-    /// reserved yet ([`Gemma::reserve`]).
-    pub fn open(path: &Path) -> Result<Gemma, String> {
-        let mut reader = Reader::open(path)?;
-        let (inner, name) = crate::device::open("jodel-gpu gemma", |device, queue, limits| {
-            Inner::new(device, queue, limits, &mut reader)
-        })?;
-        Ok(Gemma {
-            name,
-            tokens: reader.tokens,
-            inner: Turned::new(Mutex::new(inner)),
+    /// What the model in the GGUF at `path` takes with room for `context`
+    /// positions (the prompt and what it writes), before it is loaded
+    /// (only the file's header read): its weights as the file holds them,
+    /// and the context's room at its most (a prompt of all of it under
+    /// way).
+    pub fn planned(path: &Path, context: usize) -> Result<Footprint, String> {
+        let layout = Layout::of(&Gguf::open(path)?)?;
+        let room = ContextPlan::new(&layout, context)?;
+        Ok(Footprint {
+            resident: layout.bytes(),
+            working: room.peak_bytes(),
         })
     }
 
-    /// The GPU's name.
-    pub fn name(&self) -> &str {
-        &self.name
+    /// The model in the GGUF at `path` (Unsloth's
+    /// `gemma-4-E4B-it-Q4_K_M.gguf`) on the best GPU, reckoning as
+    /// `precision` says: its weights read a tensor at a time and kept
+    /// there, its tokeniser read from the file. Its context is not
+    /// reserved yet ([`Gemma::reserve`]).
+    pub fn open(path: &Path, precision: Precision) -> Result<Gemma, String> {
+        let mut file = Gguf::open(path)?;
+        let tokens = Tokenizer::from_gguf(&file)?;
+        let layout = Layout::of(&file)?;
+        let (inner, name) = crate::device::open("jodel-gpu gemma", |device, queue, limits| {
+            Inner::new(device, queue, limits, &mut file, layout, precision)
+        })?;
+        Ok(Gemma {
+            name,
+            tokens,
+            inner: Turned::new(Mutex::new(inner)),
+        })
     }
 
     /// Its tokeniser.
@@ -304,50 +224,54 @@ impl Gemma {
         &self.tokens
     }
 
-    /// How its matrices take their rows on this GPU.
-    pub fn precision(&self) -> Result<Precision, String> {
-        Ok(self.lock()?.precision)
+    /// How it reckons on this GPU: [`Precision::Fast`] where its rows go at
+    /// 8 bits.
+    pub fn precision(&self) -> Precision {
+        if self.peek().q8 {
+            Precision::Fast
+        } else {
+            Precision::Full
+        }
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
+    fn lock(&self) -> Result<MutexGuard<'_, Inner>, String> {
         self.inner
             .lock()
             .map_err(|_| "the GPU language model failed before".to_owned())
     }
 
-    /// Whether its device was lost (a driver reset, the GPU gone): it runs
-    /// nothing again, and a new one is opened instead.
-    pub fn is_lost(&self) -> bool {
-        self.lock().map_or(true, |inner| inner.program.lost())
+    /// The model for what it says of itself, even after a use failed.
+    fn peek(&self) -> MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Room for `context` positions (a prompt and what it writes), made
-    /// now (any room it had goes first): [`Memory::of`]`(context)`'s
-    /// context bytes.
+    /// now (any room it had goes first): [`Gemma::planned`]'s working
+    /// bytes, less a prompt's dispatches (recorded as it runs).
     pub fn reserve(&self, context: usize) -> Result<(), String> {
         let mut inner = self.lock()?;
         inner.context = None;
         let device = inner.program.device.clone();
-        guarded(&device, || inner.reserve(context))
+        let made = guarded(&device, || inner.reserve(context));
+        if made.is_err() {
+            // No room, and none to make again: the next use asks for one.
+            inner.reserved = None;
+        }
+        made
     }
 
-    /// Lets the context's room go (the weights stay).
-    pub fn release(&self) -> Result<(), String> {
-        self.lock()?.context = None;
-        Ok(())
-    }
-
-    /// What it holds on the GPU now.
-    pub fn memory(&self) -> Result<Memory, String> {
-        let inner = self.lock()?;
-        Ok(Memory {
-            weights: inner.weights_bytes,
-            context: inner.context.as_ref().map_or(0, |c| c.bytes),
-        })
+    /// The bytes the GPU's allocator holds for it now (where the backend
+    /// tells), as the picture models say theirs.
+    pub fn reserved(&self) -> Option<u64> {
+        self.peek()
+            .program
+            .device
+            .generate_allocator_report()
+            .map(|r| r.total_reserved_bytes)
     }
 
     /// The tokens it writes after `prompt` (its ids, the chat template's:
-    /// [`Tokenizer::chat`]), greedily, until a stop token ([`STOP`]) or
+    /// [`Tokenizer::chat`]), greedily, until a stop token ([`Tokenizer::stop`]) or
     /// `most` of them; `seen` is shown them as they are read (eight at a
     /// time). The context must have room for the prompt and `most`.
     pub fn generate(
@@ -358,7 +282,35 @@ impl Gemma {
     ) -> Result<Generated, String> {
         let mut inner = self.lock()?;
         let device = inner.program.device.clone();
-        guarded(&device, || inner.generate(prompt, most, seen))
+        guarded(&device, || {
+            inner.generate(prompt, (most, self.tokens.stop()), seen)
+        })
+    }
+
+    /// [`Gemma::generate`]'s answer as text: `seen` is shown each piece as
+    /// it is read (whole characters only: each token decoded once,
+    /// [`Tokenizer::stream`]).
+    pub fn generate_text(
+        &self,
+        prompt: &[u32],
+        most: usize,
+        mut seen: impl FnMut(&str),
+    ) -> Result<Text, String> {
+        let mut stream = self.tokens.stream();
+        let mut text = String::new();
+        let mut take = |piece: String| {
+            if !piece.is_empty() {
+                seen(&piece);
+                text.push_str(&piece);
+            }
+        };
+        let generated = self.generate(prompt, most, |tokens| {
+            for &t in tokens {
+                take(stream.push(t));
+            }
+        })?;
+        take(stream.finish());
+        Ok(Text { text, generated })
     }
 
     /// The logits after `prompt` (capped, as the head writes them), for
@@ -367,15 +319,58 @@ impl Gemma {
         let mut inner = self.lock()?;
         let device = inner.program.device.clone();
         guarded(&device, || {
-            let running = inner.prompt(prompt, Buf::Logits)?;
+            inner.ready()?;
+            let running = inner.prompt(prompt, Read::Logits)?;
             inner.read(running)
         })
     }
 }
 
-/// The room for a context: its buffers, the step recorded, the reads.
+impl Gemma {
+    /// What it holds on the GPU now: its weights, and the room for a
+    /// context while it has one.
+    pub fn held(&self) -> Footprint {
+        let inner = self.peek();
+        Footprint {
+            resident: inner.weights_bytes,
+            working: inner.context.as_ref().map_or(0, |c| c.bytes),
+        }
+    }
+
+    /// Whether its device was lost (a driver reset, the GPU gone): it runs
+    /// nothing again, and a new one is opened instead.
+    pub fn is_lost(&self) -> bool {
+        self.peek().program.lost()
+    }
+
+    /// The GPU's name.
+    pub fn gpu_name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Resident for Gemma {
+    /// Its weights, and the room for the context last reserved at its most
+    /// (none before one is).
+    fn footprint(&self) -> Footprint {
+        let inner = self.peek();
+        Footprint {
+            resident: inner.weights_bytes,
+            working: inner.reserved.map_or(0, |(_, bytes)| bytes),
+        }
+    }
+
+    /// Lets the context's room go (the weights stay); the next generation
+    /// makes it again, as large.
+    fn release(&self) {
+        self.peek().context = None;
+    }
+}
+
+/// The room for a context: its plan, its buffers, the step recorded, the
+/// reads.
 struct Context {
-    sizes: Sizes,
+    plan: ContextPlan,
     buffers: HashMap<Buf, wgpu::Buffer>,
     step: Recorded<Kernel>,
     /// The step's dispatches [`STEPS_A_READ`] times.
@@ -389,40 +384,44 @@ struct Inner {
     weights: HashMap<Buf, wgpu::Buffer>,
     weights_bytes: u64,
     layout: Layout,
-    precision: Precision,
+    /// Whether its quantised matrices take their rows at 8 bits.
+    q8: bool,
     context: Option<Context>,
+    /// The context last reserved, and its room at its most (made again by
+    /// a use after it was let go).
+    reserved: Option<(usize, u64)>,
     prompt_pieces: crate::pace::Pieces,
     step_pieces: crate::pace::Pieces,
 }
 
+/// What a prompt's run reads back: the token chosen, or the logits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Read {
+    Token,
+    Logits,
+}
+
+/// What a run was: a prompt's, or a batch of steps'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    Prompt,
+    Steps,
+}
+
 /// A run made and maybe still running: its last submission (`None`:
-/// done), the staging buffer it reads into, how many words, and whether
-/// it was a prompt's.
+/// done), the staging buffer it reads into, how many words, and what it
+/// was.
 struct Running {
     index: Option<wgpu::SubmissionIndex>,
     staging: usize,
     count: usize,
-    prompt: bool,
+    phase: Phase,
 }
 
-/// How the matrices take their rows on the chosen GPU: as f32s on Metal
-/// (whose `dot4I8Packed` is emulated), else at 8 bits;
-/// `JODEL_GEMMA_PRECISION` (`q8` or `plain`) says otherwise.
-fn precision_here() -> Precision {
-    match std::env::var("JODEL_GEMMA_PRECISION").as_deref() {
-        Ok("plain") => return Precision::Plain,
-        Ok("q8") => return Precision::Q8,
-        _ => {}
-    }
-    let backend = crate::chosen()
-        .adapter
-        .as_ref()
-        .map(|a| a.get_info().backend);
-    if backend == Ok(wgpu::Backend::Metal) {
-        Precision::Plain
-    } else {
-        Precision::Q8
-    }
+/// Whether the matrices take their rows at 8 bits with `precision` on
+/// `device`: where it is fast and `dot4I8Packed` is native (not Metal).
+fn q8_here(device: &wgpu::Device, precision: Precision) -> bool {
+    precision == Precision::Fast && device.adapter_info().backend != wgpu::Backend::Metal
 }
 
 impl Inner {
@@ -430,76 +429,71 @@ impl Inner {
         device: wgpu::Device,
         queue: wgpu::Queue,
         limits: &wgpu::Limits,
-        reader: &mut Reader,
+        file: &mut Gguf,
+        layout: Layout,
+        precision: Precision,
     ) -> Result<Inner, String> {
-        let layout = Layout::new();
+        let q8 = q8_here(&device, precision);
         let program = Program::new(device, queue, limits, "jodel-gpu gemma", &source());
         let mut weights = HashMap::new();
-        // Each section's copy done before the next is read: the queue's
-        // staging of it let go.
-        let put = |b: &wgpu::Buffer, at: usize, data: &[u8]| {
-            program.queue.write_buffer(b, (at * 4) as u64, data);
-            program.queue.submit([]);
-            program.wait()
-        };
         for (buf, words) in [(Buf::Small, layout.small), (Buf::Shared, layout.shared)]
             .into_iter()
             .chain((0..).zip(layout.groups()).map(|(g, w)| (Buf::Layers(g), w)))
         {
             weights.insert(buf, program.storage(&format!("gemma {buf:?}"), words)?);
         }
-        put(&weights[&Buf::Small], 0, &reader.small)?;
-        put(&weights[&Buf::Shared], 0, &reader.next(layout.shared)?)?;
-        for layer in &layout.layers {
-            let b = &weights[&Buf::Layers(layer.group)];
-            put(b, layer.base, &reader.next(layer.words)?)?;
-        }
+        let mut upload = program.upload();
+        model::load(file, &layout.pieces, |buf, at, data| {
+            upload.write(&weights[&buf], (at * 4) as u64, data)
+        })?;
+        upload.finish()?;
         let weights_bytes = weights.values().map(wgpu::Buffer::size).sum();
         Ok(Inner {
             program,
             weights,
             weights_bytes,
             layout,
-            precision: precision_here(),
+            q8,
             context: None,
+            reserved: None,
             prompt_pieces: crate::pace::Pieces::resting(),
             step_pieces: crate::pace::Pieces::resting(),
         })
     }
 
+    /// A plan of dispatches for the context `plan`.
+    fn plan<'a>(&'a self, plan: &ContextPlan) -> Plan<'a> {
+        Plan {
+            layout: &self.layout,
+            sizes: plan.sizes,
+            q8: self.q8,
+        }
+    }
+
     /// Makes room for `context` positions (and the steps run past a
     /// stop), the step recorded.
     fn reserve(&mut self, context: usize) -> Result<(), String> {
-        let positions = context + 2 * STEPS_A_READ;
-        if positions > MOST_POSITIONS {
-            return Err(format!(
-                "a context of {context}: at most {} positions",
-                MOST_POSITIONS - 2 * STEPS_A_READ
-            ));
-        }
-        let sizes = Sizes::new(positions);
-        let buffers = self.program.buffers(&sizes.buffers())?;
+        let room = ContextPlan::new(&self.layout, context)?;
+        let buffers = self.program.buffers(&room.sizes.buffers())?;
         self.program
             .queue
-            .write_buffer(&buffers[&Buf::Rope], 0, &bytes(&sizes.rope()));
-        let plan = Plan {
-            layout: &self.layout,
-            sizes,
-            precision: self.precision,
-        };
-        let step = self.record(&buffers, &plan.step())?;
+            .write_buffer(&buffers[&Buf::Rope], 0, &bytes(&room.sizes.rope()));
+        let step = self.record(&buffers, &self.plan(&room).step())?;
         let steps = (0..STEPS_A_READ)
             .flat_map(|_| step.dispatches.iter().copied())
             .collect();
-        let staging = [
-            self.program.staging(VOCAB.max(STEPS_A_READ)),
-            self.program.staging(VOCAB.max(STEPS_A_READ)),
-        ];
-        let bytes = buffers.values().map(wgpu::Buffer::size).sum::<u64>()
-            + step.dispatches.len() as u64 * crate::engine::PARAM_STRIDE
-            + 2 * staging_bytes();
+        let staging = [0, 1].map(|_| self.program.staging(plan::STAGING_WORDS));
+        let bytes = room.held_bytes();
+        debug_assert_eq!(
+            bytes,
+            buffers.values().map(wgpu::Buffer::size).sum::<u64>()
+                + step.dispatches.len() as u64 * engine::PARAM_STRIDE
+                + staging.iter().map(wgpu::Buffer::size).sum::<u64>(),
+            "the room as planned"
+        );
+        self.reserved = Some((context, room.peak_bytes()));
         self.context = Some(Context {
-            sizes,
+            plan: room,
             buffers,
             step,
             steps,
@@ -507,6 +501,15 @@ impl Inner {
             bytes,
         });
         Ok(())
+    }
+
+    /// The room for the context last reserved made again, where it was
+    /// let go.
+    fn ready(&mut self) -> Result<(), String> {
+        match (&self.context, self.reserved) {
+            (None, Some((context, _))) => self.reserve(context),
+            _ => Ok(()),
+        }
     }
 
     /// `ops` recorded on the weights and `buffers`.
@@ -528,31 +531,26 @@ impl Inner {
     }
 
     /// `prompt` through the decoder, its first token chosen; it reads
-    /// that token back (or the logits, with `read` `Logits`).
-    fn prompt(&mut self, prompt: &[u32], read: Buf) -> Result<Running, String> {
+    /// back what `read` says.
+    fn prompt(&mut self, prompt: &[u32], read: Read) -> Result<Running, String> {
         let context = room(&self.context)?;
-        let positions = context.sizes.positions;
         let n = prompt.len();
-        if n == 0 || n + 2 * STEPS_A_READ > positions {
+        if n == 0 || n > context.plan.context {
             return Err(format!(
                 "a prompt of {n} tokens in a context of {}",
-                positions - 2 * STEPS_A_READ
+                context.plan.context
             ));
         }
         if prompt.iter().any(|&t| t as usize >= VOCAB) {
             return Err("a token past the vocabulary".into());
         }
         let ints = &context.buffers[&Buf::Ints];
-        let at = plan::TOKENS;
+        let at = kernels::TOKENS;
         let mut state = vec![0u32; at];
         state[0] = (n - 1) as u32;
         state.extend_from_slice(prompt);
         self.program.queue.write_buffer(ints, 0, &bytes(&state));
-        let plan = Plan {
-            layout: &self.layout,
-            sizes: context.sizes,
-            precision: self.precision,
-        };
+        let plan = self.plan(&context.plan);
         let mut ops = Vec::new();
         for first in (0..n).step_by(CHUNK) {
             let rows = CHUNK.min(n - first);
@@ -560,8 +558,8 @@ impl Inner {
         }
         let recorded = self.record(&context.buffers, &ops)?;
         let (from, first, count) = match read {
-            Buf::Logits => (&context.buffers[&Buf::Logits], 0, VOCAB),
-            _ => (ints, at + n, 1),
+            Read::Logits => (&context.buffers[&Buf::Logits], 0, VOCAB),
+            Read::Token => (ints, at + n, 1),
         };
         let index = self.program.submit(
             &mut self.prompt_pieces,
@@ -575,7 +573,7 @@ impl Inner {
             index,
             staging: 0,
             count,
-            prompt: true,
+            phase: Phase::Prompt,
         })
     }
 
@@ -589,7 +587,7 @@ impl Inner {
             |_| {},
             Some((
                 &context.buffers[&Buf::Ints],
-                plan::TOKENS + pos + 1,
+                kernels::TOKENS + pos + 1,
                 STEPS_A_READ,
             )),
             &context.staging[staging],
@@ -599,17 +597,16 @@ impl Inner {
             index,
             staging,
             count: STEPS_A_READ,
-            prompt: false,
+            phase: Phase::Steps,
         })
     }
 
     /// What `running` read, once it is done.
     fn read(&mut self, running: Running) -> Result<Vec<f32>, String> {
         if let Some(index) = running.index {
-            let pieces = if running.prompt {
-                &mut self.prompt_pieces
-            } else {
-                &mut self.step_pieces
+            let pieces = match running.phase {
+                Phase::Prompt => &mut self.prompt_pieces,
+                Phase::Steps => &mut self.step_pieces,
             };
             crate::pace::finish(pieces, &self.program.device, index)?;
         }
@@ -621,23 +618,24 @@ impl Inner {
         )
     }
 
-    /// [`Gemma::generate`]'s work.
+    /// [`Gemma::generate`]'s work: at most `most` tokens, until one of
+    /// `stop`.
     fn generate(
         &mut self,
         prompt: &[u32],
-        most: usize,
+        (most, stop): (usize, &[u32]),
         mut seen: impl FnMut(&[u32]),
     ) -> Result<Generated, String> {
-        let positions = room(&self.context)?.sizes.positions;
+        self.ready()?;
+        let context = room(&self.context)?.plan.context;
         let n = prompt.len();
-        if n + most + 2 * STEPS_A_READ > positions {
+        if n + most > context {
             return Err(format!(
-                "{n} tokens and {most} more in a context of {}",
-                positions - 2 * STEPS_A_READ
+                "{n} tokens and {most} more in a context of {context}"
             ));
         }
         let started = Instant::now();
-        let mut flying = VecDeque::from([self.prompt(prompt, Buf::Ints)?]);
+        let mut flying = VecDeque::from([self.prompt(prompt, Read::Token)?]);
         // The decoder's position after the runs made so far.
         let mut pos = n;
         let mut out = Generated {
@@ -667,7 +665,7 @@ impl Inner {
             }
             let before = out.tokens.len();
             for t in got {
-                if STOP.contains(&t) {
+                if stop.contains(&t) {
                     out.stopped = true;
                     break;
                 }

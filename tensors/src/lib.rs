@@ -1,14 +1,19 @@
 //! The networks' numeric base, depending on nothing: a `.safetensors`
 //! file's tensors as f32 or as stored ([`SafeTensors`]), the checkpoints
 //! the speech models (`jodel-lyrics`) and the covers' depth and matte
-//! models and the picture model (`jodel-gpu`) are read from, as published;
-//! half floats ([`half`]); a
-//! small JSON reader ([`json`]); and what the CPU kernels share
-//! ([`kernels`], [`fast!`]).
+//! models and the picture model (`jodel-gpu`) are read from, as published
+//! (a checkpoint in several files through its index: [`Shards`]; either
+//! read by name: [`Tensors`]); a GGUF file's metadata and tensors as it
+//! holds them ([`gguf`], the story's language model's); byte-pair encoding
+//! over a vocabulary's ids ([`bpe`], the story's tokenisers'); half floats
+//! ([`half`]); a small JSON reader ([`json`]); and what the CPU kernels
+//! share ([`kernels`], [`fast!`]).
 //!
 //! A `.safetensors` file is an 8-byte length, a JSON header naming each
 //! tensor's type, shape and place, and the data.
 
+pub mod bpe;
+pub mod gguf;
 pub mod half;
 pub mod json;
 pub mod kernels;
@@ -21,10 +26,12 @@ use json::Json;
 
 /// How a tensor's values are stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum DType {
+pub enum DType {
     F32,
     Bf16,
     F16,
+    /// FP8 with 4 bits of exponent and 3 of mantissa (`F8_E4M3`).
+    F8E4M3,
     /// Any other type, by its name. The file still opens and such a tensor
     /// fails only when it is read ([`SafeTensors::get`]): published
     /// checkpoints carry integer buffers (position ids, step counters)
@@ -38,8 +45,93 @@ impl DType {
             "F32" => DType::F32,
             "BF16" => DType::Bf16,
             "F16" => DType::F16,
+            "F8_E4M3" => DType::F8E4M3,
             other => DType::Other(other.to_owned()),
         }
+    }
+}
+
+/// Tensors read by name: a checkpoint's file ([`SafeTensors`]), or its
+/// files together ([`Shards`]).
+pub trait Tensors {
+    /// Tensor `name` as stored: its type, its shape and its bytes.
+    fn raw(&self, name: &str) -> Result<(&DType, &[usize], &[u8]), String>;
+    /// Tensor `name` with `shape`, as f32 (stored as f32, bf16 or f16).
+    fn get(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, String>;
+}
+
+/// A checkpoint in several files with an index
+/// (`model.safetensors.index.json`: each tensor's file), those of its
+/// files that hold the tensors asked for opened.
+pub struct Shards {
+    files: Vec<SafeTensors>,
+}
+
+impl Shards {
+    /// The files of the checkpoint in `dir` (its index the file `index`)
+    /// that hold `names`; an error where the index puts one in a file not
+    /// among `files` (the files the caller knows the checkpoint by).
+    pub fn open(
+        dir: &Path,
+        index: &str,
+        names: &[String],
+        files: &[&str],
+    ) -> Result<Shards, String> {
+        let at = dir.join(index);
+        let text = std::fs::read_to_string(&at).map_err(|e| format!("{}: {e}", at.display()))?;
+        let map = Json::parse(&text)
+            .and_then(|j| j.get("weight_map").cloned())
+            .ok_or("no weight map in the index")?;
+        let mut held: Vec<&str> = names
+            .iter()
+            .map(|n| {
+                let file = map
+                    .get(n)
+                    .and_then(Json::as_str)
+                    .ok_or_else(|| format!("{n} is in no file of the index"))?;
+                files
+                    .iter()
+                    .copied()
+                    .find(|&f| f == file)
+                    .ok_or_else(|| format!("{n} is in {file}, not a file of the checkpoint"))
+            })
+            .collect::<Result<_, String>>()?;
+        held.sort_unstable();
+        held.dedup();
+        Ok(Shards {
+            files: held
+                .iter()
+                .map(|f| SafeTensors::open(&dir.join(f)))
+                .collect::<Result<_, _>>()?,
+        })
+    }
+
+    /// The file that holds tensor `name`.
+    fn file(&self, name: &str) -> Result<&SafeTensors, String> {
+        self.files
+            .iter()
+            .find(|f| f.has(name))
+            .ok_or_else(|| format!("no tensor {name}"))
+    }
+}
+
+impl Tensors for Shards {
+    fn raw(&self, name: &str) -> Result<(&DType, &[usize], &[u8]), String> {
+        self.file(name)?.raw(name)
+    }
+
+    fn get(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, String> {
+        self.file(name)?.get(name, shape)
+    }
+}
+
+impl Tensors for SafeTensors {
+    fn raw(&self, name: &str) -> Result<(&DType, &[usize], &[u8]), String> {
+        SafeTensors::raw(self, name)
+    }
+
+    fn get(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, String> {
+        SafeTensors::get(self, name, shape)
     }
 }
 
@@ -92,17 +184,10 @@ impl SafeTensors {
         self.entries.contains_key(name)
     }
 
-    /// Tensor `name` as stored: its type as the header names it (`F32`,
-    /// `BF16`, `F8_E4M3`, …), its shape and its bytes.
-    pub fn raw(&self, name: &str) -> Result<(&str, &[usize], &[u8]), String> {
+    /// Tensor `name` as stored: its type, its shape and its bytes.
+    pub fn raw(&self, name: &str) -> Result<(&DType, &[usize], &[u8]), String> {
         let t = self.entries.get(name).ok_or(format!("no tensor {name}"))?;
-        let dtype = match &t.dtype {
-            DType::F32 => "F32",
-            DType::Bf16 => "BF16",
-            DType::F16 => "F16",
-            DType::Other(other) => other,
-        };
-        Ok((dtype, &t.shape, &self.bytes[t.bytes.clone()]))
+        Ok((&t.dtype, &t.shape, &self.bytes[t.bytes.clone()]))
     }
 
     /// Tensor `name` with `shape`, as f32 (stored as f32, bf16 or f16).
@@ -115,7 +200,7 @@ impl SafeTensors {
             DType::F32 => (4, |b| f32::from_le_bytes(b.try_into().unwrap())),
             DType::Bf16 => (2, |b| bf16_to_f32(bits(b))),
             DType::F16 => (2, |b| f16_to_f32(bits(b))),
-            DType::Other(other) => return Err(format!("{name} is {other}, not f32, bf16 or f16")),
+            other => return Err(format!("{name} is {other:?}, not f32, bf16 or f16")),
         };
         if t.shape != shape {
             return Err(format!("{name} is {:?}, not {shape:?}", t.shape));
@@ -249,10 +334,10 @@ mod tests {
         let (dtype, shape, bytes) = t.raw("w").unwrap();
         assert_eq!(
             (dtype, shape, bytes),
-            ("F8_E4M3", &[2, 2][..], &[0x38, 0xb8, 0x40, 0x00][..])
+            (&DType::F8E4M3, &[2, 2][..], &[0x38, 0xb8, 0x40, 0x00][..])
         );
         let (dtype, shape, bytes) = t.raw("s").unwrap();
-        assert_eq!((dtype, shape.len(), bytes.len()), ("F32", 0, 4));
+        assert_eq!((dtype, shape.len(), bytes.len()), (&DType::F32, 0, 4));
         assert!(t.raw("x").is_err());
         // Read as f32, the FP8 tensor is refused.
         assert!(t.get("w", &[2, 2]).is_err());

@@ -18,19 +18,23 @@
 //!   network's) is [`Kept`] (`kept.rs`): set up when first needed, and
 //!   again when its device is lost; a failed setup is tried again a while
 //!   later. A network the caller holds says when its device is lost
-//!   ([`Program::lost`]), and the caller makes it again.
+//!   ([`Program::lost`]), and the caller makes it again. A device the
+//!   parts of several models share (the picture models') is a
+//!   [`SharedDevice`] (`shared.rs`), set up and set up again the same way.
 
 mod kept;
 mod model;
 mod mul;
 mod program;
+mod shared;
 
 use std::hash::Hash;
 
 pub(crate) use kept::{Kept, OnDevice, SetUp};
 pub(crate) use model::Model;
-pub(crate) use mul::{After, Matrix, Mul, ARGMAX, SWIGLU};
+pub(crate) use mul::{After, Matrix, Mul, ARGMAX, BIAS, MUL_NUMBERS, SWIGLU};
 pub(crate) use program::{Program, Recorded};
+pub(crate) use shared::SharedDevice;
 
 /// Bytes between the dispatches' parameters (the uniform offset
 /// alignment every device offers).
@@ -51,6 +55,12 @@ pub(crate) trait Kernels: Copy + Eq + Hash + 'static {
     const PARAM_BYTES: u64;
     const EXTRA: &'static [Access];
     fn entry(self) -> &'static str;
+
+    /// Whether the kernel is in the program on a device with `features`
+    /// (a program makes the pipelines of these only; every one by default).
+    fn available(self, _features: wgpu::Features) -> bool {
+        true
+    }
 }
 
 /// One dispatch as planned: its kernel, the buffers it binds (`B`, a key
@@ -113,19 +123,102 @@ pub(crate) fn params<const P: usize>(values: &[usize]) -> [usize; P] {
     p
 }
 
-/// The rotary table: per position, per pair of a head of 32, its cosine
-/// and sine (in single precision, as the CPU's tables).
-pub(crate) fn rotary_table(positions: usize) -> Vec<f32> {
-    let mut table = Vec::with_capacity(positions * 32);
-    for p in 0..positions {
-        for i in 0..16 {
-            let freq = 1.0f32 / 10_000f32.powf((2 * i) as f32 / 32.0);
-            let angle = p as f32 * freq;
-            table.push(angle.cos());
-            table.push(angle.sin());
+/// A head's rotary frequencies: its pairs (half its width `dim`), the
+/// first `turned` of them turning at `1 / base^(2i / dim)`, the rest not.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Freqs {
+    pub(crate) base: f64,
+    pub(crate) dim: usize,
+    pub(crate) turned: usize,
+}
+
+/// The separator's, the beat network's and the speech model's heads of 32
+/// (every pair turned, base 10⁴).
+pub(crate) const HEAD_32: Freqs = Freqs {
+    base: 10_000.0,
+    dim: 32,
+    turned: 16,
+};
+
+/// How a rotary table is reckoned (each model's as its reference does).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Angles {
+    /// The frequencies, angles, cosines and sines in f32 (the separator's,
+    /// the beat network's, the speech model's and the text encoder's).
+    F32,
+    /// The frequencies and angles in f32, their cosines and sines in f64
+    /// (the language model: its reference's f32 angles, the functions to
+    /// the last bit).
+    F32ThenF64,
+    /// All in f64 (the picture transformer, as its pipeline).
+    F64,
+}
+
+/// A rotary table: per position of `positions`, each pair's cosine and
+/// sine (as f32s, side by side).
+pub(crate) fn rotary(
+    positions: impl IntoIterator<Item = usize>,
+    freqs: Freqs,
+    angles: Angles,
+) -> Vec<f32> {
+    // Each pair's frequency, in the precision `angles` takes it (an f32
+    // one held exactly as an f64).
+    let freq = |i: usize| -> f64 {
+        if i >= freqs.turned {
+            return 0.0;
+        }
+        let (base, dim) = (freqs.base, freqs.dim as f64);
+        match angles {
+            Angles::F64 => 1.0 / base.powf((2 * i) as f64 / dim),
+            Angles::F32 | Angles::F32ThenF64 => {
+                f64::from(1.0 / (base as f32).powf((2 * i) as f32 / dim as f32))
+            }
+        }
+    };
+    let freqs: Vec<f64> = (0..freqs.dim / 2).map(freq).collect();
+    let mut out = Vec::new();
+    for p in positions {
+        for &f in &freqs {
+            let (c, s) = match angles {
+                Angles::F32 => {
+                    let a = p as f32 * f as f32;
+                    (a.cos(), a.sin())
+                }
+                Angles::F32ThenF64 => {
+                    let a = f64::from(p as f32 * f as f32);
+                    (a.cos() as f32, a.sin() as f32)
+                }
+                Angles::F64 => {
+                    let a = p as f64 * f;
+                    (a.cos() as f32, a.sin() as f32)
+                }
+            };
+            out.extend([c, s]);
         }
     }
-    table
+    out
+}
+
+/// WGSL's declarations of `values` as `u32` constants, so the kernels'
+/// flags and places are written once, in Rust.
+pub(crate) fn wgsl_consts(values: &[(&str, usize)]) -> String {
+    values
+        .iter()
+        .map(|(name, v)| format!("const {name}: u32 = {v}u;\n"))
+        .collect()
+}
+
+/// WGSL's readers of a dispatch's numbers by name: for each name and its
+/// place, `fn name() -> u32 { return p.{field}{place}; }` (`field` the
+/// prefix of the parameters' fields, `f` or `n`).
+pub(crate) fn wgsl_numbers<S: AsRef<str>>(
+    field: &str,
+    names: impl IntoIterator<Item = (S, usize)>,
+) -> String {
+    names
+        .into_iter()
+        .map(|(name, i)| format!("fn {}() -> u32 {{ return p.{field}{i}; }}\n", name.as_ref()))
+        .collect()
 }
 
 /// Runs `work` inside error scopes for validation, out-of-memory and

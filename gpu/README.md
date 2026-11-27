@@ -8,7 +8,7 @@ model and the speech recogniser of [`jodel-lyrics`](../lyrics)
 (`GpuSpeech`, `GpuAsr`), the cover's depth and cut-out (`GpuDepth`,
 `GpuMatte`), karaoke story mode's language model (`Gemma`, Gemma 4
 E4B's text decoder) and the story's pictures (FLUX.2 [klein] 4B:
-`image::TextEncoder`, `image::Painter`). Each is a program of kernels on one bind group layout, its
+`image::TextEncoder`, `image::Drawer`). Each is a program of kernels on one bind group layout, its
 dispatches planned on the processor and run in short submissions
 (`src/engine/`: the program, its buffers, parameters and bind groups;
 every matrix multiply as a `Mul`, what it reads and writes and what becomes
@@ -281,21 +281,37 @@ the reference on a generated scene (`tests/fixtures`);
 look written from its lyrics, greedily, so the same song always gets the
 same plan (`src/llm/`).
 
-- **Packing:** `llm::pack` reads the checkpoint once (all 16 GB, and the
-  per-layer embeddings as 11 GB of f32s; 2.5 minutes) and writes our own file
-  (`.jdlgemma`, 4.4 GB): every matrix at 4 bits in groups of 32 with a fitted
-  half scale and offset (the recogniser's rounding,
-  `jodel_lyrics::asr::quant`), the norms as f32s, and the tokeniser.
-- **Memory:** loading the weights (`Gemma::open`, read a buffer at a time:
-  the embeddings with the per-layer projection, then a buffer each layer
-  with its slice of the per-layer embeddings) and the room for a context
-  (`Gemma::reserve`: the cache of keys and values, the working buffers of a
-  prompt's chunk and a step, the rotary tables; `release` lets it go) are
-  separate. `Memory::of(context)` says what each takes before anything is
-  loaded: 4450 MB of weights (in 15 buffers, the layers three to one, each
-  above the allocator's 256 MB blocks: a layer a buffer, two to a block,
-  held 1.3 GB more), and 536 MB for 4041 positions (the story prompt and
-  2500 tokens).
+- **Weights:** Unsloth's GGUF of it, `gemma-4-E4B-it-Q4_K_M.gguf`
+  (`unsloth/gemma-4-E4B-it-GGUF`, Apache-2.0, revision `bfc15c38`), read as
+  it is (`jodel_tensors::gguf` parses its header, metadata and tensors;
+  `llm/model.rs` maps its names to the model's). It holds five kinds of
+  tensor, every one kept on the GPU in the file's blocks and unpacked by
+  the kernels that read it (`llm/blocks.wgsl`): Q4_K (most matrices and the
+  token embeddings, tied to the head: 256 values in 144 bytes, eight 6-bit
+  scales and minimums), Q6_K (the values and the feed-forward's down
+  projection of 21 of the 42 layers, 210 bytes a block, every other block
+  halfway into a word), Q5_K (the per-layer embeddings, 176 bytes a block, read
+  a value at a time), BF16 (the per-layer projection) and F32 (each layer's
+  per-layer gate and projection, the norms and scalars). Only the keys and
+  values of the 18 layers that share an earlier one's, and the rotary
+  frequencies, stay in the file.
+- **Memory:** loading the weights (`Gemma::open`, a tensor at a time: the
+  token embeddings with the per-layer projection, then each layer's,
+  queries, keys and values one after another, the gate's and up's rows in
+  turn; then the per-layer embeddings 4096 tokens at a time, each layer's
+  slice of each token's row, one Q5_K block, with its layer) and the room for
+  a context (`Gemma::reserve`: the cache of keys and values, the working
+  buffers of a prompt's chunk and a step, the rotary tables; `release` lets
+  it go, and the next generation makes it again) are separate.
+  `Gemma::planned(gguf, context)` says what each takes
+  before anything is loaded (from the file's header): 4698 MB of weights (in
+  15 buffers, the layers three to one, each above the allocator's 256 MB
+  blocks: a layer a buffer, two to a block, held 1.3 GB more), and 536 MB
+  for 4041 positions (the story prompt and 2500 tokens). A context takes at
+  most `llm::MOST_CONTEXT` positions (16 368).
+- **Text:** `Gemma::generate_text` gives the answer as it is read, in whole
+  characters: each token decoded once, a character that comes in byte
+  pieces over several tokens held until it is whole (`Tokenizer::stream`).
 - **The architecture** is the reference's (Hugging Face's
   `Gemma4TextModel`): 42 layers of 2560, five sliding-window layers (a window
   of 512, heads of 256) to a global one (heads of 512, a quarter turned);
@@ -308,8 +324,14 @@ same plan (`src/llm/`).
   logits capped at 30.
 - **Tokeniser:** Gemma's byte-pair encoding, our own (`llm::Tokenizer`), as
   Hugging Face's `tokenizers` does it (specials first, the lowest-ranked
-  merge first, byte pieces for what has no piece); it gives the reference's
-  ids for the story prompt exactly.
+  merge first, byte pieces for what has no piece), from the GGUF's metadata:
+  its pieces, their types (the control and user-defined ones the specials),
+  its merges; its chat template is checked to write the turns as
+  `Tokenizer::chat` does. It gives Hugging Face's ids for the story prompt
+  exactly. The file's merges are the checkpoint's in their order with 253
+  more among them (of code-like pieces, `SRP Basic`), which text such as a
+  song's never meets; and its `<eos>` is a plain piece, not a special (it
+  ends an answer all the same).
 - **A prompt** goes in chunks of up to 512 rows: the 24 layers with keys and
   values of their own over all of them (a tiled matrix multiply, 64 × 64
   tiles; flash attention over tiles of 8 keys, a query's 16 values an
@@ -319,47 +341,53 @@ same plan (`src/llm/`).
   is put after it as the next token, the position moved on. Steps go eight
   at a time between reads of the tokens, the next eight made while those
   run. A matrix multiply of one row (`gemv_*`) is 16 rows a workgroup, 32
-  invocations a row each taking every 32nd half-group of inputs; attention
+  invocations a row each taking every 32nd 16 (or 8, as f32s) of its
+  inputs; attention
   is split (8 splits on a sliding layer, 16 on a global one, each taking
   every so many chunks of 64 positions with an online softmax) and joined.
-- **Precision:** the rows a matrix multiplies are rounded to 8 bits a block
-  of 32 (by the block's largest, its scaled sum kept for the weights'
-  offsets, as llama.cpp's q8_1) and multiplied four at a time with
-  `dot4I8Packed`, the weights' two nibbles a word unpacked into byte lanes;
-  where that instruction is emulated (Metal) they stay f32s
-  (`llm::Precision`; `JODEL_GEMMA_PRECISION=plain` or `q8` says otherwise).
+- **Precision:** the rows a Q4_K or Q6_K matrix multiplies are rounded to 8
+  bits a block of 32 (by the block's largest, its scaled sum kept for the
+  Q4_K minimums: finer than llama.cpp's q8_K, a scale for 256) and
+  multiplied four at a time with `dot4I8Packed`, the weights' values
+  unpacked into signed byte lanes (a Q4_K's nibbles as they are, a Q6_K's
+  six bits less 32), 16 at a time with their scale; where that instruction
+  is emulated (Metal) they stay f32s and the weights are unpacked to f32s
+  (`Gemma::open(path, Precision::Fast)`; `Precision::Full` keeps them f32s
+  everywhere; the example takes `JODEL_GEMMA_PRECISION=full`).
+  The BF16 and F32 matrices take their rows as f32s on both paths.
 
 On an RTX 5080 (November 2026), the Fast Car storyboard prompt of the story
-prototype (1541 tokens): loading takes 5 s, the prompt 0.58 s (2650 tokens a
-second), the answer 118 tokens a second (787 tokens in 6.7 s, at 8.5 ms a
-step); the prototype's Hugging Face run at 4 bits (bitsandbytes' nf4) wrote
-10.7 a second. The GPU holds 5.0 GB (5.2 GB in use, by the driver's count).
-As f32s (`plain`) the prompt takes 1.03 s and a step 12 ms (83 a second).
-Profiled, a step's GPU time goes mostly to the one-row matrix multiplies
-(4.7 ms: the weights' 2.9 GB a token at 610 GB/s), then the residual
-steps, the attention, its joins and the rows written for the matrices
-(each of the last a few microseconds, 640 dispatches a step).
+prototype (1541 tokens): loading takes 6.4 s (the file in the system's
+cache), the prompt 0.65 s (2380 tokens a second), the answer 111 tokens a
+second (1065 tokens in 9.5 s, at 9 ms a step); the prototype's Hugging Face
+run at 4 bits (bitsandbytes' nf4) wrote 10.7 a second. The GPU holds 5.1 GB
+(5.4 GB in use, by the driver's count). As f32s (`plain`) the prompt takes
+1.03 s and a step 10 ms (97 a second). Profiled, a step's GPU time goes
+mostly to the one-row matrix multiplies (5 ms: the Q4_K ones 3.3 ms, the
+Q6_K 0.8, the F32 per-layer gates and projections 0.9, their 220 MB in 84
+small multiplies), then the residual steps, the attention, its joins and
+the rows written for the matrices (650 dispatches a step). Our own 4-bit
+file before it (5 bits a weight, everything at 4 bits) took 0.58 s and 8.5
+ms a step in 4450 MB.
 
 Against the reference (Hugging Face's own `Gemma4ForCausalLM` in f32 with
-our file's weights dequantised, and every matrix's input rounded as ours
-where we round it):
-- **Plain:** the logits after the prompt agree to 2.0e-4 (of 28; 3.4e-5 on
+the GGUF's weights dequantised as llama.cpp does):
+- **Plain:** the logits after the prompt agree to 1.8e-4 (of 26; 4.8e-5 on
   average), and the greedy answer is the reference's token for token, all
-  1020 of them.
-- **At 8 bits:** the rounding of every matrix's rows makes any difference
-  of rounding grow: the reference itself, its embeddings' scale nudged by
-  one part in a million, moves its logits by 0.53 on average (the best
-  logit leads by 5.9). Ours are as far from it (0.48), and 0.31 from the
-  plain path's, and the answers part after 15 tokens: as different as two
-  roundings of the same model, each as good (both plans take the lyrics'
-  18 lines in order, in 7 and 9 scenes).
+  986 of them.
+- **At 8 bits:** the rounding of every quantised matrix's rows makes any
+  difference of rounding grow (logits 0.17 from the reference's on average,
+  the best logit leading by 4.6), and the answers part after 74 tokens: two
+  roundings of the same model, each as good (both plans take the lyrics' 18
+  lines in order, two to a scene, in 9 scenes).
 
-`cargo test -p jodel-gpu` holds every kernel (both paths) to a reference on
-the processor on small shapes, and the tokeniser to its rules.
+`cargo test -p jodel-gpu` holds every kernel (both paths, every kind of
+matrix) to a reference on the processor on small shapes (the blocks read as
+llama.cpp's `dequantize_row_*` reads them), the GGUF reader to a small file
+of its own (`jodel_tensors::gguf`), and the tokeniser to its rules.
 
-`examples/gemma.rs` packs the checkpoint, writes after a prompt file (one
-user turn) with the timings and the memory held, or writes the logits after
-it.
+`examples/gemma.rs` writes after a prompt file (one user turn) from the
+GGUF, with the timings and the memory held, or writes the logits after it.
 
 ## The story's pictures
 
@@ -376,7 +404,7 @@ both:
   of Qwen3-4B's 36 layers (the embeddings are the hidden states after
   layers 9, 18 and 27, side by side), the token table kept on the
   processor. 0.2 s a prompt.
-- `Painter` (3.95 GB, and 2.19 GB while it draws at 1344 × 768 with a
+- `Drawer` (3.95 GB, and 2.19 GB while it draws at 1344 × 768 with a
   reference of 512 × 512): the reference pictures through the autoencoder's
   encoder, then four steps of the transformer (5 double-stream and 20
   single-stream blocks; the references' tokens after the picture's, as the
@@ -386,8 +414,10 @@ both:
   picture size, kept until `release()`; the autoencoder's buffers are the
   transformer's, taken in turns.
 
-`footprint()` says what each takes before it is loaded (its weights, and
-its buffers for a picture size); `bytes()` what it takes now.
+`planned()` says what each takes before it is loaded (its weights packed as
+they would be, nothing read, and its buffers for a picture size); `held()`
+what it takes now; as a `Resident` (`footprint()`, `release()`) each tells a
+scheduler what it needs and lets its buffers go.
 
 The FP8 matrices stay FP8 on the GPU, four values a word, turned to
 numbers as the matrix multiply reads them, times the checkpoint's scales
@@ -440,7 +470,7 @@ reference in 4.7 s (PyTorch in bf16: 2.9 s; here in f32 without tensor
 cores: 11.8 s). Of its GPU time the matrix multiplies take 70 % (about 44
 TFLOPS: the transformer's and the decoder's 146 TFLOPs) and the attention
 28 % (about 29 TFLOPS); the rest is under 2 %. Loading takes 4.0 s for the
-encoder and 3.3 s for the painter (PyTorch: 4.8 and 3.4 s). The GPU's
+encoder and 3.3 s for the drawer (PyTorch: 4.8 and 3.4 s). The GPU's
 allocator holds 6.5 GB at its peak with the encoder freed first (PyTorch:
 7.3 GB), 9.0 GB with both kept.
 
