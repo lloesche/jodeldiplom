@@ -59,14 +59,17 @@ use jodel_output::StreamInfo;
 use jodel_playback::{PlayState, Route, TrackInfo};
 
 pub use action::{
-    Action, Effect, Facts, Heard, Job, LyricsFacts, Placing, RhythmFacts, WalkPurpose,
+    Action, Effect, Facts, Heard, Job, LyricsFacts, Placing, QueueFacts, RhythmFacts,
+    SettledLyrics, StoryFact, Took, WalkPurpose,
 };
 pub use browse::{browser_rows, list_cursor, list_height, list_len, row_entry, shown_title, Row};
 pub use fit::Fit;
 pub use help::{help_line_count, help_shown, palette_window};
 pub use settings::{device_window, folder_window};
 pub use update::update;
-pub use work::{job_done, job_words, readiness, still_to_do, visible_missing, Readiness};
+pub use work::{
+    job_done, job_words, readiness, still_to_do, visible_missing, Readiness, StorySong,
+};
 
 use crate::browser::{Details, Entry};
 use crate::config::Config;
@@ -125,31 +128,6 @@ impl Rhythmed {
         self.analysis
             .duration
             .max(self.waveform.as_ref().map_or(0.0, |w| w.duration()))
-    }
-}
-
-/// What a file's work found so far, as the queue's icons show it: each
-/// `None` until that part is done, then whether the file has it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct QueueFacts {
-    /// Its key.
-    pub key: Option<bool>,
-    /// Its stems, separated and kept.
-    pub stems: Option<bool>,
-    /// Its tempo (a clear beat).
-    pub tempo: Option<bool>,
-    /// Its lyrics, once settled.
-    pub lyrics: Option<LyricsFacts>,
-    /// Its cover, taken apart.
-    pub cover: Option<bool>,
-}
-
-impl QueueFacts {
-    /// Takes in the whole analysis's facts.
-    pub fn analysed(&mut self, f: &RhythmFacts) {
-        self.key = Some(f.key.is_some());
-        self.stems = Some(f.stems);
-        self.tempo = Some(f.bpm.is_some());
     }
 }
 
@@ -594,6 +572,9 @@ pub struct Prepared {
     pub order: Vec<PathBuf>,
     /// The analysis's recipe; `None`: no analysis (the tempo is off).
     pub recipe: Option<RhythmRecipe>,
+    /// The songs whose stories were last asked for, in order
+    /// ([`Effect::WantStories`]).
+    pub stories: Vec<StorySong>,
 }
 
 /// The GPU: for stems, and for karaoke (none without one).
@@ -813,7 +794,7 @@ pub struct State {
     /// What each file's finished work found, for the queue's icons.
     pub facts: HashMap<PathBuf, QueueFacts>,
     /// The work each file of the queue is got ready by (a worker for
-    /// each): the analysis always, the lyrics and the cover where the app
+    /// each): the analysis always, the lyrics and the story where the app
     /// has their workers. A file is ready when all of it is done.
     pub preparing: Vec<Job>,
     /// The GPU for stems.

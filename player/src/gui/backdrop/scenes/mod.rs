@@ -1,7 +1,7 @@
-//! Karaoke's backdrop showing a song's story scenes
-//! ([`crate::work::scenes`]) instead of its cover: the scene of the moment
-//! filling the window, cut in on the song's bars ([`cuts`]); before the
-//! first, after the last and in a gap between them the cover as ever.
+//! Karaoke's backdrop: a song's story scenes ([`crate::work::scenes`]),
+//! the scene of the moment filling the window, cut in on the song's bars
+//! one after the other through the whole song ([`cuts`]: the first from
+//! the song's start, each on till the next, the last on to the end).
 //!
 //! Each scene moves by a slow camera push (in, the next out, in turn, as
 //! fast as the song's tempo has it), drifting a third of the way towards
@@ -13,9 +13,9 @@
 //! first beat, the nearest's shadow on what is behind it. The beat kicks
 //! the camera a little (more on a bar's first), a cut lands with a punch;
 //! the far is hazed into the scene's own palette's largest colour,
-//! darkened, its edges lit in its most vivid; the section's lift and the
-//! theme's grade are the cover's. The song's look draws over it as over
-//! the cover.
+//! darkened, its edges lit in its most vivid ([`lights`]); a section
+//! begun and the singer's glow lift it ([`Felt::lift`]), and the theme
+//! grades it. The song's look draws over it.
 //!
 //! [`Showing`] is the processor's side: when each scene shows, and each
 //! frame's numbers ([`SceneLook`], the camera's maths here, the shader's in
@@ -32,8 +32,9 @@ use jodel_rhythm::Analysis;
 use self::cuts::{cuts, showing, Shown};
 use super::music::{Felt, Song};
 use super::pulse::Pulse;
-use super::subject::lights;
+use crate::work::picture::Swatch;
 use crate::work::scenes::Story;
+use jodel_looks::math::srgb_to_linear;
 
 /// How much larger than the window the picture is at the least: room for
 /// the warp's and the layers' slide, so no edge ever shows.
@@ -121,22 +122,26 @@ pub struct SceneLook {
 }
 
 /// The story's scenes in a frame: of which story, the one drawn and its
-/// numbers (none: none yet, the cover drawn, the next only sent over
-/// ahead), the next to have ready (none: none yet).
+/// numbers, the next to have ready (none: none yet).
 #[derive(Clone, Debug)]
 pub struct SceneFrame {
     /// The story.
     pub story: Arc<Story>,
     /// The scene drawn and its numbers.
-    pub drawn: Option<(usize, SceneLook)>,
+    pub drawn: (usize, SceneLook),
     /// The next scene, sent over ahead of its cut.
     pub next: Option<usize>,
 }
 
 impl SceneFrame {
-    /// The picture's size of the scene drawn (none: none drawn).
-    pub fn picture(&self) -> Option<(u32, u32)> {
-        Some(self.story.scenes[self.drawn?.0].size)
+    /// The picture's size of the scene drawn.
+    pub fn picture(&self) -> (u32, u32) {
+        self.story.scenes[self.drawn.0].size
+    }
+
+    /// The palette of the scene drawn, the largest share first.
+    pub fn palette(&self) -> &[Swatch] {
+        &self.story.scenes[self.drawn.0].palette
     }
 }
 
@@ -180,10 +185,33 @@ pub fn camera(
     }
 }
 
+/// A colour (sRGB bytes) as linear light, as bright as it can be: its
+/// largest channel at 1 (a light's colour, not its strength).
+fn light_of(rgb: [u8; 3]) -> [f32; 3] {
+    let lin = rgb.map(|v| srgb_to_linear(f32::from(v) / 255.0));
+    let most = lin[0].max(lin[1]).max(lin[2]).max(1e-3);
+    lin.map(|c| c / most)
+}
+
+/// A scene's lights, of its `palette`: its most vivid colour (the layers'
+/// edges) and its largest (the haze); a warm white for each it does not
+/// have.
+fn lights(palette: &[Swatch]) -> [[f32; 3]; 2] {
+    let vivid = |s: &Swatch| {
+        let c = s.rgb.map(f32::from);
+        let (max, min) = (c[0].max(c[1]).max(c[2]), c[0].min(c[1]).min(c[2]));
+        let sat = if max > 0.0 { (max - min) / max } else { 0.0 };
+        sat * (max / 255.0).min(0.7) * (0.25 + s.share).sqrt()
+    };
+    let warm = [1.0, 0.85, 0.65];
+    let most = palette.iter().max_by(|a, b| vivid(a).total_cmp(&vivid(b)));
+    let pick = |s: Option<&Swatch>| s.map_or(warm, |s| light_of(s.rgb));
+    [pick(most), pick(palette.first())]
+}
+
 /// A song's story as the backdrop shows it: its scenes ready, when each
-/// shows (cut on the song's bars), each one's lights (of its palette: its
-/// vivid, its next, its largest) and how fast its camera moves; the
-/// analysis it was cut on.
+/// shows (cut on the song's bars), each one's lights ([`lights`]) and how
+/// fast its camera moves; the analysis it was cut on.
 #[derive(Debug)]
 pub struct Showing {
     /// The story.
@@ -191,7 +219,7 @@ pub struct Showing {
     /// When each scene shows.
     pub shown: Vec<Shown>,
     /// Each scene's lights.
-    lights: Vec<[[f32; 3]; 3]>,
+    lights: Vec<[[f32; 3]; 2]>,
     /// The camera's speed ([`speed`]).
     pub speed: f32,
     /// The analysis it was cut on (none: not analysed yet).
@@ -233,9 +261,9 @@ impl Showing {
             }
     }
 
-    /// The scene at `at` seconds into the song (none drawn where none
-    /// shows; none at all where none comes within [`PRELOAD`] either), with
-    /// the music `felt`, in a `window` of pixels, the theme's `grade`.
+    /// The scene at `at` seconds into the song (none: the story has no
+    /// scene), with the music `felt`, in a `window` of pixels, the theme's
+    /// `grade`; the next sent over ahead within [`PRELOAD`] of its cut.
     pub fn frame(
         &self,
         at: f64,
@@ -243,24 +271,16 @@ impl Showing {
         window: (u32, u32),
         grade: [f32; 4],
     ) -> Option<SceneFrame> {
-        let index = showing(&self.shown, at);
-        let from = index.map_or_else(|| self.shown.partition_point(|s| s.start <= at), |i| i + 1);
-        let next = (from < self.shown.len())
-            .then_some(from)
+        let index = showing(&self.shown, at)?;
+        let next = (index + 1 < self.shown.len())
+            .then_some(index + 1)
             .filter(|&n| self.shown[n].start - at <= PRELOAD);
-        let Some(index) = index else {
-            return next.map(|n| SceneFrame {
-                story: Arc::clone(&self.story),
-                drawn: None,
-                next: Some(n),
-            });
-        };
         let shown = self.shown[index];
         let scene = &self.story.scenes[index];
         let u = ((at - shown.start) / (shown.end - shown.start).max(1e-3)) as f32;
         let (w, h) = (window.0.max(1) as f32, window.1.max(1) as f32);
         let picture = (scene.size.0 as f32, scene.size.1 as f32);
-        let fill = super::look::fill((w, h), picture, 1.0);
+        let fill = look::fill((w, h), picture);
         let extent = [fill[0], fill[1]];
         let pulse = Pulse::of(felt.beat, felt.tier, felt.flare);
         let layers = scene.moved.count();
@@ -274,7 +294,7 @@ impl Showing {
         let long = scene.size.0.max(scene.size.1).max(1) as f32;
         let levels = super::gpu::levels(scene.size) as f32;
         let behind = (long / BEHIND_TEXELS).log2().clamp(0.0, levels - 1.0);
-        let [vivid, _, largest] = self.lights[index];
+        let [vivid, largest] = self.lights[index];
         let rim = vivid.map(|c| (1.0 - RIM.1) * c + RIM.1);
         let fog = largest.map(|c| HAZE.1 * c);
         let look = SceneLook {
@@ -289,7 +309,7 @@ impl Showing {
         };
         Some(SceneFrame {
             story: Arc::clone(&self.story),
-            drawn: Some((index, look)),
+            drawn: (index, look),
             next,
         })
     }
@@ -333,13 +353,13 @@ mod tests {
         assert!((cam(2.0, 0.01) - cam(2.0, 0.0) - KICK * 0.01).abs() < 1e-6);
     }
 
-    /// A story of three scenes, without bars: each shows in its span, the
-    /// cover in the gap and round them; the next is sent over ahead of its
-    /// cut; a scene in layers slides further than one warped; each scene
-    /// is lit by its own palette.
+    /// A story of three scenes, without bars: a scene shows all through
+    /// the song (the first from its start, each on over a gap till the
+    /// next, the last on after its span); the next is sent over ahead of
+    /// its cut; a scene in layers slides further than one warped; each
+    /// scene is lit by its own palette.
     #[test]
-    fn a_story_shows_each_scene_in_its_span_and_the_next_ahead() {
-        use crate::work::picture::Swatch;
+    fn a_story_shows_a_scene_all_through_the_song_and_the_next_ahead() {
         use crate::work::scenes::{Cuts, Moved, Ready};
         let scene = |span, cuts: Option<Cuts>, red: u8| Ready {
             span,
@@ -364,25 +384,27 @@ mod tests {
                 scene((20.0, 30.0), Some(Cuts::Three(0.3, 0.6)), 20),
                 scene((40.0, 50.0), None, 200),
             ],
-            crate::work::scenes::look(),
         ));
         let showing = Showing::new(Arc::clone(&story), None);
         assert!(showing.is_of(&story, None));
         let felt = Felt::default();
         let at = |t: f64| showing.frame(t, &felt, (1600, 900), [0.0; 4]);
-        assert!(at(5.0).is_none() && at(35.0).is_none() && at(50.0).is_none());
-        // Before the first and in the gap: none drawn, the next sent over
-        // ahead.
-        let ahead = at(9.9).unwrap();
-        assert_eq!((ahead.drawn.is_none(), ahead.next), (true, Some(0)));
-        let gap = at(38.0).unwrap();
-        assert_eq!((gap.drawn.is_none(), gap.next), (true, Some(2)));
+        let drawn = |t: f64| at(t).unwrap().drawn.0;
+        // The first from the song's start, the second on over the gap, the
+        // last on after its span.
+        assert_eq!(
+            [0.0, 5.0, 19.9, 20.0, 35.0, 39.9, 40.0, 50.0, 300.0].map(drawn),
+            [0, 0, 0, 1, 1, 1, 2, 2, 2]
+        );
         let first = at(12.0).unwrap();
-        let (index, look) = first.drawn.unwrap();
+        let (index, look) = first.drawn;
         assert_eq!((index, first.next), (0, None));
-        assert_eq!(first.picture(), Some((16, 9)));
+        assert_eq!(first.picture(), (16, 9));
+        assert_eq!(first.palette()[0].rgb, [200, 40, 40]);
         assert_eq!(at(17.5).unwrap().next, Some(1));
-        let (index, second) = at(25.0).unwrap().drawn.unwrap();
+        assert_eq!(at(38.0).unwrap().next, Some(2));
+        assert_eq!(at(45.0).unwrap().next, None);
+        let (index, second) = at(25.0).unwrap().drawn;
         assert_eq!(index, 1);
         assert_eq!(second.layers[0], 3);
         // Each its own palette: the first's haze redder than the second's.
@@ -390,10 +412,27 @@ mod tests {
         // At either end of a scene the slide is at its fullest: the
         // layers' further than the warp's.
         let slide = |t: f64| {
-            let c = at(t).unwrap().drawn.unwrap().1.cam;
+            let c = at(t).unwrap().drawn.1.cam;
             c[2].hypot(c[3] / UPRIGHT)
         };
-        assert!(slide(29.99) > slide(19.99));
+        assert!(slide(39.99) > slide(19.99));
+        // No scene: nothing drawn.
+        let none = Showing::new(Arc::new(Story::new(&[], Vec::new())), None);
+        assert!(none.frame(5.0, &felt, (1600, 900), [0.0; 4]).is_none());
+    }
+
+    #[test]
+    fn a_scene_is_lit_by_its_palette_s_vivid_colour_and_hazed_in_its_largest() {
+        let swatch = |rgb, share| Swatch { rgb, share };
+        let palette = [
+            swatch([60, 60, 64], 0.6),
+            swatch([220, 40, 120], 0.2),
+            swatch([30, 120, 200], 0.15),
+        ];
+        let [vivid, largest] = lights(&palette);
+        assert!(vivid[0] == 1.0 && vivid[1] < 0.1, "{vivid:?}");
+        assert!(largest.iter().all(|&c| c > 0.8), "{largest:?}");
+        assert_eq!(lights(&[]), [[1.0, 0.85, 0.65]; 2]);
     }
 
     #[test]

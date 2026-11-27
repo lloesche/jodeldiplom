@@ -279,6 +279,7 @@ pub fn playing_state(cols: u16, rows: u16) -> State {
     state.prepared = Prepared {
         order,
         recipe: Some(state.rhythm_recipe.clone()),
+        ..Prepared::default()
     };
     state.rhythm.insert(
         path,

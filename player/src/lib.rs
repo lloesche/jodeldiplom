@@ -18,9 +18,10 @@
 //!   wall clock, or one a test steps).
 //! - [`browser`]: folder listing, lazy file details, recursive search.
 //! - [`work`]: the background workers (the beats and tempo, the lyrics,
-//!   the covers taken apart, the cover art, the songs' loudness, the
-//!   original singer's phrases, the files fetched for the setup), what
-//!   they are built of, and the way their results come back to the app.
+//!   the stories made, the song playing's scenes, the cover art, the
+//!   songs' loudness, the original singer's phrases, the files fetched for
+//!   the setup), what they are built of, and the way their results come
+//!   back to the app.
 //! - [`store`]: what is kept on disk between runs, and the schema of each
 //!   kind of file: the two folders and a move between them, the session,
 //!   the user's own records (the grids, the delays, the scores, the takes,

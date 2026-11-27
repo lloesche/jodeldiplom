@@ -44,9 +44,6 @@ impl App {
                 }
             }
             Effect::Prepare(paths, recipe) => {
-                if let Some(covers) = &self.covers {
-                    covers.prepare(paths.clone());
-                }
                 self.lyrics.prepare(paths.clone());
                 self.rhythm.prepare(paths, recipe);
             }

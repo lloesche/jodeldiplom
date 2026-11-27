@@ -200,8 +200,9 @@ stem keys are their mutes.
   - `a_double_click_on_a_queue_row_is_two_clicks_on_it` (the window)
   - `another_track_played_while_paused_plays` (engine)
 - **Q5.** A queue row's icons are all lit only when nothing is left to do
-  for its track: a step's last icon (the tempo, the lyrics, the cover)
-  lights once that step is done and no worker is at it. A song no source
+  for its track: a step's last icon (the tempo, the lyrics, the story, an
+  open book: lit only once its scenes are drawn and taken apart) lights
+  once that step is done and no worker is at it. A song no source
   has lyrics for is heard from its voice once a run, however often the
   queue is got ready again, and its lyrics icon lights once it is.
   - `a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it`
@@ -216,30 +217,46 @@ really found, as its workers tell it: never a progress they did not tell.
 - **P1.** Each step's results are kept for the song as they are told (the
   key once the file is decoded, the stems as each chunk is separated and
   once they all are, the beat once decided, the words looked up, heard,
-  timed, the cover taken apart), for the last six songs worked on (the
-  covers' layers for the last two), and only for work done now: a song
-  whose results were all in the caches has none. Telling them costs no
-  work of its own: what the workers have is sent as it is.
+  timed, the story planned and written, each of its pictures begun and
+  each scene drawn, its scenes taken apart; a story planned again starts
+  afresh, its words, scenes and count from before gone), for the last six
+  songs worked on, and only for work done now: a song whose results were
+  all in the caches has none. Telling them costs no work of its own: what
+  the workers have is sent as it is (a scene as a small square of it).
+  Where a story stands (at work, to come, not made now and why, made, or
+  none) is one fact the core works out (`prep::StoryStand`), in one set
+  of words for every screen.
   - `partial_results_fill_the_songs_preparation_and_its_view`
+  - `a_story_planned_again_starts_afresh`,
+    `a_story_s_stand_says_itself_once` (`core::prep`)
 - **P2.** A queue row being got ready says the step under way (the key
   listened for, the song taken apart, the beat found, the words looked
-  up, heard or timed, the cover cut out; of the work started last), and
-  each result found instead for 2.5 s, with a tick; nothing once no work
-  is on it.
+  up, heard or timed, "planning the story…", the model "thinking…"
+  before it writes the plan, "drawing scene 4 of 23…",
+  the scenes given depth; of the work started last), and each result
+  found instead for 2.5 s, with a tick ("scene 4 of 23 ✓"); nothing once
+  no work is on it. The step a job is at is one source for every screen
+  that says a song is being prepared: the queue's caption, the
+  preparation view, the Karaoke tab's why and the mode's line under the
+  title ("its story: drawing scene 4 of 23…", K1b).
   - `a_rows_caption_follows_the_step_running`
+  - `the_game_waits_for_the_story_and_says_where_it_is`
 - **P3.** While the queue's selected song is being got ready, and for 12 s
   after nothing is left to do for it, the right column shows its
   preparation in place of the cover and the track's text: its steps, each
-  what it does or found, and the latest result big (held 3 s, then the
-  stems as they are separated, else the cover cut out, else the last
-  result): the beat's stretch of waveform with its ticks coming in and a
-  pulse on each beat the play head passes, the key's chord on a keyboard,
-  the stems' lanes filling, the words lit in time, the cover's subject
-  lifting off it. A story's slot shows a story of the song as it is
-  written and its scenes as they are drawn (K29), "Scene N of M drawn"
-  its headline as each lands.
+  what it does or found, and in the cover's place the latest result big
+  (held 3 s, then the stems as they are separated): the beat's stretch of
+  waveform with its ticks coming in and a pulse on each beat the play
+  head passes, the key's chord on a keyboard, the stems' lanes filling,
+  the words lit in time. While its story is made (K29), the story is built
+  on the song's cover: its words typed out over the cover darkened as the
+  language model writes them, then its scenes taking the cover's place
+  tile by tile as they are drawn, fading in, "Scene N of M drawn" its
+  headline as each lands. Otherwise (its story made, none for good, or
+  not made now), the card is the song's own cover.
   - `partial_results_fill_the_songs_preparation_and_its_view`
   - `an_idle_preparation_view_rests`
+  - `the_story_is_built_on_the_cover_and_the_cover_comes_back`
 - **P4.** The preparation view moves only while it shows and something
   changes: a worker at its song, a result coming in or held, its song
   just ready. Waiting for the rest of its work with nothing new, it rests
@@ -313,9 +330,12 @@ really found, as its workers tell it: never a progress they did not tell.
   once it is fully prepared: every job the queue's icons show for it done
   (Q5: its analysis and waveforms, and its stems where they are separated;
   its lyrics, found or heard from the voice, and timed, or found where
-  they cannot be timed: no speech model, or the timing failed; its cover
-  taken apart, where covers are), and it has lyrics to sing (not none
-  found, an instrumental, or the look-up failed). What cannot be done on
+  they cannot be timed: no speech model, or the timing failed; with the
+  game on, its story made, where stories are), and it has lyrics to sing
+  (not none found, an instrumental, or the look-up failed); with the game
+  on, a song left with no story for good (no timed sung lines, or a plan
+  that did not hold) is refused, the why saying it can be sung with the
+  game off. What cannot be done on
   the machine counts as done, as for the icons, so no song waits for it
   for ever. Until then the tab's button is disabled, with why beside it
   as its hint (what is still being done for the song, job by job in the
@@ -326,6 +346,7 @@ really found, as its workers tell it: never a progress they did not tell.
   - `no_karaoke_for_a_song_until_it_is_fully_prepared`
   - `no_karaoke_for_a_song_until_its_lyrics_are_ready`
   - `what_cannot_be_done_here_holds_no_song_up`
+  - `the_game_waits_for_the_story_and_says_where_it_is`
 - **K1c.** In the mode, a song held for Next while it is still being
   prepared (a song's end held it, or `N`) is not started: the stage says
   what is still to come for it, and Next (`enter`, `space`, its button)
@@ -487,8 +508,9 @@ really found, as its workers tell it: never a progress they did not tell.
   recogniser's checkpoint downloaded and checked, packed at 4 bits, the
   packed file checked, the checkpoint removed); with both there and
   checked, the player starts at once and never goes online for them. With
-  a usable GPU, the covers' and karaoke story mode's models are got the
-  same way; a model kept as a folder (the story's image model, its
+  a usable GPU, karaoke story mode's models (and its scenes' depth and
+  cut-out) are got the same way; a model kept as a folder (the story's
+  image model, its
   decoder, its text encoder) is got in one step, each file at its path in
   the folder and checked, a file left whole by a run that stopped kept.
   The screen cannot be skipped: a failure offers only Try again and Quit, each a
@@ -998,18 +1020,22 @@ really found, as its workers tell it: never a progress they did not tell.
   - `the_app_plays_the_clicks_and_hears_a_ta_after_each`
   - `the_output_changing_mid_sync_ends_it`
   - `the_songs_blocks_left_at_the_start_are_left_out` (`sync`)
-- **K24.** The game (`g`, `karaoke_game`) and the notes (`p` on the tab,
-  `karaoke_notes`) set the mode's backdrop and its sounds. With either
-  on, the backdrop is the cover taken apart, its card over its blur;
-  with neither (plain lyrics karaoke), the blurred cover alone fills the
-  window. Switched mid-song, the card fades out to the blur, or in from
-  it, over 1.2 s. The game's live sounds (the pops, the clinks, the
+- **K24.** The game (`g`, `karaoke_game`) sets the mode's backdrop: with
+  it on, where stories are made (K29), the song's story (its scenes all
+  through the song, the plain dark ground until the story is there);
+  with it off (the notes on or not), or where no stories are made (no
+  story's models, no scenes' models, no data folder: the game is played
+  then all the same), the song's cover blurred heavily, dark and still,
+  fills the window. Switched mid-song, the next frame cuts to the other.
+  The game and the notes (`p` on the tab, `karaoke_notes`) set its
+  sounds. The
+  game's live sounds (the pops, the clinks, the
   stingers, the chimes, the jackpot, the payout) go with its bubbles:
   with the game on and the notes hidden, none plays, and switched
   mid-song what was planned and not heard yet is called off. A song's
   diploma still shows after it with the game on, notes or not (the game
   scored it), and its sounds play.
-  - `plain_karaoke_has_the_blur_alone_and_a_switch_fades`
+  - `plain_karaoke_has_the_blur_alone_and_the_game_its_story`
     (`gui::backdrop`)
   - `the_game_is_silent_with_its_notes_hidden` (sfx)
 - **K25.** The game's sounds follow the sung song's loudness as the
@@ -1109,42 +1135,63 @@ really found, as its workers tell it: never a progress they did not tell.
   - `the_karaoke_theme_is_a_setting_row_and_saved`
   - `a_theme_changed_mid_song_is_the_next_frame_s`
   - `a_theme_s_dress_reaches_the_lyric_treatment` (fx_looks)
-  - `a_cover_is_graded_by_the_theme_of_its_frame` (`gui::backdrop`)
+  - `a_scene_is_graded_by_the_theme_of_its_frame` (`gui::backdrop`)
   - `a_theme_switched_as_it_sounds_plays_its_patches_and_allocates_nothing`
     (conductor)
   - `the_synth_tab_plays_the_theme_it_compares` (sfx)
-- **K29.** In the mode, where the GPU has the story's models, the song
-  held and the next two get a story once their words are timed, in
-  rounds by model, each turn a job of the GPU's stages (P6): the
-  language model plans every song wanted, then the image model's text
-  encoder encodes their prompts, then the image model draws them (a
-  portrait of each character, then a picture of each scene with the
-  portraits of those in it), each picture kept in the song's folder as it
-  lands and the scenes described last (once the prompts encoded in a
-  round hold `ENCODED_AHEAD_MB`, the songs after wait for the next
-  round). A song no longer wanted (another
-  song, or its lyrics changed) is given up before its turns and between
-  its pictures, what is drawn kept; nothing new is loaded while a song is
-  sung. The scenes then show behind the lyrics instead of the cover
-  (taken up at once if they land while the song plays, its cover not
-  taken again), the plan's look over them as the song's. A plan kept is
-  not asked again, a song drawn is not drawn again nor told of, a picture
-  kept is not drawn again (a new plan draws only what it changed);
-  without the models, or without timed words, the cover shows as before.
-  - `stories_are_wanted_in_the_mode_once_the_words_are_timed`
-  - `a_round_plans_every_song_then_encodes_then_draws`,
-    `a_song_drawn_is_not_drawn_again`,
+- **K29.** Where the GPU has the story's models and the scenes' depth
+  and cut-out models, every song of the queue (and the song playing) gets
+  its story made in the background as a step of its preparation, like
+  its analysis and its lyrics, wherever the player is (never tied to the
+  Karaoke tab or mode, which only read whether a song's story is made):
+  wanted once its lyrics are settled, in the order the queue is got ready
+  (from the song playing to the end, then from the start), in rounds by
+  model, each turn a job of the GPU's stages (P6). A round first looks
+  at every song wanted, no model run (one whose story is made, or that
+  has none for good, is told ready at once); then the language model
+  plans the songs still to plan, in order, as many as their prompts would
+  hold `ENCODED_AHEAD_MB` once encoded, then the image model's text
+  encoder encodes their prompts (while those held are less), then the
+  image model draws them (a portrait of each character, then a picture
+  of each scene with the portraits of those in it), each picture kept in
+  the song's folder as it lands and the scenes described last, then the
+  depth and cut-out models take its scenes apart; the songs left wait for
+  the next round, at once, so the song wanted first is made first. Each
+  song is told working in each of its turns, with the step it is at (Q5,
+  P2), and ready once its scenes are taken apart. A song no longer wanted
+  (out of the queue, or other lyrics of it settled: the same lyrics told
+  settled again, as every track change has them, change nothing) is
+  given up before its turns and between its pictures, what is drawn
+  kept; nothing new is loaded while a song is sung. As a song plays, its
+  look (its plan's) is the song's at once, and its story is made ready
+  for the game's backdrop from what was kept only while that backdrop
+  shows (on the processor alone; at once if it is finished while the
+  song plays). A plan kept is not asked again, a song made is not made
+  again (told ready, and not looked at again while its lyrics stay), a
+  picture kept is not drawn again (a new plan draws only what it
+  changed). A song with no lyrics or no timed sung lines, or whose plan
+  did not hold, has no story for good: the game refuses it (K1b). A model
+  that fails, or a file not read now, leaves the song without its story
+  now: told so (its step says why, "not made now"), and the round after
+  a minute tries it again.
+  - `every_queued_song_is_wanted_for_its_story_once_its_lyrics_are_settled`
+  - `a_round_plans_every_song_then_encodes_then_draws_then_takes_apart`,
+    `a_round_plans_no_more_songs_than_it_can_draw`,
+    `a_song_made_is_not_made_again`,
     `a_song_no_longer_wanted_is_given_up_between_its_pictures`,
     `without_models_or_timed_lines_there_is_no_story`,
     `a_song_is_still_wanted_with_its_very_lyrics`,
-    `the_worker_takes_up_the_songs_wanted_and_their_new_lyrics`,
+    `the_worker_takes_up_the_songs_wanted_in_order_and_their_new_lyrics`,
     `the_worker_gives_up_a_song_no_longer_wanted`,
     `a_plan_written_again_tells_only_its_words_past_those_told`
     (`work::story`)
+  - `a_song_s_scenes_are_taken_apart_once_and_made_ready_from_what_is_kept`
+    (`work::scenes`)
   - `shaders_over_the_budget_lose_their_dearest_passes` (`core::story`)
-  - `a_story_drawn_while_its_song_plays_is_taken_up` (`work::cover`)
+  - `the_song_playing_s_story_is_held_once_it_is_finished_and_wanted`
+    (`work::scenes`)
   - `the_song_s_look_follows_its_story` (`app`)
-  - `a_song_played_in_karaoke_mode_gets_its_story_drawn` (on the real
+  - `queued_songs_get_their_stories_made_in_the_background` (on the real
     models, `--ignored`)
 ## Mixer
 
@@ -1320,8 +1367,9 @@ really found, as its workers tell it: never a progress they did not tell.
 ## Shader
 
 - **L1.** The Shader tab is the seventh tab, after the Synth tab (`tab`
-  goes round to it). It shows the song's pictures (its cover) as Karaoke
-  mode draws them, its stage over them, with the tab's look in force
+  goes round to it). It shows the song's pictures (its story's scenes in
+  the game, else its cover blurred) as Karaoke mode draws them, its stage
+  over them, with the tab's look in force
   while it shows; elsewhere the look in force is the song's own, else
   the theme's (none in classic and spooky: their frames as before). Its
   keys: `↑` `↓` the looks (drawn at once: every preset by family, then

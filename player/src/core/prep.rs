@@ -15,14 +15,15 @@
 //! - the lyrics ([`Heard::Lyrics`]): looked up on LRCLIB, found (and
 //!   where), heard from the voice, their words being timed, timed (the
 //!   first lines, with their words' times, for a preview);
-//! - the cover once taken apart ([`Heard::Cover`]: its layers, as they
-//!   were made);
-//! - in Karaoke mode, a story of the song written as a language model
-//!   writes it and its scenes as an image model draws them, one by one
-//!   ([`Heard::Story`], from [`crate::work::story`]).
+//! - the song's story ([`Heard::Story`], from [`crate::work::story`]): its
+//!   plan begun and written as a language model writes it, its pictures'
+//!   prompts read, each picture begun and each scene as the image model
+//!   draws it, then its scenes taken apart; or why it was not made now.
 //!
 //! Each result found is counted ([`Prep::found`]), so a sound can follow
-//! it ([`crate::sfx`]).
+//! it ([`crate::sfx`]). The step a job is at ([`step_of`]) is what every
+//! screen says of it: the queue's captions, the preparation view, and
+//! what a song waits for before it can be sung ([`crate::core::job_words`]).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -35,9 +36,6 @@ use super::{readiness, Heard, Job, Readiness, State};
 
 /// The songs whose preparation is kept: the most recent.
 pub const KEPT: usize = 6;
-/// The songs whose cover's layers are kept with it: the most recent (each
-/// a few megabytes).
-pub const COVERS_KEPT: usize = 2;
 /// The bins each stem's waveform is shown in, over the whole song.
 pub const BINS: usize = 64;
 /// The bins of the stretch of waveform the beat is shown on.
@@ -58,8 +56,10 @@ pub const SHOWN_MS: u64 = 12_000;
 pub const PREVIEW_LINES: usize = 2;
 /// The most of a story kept, in bytes (its oldest words go first).
 pub const STORY_CHARS: usize = 4_000;
-/// The most of a story's scenes kept.
-pub const SCENES: usize = 4;
+/// The side of a scene's picture as it is told (a square from its
+/// middle, [`Story::Scene`]), in pixels: what the preparation view shows
+/// it at, a tile of the cover.
+pub const SCENE_SIDE: u32 = 192;
 
 /// The stems separated so far ([`Heard::Separating`]).
 #[derive(Clone, Debug, PartialEq)]
@@ -252,32 +252,37 @@ pub enum Words {
     Timed(Arc<Preview>),
 }
 
-/// A cover taken apart ([`Heard::Cover`]), its layers as they were made.
-#[derive(Clone)]
-pub struct CoverCut(pub crate::work::cover::Layers);
-
-impl fmt::Debug for CoverCut {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "CoverCut({})", self.0.key)
-    }
+/// A picture of a story begun by the image model ([`Story::Drawing`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Picture {
+    /// A character's portrait: which (from 1), of how many.
+    Portrait(usize, usize),
+    /// A scene: which (from 1), of how many.
+    Scene(usize, usize),
 }
 
-impl PartialEq for CoverCut {
-    fn eq(&self, other: &CoverCut) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-/// A story of the song ([`Heard::Story`]) as its jobs tell it
-/// (`crate::work::story`): written by a language model and told as it
-/// writes it, its scenes drawn by an image model and told one by one as
-/// each lands (each a result found: [`Found::Scene`]). The preparation
-/// view shows them ([`crate::view::prep::StoryView`]).
+/// The song's story ([`Heard::Story`]) as its jobs tell it
+/// (`crate::work::story`): its plan begun, the language model's thought
+/// before it, then the plan written and told as it is, its pictures'
+/// prompts read, each picture begun
+/// and each scene told as it lands (each a result found:
+/// [`Found::Scene`]), its scenes taken apart (kept as [`StoryPrep`]; how it
+/// ends is a fact, [`crate::core::StoryFact`]). The queue's captions and
+/// the preparation view show it ([`StoryStand`]).
 #[derive(Clone)]
 pub enum Story {
+    /// Its plan begun by the language model.
+    Planning,
+    /// The model thinking before it writes the plan.
+    Thinking,
     /// The next words of the story, as the model writes them.
     Words(String),
-    /// A scene drawn: which, of how many, and its picture.
+    /// Its pictures' prompts being read by the image model's text encoder.
+    Reading,
+    /// A picture begun.
+    Drawing(Picture),
+    /// A scene drawn: which, of how many, and its picture ([`SCENE_SIDE`]
+    /// square).
     Scene {
         /// Which scene, from 0.
         index: usize,
@@ -286,13 +291,20 @@ pub enum Story {
         /// Its picture.
         picture: Arc<image::RgbaImage>,
     },
+    /// Its scenes being taken apart for the backdrop.
+    Cutting,
 }
 
 impl fmt::Debug for Story {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Story::Planning => write!(f, "Planning"),
+            Story::Thinking => write!(f, "Thinking"),
             Story::Words(words) => write!(f, "Words({words:?})"),
+            Story::Reading => write!(f, "Reading"),
+            Story::Drawing(picture) => write!(f, "Drawing({picture:?})"),
             Story::Scene { index, of, .. } => write!(f, "Scene({index} of {of})"),
+            Story::Cutting => write!(f, "Cutting"),
         }
     }
 }
@@ -300,7 +312,6 @@ impl fmt::Debug for Story {
 impl PartialEq for Story {
     fn eq(&self, other: &Story) -> bool {
         match (self, other) {
-            (Story::Words(a), Story::Words(b)) => a == b,
             (
                 Story::Scene {
                     index: a,
@@ -313,6 +324,12 @@ impl PartialEq for Story {
                     picture: q,
                 },
             ) => a == b && m == n && Arc::ptr_eq(p, q),
+            (Story::Words(a), Story::Words(b)) => a == b,
+            (Story::Drawing(a), Story::Drawing(b)) => a == b,
+            (Story::Planning, Story::Planning)
+            | (Story::Thinking, Story::Thinking)
+            | (Story::Reading, Story::Reading)
+            | (Story::Cutting, Story::Cutting) => true,
             _ => false,
         }
     }
@@ -329,6 +346,156 @@ pub struct Scene {
     pub at: u64,
 }
 
+/// What a song's story told of itself so far, its plan's: the step under
+/// way last told (planning, thinking, reading, drawing, cutting; the plan's
+/// words planning again after the thought), its words as
+/// written, its scenes drawn, in order, and how many it has (once one is
+/// drawn). A plan begun anew starts it afresh.
+#[derive(Clone, Debug, Default)]
+pub struct StoryPrep {
+    /// The step under way last told.
+    pub step: Option<Step>,
+    /// The words so far (the last [`STORY_CHARS`] bytes).
+    pub text: String,
+    /// The scenes drawn so far.
+    pub scenes: Vec<Scene>,
+    /// How many scenes it has.
+    pub of: usize,
+}
+
+impl StoryPrep {
+    /// Whether anything of it is told: words or a scene.
+    pub fn told(&self) -> bool {
+        !self.text.is_empty() || !self.scenes.is_empty()
+    }
+
+    /// `story` told of at `now`; a scene drawn found (which, of how many).
+    fn tell(&mut self, story: &Story, now: u64) -> Option<Found> {
+        match story {
+            Story::Planning => {
+                *self = StoryPrep {
+                    step: Some(Step::Planning),
+                    ..StoryPrep::default()
+                };
+            }
+            Story::Thinking => self.step = Some(Step::Thinking),
+            Story::Reading => self.step = Some(Step::Reading),
+            Story::Drawing(picture) => self.step = Some(Step::Drawing(*picture)),
+            Story::Cutting => self.step = Some(Step::Cutting),
+            Story::Words(words) => {
+                // Words come only while it is planned: after the thought,
+                // planning again.
+                self.step = Some(Step::Planning);
+                self.text.push_str(words);
+                if self.text.len() > STORY_CHARS {
+                    let cut = self.text.len() - STORY_CHARS;
+                    let at = (cut..self.text.len())
+                        .find(|&k| self.text.is_char_boundary(k))
+                        .unwrap_or(self.text.len());
+                    self.text.drain(..at);
+                }
+            }
+            Story::Scene { index, of, picture } => {
+                self.scenes.retain(|s| s.index != *index);
+                self.scenes.push(Scene {
+                    index: *index,
+                    picture: Arc::clone(picture),
+                    at: now,
+                });
+                self.scenes.sort_by_key(|s| s.index);
+                self.of = *of;
+                return Some(Found::Scene {
+                    n: index + 1,
+                    of: *of,
+                });
+            }
+        }
+        None
+    }
+}
+
+/// Where a song's story stands, as every screen says it: the queue's
+/// caption and the preparation view ([`crate::view::prep`]), and what a
+/// song waits for before it can be sung ([`crate::core::job_words`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StoryStand {
+    /// No stories are made here.
+    Off,
+    /// A worker at it, at this step.
+    Making(Step),
+    /// Still to come, no worker at it now: the scenes drawn so far, of
+    /// how many (none told: 0 of 0).
+    Waiting {
+        /// Drawn.
+        drawn: usize,
+        /// Of how many.
+        of: usize,
+    },
+    /// Not made now, and why: tried again later.
+    NotNow(String),
+    /// Made.
+    Made,
+    /// None, for good.
+    NoStory,
+}
+
+impl StoryStand {
+    /// Where `path`'s story stands in `state`.
+    pub fn of(state: &State, path: &Path) -> StoryStand {
+        use crate::core::StoryFact;
+        if !state.preparing.contains(&Job::Story) {
+            return StoryStand::Off;
+        }
+        if let Some(step) = doing(state, path, Job::Story) {
+            return StoryStand::Making(step);
+        }
+        // Told with its job (made, none: done; not now: still to come),
+        // and forgotten with it.
+        match state.facts.get(path).and_then(|f| f.story.clone()) {
+            Some(StoryFact::Made) => StoryStand::Made,
+            Some(StoryFact::NoStory) => StoryStand::NoStory,
+            Some(StoryFact::NotNow(why)) => StoryStand::NotNow(why),
+            None => {
+                let song = state.prep.song(path);
+                StoryStand::Waiting {
+                    drawn: song.map_or(0, |s| s.story.scenes.len()),
+                    of: song.map_or(0, |s| s.story.of),
+                }
+            }
+        }
+    }
+
+    /// Whether the story is still being made (a worker at it, or to come).
+    pub fn making(&self) -> bool {
+        matches!(self, StoryStand::Making(_) | StoryStand::Waiting { .. })
+    }
+
+    /// Where it is, in a few words (none: nothing to say but that it is to
+    /// come, or no stories are made here).
+    pub fn status(&self) -> Option<String> {
+        match self {
+            StoryStand::Off | StoryStand::Waiting { of: 0, .. } => None,
+            StoryStand::Making(step) => Some(step.caption()),
+            StoryStand::Waiting { drawn, of } => {
+                Some(format!("{drawn} of {of} scenes drawn, waiting its turn"))
+            }
+            StoryStand::NotNow(why) => Some(format!("not made now ({why})")),
+            StoryStand::Made => Some("made".into()),
+            StoryStand::NoStory => Some("none for this song".into()),
+        }
+    }
+
+    /// Its line, as the preparation view's step says it: its status as a
+    /// sentence ("The story" with nothing to say).
+    pub fn line(&self) -> String {
+        let status = self.status().unwrap_or_else(|| "the story".into());
+        let mut chars = status.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(chars).collect()
+        })
+    }
+}
+
 /// A result a step found, as the queue's caption says it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Found {
@@ -342,8 +509,6 @@ pub enum Found {
     Words(Origin),
     /// The words timed.
     Timed,
-    /// The cover taken apart.
-    Cover,
     /// A scene of the story drawn: which (from 1), of how many.
     Scene {
         /// Which.
@@ -364,7 +529,6 @@ impl Found {
             Found::Words(Origin::Heard) => "words heard ✓".into(),
             Found::Words(_) => "words found ✓".into(),
             Found::Timed => "words timed ✓".into(),
-            Found::Cover => "cover cut ✓".into(),
             Found::Scene { n, of } => format!("scene {n} of {of} ✓"),
         }
     }
@@ -377,7 +541,6 @@ impl Found {
             Found::Key(_) => 1,
             Found::Stems => 2,
             Found::Words(_) | Found::Timed => 3,
-            Found::Cover => 4,
             Found::Scene { .. } => LAST_STEP,
         }
     }
@@ -385,7 +548,7 @@ impl Found {
 
 /// The last step a result is found at ([`Found::step`]): the story's
 /// scenes.
-pub const LAST_STEP: u32 = 5;
+pub const LAST_STEP: u32 = 4;
 
 /// What a song's work found so far, told as it came.
 #[derive(Clone, Debug, Default)]
@@ -404,12 +567,8 @@ pub struct SongPrep {
     pub origin: Option<Origin>,
     /// The words timed, for the preview.
     pub preview: Option<Arc<Preview>>,
-    /// The cover taken apart.
-    pub cover: Option<CoverCut>,
-    /// The story so far.
-    pub story: String,
-    /// Its first scenes drawn so far ([`SCENES`] at most), in order.
-    pub scenes: Vec<Scene>,
+    /// The story, as it told of itself.
+    pub story: StoryPrep,
     /// The last result found, and when ([`State::now_ms`]).
     pub found: Option<(Found, u64)>,
     /// When the beat came.
@@ -420,10 +579,6 @@ pub struct SongPrep {
     pub stems_at: Option<u64>,
     /// When the words were found, then timed.
     pub words_at: Option<u64>,
-    /// When the cover was taken apart.
-    pub cover_at: Option<u64>,
-    /// When the story was last told of.
-    pub story_at: Option<u64>,
     /// When it was last told of.
     pub last: u64,
     /// When nothing was left to do for it, once nothing is.
@@ -466,20 +621,6 @@ impl Prep {
         let (_, song) = self.songs.last_mut().expect("just pushed");
         song.last = now;
         song
-    }
-
-    /// The covers' layers let go of but for the [`COVERS_KEPT`] most
-    /// recent.
-    fn keep_covers(&mut self) {
-        let mut kept = 0;
-        for (_, song) in self.songs.iter_mut().rev() {
-            if song.cover.is_some() {
-                kept += 1;
-                if kept > COVERS_KEPT {
-                    song.cover = None;
-                }
-            }
-        }
     }
 }
 
@@ -549,42 +690,9 @@ pub(crate) fn heard(state: &mut State, path: &Path, part: &Heard) {
                 }
             }
         }
-        Heard::Cover(cut) => {
-            let song = prep.entry(path, now);
-            song.cover = Some(cut.clone());
-            song.cover_at = Some(now);
-            found(prep, path, now, Found::Cover);
-            prep.keep_covers();
-        }
         Heard::Story(story) => {
-            let song = prep.entry(path, now);
-            song.story_at = Some(now);
-            match story {
-                Story::Words(words) => {
-                    song.story.push_str(words);
-                    if song.story.len() > STORY_CHARS {
-                        let cut = song.story.len() - STORY_CHARS;
-                        let at = (cut..song.story.len())
-                            .find(|&k| song.story.is_char_boundary(k))
-                            .unwrap_or(song.story.len());
-                        song.story.drain(..at);
-                    }
-                }
-                Story::Scene { index, of, picture } => {
-                    song.scenes.retain(|s| s.index != *index);
-                    song.scenes.push(Scene {
-                        index: *index,
-                        picture: Arc::clone(picture),
-                        at: now,
-                    });
-                    song.scenes.sort_by_key(|s| s.index);
-                    song.scenes.truncate(SCENES);
-                    let scene = Found::Scene {
-                        n: index + 1,
-                        of: *of,
-                    };
-                    found(prep, path, now, scene);
-                }
+            if let Some(scene) = prep.entry(path, now).story.tell(story, now) {
+                found(prep, path, now, scene);
             }
         }
     }
@@ -606,8 +714,8 @@ pub(crate) fn follow(state: &mut State, path: &Path) {
 
 /// The step `job` is at for `song` while a worker is at it: the analysis
 /// listening for the key, then taking the song apart (while its stems are
-/// separated), then finding the beat; the lyrics' step last told; the
-/// cover's.
+/// separated), then finding the beat; the lyrics' and the story's step
+/// last told.
 pub fn step_of(job: Job, song: Option<&SongPrep>) -> Step {
     match job {
         Job::Rhythm => match song {
@@ -620,8 +728,14 @@ pub fn step_of(job: Job, song: Option<&SongPrep>) -> Step {
             Some(Words::Timing) => Step::Timing,
             _ => Step::Looking,
         },
-        Job::Cover => Step::Cover,
+        Job::Story => song.and_then(|s| s.story.step).unwrap_or(Step::Planning),
     }
+}
+
+/// The step `job` is at for `path` where a worker is at it now ([`step_of`]).
+pub fn doing(state: &State, path: &Path, job: Job) -> Option<Step> {
+    let working = state.working.get(path)?.contains(&job);
+    working.then(|| step_of(job, state.prep.song(path)))
 }
 
 /// A step of a song's preparation, as it runs.
@@ -639,21 +753,34 @@ pub enum Step {
     Hearing,
     /// Timing the words.
     Timing,
-    /// Cutting out the cover.
-    Cover,
+    /// Planning the story (the language model writing it).
+    Planning,
+    /// The language model thinking before it writes the story's plan.
+    Thinking,
+    /// Reading the story's pictures' prompts.
+    Reading,
+    /// Drawing a picture of the story.
+    Drawing(Picture),
+    /// Taking the story's scenes apart.
+    Cutting,
 }
 
 impl Step {
     /// What it is doing, as the queue's caption says it.
-    pub fn caption(self) -> &'static str {
+    pub fn caption(self) -> String {
         match self {
-            Step::Key => "listening for the key…",
-            Step::Stems => "taking the song apart…",
-            Step::Beat => "finding the beat…",
-            Step::Looking => "looking up the words…",
-            Step::Hearing => "listening for the words…",
-            Step::Timing => "timing the words…",
-            Step::Cover => "cutting out the cover…",
+            Step::Key => "listening for the key…".into(),
+            Step::Stems => "taking the song apart…".into(),
+            Step::Beat => "finding the beat…".into(),
+            Step::Looking => "looking up the words…".into(),
+            Step::Hearing => "listening for the words…".into(),
+            Step::Timing => "timing the words…".into(),
+            Step::Planning => "planning the story…".into(),
+            Step::Thinking => "thinking…".into(),
+            Step::Reading => "reading the scenes' prompts…".into(),
+            Step::Drawing(Picture::Portrait(n, of)) => format!("drawing character {n} of {of}…"),
+            Step::Drawing(Picture::Scene(n, of)) => format!("drawing scene {n} of {of}…"),
+            Step::Cutting => "giving the scenes depth…".into(),
         }
     }
 }
@@ -675,46 +802,28 @@ pub fn due(state: &State) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work::cover::{Apart, CoverLayers};
-    use crate::work::picture::NearMap;
 
-    /// A cover taken apart, tiny.
-    fn cut() -> CoverCut {
-        let near = NearMap {
-            width: 1,
-            height: 1,
-            near: vec![0],
-        };
-        CoverCut(Arc::new(Apart::new(
-            "tiny".into(),
-            CoverLayers {
-                plate: image::RgbImage::new(2, 2),
-                subject: None,
-                depth: near.clone(),
-                plate_depth: near,
-                outline: image::GrayImage::new(2, 2),
-                palette: Vec::new(),
-            },
-        )))
+    /// A scene drawn, tiny.
+    fn scene(index: usize) -> Heard {
+        Heard::Story(Story::Scene {
+            index,
+            of: 3,
+            picture: Arc::new(image::RgbaImage::new(2, 2)),
+        })
     }
 
-    /// The preparation is kept for the last songs told of only, and the
-    /// covers' layers for fewer of them; a story keeps its last words.
+    /// The preparation is kept for the last songs told of only; a story
+    /// keeps its last words.
     #[test]
     fn the_preparation_is_kept_for_the_last_songs_only() {
         let mut state = State::new("/music".into(), crate::config::Config::default());
         let song = |k: usize| PathBuf::from(format!("/music/{k}.flac"));
         for k in 0..KEPT + 3 {
-            heard(&mut state, &song(k), &Heard::Cover(cut()));
+            heard(&mut state, &song(k), &scene(0));
         }
         let kept: Vec<&PathBuf> = state.prep.songs().map(|(p, _)| p).collect();
         assert_eq!(kept.len(), KEPT);
         assert_eq!(kept[0], &song(3), "the oldest let go of");
-        let covers = (state.prep.songs())
-            .filter(|(_, s)| s.cover.is_some())
-            .count();
-        assert_eq!(covers, COVERS_KEPT);
-        assert!(state.prep.song(&song(KEPT + 2)).unwrap().cover.is_some());
         assert_eq!(state.prep.found, (KEPT + 3) as u64);
         let long = "a".repeat(STORY_CHARS);
         for words in [long.as_str(), "the end"] {
@@ -724,8 +833,67 @@ mod tests {
                 &Heard::Story(Story::Words(words.into())),
             );
         }
-        let story = &state.prep.song(&song(0)).unwrap().story;
+        let story = &state.prep.song(&song(0)).unwrap().story.text;
         assert_eq!(story.len(), STORY_CHARS);
         assert!(story.ends_with("the end"));
+    }
+
+    /// Where a story stands, in its words: the step at work as it is said,
+    /// a sentence on the preparation view; a story to come with nothing
+    /// to say is the story; a failure says why; off, nothing.
+    #[test]
+    fn a_story_s_stand_says_itself_once() {
+        let drawing = StoryStand::Making(Step::Drawing(Picture::Scene(4, 23)));
+        assert_eq!(drawing.status().as_deref(), Some("drawing scene 4 of 23…"));
+        assert_eq!(drawing.line(), "Drawing scene 4 of 23…");
+        let none = StoryStand::Waiting { drawn: 0, of: 0 };
+        assert_eq!((none.status(), none.line()), (None, "The story".into()));
+        let half = StoryStand::Waiting { drawn: 4, of: 23 };
+        assert_eq!(half.line(), "4 of 23 scenes drawn, waiting its turn");
+        let failed = StoryStand::NotNow("no GPU".into());
+        assert_eq!(failed.line(), "Not made now (no GPU)");
+        assert!(!failed.making() && half.making() && drawing.making());
+        assert_eq!(StoryStand::Off.status(), None);
+        let mut state = State::new("/music".into(), crate::config::Config::default());
+        let path = PathBuf::from("/music/a.flac");
+        assert_eq!(StoryStand::of(&state, &path), StoryStand::Off);
+        state.preparing.push(Job::Story);
+        assert_eq!(StoryStand::of(&state, &path), none);
+    }
+
+    /// The model's thought is a step of its own until the plan's words
+    /// come; a plan begun anew starts the story afresh: its words, its
+    /// scenes and their count from before all go.
+    #[test]
+    fn a_story_planned_again_starts_afresh() {
+        let mut state = State::new("/music".into(), crate::config::Config::default());
+        let path = PathBuf::from("/music/a.flac");
+        let step = |state: &State| state.prep.song(&path).unwrap().story.step;
+        heard(&mut state, &path, &Heard::Story(Story::Planning));
+        heard(&mut state, &path, &Heard::Story(Story::Thinking));
+        assert_eq!(
+            step(&state).map(Step::caption).as_deref(),
+            Some("thinking…")
+        );
+        heard(
+            &mut state,
+            &path,
+            &Heard::Story(Story::Words("Once".into())),
+        );
+        assert_eq!(
+            step(&state),
+            Some(Step::Planning),
+            "writing after the thought"
+        );
+        let drawing = Story::Drawing(Picture::Scene(1, 3));
+        heard(&mut state, &path, &Heard::Story(drawing));
+        heard(&mut state, &path, &scene(0));
+        let story = &state.prep.song(&path).unwrap().story;
+        assert!(story.told() && story.of == 3);
+        assert_eq!(story.step, Some(Step::Drawing(Picture::Scene(1, 3))));
+        heard(&mut state, &path, &Heard::Story(Story::Planning));
+        let story = &state.prep.song(&path).unwrap().story;
+        assert!(!story.told() && story.of == 0);
+        assert_eq!(story.step, Some(Step::Planning));
     }
 }

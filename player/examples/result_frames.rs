@@ -1,9 +1,10 @@
 //! Frames of Karaoke mode's result screen (the diploma headed
 //! "Jodeldiplom") on the GPU, to look at its reveal: a Silver run short
 //! of its best, a Bronze one with a long Japanese title, a Gold run with
-//! a new best, long numbers and several phrases at the top tier (each over a made-up
-//! cover, tinted by its palette), a run without a medal (over the plain
-//! backdrop), a run not sung from its start (over another cover) and a
+//! a new best, long numbers and several phrases at the top tier (each
+//! over a made-up picture, a story of one scene, the diploma tinted by
+//! its palette), a run without a medal (over the plain ground), a run
+//! not sung from its start (over another picture) and a
 //! silent one (nothing scored), each at moments of its reveal; in Karaoke
 //! mode's own fonts (as the player embeds them), the stage drawn offscreen
 //! and the frames saved as PNGs into `OUT_DIR` (`<run>-<seconds>.png`,
@@ -18,12 +19,13 @@ use std::sync::Arc;
 use jodeldiplom::core::karaoke::result::{Medal, Shown, SongResult};
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::backdrop::{Cue, Visualiser};
+use jodeldiplom::gui::backdrop::{Cue, Shows, Visualiser};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, Next, ResultShown};
-use jodeldiplom::work::art::Art;
-use jodeldiplom::work::picture::Swatch;
+
+#[path = "../tests/common/sung.rs"]
+mod sung;
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -50,24 +52,20 @@ fn phrases(tiers: &str) -> Vec<Shone> {
         .collect()
 }
 
-/// A made-up cover: a gradient of two colours with a disc of a third.
-fn cover(a: [u8; 3], b: [u8; 3], c: [u8; 3]) -> Art {
-    let image = image::RgbImage::from_fn(256, 256, |x, y| {
+/// A made-up picture: a gradient of two colours with a disc of a third.
+fn cover(a: [u8; 3], b: [u8; 3], c: [u8; 3]) -> image::RgbImage {
+    image::RgbImage::from_fn(256, 256, |x, y| {
         let t = (x + y) as f32 / 510.0;
         let (dx, dy) = (x as f32 - 150.0, y as f32 - 110.0);
         if dx * dx + dy * dy < 60.0 * 60.0 {
             return image::Rgb(c);
         }
         image::Rgb([0, 1, 2].map(|k| (f32::from(a[k]) * (1.0 - t) + f32::from(b[k]) * t) as u8))
-    });
-    Art {
-        id: 1 + u64::from(a[0]),
-        image: Arc::new(image),
-    }
+    })
 }
 
-/// The runs: a name, the result, its cover and the cover's palette.
-fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
+/// The runs: a name, the result, and its picture.
+fn runs() -> Vec<(&'static str, SongResult, Option<image::RgbImage>)> {
     let gold = SongResult {
         title: "Dancing in the Moonlight".into(),
         points: 486_350,
@@ -128,31 +126,23 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         whole: true,
         demo: false,
     };
-    let swatch = |rgb, share| Swatch { rgb, share };
     vec![
         (
             "silver",
             silver,
             Some(cover([120, 30, 30], [200, 120, 40], [250, 230, 200])),
-            vec![swatch([150, 50, 30], 0.5), swatch([60, 120, 200], 0.2)],
         ),
         (
             "long-cjk",
             long,
             Some(cover([10, 30, 80], [60, 20, 90], [250, 180, 90])),
-            vec![swatch([30, 40, 110], 0.6), swatch([240, 170, 80], 0.25)],
         ),
         (
             "gold",
             gold,
             Some(cover([40, 20, 90], [10, 70, 110], [230, 90, 160])),
-            vec![
-                swatch([30, 40, 100], 0.45),
-                swatch([220, 80, 150], 0.25),
-                swatch([20, 90, 120], 0.2),
-            ],
         ),
-        ("no-medal", none, None, Vec::new()),
+        ("no-medal", none, None),
         (
             "silent",
             SongResult {
@@ -168,13 +158,11 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
                 demo: false,
             },
             Some(cover([30, 30, 70], [70, 50, 110], [200, 190, 240])),
-            vec![swatch([50, 40, 100], 0.6), swatch([190, 180, 235], 0.3)],
         ),
         (
             "not-whole",
             part,
             Some(cover([20, 70, 40], [90, 120, 30], [240, 200, 60])),
-            vec![swatch([40, 90, 40], 0.6), swatch([235, 195, 70], 0.3)],
         ),
     ]
 }
@@ -200,19 +188,21 @@ fn main() {
         wanted = LOOKS.to_vec();
     }
     let mut gpu = Offscreen::new(false).expect("a GPU");
-    for (id, (name, result, art, palette)) in (1..).zip(runs()) {
-        let tint = Tint::of(&palette);
+    for (id, (name, result, art)) in (1..).zip(runs()) {
         let next = "Take On Me";
         let lines = plain_lines(&result, next);
         let shown = Arc::new(Shown::new(result, id, 0));
         let mut stage = Stage::default();
         let singing = Singing::default();
-        // Over the cover's blur, as the window's ground.
+        // Over its picture as a story of one scene (none: the plain
+        // ground), as the window's backdrop.
         let cue = Cue {
-            art: art.clone(),
+            shows: Shows::Story(art.as_ref().map(sung::one_scene)),
             ..Cue::default()
         };
         let ground = Visualiser::default().step(&cue, (w as u32, h as u32), 0.0);
+        // Tinted as the app tints it: by the scene showing's palette.
+        let tint = Tint::of(ground.palette());
         gpu.set_backdrop(Some(&ground), w as u32, h as u32);
         let end = shown.reveal.end();
         println!(

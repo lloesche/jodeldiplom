@@ -1,31 +1,17 @@
-//! The backdrop on the GPU ([`super`]): the ground (the blurred cover,
-//! small) in a texture of its own, sent over when the cover or the window
-//! changes; each cover showing has its pieces in textures (the plate, the
-//! subject with its matte, their depth, the subject's rim), their texels
-//! made on the covers' thread ([`crate::work::cover::Texels`]) and sent over
-//! once when it first shows, with the picture they were taken apart from (the
-//! song's cover, where it is at hand: the card at rest is the real cover, the
-//! plate only where the moving subject uncovers it or the blur round a
-//! subject cut out would carry its colours), their smaller levels
-//! made here (the blur under the card and round the subject,
-//! the subject's shadow and a small card read them), and dropped
-//! once it no longer shows. A frame draws the ground stretched smoothly
-//! over a texture the window's size, then each cover's shader
-//! (`backdrop.wgsl`, its maths in [`super::look`]) over it by its share, in
-//! a submission of its own before the window's, and keeps it for the
-//! window's pass to read ([`BackdropPass::under`]) pixel for pixel. Where a
-//! story scene shows, it is drawn instead, filling the texture
-//! ([`super::scenes::gpu`]). A frame like the last one is not drawn again.
+//! The backdrop on the GPU ([`super`]): the ground (the blurred cover, or
+//! the plain gradient, small) in a texture of its own, sent over when it
+//! or the window changes, and stretched smoothly over a texture the
+//! window's size; or the story's scene showing drawn into it instead
+//! ([`super::scenes::gpu`]: its pictures' textures sent over ahead of their
+//! cuts, their smaller levels made here). Drawn in a submission of its own
+//! before the window's, and kept for the window's pass to read
+//! ([`BackdropPass::under`]) pixel for pixel. A frame like the last one is
+//! not drawn again.
 
-use std::sync::Arc;
+use super::{BackdropFrame, Ground};
 
-use super::{BackdropFrame, Ground, Look, SlotFrame};
-use crate::work::cover::Layers;
-
-/// The most levels a cover's textures have (a 1024 cover's down to 4).
+/// The most levels a picture's textures have (a 1024 picture's down to 4).
 const LEVELS: u32 = 9;
-/// The bytes of a cover's numbers.
-const LOOK_BYTES: u64 = std::mem::size_of::<Look>() as u64;
 
 /// The pass that draws a texture stretched over its whole target, filtered
 /// (after [`super::look`]'s maths and [`SMOOTH`]): a texture's smaller
@@ -71,21 +57,6 @@ fn smooth_at(t: texture_2d<f32>, uv: vec2<f32>, at: u32) -> vec4<f32> {
 }
 ";
 
-/// The backdrop's shader for a target that takes linear light (`linear`)
-/// or not: its maths ([`super::look`], its triangle and its finish), the
-/// light's tone ([`crate::gui::bloom::TONE`]), the smooth read ([`SMOOTH`])
-/// and `backdrop.wgsl`.
-pub fn shader(linear: bool) -> String {
-    use super::look::{wgsl, FINISH, SCREEN};
-    format!(
-        "const LINEAR: f32 = {};\n{}{SCREEN}{FINISH}{}{SMOOTH}{}",
-        if linear { "1.0" } else { "0.0" },
-        wgsl(),
-        crate::gui::bloom::TONE,
-        include_str!("backdrop.wgsl")
-    )
-}
-
 /// How many levels a texture of `size` has.
 pub(super) fn levels((w, h): (u32, u32)) -> u32 {
     (32 - w.max(h).max(1).leading_zeros()).min(LEVELS)
@@ -117,7 +88,7 @@ impl Stretch {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}{}{SMOOTH}{STRETCH}",
-                    super::look::wgsl(),
+                    super::look::BSPLINE,
                     super::look::SCREEN
                 )
                 .into(),
@@ -349,58 +320,6 @@ pub(super) fn texture(
     texture
 }
 
-/// A cover's pieces as its textures take them: the plate (RGBA), the
-/// subject (RGBA, its matte; one clear texel without one), the depth
-/// (nearness of the cover and of the plate, a byte each), the subject's
-/// rim (a byte; one dark texel without a subject); all as the covers'
-/// thread made them.
-fn pieces(apart: &crate::work::cover::Apart) -> [Upload<'_>; 4] {
-    use wgpu::TextureFormat as F;
-    let l = &apart.layers;
-    let none: &[u8] = &[0; 4];
-    let (subject_size, subject) = l
-        .subject
-        .as_ref()
-        .map_or(((1, 1), none), |s| (s.dimensions(), s.as_raw().as_slice()));
-    let (rim_size, rim) = match l.subject {
-        Some(_) => (l.outline.dimensions(), l.outline.as_raw().as_slice()),
-        None => ((1, 1), &none[..1]),
-    };
-    let texels = |format, texel, size, bytes| Upload {
-        format,
-        texel,
-        size,
-        bytes,
-    };
-    [
-        texels(
-            F::Rgba8UnormSrgb,
-            4,
-            l.plate.dimensions(),
-            &apart.texels.plate,
-        ),
-        texels(F::Rgba8UnormSrgb, 4, subject_size, subject),
-        texels(
-            F::Rg8Unorm,
-            2,
-            (l.depth.width, l.depth.height),
-            &apart.texels.depth,
-        ),
-        texels(F::R8Unorm, 1, rim_size, rim),
-    ]
-}
-
-/// A cover on the GPU: its layers (whose they are) and the picture they
-/// were taken apart from (its id, none where it is not at hand), its
-/// textures, its numbers and what its shader reads.
-struct Cover {
-    layers: Layers,
-    art: Option<u64>,
-    _textures: Vec<wgpu::Texture>,
-    uniforms: wgpu::Buffer,
-    bind: wgpu::BindGroup,
-}
-
 /// The ground on the GPU: which it is, its texture and what reads it.
 struct GroundTexture {
     of: (u64, (u32, u32)),
@@ -420,38 +339,18 @@ struct Target {
 enum Drawn {
     /// The story's scene.
     Scene(super::scenes::gpu::Drawn),
-    /// The ground and each cover (by its key and its picture's) with its
-    /// numbers.
-    Covers((u64, (u32, u32)), Vec<(Held, Look)>),
+    /// The ground (which it is).
+    Ground((u64, (u32, u32))),
 }
 
-/// Which cover a cover on the GPU is: its layers' key, its picture's id.
-type Held = (String, Option<u64>);
-
-/// Which cover `slot` shows.
-fn held(slot: &SlotFrame) -> Held {
-    (slot.layers.key.clone(), slot.art.as_ref().map(|a| a.id))
-}
-
-impl Cover {
-    /// Whether it is the cover `slot` shows.
-    fn is(&self, slot: &SlotFrame) -> bool {
-        self.layers.key == slot.layers.key && self.art == slot.art.as_ref().map(|a| a.id)
-    }
-}
-
-/// The backdrop's pipeline, the ground and the covers on the GPU and the
+/// The backdrop's passes, the ground and the scenes on the GPU and the
 /// texture it is drawn into.
 pub struct BackdropPass {
-    pipeline: wgpu::RenderPipeline,
-    layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
     stretch: Stretch,
     /// The ground stretched smoothly over the target.
     smooth: wgpu::RenderPipeline,
     ground: Option<GroundTexture>,
-    covers: Vec<Cover>,
-    /// The story's scenes, where one shows.
+    /// The story's scenes.
     scenes: super::scenes::gpu::ScenePass,
     target: Option<Target>,
     /// What the window reads while there is none: one black texel.
@@ -469,36 +368,6 @@ impl BackdropPass {
     /// For a window whose pass reads its textures as linear light
     /// (`linear`: through sRGB views) or as they are.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, linear: bool) -> BackdropPass {
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("jodeldiplom backdrop"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(LOOK_BYTES),
-                    },
-                    count: None,
-                },
-                texture_entry(1),
-                texture_entry(2),
-                texture_entry(3),
-                sampler_entry(4),
-                texture_entry(5),
-                texture_entry(6),
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("jodeldiplom backdrop"),
-            bind_group_layouts: &[Some(&layout)],
-            ..Default::default()
-        });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("jodeldiplom backdrop"),
-            source: wgpu::ShaderSource::Wgsl(shader(linear).into()),
-        });
         // The ground's and the target's: what the window reads as it reads
         // the pixmap.
         let format = if linear {
@@ -506,22 +375,6 @@ impl BackdropPass {
         } else {
             wgpu::TextureFormat::Rgba8Unorm
         };
-        // Each cover over what is under it by its share.
-        let blend = wgpu::BlendState::ALPHA_BLENDING;
-        let pipeline = full_screen(
-            device,
-            (&pipeline_layout, &module),
-            (format, "fs"),
-            Some(blend),
-            "jodeldiplom backdrop",
-        );
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("jodeldiplom backdrop"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
         let mut stretch = Stretch::new(device);
         let smooth = stretch.stretching(device, (format, "fs_smooth"));
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -535,13 +388,9 @@ impl BackdropPass {
         queue.submit([encoder.finish()]);
         let empty_view = empty.create_view(&wgpu::TextureViewDescriptor::default());
         BackdropPass {
-            pipeline,
-            layout,
-            sampler,
             stretch,
             smooth,
             ground: None,
-            covers: Vec::new(),
             scenes: super::scenes::gpu::ScenePass::new(device, format, linear),
             target: None,
             _empty: empty,
@@ -568,15 +417,10 @@ impl BackdropPass {
         self.target.is_some()
     }
 
-    /// How many covers are on the GPU.
-    pub fn held(&self) -> usize {
-        self.covers.len()
-    }
-
     /// The next frame's backdrop (`frame`; none: none, everything dropped)
-    /// for a window of `size`: the ground and the covers new to it sent
-    /// over, the covers gone dropped, and drawn (unless it is the frame
-    /// drawn last).
+    /// for a window of `size`: the ground and its scene's textures new to
+    /// it sent over, the scenes gone dropped, and drawn (unless it is the
+    /// frame drawn last).
     pub fn set(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -585,7 +429,6 @@ impl BackdropPass {
     ) {
         let Some(frame) = frame else {
             if self.target.is_some() {
-                self.covers.clear();
                 self.scenes.clear();
                 self.ground = None;
                 self.target = None;
@@ -594,19 +437,13 @@ impl BackdropPass {
             }
             return;
         };
-        self.covers.retain(|c| frame.slots.iter().any(|s| c.is(s)));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("jodeldiplom backdrop"),
         });
-        if self.ground.as_ref().is_none_or(|g| g.of != frame.ground.of) {
-            self.ground = Some(self.ground_texture((device, queue), &mut encoder, &frame.ground));
-        }
-        for slot in &frame.slots {
-            if !self.covers.iter().any(|c| c.is(slot)) {
-                let cover = self.cover((device, queue), &mut encoder, slot);
-                self.covers.push(cover);
-            }
-        }
+        let ground = match self.ground.take() {
+            Some(g) if g.of == frame.ground.of => g,
+            _ => self.ground_texture((device, queue), &mut encoder, &frame.ground),
+        };
         let scene = self.scenes.set(
             (device, queue),
             (&mut encoder, &mut self.stretch),
@@ -621,56 +458,23 @@ impl BackdropPass {
                 self.target(device, size)
             }
         };
-        let now = match scene {
-            Some(scene) => Drawn::Scene(scene),
-            None => Drawn::Covers(
-                frame.ground.of,
-                frame.slots.iter().map(|s| (held(s), s.look)).collect(),
-            ),
-        };
-        let now = (now, size);
+        let now = (scene.map_or(Drawn::Ground(ground.of), Drawn::Scene), size);
         if self.drawn.as_ref() != Some(&now) {
-            let view = &target.view;
+            let mut pass = begin(&mut encoder, &target.view);
             match &now.0 {
-                Drawn::Scene(scene) => self.scenes.draw(&mut begin(&mut encoder, view), scene),
-                Drawn::Covers(..) => self.draw(queue, (&mut encoder, view), frame),
+                Drawn::Scene(scene) => self.scenes.draw(&mut pass, scene),
+                Drawn::Ground(_) => {
+                    pass.set_pipeline(&self.smooth);
+                    pass.set_bind_group(0, &ground.bind, &[]);
+                    pass.draw(0..3, 0..1);
+                }
             }
+            drop(pass);
             self.drawn = Some(now);
         }
+        self.ground = Some(ground);
         self.target = Some(target);
         queue.submit([encoder.finish()]);
-    }
-
-    /// `frame`'s covers drawn into the target (its `view`): the ground
-    /// stretched smoothly over it, then its covers back to front, each over
-    /// what is under it by its share.
-    fn draw(
-        &self,
-        queue: &wgpu::Queue,
-        (encoder, view): (&mut wgpu::CommandEncoder, &wgpu::TextureView),
-        frame: &BackdropFrame,
-    ) {
-        let Some(ground) = &self.ground else {
-            return;
-        };
-        let covers: Vec<&Cover> = frame
-            .slots
-            .iter()
-            .filter_map(|s| {
-                let cover = self.covers.iter().find(|c| c.is(s))?;
-                queue.write_buffer(&cover.uniforms, 0, bytemuck::bytes_of(&s.look));
-                Some(cover)
-            })
-            .collect();
-        let mut pass = begin(encoder, view);
-        pass.set_pipeline(&self.smooth);
-        pass.set_bind_group(0, &ground.bind, &[]);
-        pass.draw(0..3, 0..1);
-        pass.set_pipeline(&self.pipeline);
-        for cover in covers {
-            pass.set_bind_group(0, &cover.bind, &[]);
-            pass.draw(0..3, 0..1);
-        }
     }
 
     /// `ground` sent over.
@@ -693,79 +497,6 @@ impl BackdropPass {
             of: ground.of,
             bind: self.stretch.bind(device, &view),
             _texture: texture,
-        }
-    }
-
-    /// `slot`'s cover sent over: its layers' textures and the picture's (the
-    /// plate's again where it is not at hand; their smaller levels made in
-    /// `encoder`), its numbers' buffer and what its shader reads. The
-    /// picture is made RGBA here, once a cover.
-    fn cover(
-        &mut self,
-        (device, queue): (&wgpu::Device, &wgpu::Queue),
-        encoder: &mut wgpu::CommandEncoder,
-        slot: &SlotFrame,
-    ) -> Cover {
-        let layers = &slot.layers;
-        let rgba: Option<Vec<u8>> =
-            (slot.art.as_ref()).map(|a| crate::work::picture::rgba(&a.image));
-        let original = slot
-            .art
-            .as_ref()
-            .zip(rgba.as_deref())
-            .map(|(a, bytes)| Upload {
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                texel: 4,
-                size: a.image.dimensions(),
-                bytes,
-            });
-        let textures: Vec<wgpu::Texture> = pieces(layers)
-            .iter()
-            .chain(original.as_ref())
-            .map(|t| {
-                let levels = levels(t.size);
-                texture((device, queue), (encoder, &mut self.stretch), t, levels)
-            })
-            .collect();
-        // The plate, the subject, the depth, the rim; the picture.
-        let mut views: Vec<wgpu::TextureView> = textures
-            .iter()
-            .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()))
-            .collect();
-        if original.is_none() {
-            views.push(textures[0].create_view(&wgpu::TextureViewDescriptor::default()));
-        }
-        let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodeldiplom backdrop look"),
-            size: LOOK_BYTES,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniforms.as_entire_binding(),
-        }];
-        for (view, binding) in views.iter().zip([1, 2, 3, 6, 5]) {
-            entries.push(wgpu::BindGroupEntry {
-                binding,
-                resource: wgpu::BindingResource::TextureView(view),
-            });
-        }
-        entries.push(wgpu::BindGroupEntry {
-            binding: 4,
-            resource: wgpu::BindingResource::Sampler(&self.sampler),
-        });
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("jodeldiplom backdrop"),
-            layout: &self.layout,
-            entries: &entries,
-        });
-        Cover {
-            layers: Arc::clone(layers),
-            art: slot.art.as_ref().map(|a| a.id),
-            _textures: textures,
-            uniforms,
-            bind,
         }
     }
 
@@ -799,7 +530,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cover_s_textures_have_their_levels_down_to_a_few_texels() {
+    fn a_picture_s_textures_have_their_levels_down_to_a_few_texels() {
         assert_eq!(levels((1024, 1024)), 9);
         assert_eq!(levels((300, 200)), 9);
         assert_eq!(levels((1, 1)), 1);

@@ -66,8 +66,8 @@ pub enum Icon {
     Tempo,
     /// A track's lyrics.
     Lyrics,
-    /// A track's cover.
-    Cover,
+    /// A song's story: an open book.
+    Story,
     /// The microphone.
     Mic,
     /// Set by hand, to stay where it is (a pushpin).
@@ -107,7 +107,7 @@ impl Icon {
         Icon::Stems,
         Icon::Tempo,
         Icon::Lyrics,
-        Icon::Cover,
+        Icon::Story,
         Icon::Mic,
         Icon::Pin,
         Icon::Undo,
@@ -142,7 +142,7 @@ impl Icon {
             Icon::Stems => "stems",
             Icon::Tempo => "tempo",
             Icon::Lyrics => "lyrics",
-            Icon::Cover => "cover",
+            Icon::Story => "story",
             Icon::Mic => "mic",
             Icon::Pin => "pin",
             Icon::Undo => "undo",
@@ -455,19 +455,19 @@ fn paint(frame: &mut Frame, icon: Icon, size: f32, color: Color, turn: f32) {
             frame.stroke(&lines(&[(8.0, 8.5), (16.0, 8.5)]), stroke);
             frame.stroke(&lines(&[(8.0, 12.0), (13.0, 12.0)]), stroke);
         }
-        Icon::Cover => {
-            frame.stroke(&bar(3.5, 3.5, 17.0, 17.0, 3.5), stroke);
-            frame.fill(&Path::circle(p(9.0, 9.0), 1.8 * k), color);
+        Icon::Story => {
+            // An open book: two pages from its spine, a line of text on
+            // each.
             frame.stroke(
-                &lines(&[
-                    (4.0, 17.5),
-                    (10.0, 12.0),
-                    (14.0, 15.5),
-                    (16.5, 13.5),
-                    (20.0, 16.5),
-                ]),
+                &polygon(&[(12.0, 6.5), (3.5, 4.5), (3.5, 18.0), (12.0, 20.0)]),
                 stroke,
             );
+            frame.stroke(
+                &polygon(&[(12.0, 6.5), (20.5, 4.5), (20.5, 18.0), (12.0, 20.0)]),
+                stroke,
+            );
+            frame.stroke(&lines(&[(6.5, 9.5), (9.5, 10.2)]), stroke);
+            frame.stroke(&lines(&[(17.5, 9.5), (14.5, 10.2)]), stroke);
         }
         Icon::Mic => {
             // A capsule on a stand, a cradle round its lower half.

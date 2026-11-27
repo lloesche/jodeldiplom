@@ -16,6 +16,7 @@
 //! writes the logits after the prompt (f32s). `JODEL_GEMMA_PRECISION=full`
 //! runs it in f32 throughout (`Precision::Full`), else fast.
 
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::time::Instant;
 
@@ -123,7 +124,9 @@ fn main() {
             write(&format!("{}.ids", args[3]), lines.join("\n").as_bytes());
             if std::env::var_os("JODEL_GEMMA_PROFILE").is_some() {
                 profile::start(profile::Detail::Kernels);
-                let again = gemma.generate(&ids, most, |_| {}).unwrap();
+                let again = gemma
+                    .generate(&ids, most, |_| ControlFlow::Continue(()))
+                    .unwrap();
                 let p = profile::take();
                 assert_eq!(again.tokens, out.tokens, "the same answer profiled");
                 println!(

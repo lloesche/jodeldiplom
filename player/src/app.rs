@@ -110,12 +110,13 @@ pub struct AppOptions {
     pub mover: Option<Arc<crate::store::mover::Mover>>,
     /// Where the engine separates stems (the real one: the GPU's).
     pub separator: SeparatorSource,
-    /// The covers' models, as setup found them ([`crate::setup::Found`]);
-    /// `None`: covers are not taken apart.
-    pub covers: Option<crate::work::cover::CoverModels>,
+    /// The story scenes' depth and cut-out models, as setup found them
+    /// ([`crate::setup::Found`]); `None`: no stories are made.
+    pub scenes: Option<crate::work::scenes::SceneModels>,
     /// Karaoke story mode's models, as setup found them
-    /// ([`crate::setup::Found`]); `None`: no stories are made (the covers
-    /// show, as without).
+    /// ([`crate::setup::Found`]); `None` (or no data folder, or no scenes'
+    /// models): no stories are made, and the game is played over the
+    /// blurred cover as plain lyrics karaoke is.
     pub story: Option<crate::work::story_models::StoryModels>,
     /// What the app times by ([`AppClock`]): the wall clock but in tests
     /// that step it.
@@ -148,7 +149,7 @@ impl AppOptions {
             data: None,
             mover: None,
             separator: gpu_separator,
-            covers: None,
+            scenes: None,
             story: None,
             clock: AppClock::default(),
         }
@@ -197,13 +198,15 @@ pub struct App {
     spectrum: SpectrumGate,
     /// The cover of the track heard.
     art: ArtWorker,
-    /// The covers' step of the preparation ([`crate::work::cover`]), holding
-    /// the song playing's layers: none without a data folder or the
-    /// covers' models.
-    covers: Option<crate::work::cover::CoverWorker>,
-    /// The stories of the songs Karaoke mode plays, planned and drawn
-    /// ([`crate::work::story::worker`]): none without the story's models,
-    /// or without the covers' worker that shows them.
+    /// The cover of the song whose preparation shows
+    /// ([`crate::view::prep::shown_path`]).
+    prep_art: ArtWorker,
+    /// The song playing's story, made ready for the backdrop
+    /// ([`crate::work::scenes::PlayingStory`]): none without a data folder.
+    playing_story: Option<crate::work::scenes::PlayingStory>,
+    /// The story's step of the preparation, every song of the queue's
+    /// story planned, drawn and taken apart ([`crate::work::story::worker`]):
+    /// none without a data folder or the story's and the scenes' models.
     stories: Option<crate::work::story::worker::StoryWorker>,
     /// When the app started, on its clock ([`AppClock`]): every time it
     /// keeps but the trace's is on that clock.
@@ -269,11 +272,12 @@ impl App {
             options.rhythm_cache.clone(),
             options.grids.clone(),
         );
+        // The lyrics' options: their worker's, and what a song's story
+        // reads them by (as that worker settled them).
+        let story_lyrics =
+            (options.lyrics.clone()).unwrap_or_else(|| crate::work::lyrics::Options::new(false));
         let lyrics = {
-            let mut lyrics_options = options
-                .lyrics
-                .clone()
-                .unwrap_or_else(|| crate::work::lyrics::Options::new(false));
+            let mut lyrics_options = story_lyrics.clone();
             lyrics_options.online &= options.config.karaoke_online;
             let working = outbox.clone();
             lyrics_options.working = Some(Arc::new(move |path: &Path, on: bool| {
@@ -303,6 +307,7 @@ impl App {
                 answers.send(Action::Lyrics(path, answer));
             })
         };
+
         let grids = (options.grids.clone())
             .map(|dir| crate::store::grids::GridStore::new(dir, outbox.clone()));
         let patches = (options.data.as_ref())
@@ -329,36 +334,31 @@ impl App {
         // There is always a lyrics worker (one without the web or a cache
         // where the options give none): the queue waits for it too.
         state.preparing.push(core::Job::Lyrics);
-        // Covers are taken apart where there is a data folder to keep them,
-        // and the songs' story scenes are there.
+        // The songs' story scenes are in the data folder; the song
+        // playing's are made ready there.
         let scenes = (options.data.as_ref())
             .map(|d| crate::work::scenes::SceneStore::new(d.scenes(), d.scene_parts()));
-        let covers = (options.data.as_ref().zip(options.covers.clone()))
-            .zip(scenes.clone())
-            .map(|((data, models), scenes)| {
-                crate::work::cover::CoverWorker::start(
-                    data.covers(),
-                    models,
-                    scenes,
-                    outbox.clone(),
-                )
-            });
-        if covers.is_some() {
-            state.preparing.push(core::Job::Cover);
-        }
-        // Stories are made where their scenes are shown: by the covers'
-        // worker, told of each one drawn.
-        let stories = (options.data.as_ref().zip(options.story.clone()))
-            .zip(scenes.zip(covers.as_ref()))
-            .map(|((data, files), (scenes, covers))| {
+        let playing_story =
+            (scenes.clone()).map(|s| crate::work::scenes::PlayingStory::start(s, outbox.notify()));
+        // Stories are made where there is a data folder to keep them and
+        // the models, for every song of the queue once its lyrics are
+        // settled; the song playing's story told of each one finished.
+        let models = (options.story.clone()).zip(options.scenes.clone());
+        let stories = (options.data.as_ref().zip(models))
+            .zip(scenes.zip(playing_story.as_ref()))
+            .map(|((data, (files, nets)), (scenes, playing))| {
                 use crate::work::story::worker::{GpuModels, Places, StoryWorker};
                 let places = Places {
                     stories: data.stories(),
                     scenes,
+                    lyrics: Arc::new(move |path| crate::work::lyrics::settled(&story_lyrics, path)),
                 };
-                let models = Arc::new(GpuModels::new(&files));
-                StoryWorker::start(models, places, outbox.clone(), Arc::new(covers.on_drawn()))
+                let models = Arc::new(GpuModels::new(&files, nets));
+                StoryWorker::start(models, places, outbox.clone(), Arc::new(playing.on_drawn()))
             });
+        if stories.is_some() {
+            state.preparing.push(core::Job::Story);
+        }
         state.karaoke.model = match &options.model {
             Some(path) if path.is_file() => core::karaoke::ModelState::Ready,
             Some(_) => core::karaoke::ModelState::Coming,
@@ -401,7 +401,8 @@ impl App {
                 .map(|dir| crate::store::stems::Store::shared(crate::store::stems::beside(dir))),
             search: None,
             spectrum: SpectrumGate::new(),
-            covers,
+            prep_art: ArtWorker::new(options.notify.clone()),
+            playing_story,
             stories,
             started: options.clock.now(),
             clock: options.clock.clone(),
@@ -545,8 +546,8 @@ impl App {
     fn take_in(&mut self, action: &Action) {
         if let Action::Engine(Event::TrackStarted(start)) = action {
             self.art.want(start.info.cover.as_ref());
-            if let Some(covers) = &self.covers {
-                covers.want(&start.info);
+            if let Some(playing) = &self.playing_story {
+                playing.want(&start.info.path);
             }
         }
         if let Action::Engine(
@@ -672,6 +673,9 @@ impl App {
         }
         any |= self.moving.pump(&mut self.state.data_move);
         any |= self.art.pump();
+        self.prep_art
+            .want_song(crate::view::prep::shown_path(&self.state));
+        any |= self.prep_art.pump();
         any |= self.follow_story();
         let now = self.now_ms();
         // A tick every 250 ms, and one as soon as something is due (which
@@ -707,28 +711,28 @@ impl App {
         self.art.art()
     }
 
-    /// The cover of the track heard taken apart (subject, plate, depth,
-    /// rim, palette), once ready; `None` where it has no cover or this
-    /// machine cannot take covers apart.
-    pub fn cover_layers(&self) -> Option<crate::work::cover::Layers> {
-        self.covers
-            .as_ref()
-            .and_then(crate::work::cover::CoverWorker::current)
+    /// The cover of the song whose preparation shows, once decoded.
+    pub fn prep_art(&self) -> Option<&Art> {
+        self.prep_art.art()
     }
 
-    /// The track heard's story scenes, once ready
-    /// ([`crate::work::cover::CoverWorker::story`]); `None` where it has
-    /// none or this machine cannot take covers apart.
+    /// The track heard's story scenes, once ready, while the game's
+    /// backdrop shows ([`crate::work::scenes::PlayingStory::story`]);
+    /// `None` where it has none (or not yet).
     pub fn story(&self) -> Option<Arc<crate::work::scenes::Story>> {
-        self.covers
-            .as_ref()
-            .and_then(crate::work::cover::CoverWorker::story)
+        (self.playing_story.as_ref()).and_then(crate::work::scenes::PlayingStory::story)
     }
 
     /// The song's own look follows its story: the look of the story held
-    /// for the track heard, or none (the theme's). Whether it changed.
+    /// for the track heard, or none (the theme's); its scenes are wanted
+    /// while the game's backdrop shows. Whether the look changed.
     fn follow_story(&mut self) -> bool {
-        let look = self.story().map(|s| Arc::clone(&s.look));
+        let Some(playing) = &self.playing_story else {
+            return false;
+        };
+        let state = &self.state;
+        playing.show_scenes(core::karaoke::stage_shown(state) && state.show().story);
+        let look = playing.look();
         let held = &mut self.state.karaoke.look;
         let changed = look.as_ref().map(Arc::as_ptr) != held.as_ref().map(Arc::as_ptr);
         if changed {

@@ -6,21 +6,22 @@
 //! what it found, and the latest result shown big ([`Hero`]): the beat on
 //! a stretch of the song's waveform, its ticks coming in and a pulse on
 //! each; the key on a keyboard; the stems' lanes filling as they are
-//! separated; the words lit in time as they will be sung; the cover's
-//! subject lifting off it. Only what the work found is shown, never a
-//! progress it did not tell.
+//! separated; the words lit in time as they will be sung. Only what the
+//! work found is shown, never a progress it did not tell.
 //!
-//! The story of a song in Karaoke mode: typed out as a language model
-//! writes it, its scenes fading in as an image model draws them, each
-//! told as "Scene N of M drawn" ([`Hero::Story`], [`StoryView`]), shown
-//! big once anything tells one.
+//! The song's story is shown on its cover while it is made
+//! ([`Hero::Story`], [`StoryView`]): typed out over it as a language model
+//! writes it, then its scenes taking the cover's place tile by tile as an
+//! image model draws them, each told as "Scene N of M drawn". Otherwise,
+//! and once its story is made, the card is the song's cover itself
+//! ([`Hero::Cover`]).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::core::prep::{
-    self, BeatsFound, CoverCut, Found, Origin, SongPrep, Step, CAPTION_MS, HOLD_MS, REVEAL_MS,
+    self, BeatsFound, Found, Origin, SongPrep, Step, StoryStand, CAPTION_MS, HOLD_MS, REVEAL_MS,
     SHOWN_MS,
 };
 use crate::core::{job_done, list_cursor, readiness, Job, LyricsFacts, Readiness, Side, State};
@@ -29,8 +30,6 @@ use crate::core::{job_done, list_cursor, readiness, Job, LyricsFacts, Readiness,
 pub const PULSE_SECONDS: f32 = 0.12;
 /// The rest between two plays of the words' preview, seconds.
 const PREVIEW_REST: f32 = 1.5;
-/// How long the cover's subject takes to sway there and back, ms.
-const SWAY_MS: f32 = 7_000.0;
 
 /// A queue row's caption.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +55,7 @@ pub fn caption(state: &State, path: &Path) -> Option<Caption> {
     }
     let job = *state.working.get(path)?.last()?;
     Some(Caption {
-        text: prep::step_of(job, song).caption().to_owned(),
+        text: prep::step_of(job, song).caption(),
         found: false,
     })
 }
@@ -72,8 +71,8 @@ pub enum Kind {
     Stems,
     /// The words.
     Words,
-    /// The cover.
-    Cover,
+    /// The story.
+    Story,
 }
 
 /// How a step stands.
@@ -144,22 +143,11 @@ pub struct WordsView {
     pub lines: Vec<Vec<(String, f32)>>,
 }
 
-/// The cover taken apart, its subject lifting off its plate.
-#[derive(Clone, Debug, PartialEq)]
-pub struct CoverView {
-    /// The layers.
-    pub cut: CoverCut,
-    /// How far the subject sways across, -1 to 1.
-    pub sway: f32,
-    /// How far it has lifted off, 0 to 1.
-    pub lift: f32,
-}
-
 /// What the view shows big.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Hero {
-    /// Nothing found yet to show.
-    Waiting,
+    /// The song's cover (a placeholder without one).
+    Cover,
     /// The beat.
     Beat(BeatView),
     /// The key.
@@ -168,32 +156,34 @@ pub enum Hero {
     Stems(StemsView),
     /// The words.
     Words(WordsView),
-    /// The cover.
-    Cover(CoverView),
-    /// The story, as written and drawn so far.
+    /// The story on the cover, as written and drawn so far.
     Story(StoryView),
 }
 
-/// The story as written so far, and its scenes as drawn so far: the view's
-/// slot for what is to come ([`crate::core::prep::Story`]).
+/// The story as written so far, and its scenes as drawn so far, on the
+/// song's cover ([`crate::core::prep::Story`]).
 #[derive(Clone, Debug)]
 pub struct StoryView {
     /// The words so far.
     pub text: String,
     /// Whether the caret shows after them (while they are written).
     pub caret: bool,
-    /// Each scene's picture and how far it has faded in, 0 to 1.
-    pub scenes: Vec<(Arc<image::RgbaImage>, f32)>,
+    /// Each scene drawn: which (from 0), its picture and how far it has
+    /// faded in, 0 to 1.
+    pub scenes: Vec<(usize, Arc<image::RgbaImage>, f32)>,
+    /// How many scenes the story has (0: none drawn yet).
+    pub of: usize,
 }
 
 impl PartialEq for StoryView {
     fn eq(&self, other: &StoryView) -> bool {
-        let same = |(a, x): &(Arc<image::RgbaImage>, f32),
-                    (b, y): &(Arc<image::RgbaImage>, f32)| {
-            Arc::ptr_eq(a, b) && x == y
+        let same = |(i, a, x): &(usize, Arc<image::RgbaImage>, f32),
+                    (k, b, y): &(usize, Arc<image::RgbaImage>, f32)| {
+            i == k && Arc::ptr_eq(a, b) && x == y
         };
         self.text == other.text
             && self.caret == other.caret
+            && self.of == other.of
             && self.scenes.len() == other.scenes.len()
             && self
                 .scenes
@@ -238,17 +228,18 @@ fn shown_song(state: &State) -> Option<(&PathBuf, &SongPrep)> {
     shows.then_some((path, song))
 }
 
-/// The cover taken apart of the song whose preparation shows, if it has
-/// one: the window fits it to the cover's place.
-pub fn shown_cut(state: &State) -> Option<&CoverCut> {
-    shown_song(state)?.1.cover.as_ref()
+/// The song whose preparation shows: the app reads its cover for the card.
+pub fn shown_path(state: &State) -> Option<&Path> {
+    shown_song(state).map(|(path, _)| path.as_path())
 }
 
 /// The story's scenes of the song whose preparation shows, in order:
 /// the window makes their pictures ready.
 pub fn shown_scenes(state: &State) -> Vec<Arc<image::RgbaImage>> {
     shown_song(state).map_or_else(Vec::new, |(_, s)| {
-        s.scenes.iter().map(|s| Arc::clone(&s.picture)).collect()
+        (s.story.scenes.iter())
+            .map(|s| Arc::clone(&s.picture))
+            .collect()
     })
 }
 
@@ -323,8 +314,7 @@ impl PrepView {
 }
 
 /// The steps for `path`, in order: the beat, the key, the stems (where
-/// they are separated), the words, the cover (where covers are taken
-/// apart).
+/// they are separated), the words, the story (where stories are made).
 fn stages(state: &State, path: &Path, song: &SongPrep, now: u64) -> Vec<Stage> {
     let working = |job| state.working.get(path).is_some_and(|j| j.contains(&job));
     let done = |job| job_done(state, path, job);
@@ -425,7 +415,7 @@ fn stages(state: &State, path: &Path, song: &SongPrep, now: u64) -> Vec<Stage> {
     } else if let Some(origin) = song.origin {
         stage(Kind::Words, Stand::Found, found_line(origin), song.words_at)
     } else if done(Job::Lyrics) {
-        match facts.lyrics {
+        match facts.lyrics.map(|l| l.how) {
             Some(LyricsFacts::Timed | LyricsFacts::Untimed) => {
                 stage(Kind::Words, Stand::Found, "Found them", None)
             }
@@ -441,29 +431,24 @@ fn stages(state: &State, path: &Path, song: &SongPrep, now: u64) -> Vec<Stage> {
     } else {
         stage(Kind::Words, Stand::Waiting, "The words", None)
     });
-    // The cover, where covers are taken apart.
-    if state.preparing.contains(&Job::Cover) {
-        out.push(if song.cover.is_some() {
-            stage(Kind::Cover, Stand::Found, "Cut out", song.cover_at)
-        } else if working(Job::Cover) {
-            stage(Kind::Cover, Stand::Running, "Cutting out the cover…", None)
-        } else if done(Job::Cover) {
-            match facts.cover {
-                Some(true) => stage(Kind::Cover, Stand::Found, "Cut out", None),
-                _ => stage(Kind::Cover, Stand::Missing, "No cover to cut out", None),
-            }
-        } else {
-            stage(Kind::Cover, Stand::Waiting, "The cover", None)
-        });
-    }
+    // The story, where stories are made: where it stands, in its words.
+    let story = StoryStand::of(state, path);
+    let stand = match story {
+        StoryStand::Off => return out,
+        StoryStand::Making(_) => Stand::Running,
+        StoryStand::Waiting { .. } | StoryStand::NotNow(_) => Stand::Waiting,
+        StoryStand::Made => Stand::Found,
+        StoryStand::NoStory => Stand::Missing,
+    };
+    out.push(stage(Kind::Story, stand, &story.line(), None));
     out
 }
 
 /// What the view shows big, and its headline where it is a result: the
 /// result found last while it is held ([`HOLD_MS`]; a scene drawn shows
-/// the story); else the stems as they are separated; else the story,
-/// where one is told; else the cover taken apart; else the last result
-/// found that can be shown; else nothing yet.
+/// the story, while it is still being made); else the stems as they are
+/// separated; else the story on the cover while it is being made (once
+/// anything of it is told, or a worker is at it); else the song's cover.
 fn hero(
     state: &State,
     path: &Path,
@@ -471,7 +456,10 @@ fn hero(
     now: u64,
     moves: bool,
 ) -> (Hero, Option<String>) {
-    let held = (song.found.as_ref()).filter(|(_, at)| state.now_ms.saturating_sub(*at) < HOLD_MS);
+    let story = StoryStand::of(state, path);
+    let held = (song.found.as_ref())
+        .filter(|(_, at)| state.now_ms.saturating_sub(*at) < HOLD_MS)
+        .filter(|(found, _)| story.making() || !matches!(found, Found::Scene { .. }));
     let separating = song.separating.as_ref().filter(|_| {
         !song.stems
             && state
@@ -511,12 +499,8 @@ fn hero(
                     headline("The words, in time".to_owned()),
                 ))
             }
-            Found::Cover => Some((
-                Hero::Cover(cover_view(song, now, moves)?),
-                headline("Cut out: the cover".to_owned()),
-            )),
             Found::Scene { n, of } => Some((
-                Hero::Story(story_view(song, now, moves)?),
+                Hero::Story(story_view(song, now, moves)),
                 headline(format!("Scene {n} of {of} drawn")),
             )),
         }
@@ -527,37 +511,32 @@ fn hero(
     if let Some(s) = separating {
         return (Hero::Stems(stems_view(s, s.share)), None);
     }
-    if let Some(story) = story_view(song, now, moves) {
-        return (Hero::Story(story), None);
-    }
-    if let Some(cover) = cover_view(song, now, moves) {
-        return (Hero::Cover(cover), None);
-    }
-    let last = [
-        song.preview.as_ref().map(|_| Found::Timed),
-        song.beats.as_ref().and_then(|b| b.bpm).map(Found::Tempo),
-        song.stems.then_some(Found::Stems),
-        song.key.flatten().map(Found::Key),
-    ];
-    for found in last.into_iter().flatten() {
-        if let Some((hero, _)) = shown(&found) {
-            return (hero, None);
+    // Built on the cover while it is made (being made now, or to come
+    // with some of it told); else the cover.
+    match story {
+        StoryStand::Making(_) => (Hero::Story(story_view(song, now, moves)), None),
+        StoryStand::Waiting { .. } if song.story.told() => {
+            (Hero::Story(story_view(song, now, moves)), None)
         }
+        _ => (Hero::Cover, None),
     }
-    (Hero::Waiting, None)
 }
 
 /// The story of `song` as written and drawn so far, by `now` (its caret
-/// blinking while the view `moves`, each scene fading in as it came);
-/// none where nothing of it is told.
-fn story_view(song: &SongPrep, now: u64, moves: bool) -> Option<StoryView> {
-    (!song.story.is_empty() || !song.scenes.is_empty()).then(|| StoryView {
-        text: song.story.clone(),
+/// blinking while the view `moves`, each scene fading in as it came).
+fn story_view(song: &SongPrep, now: u64, moves: bool) -> StoryView {
+    let story = &song.story;
+    StoryView {
+        text: story.text.clone(),
         caret: moves && (now / 500).is_multiple_of(2),
-        scenes: (song.scenes.iter())
-            .map(|s| (Arc::clone(&s.picture), reveal(now, Some(s.at), REVEAL_MS)))
+        scenes: (story.scenes.iter())
+            .map(|s| {
+                let shown = reveal(now, Some(s.at), REVEAL_MS);
+                (s.index, Arc::clone(&s.picture), shown)
+            })
             .collect(),
-    })
+        of: story.of,
+    }
 }
 
 /// The beat of `beats` (found at `at`) by `now`: its ticks coming in left
@@ -627,23 +606,6 @@ fn words_view(preview: &prep::Preview, now: u64, at: Option<u64>, moves: bool) -
     }
 }
 
-/// The cover taken apart by `now`: its subject lifting off over
-/// [`REVEAL_MS`], then swaying gently while the view moves.
-fn cover_view(song: &SongPrep, now: u64, moves: bool) -> Option<CoverView> {
-    let cut = song.cover.clone()?;
-    let since = song.cover_at.map_or(0, |at| now.saturating_sub(at)) as f32;
-    let sway = if moves {
-        (std::f32::consts::TAU * since / SWAY_MS).sin()
-    } else {
-        0.0
-    };
-    Some(CoverView {
-        cut,
-        sway,
-        lift: reveal(now, song.cover_at, 2 * REVEAL_MS),
-    })
-}
-
 /// An outline of the view, one line a piece with its tone in brackets:
 /// for the tests.
 impl fmt::Display for PrepView {
@@ -652,7 +614,7 @@ impl fmt::Display for PrepView {
         writeln!(f, "[prep{done}] {}", self.title)?;
         writeln!(f, "[headline] {}", self.headline)?;
         let hero = match &self.hero {
-            Hero::Waiting => "waiting".to_owned(),
+            Hero::Cover => "cover".to_owned(),
             Hero::Beat(b) => format!("beat: {} ticks", b.ticks.len()),
             Hero::Key(k) => format!("key: {}", k.name),
             Hero::Stems(s) => format!("stems: {:.0} %", 100.0 * s.share),
@@ -663,8 +625,7 @@ impl fmt::Display for PrepView {
                     .collect::<Vec<_>>()
                     .join(" ")
             ),
-            Hero::Cover(_) => "cover".to_owned(),
-            Hero::Story(s) => format!("story: {} ({} scenes)", s.text, s.scenes.len()),
+            Hero::Story(s) => format!("story: {} ({} of {} scenes)", s.text, s.scenes.len(), s.of),
         };
         writeln!(f, "[hero] {hero}")?;
         for s in &self.stages {

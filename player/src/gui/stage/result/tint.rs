@@ -1,6 +1,6 @@
-//! The diploma's tint: from the cover's palette where its layers
-//! have one (its most vivid colour lights the screen and its border, a
-//! deep shade of it its ink), else the stage's own colours.
+//! The diploma's tint: from the palette of the story's scene showing
+//! where there is one (its most vivid colour lights the screen and its
+//! border, a deep shade of it its ink), else the stage's own colours.
 
 use super::super::{Rgb, ACTIVE, CORAL, GOLD};
 use crate::work::picture::Swatch;
@@ -51,7 +51,7 @@ impl Tint {
         soft: ACTIVE,
     };
 
-    /// From a cover's palette (largest share first): its most vivid colour
+    /// From a picture's palette (largest share first): its most vivid colour
     /// (that is not too dark) for the light, the ribbons and the words, a
     /// deep shade of it for the ink; the stage's own without one.
     pub fn of(palette: &[Swatch]) -> Tint {

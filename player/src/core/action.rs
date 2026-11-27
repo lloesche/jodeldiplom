@@ -16,9 +16,23 @@ pub enum Job {
     Rhythm,
     /// Its lyrics looked up, or their words timed.
     Lyrics,
-    /// Its cover taken apart (subject, plate, depth) for the karaoke
-    /// background ([`crate::work::cover`]).
-    Cover,
+    /// Its karaoke story planned, its pictures drawn and its scenes taken
+    /// apart ([`crate::work::story`]).
+    Story,
+}
+
+impl Job {
+    /// Every job.
+    pub const ALL: [Job; 3] = [Job::Rhythm, Job::Lyrics, Job::Story];
+
+    /// The job whose result this one is made from (the story from the
+    /// lyrics): another result of it makes this one's to be made again.
+    pub fn needs(self) -> Option<Job> {
+        match self {
+            Job::Story => Some(Job::Lyrics),
+            Job::Rhythm | Job::Lyrics => None,
+        }
+    }
 }
 
 /// What a file's analysis found, as the queue's icons show it.
@@ -61,6 +75,53 @@ pub enum LyricsFacts {
     Failed,
 }
 
+/// A file's lyrics as settled: how, as the queue's icons show it, and
+/// which they are (a fingerprint of them as shown: settled again the same,
+/// the same fingerprint), what the story is made from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SettledLyrics {
+    /// How.
+    pub how: LyricsFacts,
+    /// Which: [`SettledLyrics::print`] of them as shown, 0 with none.
+    pub print: u64,
+}
+
+impl SettledLyrics {
+    /// How `answer` settles them, and which they are.
+    pub fn of(answer: &crate::work::lyrics::Answer) -> SettledLyrics {
+        use crate::work::lyrics::Answer;
+        let print = match answer {
+            Answer::Found { lyrics, timed } => {
+                SettledLyrics::print(timed.as_ref().unwrap_or(lyrics))
+            }
+            Answer::Instrumental | Answer::NotFound | Answer::Failed(_) => 0,
+        };
+        SettledLyrics {
+            how: LyricsFacts::of(answer),
+            print,
+        }
+    }
+
+    /// The fingerprint of `lyrics`: a hash of them as Enhanced LRC (their
+    /// words and every time).
+    pub fn print(lyrics: &jodel_lyrics::Lyrics) -> u64 {
+        jodel_dsp::fnv1a(lyrics.to_lrc().as_bytes())
+    }
+}
+
+/// How a song's story stands once its worker told it ([`Facts::Story`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StoryFact {
+    /// Made: planned, drawn and its scenes taken apart.
+    Made,
+    /// None, for good: no lyrics or no timed sung lines, or a plan that
+    /// did not hold (the game cannot be played over it).
+    NoStory,
+    /// Not made now, and why (a model that failed, a file that could not
+    /// be read): tried again later.
+    NotNow(String),
+}
+
 impl LyricsFacts {
     /// How `answer` settles them.
     pub fn of(answer: &crate::work::lyrics::Answer) -> LyricsFacts {
@@ -80,11 +141,94 @@ impl LyricsFacts {
     }
 }
 
+/// What a finished job's facts make of it ([`QueueFacts::take`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Took {
+    /// Done.
+    Done,
+    /// Done, its result another than before: every job made from it is
+    /// to be done again ([`Job::needs`]).
+    Changed,
+    /// Not done now: still to come, its why kept.
+    StillToCome,
+    /// Of what is no longer so: dropped, nothing taken in.
+    Stale,
+}
+
+/// What a file's work found so far, as the queue's icons show it: each
+/// `None` until that part is done, then whether the file has it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QueueFacts {
+    /// Its key.
+    pub key: Option<bool>,
+    /// Its stems, separated and kept.
+    pub stems: Option<bool>,
+    /// Its tempo (a clear beat).
+    pub tempo: Option<bool>,
+    /// Its lyrics, once settled.
+    pub lyrics: Option<SettledLyrics>,
+    /// Its story, as its worker last told it.
+    pub story: Option<StoryFact>,
+}
+
+impl QueueFacts {
+    /// Takes in the whole analysis's facts.
+    pub fn analysed(&mut self, f: &RhythmFacts) {
+        self.key = Some(f.key.is_some());
+        self.stems = Some(f.stems);
+        self.tempo = Some(f.bpm.is_some());
+    }
+
+    /// Takes in what finished `facts` found, and what that makes of its
+    /// job ([`Took`]): lyrics with another fingerprint than before changed
+    /// (what the jobs made from them are made of: none before, not
+    /// changed; settled otherwise with the same words, not changed
+    /// either); a story not made now still to come; a story of other
+    /// lyrics than those settled now (they changed while it was made)
+    /// stale, not taken in.
+    pub fn take(&mut self, facts: Facts) -> Took {
+        match facts {
+            Facts::Rhythm(f) => {
+                self.analysed(&f);
+                Took::Done
+            }
+            Facts::Lyrics(f) => match self.lyrics.replace(f) {
+                Some(was) if was.print != f.print => Took::Changed,
+                _ => Took::Done,
+            },
+            Facts::Story { lyrics, .. } if lyrics != self.lyrics_print() => Took::Stale,
+            Facts::Story { fact, .. } => {
+                let took = match fact {
+                    StoryFact::NotNow(_) => Took::StillToCome,
+                    StoryFact::Made | StoryFact::NoStory => Took::Done,
+                };
+                self.story = Some(fact);
+                took
+            }
+        }
+    }
+
+    /// The fingerprint of the lyrics settled (0: none settled, or none
+    /// found), what a story is made of.
+    pub fn lyrics_print(&self) -> u64 {
+        self.lyrics.map_or(0, |l| l.print)
+    }
+
+    /// What `job` found, forgotten: it is to be done again.
+    pub fn forget(&mut self, job: Job) {
+        match job {
+            Job::Rhythm => (self.key, self.stems, self.tempo) = (None, None, None),
+            Job::Lyrics => self.lyrics = None,
+            Job::Story => self.story = None,
+        }
+    }
+}
+
 /// A part of a song's preparation told while it goes on, in the order
 /// they come ([`Action::Heard`]): the key once the file is decoded, the
 /// stems as they are separated and once they all are, the beat once
-/// decided; the lyrics' steps and what they find; the cover taken apart;
-/// a story of the song as it is written ([`crate::core::prep`]).
+/// decided; the lyrics' steps and what they find; the song's story as it
+/// is planned, written and drawn ([`crate::core::prep`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Heard {
     /// The key was looked for: the one found.
@@ -97,9 +241,7 @@ pub enum Heard {
     Beats(Arc<crate::core::prep::BeatsFound>),
     /// A step of the lyrics begun, or what it found.
     Lyrics(crate::core::prep::Words),
-    /// The cover taken apart.
-    Cover(crate::core::prep::CoverCut),
-    /// A story of the song, as it is written and drawn.
+    /// The song's story, as it is planned, written and drawn.
     Story(crate::core::prep::Story),
 }
 
@@ -109,10 +251,16 @@ pub enum Facts {
     /// The analysis's.
     Rhythm(RhythmFacts),
     /// The lyrics'.
-    Lyrics(LyricsFacts),
-    /// The cover's: whether it was taken apart (a song without a cover,
-    /// or a machine that cannot, has none).
-    Cover(bool),
+    Lyrics(SettledLyrics),
+    /// The story's (not made now: the job still to come), and the
+    /// fingerprint of the lyrics it was made of
+    /// ([`SettledLyrics::print`]).
+    Story {
+        /// The lyrics' fingerprint.
+        lyrics: u64,
+        /// How it stands.
+        fact: StoryFact,
+    },
 }
 
 /// Every input to the UI core.
@@ -444,10 +592,11 @@ pub enum Effect {
     /// with [`Action::Lyrics`]); what was asked for before and not started
     /// is dropped.
     WantLyrics(Vec<PathBuf>),
-    /// Get the stories of exactly these songs planned and drawn, in this
-    /// order, from their lyrics as shown (told with [`Heard::Story`]);
-    /// what was asked for before and not started is dropped.
-    WantStories(Vec<crate::core::karaoke::StorySong>),
+    /// Get the stories of exactly these songs made, in this order, from
+    /// their lyrics as settled (told with [`Heard::Story`], working and
+    /// ready as [`Job::Story`]); the songs no longer asked for are given
+    /// up.
+    WantStories(Vec<crate::core::StorySong>),
     /// Keep a song's lyrics as edited by hand (`None`: forget its edits),
     /// and time it again with them (answered with [`Action::Lyrics`] once
     /// timed).

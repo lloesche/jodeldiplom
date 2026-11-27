@@ -396,20 +396,6 @@ small and few, their step 0.07–0.13 ms a frame at the Diva peak and with
 every effect, and a quad's look is the same over its pixels (one branch
 taken by the whole quad).
 
-**The backdrop's depth of field and beat.** Round a subject cut out,
-the card reads the cover's levels (made once, as the cover is sent over)
-blurred by its depth: two smooth reads of two levels (8 taps) where it
-read the cover and the plate sharp before (9), the plate's only where
-the cover's blur would carry the subject's colours. The beat's push,
-the rim and the spotlight rays are a few numbers in the cover's uniform
-and one tap of the subject's rim. `frame_cost` on the RTX 5080 (two runs
-of each, the unchanged backdrop and this one in turn, the machine shared
-with other agents' builds and tests): the backdrop step's medians over
-the scenes 0.18–0.25 ms before, 0.19–0.44 after at 3024 × 1964, and
-0.22–0.79 before, 0.25–0.49 after at 3840 × 2160: within the machine's
-noise; the worst frames (to 9–20 ms in either build) fell where every
-step spiked at once.
-
 **One fire.** The edges on fire and the lane's flames (which set the
 marquee's bulbs on fire where both show) draw the same fire, a helper
 the effects share (`fx_fire`, `fx_fire_light`, with `fx_heat` and the
@@ -471,30 +457,32 @@ every start. An M-series Mac's GPU is slower at whole-window passes:
 the budget there is to be measured (`frame_cost --look heaviest
 --budget 4 --step-budget 2.5`) before a look is given to a theme.
 
-**Story scenes.** A scene showing instead of the cover
-(`gui::backdrop::scenes`) is one full-screen pass of its own pipeline
-into the backdrop's texture, drawn at its share of the window like the
-cover's card (a 1344 × 768 picture: half the window's sides at
-3024 × 1964), the look over it as over the cover. A warp reads the
+**Story scenes.** With the game on, the backdrop is the song's story: a
+scene (`gui::backdrop::scenes`) is one full-screen pass of its own
+pipeline into the backdrop's texture, drawn at its share of the window
+(a 1344 × 768 picture: half the window's sides at 3024 × 1964), the look
+over it; until the story is there, the plain gradient's small ground
+stretched over it (one pass). A scene shows all through the song (the
+first from its start, each on till the next), so the cover's card is
+gone (November 2026); without the game the backdrop is the blurred
+cover's small ground alone, stretched, as it always was. A warp reads the
 shape once and the picture once; three layers read the shape six
 times (three of them a blurred level), the plate three and the picture
 twice. A scene is sent over ahead of its cut, a texture a frame (the
 picture, the plate, the shape, each with its levels made on the GPU),
-so no frame sends a whole one; only a scene that shows before it was
-sent ahead (the story ready in the middle of it) is sent whole on its
-frame. `frame_cost`'s
-`story` scene (the normal one over three scenes in three layers each,
-a cut in the second timed) on the RTX 5080 at 3024 × 1964 (the machine
+so no frame sends a whole one; only the scene the story starts on (the
+story come while its song plays) is sent whole on its frame. Before the
+cover went, `frame_cost`'s `story` scene (the normal one over three
+scenes in three layers each, a cut in the second timed; now every
+scene is over that story) on the RTX 5080 at 3024 × 1964 (the machine
 shared with other agents' builds and GPU work): the backdrop step's
 median 0.21 ms (the cover's 0.17 in the same run), its worst 1.6 ms, on
 the cut's frame; the GPU's total median 1.4 ms, worst 3.1, no frame over
-4 ms. With `--look heaviest` (each of the four over the cover and over
-the scenes) the story's backdrop step median was 0.18–0.32 ms, its worst
-1.1–2.0 ms (a frame sending a texture), the GPU's total median 2.1–3.3
-ms; its frames over 4 ms fell where the look's or every step spiked,
-as the cover's scenes' in the same runs did. Sending a scene whole in
-one frame, before it went a texture a frame, put the backdrop step's
-worst at 2.0–2.5 ms.
+4 ms. With `--look heaviest` the story's backdrop step median was
+0.18–0.32 ms, its worst 1.1–2.0 ms (a frame sending a texture), the
+GPU's total median 2.1–3.3 ms; its frames over 4 ms fell where the
+look's or every step spiked. Sending a scene whole in one frame, before
+it went a texture a frame, put the backdrop step's worst at 2.0–2.5 ms.
 
 The strength a look is drawn at (`jodel_looks::guard::strength`: the
 look drawn on the processor over the song's picture made 48 × 27, at 64
@@ -634,11 +622,12 @@ tests that need no GPU (`gui::stage::gpu::groups`, `gui::particles`):
   over:
 
   ```text
-  L=$(ls "$HOME/Library/Application Support/Jodeldiplom Data/covers/"*.layers | head -1)
-  cargo +1.100.0 run --release -p jodeldiplom --example frame_cost -- "$L" --budget 4 --step-budget 2.5
+  P=$(ls "$HOME/Library/Application Support/Jodeldiplom Data/scenes/"*/scene-*.png | head -1)
+  cargo +1.100.0 run --release -p jodeldiplom --example frame_cost -- "$P" --budget 4 --step-budget 2.5
   ```
 
-  (any cover's `.layers` file from the player's data folder; its scenes
+  (any story scene's picture from the player's data folder, or any
+  picture: the story every scene is over is made of it; its scenes
   are the normal one, the lyrics set in the middle (no lane), a tier's
   each at its rung, every effect at once and
   the diploma: the RTX 5080 takes 1.3–3.4 ms at worst over the singing

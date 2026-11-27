@@ -1,14 +1,11 @@
-//! What the backdrop hears: each stem's level at the moment heard (the
-//! drums' not: they light nothing), read
-//! from the song's analysis (its waveform's lanes, 10 ms a frame: the
-//! stems as separated, so the vocals light the subject even with the
-//! Karaoke voice turned down for the singer), each against how loud that
-//! stem gets in this song ([`Song`]), then as the desk lets it be heard
-//! (its fader, mute and solo: [`Levels::times`]); the sections' starts,
-//! where the music lifts ([`sections`]); and all of it smoothed, so
-//! nothing flickers ([`Feel`]). Read on the main thread, frame by frame,
-//! from what the analysis already holds: nothing of it touches the audio
-//! thread.
+//! What the backdrop and the effects hear: the song as heard ([`Song`]:
+//! its analysis, and how loud the mix and each stem is at a moment, read
+//! from its waveform's lanes, 10 ms a frame, each against how loud it gets
+//! in this song), the sections' starts, where the music lifts
+//! ([`sections`]); and for the backdrop the singer's tier, a section begun
+//! and a phrase landed, smoothed so nothing flickers, and the beat
+//! ([`Feel`]). Read on the main thread, frame by frame, from what the
+//! analysis already holds: nothing of it touches the audio thread.
 
 use std::sync::Arc;
 
@@ -53,32 +50,6 @@ impl Follower {
         let k = 1.0 - (-dt.max(0.0) / tau.max(1e-4)).exp();
         self.value += (target - self.value) * k;
         self.value
-    }
-}
-
-/// The stems' levels at a moment, each 0 (quiet for that stem in this
-/// song) to 1 (as loud as it gets).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Levels {
-    /// The bass.
-    pub bass: f32,
-    /// The vocals.
-    pub vocals: f32,
-    /// Everything else.
-    pub other: f32,
-}
-
-impl Levels {
-    /// Each scaled by its own of `gains` (drums, bass, vocals, other: what
-    /// the desk lets each be heard at,
-    /// [`crate::core::desk::DeskState::heard_gain`]; a stem muted, or not
-    /// soloed, is not seen either; the drums' is not needed).
-    pub fn times(self, [_, bass, vocals, other]: [f32; 4]) -> Levels {
-        Levels {
-            bass: self.bass * bass,
-            vocals: self.vocals * vocals,
-            other: self.other * other,
-        }
     }
 }
 
@@ -194,24 +165,6 @@ impl Song {
         Some((mix, stems))
     }
 
-    /// The levels heard at `t` seconds; without stems, the mix's for each
-    /// (the vocals not: a mix lights no subject); none without a waveform.
-    pub fn levels(&self, t: f64) -> Levels {
-        match self.loudness(t) {
-            Some((_, Some(s))) => Levels {
-                bass: s[Stem::Bass as usize],
-                other: s[Stem::Other as usize],
-                vocals: s[Stem::Vocals as usize],
-            },
-            Some((mix, None)) => Levels {
-                bass: mix,
-                vocals: 0.0,
-                other: mix,
-            },
-            None => Levels::default(),
-        }
-    }
-
     /// Whether a section starts after `from` and by `to` seconds.
     pub fn section_between(&self, from: f64, to: f64) -> bool {
         let i = self.sections.partition_point(|&s| s <= from);
@@ -274,25 +227,17 @@ pub fn sections(mix: &Lane, downbeats: &[f64]) -> Vec<f64> {
     found
 }
 
-/// The pieces' light as felt now (each 0 to 1), and the beat.
+/// The music as felt now (each 0 to 1), and the beat.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Felt {
-    /// The depth's breathing: the bass.
-    pub bass: f32,
-    /// The subject's light: the vocals.
-    pub vocals: f32,
-    /// The plate's colour and sweeping light: everything else.
-    pub other: f32,
-    /// The subject's glow: the singer's tier's (its row's).
+    /// The singer's glow: the singer's tier's (its row's).
     pub glow: f32,
-    /// The rays behind the subject: the singer's tier's, and the sections.
-    pub rays: f32,
     /// A section just begun: the whole lifting, fading.
     pub section: f32,
-    /// How much harder the subject moves with the beat: the singer's
-    /// tier's (its row's).
+    /// How much harder the scene moves with the beat: the singer's tier's
+    /// (its row's).
     pub tier: f32,
-    /// A phrase just landed: the subject flaring, fading.
+    /// A phrase just landed: the scene flaring, fading.
     pub flare: f32,
     /// The beat's pushes now (as the grid has them: not smoothed).
     pub beat: Beat,
@@ -340,14 +285,10 @@ impl Swell {
     }
 }
 
-/// The levels and moments smoothed: each with its own attack and release.
+/// The moments smoothed: each with its own attack and release.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Feel {
-    bass: Follower,
-    vocals: Follower,
-    other: Follower,
     glow: Follower,
-    rays: Follower,
     tier: Follower,
     section: Swell,
     flare: Swell,
@@ -359,11 +300,7 @@ pub struct Feel {
 impl Default for Feel {
     fn default() -> Feel {
         Feel {
-            bass: Follower::new(0.25, 0.8),
-            vocals: Follower::new(0.15, 0.7),
-            other: Follower::new(0.6, 1.6),
             glow: Follower::new(0.6, 1.5),
-            rays: Follower::new(0.8, 1.8),
             tier: Follower::new(0.6, 1.5),
             section: Swell::new(SECTION_HOLD, 0.35, 2.2),
             flare: Swell::new(FLARE_HOLD, 0.05, 0.8),
@@ -372,24 +309,21 @@ impl Default for Feel {
     }
 }
 
-/// The glow on the subject, the rays behind it and how much harder it moves
-/// with the beat at the singer's `glow` (0 none, up to the top tier's 1):
-/// each held by the tiers' rows.
-fn tier_light(glow: f32) -> [f32; 3] {
+/// The glow lifting the scene and how much harder it moves with the beat
+/// at the singer's `glow` (0 none, up to the top tier's 1): each held by
+/// the tiers' rows.
+fn tier_light(glow: f32) -> [f32; 2] {
     [
         held(glow, |t| t.backdrop_glow),
-        held(glow, |t| t.backdrop_rays),
         held(glow, |t| t.backdrop_beat),
     ]
 }
 
-/// What the backdrop hears in a frame: the stems' levels, the singer's
-/// glow (0 none, up to the top tier's 1), whether a section began and a
-/// phrase landed since the last frame, and the music (its beat: [`Beat::of`]).
+/// What the backdrop hears in a frame: the singer's glow (0 none, up to
+/// the top tier's 1), whether a section began and a phrase landed since
+/// the last frame, and the music (its beat: [`Beat::of`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Hearing {
-    /// The stems' levels.
-    pub levels: Levels,
     /// The singer's glow.
     pub glow: f32,
     /// A section began.
@@ -403,29 +337,19 @@ pub struct Hearing {
 impl Feel {
     /// `dt` seconds on with what is `heard`.
     pub fn step(&mut self, heard: &Hearing, dt: f32) -> Felt {
-        let levels = heard.levels;
         let (swell, swelling) = self.section.step(heard.section, dt);
         let (flare, flaring) = self.flare.step(heard.phrase, dt);
-        let [lit, rays, tier] = tier_light(heard.glow);
-        let rays = rays.max(swell * 0.6);
+        let [lit, tier] = tier_light(heard.glow);
         let beat = Beat::of(&heard.music);
         let felt = Felt {
-            bass: self.bass.step(levels.bass, dt),
-            vocals: self.vocals.step(levels.vocals, dt),
-            other: self.other.step(levels.other, dt),
             glow: self.glow.step(lit, dt),
-            rays: self.rays.step(rays, dt),
             section: swell,
             tier: self.tier.step(tier, dt),
             flare,
             beat,
         };
         let aims = [
-            (felt.bass, levels.bass),
-            (felt.vocals, levels.vocals),
-            (felt.other, levels.other),
             (felt.glow, lit),
-            (felt.rays, rays),
             (felt.tier, tier),
             (swell, swelling),
             (flare, flaring),
@@ -491,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn levels_are_each_stem_s_own_and_the_mix_lights_no_subject() {
+    fn loudness_is_each_stem_s_own_against_how_loud_it_gets() {
         let quietish = |t: f64| if t.fract() < 0.5 { 90 } else { 210 };
         let mut w = Waveform {
             mix: lane(30.0, quietish),
@@ -500,9 +424,9 @@ mod tests {
         };
         let heard = |w: &Waveform| Song::of(&Rhythmed::new(Analysis::default(), Some(w.clone())));
         let song = heard(&w);
-        let loud = song.levels(10.9);
-        assert!(loud.bass > 0.9 && loud.vocals == 0.0, "{loud:?}");
-        assert!(song.levels(10.3).bass < 0.1);
+        let (loud, stems) = song.loudness(10.9).expect("a waveform");
+        assert!(loud > 0.9 && stems.is_none(), "{loud}");
+        assert!(song.loudness(10.3).expect("a waveform").0 < 0.1);
         // With stems: the vocals' own.
         w.stems = Some([
             lane(30.0, |_| 100),
@@ -511,14 +435,12 @@ mod tests {
             lane(30.0, quietish),
         ]);
         let song = heard(&w);
-        assert!(song.levels(10.9).vocals > 0.9);
-        assert!(song.levels(10.3).vocals < 0.1);
-        let muted = song.levels(10.9).times([1.0, 1.0, 0.0, 1.0]);
-        assert_eq!(muted.vocals, 0.0);
+        let vocals = |t: f64| song.loudness(t).and_then(|(_, s)| s).expect("stems")[3];
+        assert!(vocals(10.9) > 0.9 && vocals(10.3) < 0.1);
     }
 
     #[test]
-    fn a_section_swells_and_fades_and_diva_brings_the_rays() {
+    fn a_section_swells_and_fades_and_diva_glows() {
         let mut feel = Feel::default();
         let dt = 1.0 / 60.0;
         let at = |glow: f32, section: bool| Hearing {
@@ -530,18 +452,15 @@ mod tests {
         for _ in 0..40 {
             felt = feel.step(&at(0.0, false), dt);
         }
-        assert!(felt.section > 0.6 && felt.rays > 0.1, "{felt:?}");
+        assert!(felt.section > 0.6 && felt.lift() > 0.2, "{felt:?}");
         for _ in 0..900 {
             felt = feel.step(&at(0.0, false), dt);
         }
-        assert!(felt.section < 0.01 && felt.rays < 0.01, "{felt:?}");
+        assert!(felt.section < 0.01 && felt.lift() < 0.01, "{felt:?}");
         for _ in 0..300 {
             felt = feel.step(&at(1.0, false), dt);
         }
-        assert!(
-            felt.glow > 0.95 && felt.rays > 0.95 && felt.tier > 0.95,
-            "{felt:?}"
-        );
+        assert!(felt.glow > 0.95 && felt.tier > 0.95, "{felt:?}");
         // Held there long enough, nothing moves.
         for _ in 0..600 {
             feel.step(&at(1.0, false), dt);

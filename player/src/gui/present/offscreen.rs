@@ -132,7 +132,7 @@ impl Offscreen {
             .set_backdrop(frame, (width.max(1), height.max(1)));
     }
 
-    /// Karaoke mode's plain backdrop (no cover: the window's ground) under
+    /// Karaoke mode's plain backdrop (no story: the window's ground) under
     /// the frames from now on, `width` × `height`.
     pub fn set_plain_ground(&mut self, width: u32, height: u32) {
         let cue = crate::gui::backdrop::Cue::default();
@@ -144,11 +144,6 @@ impl Offscreen {
     /// to begin with; a Retina screen's 2).
     pub fn set_density(&mut self, density: f32) {
         self.painter.density = density;
-    }
-
-    /// How many covers the backdrop holds on the GPU.
-    pub fn backdrop_held(&self) -> usize {
-        self.painter.backdrop.held()
     }
 
     /// Draws a frame of `width` × `height` of what was set (Karaoke mode:

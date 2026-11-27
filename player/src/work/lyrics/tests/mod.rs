@@ -106,7 +106,7 @@ fn a_track_with_no_lyrics_found_is_heard_instead() {
         timer: Some(Arc::new(Transcriber)),
         working: None,
         done: Some(Arc::new(move |_: &Path, facts| {
-            told.lock().unwrap().push(facts)
+            told.lock().unwrap().push(facts.how)
         })),
         edits: None,
         told: None,
@@ -196,7 +196,7 @@ fn a_track_with_no_lyrics_found_is_heard_once_a_run() {
             let _ = busy_tx.lock().unwrap().send(on);
         })),
         done: Some(Arc::new(move |_: &Path, facts| {
-            let _ = done_tx.lock().unwrap().send(facts);
+            let _ = done_tx.lock().unwrap().send(facts.how);
         })),
         edits: None,
         told: None,
@@ -282,7 +282,7 @@ fn a_track_heard_and_kept_is_not_heard_again_after_a_restart() {
             timer: Some(Arc::new(CountingHearer(Arc::clone(hearings)))),
             working: None,
             done: Some(Arc::new(move |_: &Path, facts| {
-                let _ = done_tx.lock().unwrap().send(facts);
+                let _ = done_tx.lock().unwrap().send(facts.how);
             })),
             edits: None,
             told: None,
@@ -735,7 +735,7 @@ fn songs_got_ready_ahead_are_timed_into_the_cache_quietly() {
             let _ = busy_tx.lock().unwrap().send((path.to_owned(), on));
         })),
         done: Some(Arc::new(move |path: &Path, facts| {
-            let _ = done_tx.lock().unwrap().send((path.to_owned(), facts));
+            let _ = done_tx.lock().unwrap().send((path.to_owned(), facts.how));
         })),
         edits: None,
         told: None,

@@ -1,14 +1,15 @@
 //! The background work on the files: their details read for what is on
 //! screen, their beats analysed ahead of the queue, the whole queue got
-//! ready, and how far each file is.
+//! ready (its stories made once their lyrics are settled), and how far
+//! each file is.
 
 use std::path::{Path, PathBuf};
 
 use crate::browser::EntryKind;
 use crate::core::browse::{browser_rows, list_cursor, list_height, row_entry};
 use crate::core::{
-    karaoke, Effect, Facts, Gpu, Heard, Job, ListKind, Prepared, Rhythm, RhythmRecipe, Rhythmed,
-    Screen, Side, State, RHYTHM_AHEAD,
+    karaoke, prep, Effect, Facts, Gpu, Heard, Job, ListKind, QueueFacts, Rhythm, RhythmRecipe,
+    Rhythmed, Screen, Side, State, Took, RHYTHM_AHEAD,
 };
 
 /// The files on screen whose details are not known yet.
@@ -190,13 +191,11 @@ pub(crate) fn prepare(state: &mut State, fx: &mut Vec<Effect>) {
             jobs.retain(|j| *j != Job::Rhythm);
         }
         for facts in state.facts.values_mut() {
-            (facts.key, facts.stems, facts.tempo) = (None, None, None);
+            facts.forget(Job::Rhythm);
         }
     }
-    state.prepared = Prepared {
-        order: order.clone(),
-        recipe: recipe.clone(),
-    };
+    state.prepared.order.clone_from(&order);
+    state.prepared.recipe.clone_from(&recipe);
     fx.push(Effect::Prepare(order, recipe));
 }
 
@@ -218,27 +217,72 @@ pub(crate) fn heard(state: &mut State, path: PathBuf, part: &Heard) {
     match part {
         Heard::Key(found) => state.facts.entry(path).or_default().key = Some(found.is_some()),
         Heard::Stems => state.facts.entry(path).or_default().stems = Some(true),
-        Heard::Separating(_)
-        | Heard::Beats(_)
-        | Heard::Lyrics(_)
-        | Heard::Cover(_)
-        | Heard::Story(_) => {}
+        Heard::Separating(_) | Heard::Beats(_) | Heard::Lyrics(_) | Heard::Story(_) => {}
     }
 }
 
 /// [`crate::core::Action::Ready`]: `job` is done for `path`, with what it
-/// found.
+/// found, as its facts make of it ([`QueueFacts::take`]): still to come
+/// (its why kept), or stale (dropped); another result than before makes
+/// every job made from it ([`Job::needs`]) one still to come.
 pub(crate) fn ready(state: &mut State, path: PathBuf, job: Job, facts: Option<Facts>) {
-    match facts {
-        Some(Facts::Rhythm(f)) => state.facts.entry(path.clone()).or_default().analysed(&f),
-        Some(Facts::Lyrics(f)) => state.facts.entry(path.clone()).or_default().lyrics = Some(f),
-        Some(Facts::Cover(f)) => state.facts.entry(path.clone()).or_default().cover = Some(f),
-        None => {}
+    let known = state.facts.entry(path.clone()).or_default();
+    let took = facts.map_or(Took::Done, |f| known.take(f));
+    if took == Took::Stale {
+        return;
     }
     let jobs = state.ready.entry(path).or_default();
-    if !jobs.contains(&job) {
+    if took == Took::Changed {
+        for dependant in Job::ALL.into_iter().filter(|d| d.needs() == Some(job)) {
+            jobs.retain(|j| *j != dependant);
+            known.forget(dependant);
+        }
+    }
+    if took != Took::StillToCome && !jobs.contains(&job) {
         jobs.push(job);
     }
+}
+
+/// A song wanted for a story: its file, and which lyrics it is of (their
+/// fingerprint, [`crate::core::SettledLyrics::print`]), so lyrics settled
+/// otherwise (edited, timed anew) ask for it again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorySong {
+    /// Its file.
+    pub path: PathBuf,
+    /// Its lyrics' fingerprint.
+    pub lyrics: u64,
+}
+
+/// The songs whose stories are wanted, where stories are made
+/// ([`State::preparing`]): the songs got ready ([`crate::core::Prepared::order`]: from
+/// the one playing to the end, then from the start) whose lyrics are
+/// settled, in that order, each with its lyrics' fingerprint.
+fn stories_wanted(state: &State) -> impl Iterator<Item = (&PathBuf, u64)> {
+    let made = state.preparing.contains(&Job::Story);
+    (state.prepared.order.iter())
+        .filter(move |path| made && job_done(state, path, Job::Lyrics))
+        .map(|path| {
+            let lyrics = state.facts.get(path).map_or(0, QueueFacts::lyrics_print);
+            (path, lyrics)
+        })
+}
+
+/// Asks for the stories wanted ([`stories_wanted`]) when they changed:
+/// other songs, or other lyrics of one.
+pub(crate) fn want_stories(state: &mut State, fx: &mut Vec<Effect>) {
+    let asked = state.prepared.stories.iter().map(|s| (&s.path, s.lyrics));
+    if stories_wanted(state).eq(asked) {
+        return;
+    }
+    let wanted: Vec<StorySong> = stories_wanted(state)
+        .map(|(path, lyrics)| StorySong {
+            path: path.clone(),
+            lyrics,
+        })
+        .collect();
+    state.prepared.stories.clone_from(&wanted);
+    fx.push(Effect::WantStories(wanted));
 }
 
 /// How far a file in the queue is got ready.
@@ -249,8 +293,8 @@ pub enum Readiness {
     /// Not yet: some work for it is still to come.
     Waiting,
     /// Everything is in the caches: its analysis and waveforms (while the
-    /// tempo is on), its lyrics, looked up and timed, and its cover taken
-    /// apart (where they are got ready).
+    /// tempo is on), its lyrics, looked up and timed, and its story made
+    /// (where they are got ready).
     Done,
 }
 
@@ -275,17 +319,31 @@ pub fn still_to_do(state: &State, path: &Path) -> Vec<Job> {
         .collect()
 }
 
-/// What `job` gets ready, in the words the queue's icons are told by:
-/// its analysis and waveforms (and its stems, where they are separated),
-/// its lyrics, its cover taken apart.
-pub fn job_words(state: &State, job: Job) -> &'static str {
-    match job {
-        Job::Rhythm if state.prepared.recipe.as_ref().is_some_and(|r| r.stems) => {
-            "its analysis, waveforms and stems"
+/// What `job` gets ready for `path`, in the words the queue's icons are
+/// told by (its analysis and waveforms, and its stems where they are
+/// separated; its lyrics; its story), with where it is: the step a worker
+/// is at now ([`prep::doing`]), or for the story, where it stands
+/// ([`prep::StoryStand::status`]: "its story: drawing scene 4 of 23…").
+pub fn job_words(state: &State, path: &Path, job: Job) -> String {
+    let (what, status) = match job {
+        Job::Rhythm => {
+            let stems = state.prepared.recipe.as_ref().is_some_and(|r| r.stems);
+            let what = if stems {
+                "its analysis, waveforms and stems"
+            } else {
+                "its analysis and waveforms"
+            };
+            (what, prep::doing(state, path, job).map(prep::Step::caption))
         }
-        Job::Rhythm => "its analysis and waveforms",
-        Job::Lyrics => "its lyrics, found or heard, and timed",
-        Job::Cover => "its cover taken apart",
+        Job::Lyrics => (
+            "its lyrics, found or heard, and timed",
+            prep::doing(state, path, job).map(prep::Step::caption),
+        ),
+        Job::Story => ("its story", prep::StoryStand::of(state, path).status()),
+    };
+    match status {
+        Some(status) => format!("{what}: {status}"),
+        None => what.to_owned(),
     }
 }
 
@@ -315,6 +373,6 @@ pub fn job_done(state: &State, path: &Path, job: Job) -> bool {
         }
         // As the worker told it; else as what it delivered shows.
         Job::Lyrics => told || karaoke::lyrics_answered(state, path),
-        Job::Cover => told,
+        Job::Story => told,
     }
 }

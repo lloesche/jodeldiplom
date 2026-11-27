@@ -1,8 +1,8 @@
-//! Where a cover's faces are: our own inference of YuNet (Shiqi Yu and
+//! Where a picture's faces are: our own inference of YuNet (Shiqi Yu and
 //! others, OpenCV Zoo's face detector, MIT, see `models/LICENSE-yunet`),
 //! read from its export by `tools/convert_yunet.py` and built in.
 //!
-//! The cover, at 640 × 640 in blue, green, red order (values 0 to 255, as
+//! The picture, at 640 × 640 in blue, green, red order (values 0 to 255, as
 //! OpenCV gives it), goes through YuNet's backbone (pairs of a 1 × 1 and a
 //! depthwise 3 × 3 convolution with ReLU, 2 × 2 max pools) and its small
 //! FPN; heads at strides 8, 16 and 32 give each cell a class and an
@@ -16,12 +16,12 @@ use std::sync::OnceLock;
 use image::RgbImage;
 use jodel_rhythm::nn::weights::Weights;
 
-use super::nets::{Conv, Map};
+use super::layers::{Conv, Map};
 
 /// The weights, built in (`tools/convert_yunet.py`).
 static WEIGHTS: &[u8] = include_bytes!("../../../models/yunet.bin");
 
-/// The side the cover is looked at.
+/// The side the picture is looked at.
 const SIDE: usize = 640;
 /// The least score a face is kept with.
 pub const MIN_SCORE: f32 = 0.5;
@@ -38,7 +38,7 @@ const OVERLAP: f32 = 0.3;
 /// The heads' strides.
 const STRIDES: [usize; 3] = [8, 16, 32];
 
-/// A face on a cover: its box in the cover's units (0 to 1 across and
+/// A face on a picture: its box in the picture's units (0 to 1 across and
 /// down) and how sure the detector is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Face {
@@ -137,7 +137,7 @@ impl FaceNet {
             for name in ["c1", "c2"] {
                 for part in ["weight", "bias"] {
                     let n = format!("kps{level}.{name}.{part}");
-                    let s = super::nets::shape(w, &n)?;
+                    let s = super::layers::shape(w, &n)?;
                     w.take(&n, &s)?;
                 }
             }
@@ -275,7 +275,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn overlapping_faces_keep_the_surest_and_a_plain_cover_has_none() {
+    fn overlapping_faces_keep_the_surest_and_a_plain_picture_has_none() {
         let face = |x: f32, score: f32| Face {
             x,
             y: 0.2,

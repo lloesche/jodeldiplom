@@ -10,14 +10,13 @@ use std::time::{Duration, Instant};
 
 use jodel_lyrics::Lyrics;
 
-use super::edits::EditStore;
 use super::finder::Finder;
 use super::store::{now, Cache};
 use super::timing::{time_words, Job, Sinks};
 use super::web::Lrclib;
 use super::{Answer, Options, WordTimer, FAILED_PAUSE};
 use crate::core::prep::{Origin, Words};
-use crate::core::LyricsFacts;
+use crate::core::SettledLyrics;
 use crate::work::{Lane as Ask, Lanes, Queue};
 
 /// Where a track no source has lyrics for stands in this run's hearing.
@@ -145,13 +144,7 @@ impl LyricsWorker {
         let worker = Arc::clone(&queue);
         thread::spawn(move || {
             let queue = &*worker;
-            let mut finder = Finder {
-                cache: options.cache.map(Cache::new),
-                online: options.online,
-                lrclib,
-                timer: options.timer.clone(),
-                edits: options.edits.map(EditStore::new),
-            };
+            let mut finder = Finder::of(&options, lrclib);
             let ready = || options.timer.as_ref().is_some_and(|t| t.ready());
             // Tracks the web failed for, and when.
             let mut failed: HashMap<PathBuf, Instant> = HashMap::new();
@@ -245,7 +238,7 @@ impl LyricsWorker {
                                 wanted.hearing.hurry(&path);
                             }
                         }
-                        Route::Settle { .. } => (sinks.done)(&path, LyricsFacts::of(&answer)),
+                        Route::Settle { .. } => (sinks.done)(&path, SettledLyrics::of(&answer)),
                     }
                     route
                 });

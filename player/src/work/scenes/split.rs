@@ -6,16 +6,15 @@
 //! depth where it splits cleanly, a warp where it does not) and each
 //! layer's share of a pixel ([`alphas`], the nearest's edges the subject's
 //! matte's where it agrees), the plate behind the layers filled, its
-//! palette. The picture tools are the cover's too
-//! ([`crate::work::picture`]).
+//! palette, with the picture tools of [`crate::work::picture`].
 
 use std::time::Instant;
 
 use image::{GrayAlphaImage, LumaA, RgbImage};
 use jodel_gpu::vision::prep::Rgb;
 
+use super::faces::{Face, FaceNet, NEAR_AS_FACE};
 use super::{SceneNets, Took};
-use crate::work::cover::{Face, FaceNet, NEAR_AS_FACE};
 use crate::work::picture::mask::{
     blur, face_rect, fill_rect, grow, joined, median_in, shrink, Size,
 };

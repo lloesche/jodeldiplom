@@ -61,6 +61,11 @@ pub struct Embeds {
     pub values: Vec<f32>,
 }
 
+impl Embeds {
+    /// The bytes a prompt's embeddings take.
+    pub const BYTES: usize = TOKENS * WIDTH * 4;
+}
+
 /// One layer's weights.
 struct Layer {
     input_norm: usize,

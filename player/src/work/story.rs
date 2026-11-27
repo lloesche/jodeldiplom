@@ -8,34 +8,46 @@
 //! of nothing on the GPU but the room for its context, which it makes as
 //! it writes and leaves made.
 //!
-//! The model writes the plan greedily, so the same song always gives the
-//! same plan ([`plan`]), its prose told as it comes for the preparation
-//! view ([`crate::core::Heard::Story`]). An answer that does not hold
+//! The model thinks first (its thinking switched on as its chat template
+//! does it), then writes the plan greedily, so the same song always gives
+//! the same plan ([`plan`]); the thought is left out of the answer read
+//! (its tokens and time are noted in the trace), and the plan's prose is
+//! told as it comes for the preparation view
+//! ([`crate::core::Heard::Story`]), "thinking…" while the thought goes on.
+//! The thought takes what the context leaves after the prompt and the
+//! answer's room ([`MOST_ANSWER`]); one that never ends there counts as
+//! cut off. An answer that does not hold
 //! ([`crate::core::story::check::read`]) is asked again once, the error
 //! said with the prompt; a second that does not hold either leaves the
-//! song with no story (told, and noted in the trace): the karaoke shows
-//! its cover as it always has.
+//! song with no story (told, and noted in the trace): it can be sung with
+//! the game off, on the blurred cover, not in the game
+//! ([`crate::core::karaoke::NO_STORY`]).
 //!
 //! A plan is kept in `stories` in the data folder
 //! ([`crate::store::cache::STORY_PLAN`]), a small file a song, named by a
 //! hash of its path, size and modification time, with what made it
-//! ([`VERSION`]) and a hash of what it was asked, both compared when it
-//! is read: new lyrics, new tags or another prompt, and it is planned
-//! again. A song whose answers did not hold is kept as having no story
-//! (it would get none again); a model that failed, or an answer cut off
-//! at its length, is not (the song is not to blame).
+//! ([`VERSION`]) and a hash of what it was asked and the room it had
+//! ([`CONTEXT`], [`MOST_ANSWER`]), both compared when it is read: new
+//! lyrics, new tags, another prompt or more room, and it is planned
+//! again. A song whose answers did not hold, or whose answer was cut off
+//! at its length, is kept as having no story: the model writes greedily,
+//! so it would get the same again until the version, the prompt, the
+//! room or the lyrics change. A model that failed is not kept (the song
+//! is not to blame: it is tried again).
 //!
 //! The plan's pictures are drawn by the image model's two jobs
-//! ([`draw`]), and the songs Karaoke mode wants are planned and drawn on a
-//! thread of their own, the models taking turns ([`worker`]).
+//! ([`draw`]), and every song of the queue is planned, drawn and its
+//! scenes taken apart on a thread of its own as a step of its preparation,
+//! the models taking turns ([`worker`]).
 
 pub mod draw;
 pub mod worker;
 
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use jodel_gpu::llm::MOST_CONTEXT;
+use jodel_gpu::llm::{Take, MOST_CONTEXT};
 use jodel_gpu::{Footprint, Gemma};
 
 use crate::core::prep::Story;
@@ -48,11 +60,12 @@ use crate::store::cache::{self, STORY_PLAN};
 /// its weights) written greedily, and how its answer is read. A new
 /// model, other weights or another reading raise it, and every song is
 /// planned again; a new prompt does so by itself (its hash is kept).
-/// Version 1 refused shaders over the budget.
-pub const VERSION: u32 = 2;
+/// Version 1 refused shaders over the budget; version 2 wrote without
+/// thinking.
+pub const VERSION: u32 = 3;
 
-/// The positions a plan takes at most, its prompt and its answer: as
-/// many as the model has room for.
+/// The positions a plan takes at most, its prompt, the model's thought
+/// and its answer: as many as the model has room for.
 pub const CONTEXT: usize = MOST_CONTEXT;
 
 /// What the job needs on the GPU: the model in the file at `model`, with
@@ -61,9 +74,9 @@ pub fn memory(model: &Path) -> Result<Footprint, String> {
     Gemma::planned(model, CONTEXT)
 }
 
-/// A language model that writes after a prompt (one user turn): the
-/// text, greedily, at most `most` tokens, shown to `seen` piece by piece
-/// as it comes. A prompt too long for it is the song's failure
+/// A language model that thinks, then writes, after a prompt (one user
+/// turn): greedily, its answer at most `most` tokens, shown to `seen` as
+/// it comes ([`Writing`]). A prompt too long for it is the song's failure
 /// ([`Failure::Refused`]), anything else its own ([`Failure::Model`]).
 pub trait Writer {
     /// What it writes after `prompt`.
@@ -71,22 +84,41 @@ pub trait Writer {
         &self,
         prompt: &str,
         most: usize,
-        seen: &mut dyn FnMut(&str),
+        seen: &mut dyn FnMut(Writing),
     ) -> Result<Written, Failure>;
 }
 
-/// What a writer wrote: the text, whether it ended by itself (not at its
-/// limit), and the prompt's and the answer's tokens and times.
+/// What a writer shows as it writes: that it thinks (once, as its thought
+/// begins), then its answer, piece by piece.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Writing<'a> {
+    /// Its thought begun.
+    Thinking,
+    /// The answer's next piece.
+    Answer(&'a str),
+}
+
+/// What a writer wrote: the answer's text (no thought), whether it ended
+/// by itself (not at a limit, its thought ended), whether it ended still
+/// thinking, and the prompt's, the thought's and the answer's tokens and
+/// times.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Written {
-    /// The text.
+    /// The answer's text.
     pub text: String,
     /// It ended by itself.
     pub stopped: bool,
+    /// It ended within its thought (cut off there, or the thought never
+    /// closed).
+    pub thinking: bool,
     /// The prompt's tokens.
     pub prompt_tokens: usize,
     /// How long the prompt took, to the answer's first token.
     pub prompt_time: Duration,
+    /// The thought's tokens, between its specials.
+    pub thought_tokens: usize,
+    /// How long the thought took.
+    pub thought_time: Duration,
     /// The answer's tokens.
     pub answer_tokens: usize,
     /// How long the answer took.
@@ -98,29 +130,64 @@ impl Writer for Gemma {
         &self,
         prompt: &str,
         most: usize,
-        seen: &mut dyn FnMut(&str),
+        seen: &mut dyn FnMut(Writing),
     ) -> Result<Written, Failure> {
-        let ids = self.tokens().chat(prompt);
-        if ids.len() + most > CONTEXT {
+        let tokens = self.tokens();
+        let ids = tokens.chat_thinking(prompt);
+        // The answer's room, the thought's two specials and one token past
+        // to find either over ([`jodel_gpu::llm::Thinking::most`]); the
+        // thought has what the context leaves.
+        let answer = most + 3;
+        let Some(thought_room) = CONTEXT.checked_sub(ids.len() + answer) else {
             return Err(Failure::Refused(format!(
                 "its words are too long for the model ({} tokens asked, at most {})",
                 ids.len(),
-                CONTEXT - most
+                CONTEXT - answer
             )));
-        }
+        };
         self.reserve(CONTEXT).map_err(Failure::Model)?;
-        let out = self
-            .generate_text(&ids, most, |piece| seen(piece))
+        let mut thinking = tokens.thinking(thought_room, most);
+        let mut stream = tokens.stream();
+        let mut out = Written::default();
+        let (mut opened, mut closed) = (None, None);
+        let generated = self
+            .generate(&ids, thinking.most(), |got| {
+                let now = Instant::now();
+                for &t in got {
+                    match thinking.take(t) {
+                        Take::Over => return ControlFlow::Break(()),
+                        Take::Opened => {
+                            opened = Some(now);
+                            seen(Writing::Thinking);
+                        }
+                        Take::Thought => {}
+                        Take::Closed => closed = Some(now),
+                        Take::Answer => {
+                            let piece = stream.push(t);
+                            if !piece.is_empty() {
+                                seen(Writing::Answer(&piece));
+                                out.text.push_str(&piece);
+                            }
+                        }
+                    }
+                }
+                ControlFlow::Continue(())
+            })
             .map_err(Failure::Model)?;
-        let generated = out.generated;
-        Ok(Written {
-            text: out.text,
-            stopped: generated.stopped,
-            prompt_tokens: generated.prompt_tokens,
-            prompt_time: generated.prompt_time,
-            answer_tokens: generated.tokens.len(),
-            answer_time: generated.step_time,
-        })
+        let rest = stream.finish();
+        if !rest.is_empty() {
+            seen(Writing::Answer(&rest));
+            out.text.push_str(&rest);
+        }
+        let ended = Instant::now();
+        [out.thought_tokens, out.answer_tokens] = thinking.taken();
+        out.thinking = thinking.in_thought();
+        out.stopped = thinking.ended(generated.stopped);
+        out.prompt_tokens = generated.prompt_tokens;
+        out.prompt_time = generated.prompt_time;
+        out.thought_time = opened.map_or(Duration::ZERO, |o| closed.unwrap_or(ended) - o);
+        out.answer_time = generated.step_time.saturating_sub(out.thought_time);
+        Ok(out)
     }
 }
 
@@ -139,8 +206,9 @@ pub struct Try {
 pub enum Failure {
     /// Its answers did not hold (it would get none again): kept.
     Refused(String),
-    /// An answer was cut off at [`MOST_ANSWER`] (the length's fault, not
-    /// asked again): not kept.
+    /// An answer was cut off at [`MOST_ANSWER`] (not asked again: the
+    /// second prompt is longer and the answer's room the same; written
+    /// greedily, it would be cut off again): kept.
     CutOff(String),
     /// The model failed: not kept.
     Model(String),
@@ -152,6 +220,13 @@ impl Failure {
         match self {
             Failure::Refused(why) | Failure::CutOff(why) | Failure::Model(why) => why,
         }
+    }
+
+    /// Whether it is the song's, for good (the same answer would come
+    /// again for the same ask): kept as having no story. A model's failure
+    /// is not.
+    pub fn for_good(&self) -> bool {
+        matches!(self, Failure::Refused(_) | Failure::CutOff(_))
     }
 }
 
@@ -203,10 +278,11 @@ pub fn plan(writer: &dyn Writer, song: &Song, asked: &str, tell: &mut dyn FnMut(
 /// Why a song with no timed sung lines has no plan.
 pub const NO_LINES: &str = "the song has no timed sung lines";
 
-/// One try: `writer`'s answer to `prompt`, its prose told as it comes,
-/// read as `song`'s plan, and the try kept in `tries`; the plan or why it
-/// was refused (an answer that does not hold, or one cut off at
-/// [`MOST_ANSWER`]), or the writer's failure.
+/// One try: `writer`'s answer to `prompt`, "thinking…" told while it
+/// thinks and its prose as it comes, read as `song`'s plan, and the try
+/// kept in `tries`; the plan or why it was refused (an answer that does
+/// not hold, one cut off at [`MOST_ANSWER`], a thought that never ended),
+/// or the writer's failure.
 fn attempt(
     writer: &dyn Writer,
     song: &Song,
@@ -215,21 +291,31 @@ fn attempt(
     tries: &mut Vec<Try>,
 ) -> Result<Result<Plan, Failure>, Failure> {
     let mut prose = Prose::new();
-    let written = writer.write(prompt, MOST_ANSWER, &mut |piece| {
-        let words = prose.feed(piece);
-        if !words.is_empty() {
-            tell(Story::Words(words));
+    let written = writer.write(prompt, MOST_ANSWER, &mut |writing| match writing {
+        Writing::Thinking => tell(Story::Thinking),
+        Writing::Answer(piece) => {
+            let words = prose.feed(piece);
+            if !words.is_empty() {
+                tell(Story::Words(words));
+            }
         }
     })?;
-    let read = check::read(&written.text, song).map_err(|why| {
-        if written.stopped {
-            Failure::Refused(why)
-        } else {
-            Failure::CutOff(format!(
-                "{why} (the answer was cut off at {MOST_ANSWER} tokens)"
-            ))
-        }
-    });
+    let read = if written.thinking {
+        Err(Failure::CutOff(format!(
+            "the model's thought did not end (cut off after {} tokens)",
+            written.thought_tokens
+        )))
+    } else {
+        check::read(&written.text, song).map_err(|why| {
+            if written.stopped {
+                Failure::Refused(why)
+            } else {
+                Failure::CutOff(format!(
+                    "{why} (the answer was cut off at {MOST_ANSWER} tokens)"
+                ))
+            }
+        })
+    };
     tries.push(Try {
         refused: read.as_ref().err().map(|f| f.why().to_owned()),
         written,
@@ -294,17 +380,19 @@ impl StoryJob {
     }
 
     /// Plans the song with `writer` ([`plan`]), its news told to `tell`,
-    /// and keeps the plan, or that it has none where that is the song's
-    /// ([`Failure::Refused`]).
+    /// and keeps the plan, or that it has none where that is the song's for
+    /// good ([`Failure::for_good`]).
     pub fn run(&self, writer: &dyn Writer, tell: &mut dyn FnMut(Story)) -> Result<Plan, Failure> {
         let planned = plan(writer, &self.song, &self.asked, tell);
         let name = crate::work::song_name(&self.path);
         for t in &planned.tries {
             let w = &t.written;
             crate::trace::note(format_args!(
-                "story: {name}: {} prompt tokens in {:.1} s, {} written in {:.1} s{}{}",
+                "story: {name}: {} prompt tokens in {:.1} s, thought {} in {:.1} s, {} written in {:.1} s{}{}",
                 w.prompt_tokens,
                 w.prompt_time.as_secs_f64(),
+                w.thought_tokens,
+                w.thought_time.as_secs_f64(),
                 w.answer_tokens,
                 w.answer_time.as_secs_f64(),
                 if w.stopped { "" } else { " (cut off)" },
@@ -315,7 +403,7 @@ impl StoryJob {
         }
         let kept = match &planned.plan {
             Ok(plan) => Kept::Plan(Box::new(plan.clone())),
-            Err(Failure::Refused(why)) => Kept::NoStory(why.clone()),
+            Err(failure) if failure.for_good() => Kept::NoStory(failure.why().to_owned()),
             Err(failure) => {
                 crate::trace::note(format_args!("story: {name}: not kept: {}", failure.why()));
                 return planned.plan;
@@ -339,9 +427,11 @@ impl StoryJob {
         cache::file_for(dir, &self.path, "story")
     }
 
-    /// What the song is asked, as the file names it: the prompt's hash.
+    /// What the song is asked, as the file names it: the hash of the
+    /// prompt and the room it is answered in (more room, a song cut off
+    /// before is planned again).
     fn hash(&self) -> String {
-        cache::name(&self.asked)
+        cache::name(&format!("{CONTEXT} {MOST_ANSWER} {}", self.asked))
     }
 }
 

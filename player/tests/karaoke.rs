@@ -511,37 +511,6 @@ fn esc_during_a_count_in_calls_the_start_off() {
     assert_eq!(state.screen, Screen::Main);
 }
 
-/// In the mode, the songs whose lyrics it wants (the one held, then the
-/// next two) are wanted for a story once their words are timed, in that
-/// order, asked for once as that changes; on the tab and out of the mode,
-/// none.
-#[test]
-fn stories_are_wanted_in_the_mode_once_the_words_are_timed() {
-    let mut state = tab();
-    state.karaoke.model = karaoke::ModelState::Ready;
-    let asked = |fx: &[Effect]| {
-        fx.iter().find_map(|e| match e {
-            Effect::WantStories(songs) => Some(songs.iter().map(|s| s.path.clone()).collect()),
-            _ => None,
-        })
-    };
-    timed(&mut state, 1, &[10.0, 20.0]);
-    assert!(state.karaoke.stories_wanted.is_empty(), "on the tab");
-    let fx = op(&mut state, Op::KaraokeEnter);
-    let held = karaoke::song_index(&state).unwrap();
-    assert_eq!(held, 1);
-    assert_eq!(asked(&fx), Some(vec![state.queue.paths[1].clone()]));
-    assert_eq!(asked(&update(&mut state, Action::Tick(5))), None, "once");
-    // The next song's words timed: both, in the queue's order.
-    timed(&mut state, 2, &[5.0]);
-    let wanted: Vec<_> = (state.karaoke.stories_wanted.iter())
-        .map(|s| s.path.clone())
-        .collect();
-    assert_eq!(wanted, state.queue.paths[1..3]);
-    let fx = op(&mut state, Op::Back);
-    assert_eq!(asked(&fx), Some(Vec::new()));
-}
-
 #[test]
 fn next_in_the_mode_holds_the_next_song_for_start() {
     let mut state = tab();

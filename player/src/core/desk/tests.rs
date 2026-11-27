@@ -289,68 +289,6 @@ fn strips_are_found_by_id_and_a_stale_look_takes_no_peaks() {
     assert!(s.desk.limiting(10_016));
 }
 
-/// What a stem is heard at follows its fader and mute, its group's,
-/// and the solos as the mixer gates them.
-#[test]
-fn a_strip_is_heard_as_its_faders_mutes_and_solos_say() {
-    let mut desk = DeskState::default();
-    let set = |desk: &mut DeskState, k: StripKind, s: StripSetting| {
-        desk.strips[k.index()] = s;
-    };
-    assert_eq!(desk.heard_gain(StripKind::Vocals), 1.0);
-    set(
-        &mut desk,
-        StripKind::Player,
-        StripSetting {
-            db: -6.0,
-            ..Default::default()
-        },
-    );
-    let half = taper::gain(-6.0);
-    assert!((desk.heard_gain(StripKind::Drums) - half).abs() < 1e-9);
-    set(
-        &mut desk,
-        StripKind::Drums,
-        StripSetting {
-            mute: true,
-            ..Default::default()
-        },
-    );
-    assert_eq!(desk.heard_gain(StripKind::Drums), 0.0);
-    // The bass soloed: the others of the group are not heard.
-    set(
-        &mut desk,
-        StripKind::Bass,
-        StripSetting {
-            solo: true,
-            ..Default::default()
-        },
-    );
-    assert!(desk.heard_gain(StripKind::Bass) > 0.0);
-    assert_eq!(desk.heard_gain(StripKind::Vocals), 0.0);
-    // The group soloed: all of it is.
-    set(
-        &mut desk,
-        StripKind::Player,
-        StripSetting {
-            solo: true,
-            ..Default::default()
-        },
-    );
-    assert_eq!(desk.heard_gain(StripKind::Vocals), 1.0);
-    // The effects soloed alone: no stem.
-    let mut desk = DeskState::default();
-    set(
-        &mut desk,
-        StripKind::Effects,
-        StripSetting {
-            solo: true,
-            ..Default::default()
-        },
-    );
-    assert_eq!(desk.heard_gain(StripKind::Other), 0.0);
-}
-
 /// The tab stands still (the window may rest) until something on it
 /// moves: a meter lit, the LIMIT lamp, a head's automation playing, the
 /// microphone's strip listening; off the tab nothing of it moves.

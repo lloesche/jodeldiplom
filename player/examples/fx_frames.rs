@@ -5,7 +5,8 @@
 //! at once, as Diva's row has them) seen and timed over a frame of
 //! Karaoke mode as the window
 //! draws it: a made-up song sung on its notes up to ten seconds in, over a
-//! cover taken apart (its `.layers` file), in a window of 3024 × 1964 (a
+//! story of one scene (a picture: a story scene's from the player's data
+//! folder, `scenes/<song>/scene-*.png`, or any), in a window of 3024 × 1964 (a
 //! 16-inch MacBook Pro's screen) by default. Each effect is put into the
 //! frame as the stage puts it (by the effects' board, from a row listing
 //! it: its screen pass, its text in its treatment, its bursts, its words),
@@ -21,7 +22,7 @@
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example fx_frames --
-//!     COVER.layers [--size WxH] [--density D] [--png OUT_DIR]
+//!     PICTURE [--size WxH] [--density D] [--png OUT_DIR]
 //! ```
 
 use std::path::Path;
@@ -30,17 +31,16 @@ use std::sync::Arc;
 use jodeldiplom::core::shine::{Reference, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::backdrop::music::Hearing;
-use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
+use jodeldiplom::gui::backdrop::scenes::Showing;
+use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Shows, Visualiser};
 use jodeldiplom::gui::fx::{By, Effects, Fx, Layer, Music, Use};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::gpu::StageFrame;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
-use jodeldiplom::work::art::Art;
-use jodeldiplom::work::cover::{Apart, Layers};
 
 #[path = "../tests/common/sung.rs"]
 mod sung;
-use sung::{cover_of, levels, picture_at, song, with_effects, Fired, FPS, LENGTH};
+use sung::{one_scene, picture_at, song, with_effects, Fired, FPS, LENGTH};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -52,12 +52,12 @@ const TIMES: usize = 15;
 /// The steady beat's tempo, beats a minute.
 const TEMPO: f64 = 120.0;
 
-/// The frame at [`AT`]: the song sung on its notes up to it, frame by
-/// frame as the window draws it (into `gpu`); its backdrop, its stage and
-/// the stage that made it.
+/// The frame at [`AT`]: the song sung on its notes up to it over `story`,
+/// frame by frame as the window draws it (into `gpu`); its backdrop, its
+/// stage and the stage that made it.
 fn frame_at(
     gpu: &mut Offscreen,
-    (art, layers): (&Art, &Layers),
+    story: &Arc<Showing>,
     (w, h): (u32, u32),
 ) -> (BackdropFrame, StageFrame, Stage) {
     let (lyrics, melody) = song();
@@ -87,13 +87,12 @@ fn frame_at(
             heard += 1;
         }
         let cue = Cue {
-            art: Some(art.clone()),
-            layers: Some(layers.clone()),
             heard: Hearing {
-                levels: levels(),
                 glow: singing.glow(true),
                 ..Hearing::default()
             },
+            shows: Shows::Story(Some(Arc::clone(story))),
+            at: now,
             ..Cue::default()
         };
         let backdrop = visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
@@ -353,7 +352,7 @@ fn shots() -> Vec<Shot> {
 fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let cover = args.first().expect("COVER.layers");
+    let picture = args.first().expect("PICTURE");
     let after = |flag: &str| args.iter().skip_while(|a| *a != flag).nth(1);
     let (w, h) = after("--size").map_or((3024, 1964), |s| {
         let (w, h) = s.split_once('x').expect("WxH");
@@ -361,22 +360,11 @@ fn main() {
     });
     let png = after("--png").map(std::path::PathBuf::from);
     let density: f32 = after("--density").map_or(2.0, |d| d.parse().expect("D"));
-    let bytes = std::fs::read(cover).expect("the layers");
-    let layers = jodeldiplom::work::cover::from_bytes(&bytes)
-        .expect("layers")
-        .layers;
-    let art = Art {
-        id: 1,
-        image: Arc::new(cover_of(&layers)),
-    };
-    let key = Path::new(cover)
-        .file_stem()
-        .map_or(String::new(), |s| s.to_string_lossy().into_owned());
-    let layers: Layers = Arc::new(Apart::new(key, layers));
+    let story = one_scene(&image::open(picture).expect("the picture").to_rgb8());
     let mut gpu = Offscreen::timed().expect("a GPU that times");
     gpu.set_density(density);
     println!("{}, {w}x{h}, {density} pixels to a point", gpu.name);
-    let (backdrop, base, mut stage) = frame_at(&mut gpu, (&art, &layers), (w, h));
+    let (backdrop, base, mut stage) = frame_at(&mut gpu, &story, (w, h));
     let area = (0.0, 0.0, w as f32, h as f32);
     println!("GPU ms, median: the window pass's step the effect draws in (what it adds)");
     for shot in &shots() {

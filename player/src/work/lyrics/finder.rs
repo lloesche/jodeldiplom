@@ -14,7 +14,7 @@ use super::edits::EditStore;
 use super::store::{cache_key, Cache, Kept};
 use super::timing::Job;
 use super::web::Lrclib;
-use super::{relined, Answer, WordTimer, OUTDATED};
+use super::{relined, Answer, Options, WordTimer, OUTDATED};
 
 /// What a look-up uses.
 #[derive(Clone)]
@@ -55,6 +55,19 @@ fn local_text(track: &Track, cache: Option<(&Cache, &str)>) -> Kept {
 }
 
 impl Finder {
+    /// What the worker of `options` looks up with, asking LRCLIB through
+    /// `lrclib` (shared with whatever else asks it, so they keep to its
+    /// spacing together).
+    pub fn of(options: &Options, lrclib: Lrclib) -> Finder {
+        Finder {
+            cache: options.cache.clone().map(Cache::new),
+            online: options.online,
+            lrclib,
+            timer: options.timer.clone(),
+            edits: options.edits.clone().map(EditStore::new),
+        }
+    }
+
     /// The lyrics of `track`: its edits by hand ([`Finder::edited`]), else
     /// from the first source that has them ([`Finder::found`]), saying to
     /// `fetching` when a web request starts (`true`) and ends; `now` is the

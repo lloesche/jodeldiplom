@@ -51,6 +51,7 @@ mod tests;
 mod tokens;
 
 use std::collections::{HashMap, VecDeque};
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -59,7 +60,7 @@ use self::kernels::{source, Kernel};
 use self::model::Layout;
 pub use self::plan::MOST_CONTEXT;
 use self::plan::{Bind, ContextPlan, Plan, CHUNK};
-pub use self::tokens::{Stream, Tokenizer};
+pub use self::tokens::{Stream, Take, Thinking, Tokenizer};
 use crate::engine::{bytes, using, InFlight, Program, Read, Recorded};
 use crate::pace::{Paces, Phase};
 use crate::{Footprint, Precision, Resident, Turned};
@@ -278,14 +279,16 @@ impl Gemma {
     }
 
     /// The tokens it writes after `prompt` (its ids, the chat template's:
-    /// [`Tokenizer::chat`]), greedily, until a stop token ([`Tokenizer::stop`]) or
-    /// `most` of them; `seen` is shown them as they are read (eight at a
-    /// time). The context must have room for the prompt and `most`.
+    /// [`Tokenizer::chat`]), greedily, until a stop token ([`Tokenizer::stop`]),
+    /// `most` of them, or `seen` breaks; `seen` is shown them as they are
+    /// read (eight at a time), and those it was shown when it broke are
+    /// the last kept (not [`Generated::stopped`]: they did not end by
+    /// themselves). The context must have room for the prompt and `most`.
     pub fn generate(
         &self,
         prompt: &[u32],
         most: usize,
-        seen: impl FnMut(&[u32]),
+        seen: impl FnMut(&[u32]) -> ControlFlow<()>,
     ) -> Result<Generated, String> {
         self.using(|inner| inner.generate(prompt, (most, self.tokens.stop()), seen))
     }
@@ -311,6 +314,7 @@ impl Gemma {
             for &t in tokens {
                 take(stream.push(t));
             }
+            ControlFlow::Continue(())
         })?;
         take(stream.finish());
         Ok(Text { text, generated })
@@ -573,7 +577,7 @@ impl Inner {
         &mut self,
         prompt: &[u32],
         (most, stop): (usize, &[u32]),
-        mut seen: impl FnMut(&[u32]),
+        mut seen: impl FnMut(&[u32]) -> ControlFlow<()>,
     ) -> Result<Generated, String> {
         self.ready()?;
         let context = room(&self.context)?.plan.context;
@@ -593,11 +597,13 @@ impl Inner {
         };
         let mut first_read = None;
         let mut runs = 0;
+        // Ended: on a stop token, at `most`, or by `seen`.
+        let mut ended = false;
         loop {
             // The tokens the runs made so far write: the prompt's first,
             // then each step's.
             let made = 1 + (pos - n);
-            if !out.stopped && flying.len() < 2 && made < most {
+            if !ended && flying.len() < 2 && made < most {
                 runs += 1;
                 flying.push_back((self.steps(pos, runs % 2)?, Phase::Steps));
                 pos += STEPS_A_READ;
@@ -613,7 +619,7 @@ impl Inner {
                 .map(|v| v.to_bits())
                 .collect();
             first_read.get_or_insert_with(Instant::now);
-            if out.stopped || out.tokens.len() >= most {
+            if ended {
                 continue;
             }
             let before = out.tokens.len();
@@ -627,7 +633,8 @@ impl Inner {
                     break;
                 }
             }
-            seen(&out.tokens[before..]);
+            let broke = seen(&out.tokens[before..]).is_break();
+            ended = out.stopped || out.tokens.len() == most || broke;
         }
         let first = first_read.unwrap_or(started);
         out.prompt_time = first - started;

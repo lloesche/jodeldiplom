@@ -16,7 +16,7 @@ use super::web::Lrclib;
 use super::worker::{Hearing, Wanted};
 use super::{Answer, Done, Probe, Told, WordTimer, Working, TOO_LITTLE_HEARD};
 use crate::core::prep::{Origin, Preview, Words};
-use crate::core::LyricsFacts;
+use crate::core::{LyricsFacts, SettledLyrics};
 use crate::work::Queue;
 
 /// A song's words to time: a text found, or one edited by hand.
@@ -113,8 +113,12 @@ impl Sinks {
 
     /// `path` settled as `facts` (told so), and `answer` delivered when the
     /// track is still wanted.
-    fn settle(&self, queue: &Queue<Wanted>, path: PathBuf, answer: Answer, facts: LyricsFacts) {
-        (self.done)(&path, facts);
+    fn settle(&self, queue: &Queue<Wanted>, path: PathBuf, answer: Answer, how: LyricsFacts) {
+        let settled = SettledLyrics {
+            how,
+            ..SettledLyrics::of(&answer)
+        };
+        (self.done)(&path, settled);
         let still = !queue.stopped() && queue.lock().wanted.contains(&path);
         if still {
             self.deliver(path, answer);
@@ -184,7 +188,11 @@ pub(super) fn time_words(
             Ok(timed) => timed,
             // The text stays as it came; nothing to say, nothing more to do.
             Err(_) => {
-                (sinks.done)(&path, LyricsFacts::Untimed);
+                let settled = SettledLyrics {
+                    how: LyricsFacts::Untimed,
+                    print: SettledLyrics::print(job.text()),
+                };
+                (sinks.done)(&path, settled);
                 continue;
             }
         };

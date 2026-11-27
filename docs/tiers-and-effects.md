@@ -31,7 +31,7 @@ first, the top last. A tier is `Tier(u8)`, its place in the table
 | `glow` | how strongly the singing glows while at it, 0 to 1 (the top's 1) |
 | `bands`, `lane_light` | the rainbow's bands from the playhead, and how much it lights the lane |
 | `fx` | the effects it lists ([below](#the-effects-library-playersrcguifx)) |
-| `backdrop_glow`, `backdrop_rays`, `backdrop_beat` | how the backdrop lights its subject, its spotlight rays, and how hard it moves with the beat |
+| `backdrop_glow`, `backdrop_beat` | how much the singer's glow lifts the backdrop's light, and how hard its scene moves with the beat |
 | `mark` | the size of its phrases' marks on the song's progress |
 | `sticker` | its sticker on the diploma (glints, a halo) |
 | `prismatic` | it shines in the rainbow: its sticker's colour runs through it, its slammed word's face is it |
@@ -314,7 +314,7 @@ theme.
   count-in is pumpkin. The fire burns green (the screen's edges, the
   lane's flames, the line sung). The marquee's bulbs are jack-o'-lanterns,
   their candles lit as the chase runs; the coins are candy, the angels
-  ghosts. The backdrop is graded cold, its gold rays turned to moonlight,
+  ghosts. The backdrop is graded cold, moonlit,
   and the fog (`fx::Fog`) creeps in at the edges with eyes blinking in it.
   The pops bubble like a cauldron over a skeleton's xylophone, the clinks
   are sweets in a jar, the chimes toll as bells, the choir sings a

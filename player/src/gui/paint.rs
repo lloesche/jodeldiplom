@@ -10,7 +10,7 @@
 use std::time::{Duration, Instant};
 
 use super::backdrop::music::Song;
-use super::backdrop::Visualiser;
+use super::backdrop::{BackdropFrame, Visualiser};
 use super::lanes::{Lanes, Metrics};
 use super::stage::Tint;
 use super::stage_view::StageView;
@@ -331,10 +331,9 @@ impl Paint {
                 super::screens::karaoke::mode::bar_share(height)
             };
             let picture = crate::view::karaoke::picture(&app.state, bar, heard);
-            // The result screen tinted by the cover's palette where its
-            // layers are ready.
-            let layers = app.cover_layers();
-            let tint = Tint::of(layers.as_ref().map_or(&[][..], |l| &l.layers.palette[..]));
+            // The result screen tinted by the palette of the story's scene
+            // showing.
+            let tint = Tint::of(backdrop.as_ref().map_or(&[][..], BackdropFrame::palette));
             stage.frame(
                 (&app.state, song),
                 &picture,

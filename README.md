@@ -130,7 +130,7 @@ its `make.py` with FFmpeg) and two PCM FLAC files (`pcm`, made by its
 | `jodel-tensors` | [tensors](tensors) | the networks' numeric base: a `.safetensors` checkpoint's tensors as f32 or as stored (for the speech, depth, cut-out and picture models), a GGUF file's metadata and tensors (for the story's language model), half floats, a small JSON reader, and what the CPU kernels share (threads, the AVX2 builds) |
 | `jodel-dsp` | [dsp](dsp) | the signal tools the audio crates share: the FFTs, the windows, the mel scale, xorshift, FNV-1a, WAV files and the 24-bit full scale |
 | `jodel-testkit` | [testkit](testkit) | what the tests share (a dev-dependency only): one real-time test at a time, the PCM fixtures, a temporary folder that goes, an allocator that counts |
-| `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network, the speech recogniser, the covers' depth and cut-out models and the story's picture model (FLUX.2 klein) on the GPU, through `wgpu` |
+| `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network, the speech recogniser, the story scenes' depth and cut-out models and the story's picture model (FLUX.2 klein) on the GPU, through `wgpu` |
 | `jodel-lyrics` | [lyrics](lyrics) | lyrics for karaoke: LRC in and out, tokens for a speech model, forced alignment of words, the speech recogniser and its 4-bit packing |
 | `jodel-synth` | [synth](synth) | a small real-time synthesizer for the karaoke game's sound effects: engines of our own, a voice host, a bus of chorus, delay, hall and dynamics |
 | `jodeldiplom` | [player](player) | the player: the window on its UI core and widgets, the browser, queue, Transition tab, karaoke, setup |
@@ -144,10 +144,9 @@ Built-in models and fonts keep their own licences, kept beside them:
 - the beat, stem, key and pitch networks' weights in
   [rhythm/models](rhythm/models): `LICENSE-beat-this`,
   `LICENSE-mini-bs-roformer`, `LICENSE-musical-key-cnn`, `LICENSE-fcpe`;
-- the covers' text and face detectors' weights in
-  [player/models](player/models) (PP-OCRv5 mobile det, Apache 2.0, and
-  YuNet, MIT, folded by `player/tools/convert_text_det.py` and
-  `player/tools/convert_yunet.py`): `LICENSE-pp-ocr`, `LICENSE-yunet`;
+- the story scenes' face detector's weights in
+  [player/models](player/models) (YuNet, MIT, folded by
+  `player/tools/convert_yunet.py`): `LICENSE-yunet`;
 - the player's fonts in [player/fonts](player/fonts):
   `LICENSE-SarasaGothic.txt`, `LICENSE-NotoEmoji.txt`,
   `LICENSE-AtkinsonHyperlegibleNext.txt`, `LICENSE-Nunito.txt`,
@@ -164,8 +163,8 @@ them from Hugging Face and checks their SHA-256s: `facebook/wav2vec2-base-960h`
 (Apache 2.0) for the word timing, and `Qwen/Qwen3-ASR-0.6B` (at a fixed
 revision) for the speech recogniser, which setup packs at 4 bits into
 `qwen3-asr-0.6b-q4.jdlasr` in the data folder. Nor are the two models that
-take covers apart for karaoke's background, downloaded the same way at fixed
-revisions: `depth-anything/DA3-SMALL` (Depth Anything 3 Small, Apache 2.0)
+take a karaoke story's scenes apart for the game's background, downloaded
+the same way at fixed revisions: `depth-anything/DA3-SMALL` (Depth Anything 3 Small, Apache 2.0)
 as `da3-small.safetensors` and `PramaLLC/BEN2` (BEN2 Base, MIT) as
 `ben2-base.safetensors`. Nor are karaoke story mode's models, downloaded the
 same way at fixed revisions, as published, into `story/` in the data
@@ -177,6 +176,6 @@ the models that draw its pictures (`jodel_gpu::image`), FLUX.2 [klein] 4B
 `black-forest-labs/FLUX.2-klein-4b-fp8` and the VAE and settings from
 `black-forest-labs/FLUX.2-klein-4B`; and the image model's text encoder
 Qwen3-4B (Apache 2.0) at 8 bits with its tokenizer, `Qwen/Qwen3-4B-FP8`.
-The covers' and the story's models are got only where there is a usable
+The story's models and its scenes' are got only where there is a usable
 GPU; the story's folders and files are listed in
 [player/src/work/story_models.rs](player/src/work/story_models.rs).

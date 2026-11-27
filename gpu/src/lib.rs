@@ -7,7 +7,7 @@
 //! - the speech model of [`jodel_lyrics::speech`] ([`GpuSpeech`],
 //!   `speech.rs`) and the speech recogniser of [`jodel_lyrics::asr`]
 //!   ([`GpuAsr`], `asr/`);
-//! - the cover's depth and cut-out ([`GpuDepth`], [`GpuMatte`], `vision/`);
+//! - the story scenes' depth and cut-out ([`GpuDepth`], [`GpuMatte`], `vision/`);
 //! - the karaoke story mode's language model, Gemma 4 E4B's text decoder
 //!   ([`Gemma`], `llm/`);
 //! - the karaoke story's pictures, FLUX.2 [klein] 4B ([`image`]: its text

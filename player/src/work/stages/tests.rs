@@ -103,14 +103,14 @@ fn on_a_small_card_a_model_drains_its_queue_before_the_next_takes_its_room() {
 #[test]
 fn a_song_queued_meanwhile_waits_until_the_models_queue_is_empty() {
     let (mut plan, t) = (plan(), Instant::now());
-    let first = plan.queue(&[Stage::Cover], false);
-    let second = plan.queue(&[Stage::Cover], false);
+    let first = plan.queue(&[Stage::Scenes], false);
+    let second = plan.queue(&[Stage::Scenes], false);
     assert_eq!(step(&mut plan, EIGHT, t), did(&[first], &[]));
     let late = plan.queue(&[Stage::Hearing], false);
     plan.done(first, t);
     assert_eq!(step(&mut plan, EIGHT, t), did(&[second], &[]));
     plan.done(second, t);
-    assert_eq!(step(&mut plan, EIGHT, t), did(&[late], &[Stage::Cover]));
+    assert_eq!(step(&mut plan, EIGHT, t), did(&[late], &[Stage::Scenes]));
 }
 
 /// A stage asked for again and again holds no other off: once a job waits
@@ -120,13 +120,13 @@ fn a_stage_asked_again_and_again_holds_no_other_off() {
     let (mut plan, t) = (plan(), Instant::now());
     let running = plan.queue(&[Stage::Stems], false);
     assert_eq!(step(&mut plan, EIGHT, t), did(&[running], &[]));
-    let other = plan.queue(&[Stage::Cover], false);
+    let other = plan.queue(&[Stage::Scenes], false);
     let again = plan.queue(&[Stage::Stems], false);
     assert_eq!(step(&mut plan, EIGHT, t), did(&[], &[]));
     plan.done(running, t);
     assert_eq!(step(&mut plan, EIGHT, t), did(&[other], &[Stage::Stems]));
     plan.done(other, t);
-    assert_eq!(step(&mut plan, EIGHT, t), did(&[again], &[Stage::Cover]));
+    assert_eq!(step(&mut plan, EIGHT, t), did(&[again], &[Stage::Scenes]));
 }
 
 /// While a song is sung, a job held back (its model not loaded) holds no
@@ -158,14 +158,14 @@ fn a_model_whose_footprint_is_not_known_runs_alone() {
     for stage in Stage::ALL {
         plan.declare(stage, model(1));
     }
-    plan.declare(Stage::Cover, jodel_gpu::UNKNOWN);
+    plan.declare(Stage::Scenes, jodel_gpu::UNKNOWN);
     let (stems, beats) = (
         plan.queue(&[Stage::Stems], false),
         plan.queue(&[Stage::Beats], false),
     );
     assert_eq!(step(&mut plan, SIXTEEN, t), did(&[stems, beats], &[]));
     plan.done(stems, t);
-    let cover = plan.queue(&[Stage::Cover], false);
+    let scenes = plan.queue(&[Stage::Scenes], false);
     assert_eq!(
         step(&mut plan, SIXTEEN, t),
         did(&[], &[]),
@@ -174,14 +174,14 @@ fn a_model_whose_footprint_is_not_known_runs_alone() {
     plan.done(beats, t);
     assert_eq!(
         step(&mut plan, SIXTEEN, t),
-        did(&[cover], &[Stage::Stems, Stage::Beats])
+        did(&[scenes], &[Stage::Stems, Stage::Beats])
     );
     let hearing = plan.queue(&[Stage::Hearing], false);
     assert_eq!(step(&mut plan, SIXTEEN, t), did(&[], &[]), "none beside it");
-    plan.done(cover, t);
+    plan.done(scenes, t);
     assert_eq!(
         step(&mut plan, SIXTEEN, t),
-        did(&[hearing], &[Stage::Cover])
+        did(&[hearing], &[Stage::Scenes])
     );
 }
 
@@ -220,14 +220,14 @@ fn the_models_not_in_use_make_room_the_oldest_first() {
         t += Duration::from_secs(1);
     }
     // 9 GB loaded of the 13.5 GB room: the timing's 3.75 GB fits, the
-    // cover's then needs the stems' room (used longest ago).
+    // scenes' then needs the stems' room (used longest ago).
     let timing = plan.queue(&[Stage::Timing], false);
     assert_eq!(step(&mut plan, SIXTEEN, t), did(&[timing], &[]));
-    let cover = plan.queue(&[Stage::Cover], false);
-    assert_eq!(step(&mut plan, SIXTEEN, t), did(&[cover], &[Stage::Stems]));
+    let scenes = plan.queue(&[Stage::Scenes], false);
+    assert_eq!(step(&mut plan, SIXTEEN, t), did(&[scenes], &[Stage::Stems]));
     // On a card too small for any two, a model runs alone.
     plan.done(timing, t);
-    plan.done(cover, t);
+    plan.done(scenes, t);
     let small = 4 * GB;
     let stems = plan.queue(&[Stage::Stems], false);
     let made = step(&mut plan, small, t);
@@ -275,11 +275,11 @@ fn singing_takes_the_gpu_first() {
     plan.done(first, t);
     plan.sing(true);
     let stems = plan.queue(&[Stage::Stems], false);
-    let cover = plan.queue(&[Stage::Cover], false);
+    let scenes = plan.queue(&[Stage::Scenes], false);
     let shine = plan.queue(&[Stage::Hearing], true);
     assert_eq!(step(&mut plan, SIXTEEN, t), did(&[stems, shine], &[]));
     plan.sing(false);
-    assert_eq!(step(&mut plan, SIXTEEN, t), did(&[cover], &[]));
+    assert_eq!(step(&mut plan, SIXTEEN, t), did(&[scenes], &[]));
 }
 
 /// A fake model: its releases told on a channel with the thread that
@@ -419,9 +419,9 @@ fn the_planner_lets_models_go_and_then_starts_the_jobs() {
 /// one for the song does not.
 #[test]
 fn while_a_song_is_sung_a_model_not_loaded_waits_for_its_end() {
-    let (stages, _, _) = stages(&[Stage::Cover, Stage::Hearing]);
+    let (stages, _, _) = stages(&[Stage::Scenes, Stage::Hearing]);
     let singing = stages.sing();
-    let (started, end, cover) = job(&stages, Stage::Cover);
+    let (started, end, scenes) = job(&stages, Stage::Scenes);
     let shine = {
         let stages = Arc::clone(&stages);
         thread::spawn(move || {
@@ -429,7 +429,7 @@ fn while_a_song_is_sung_a_model_not_loaded_waits_for_its_end() {
             stages.run(&[Stage::Hearing], "the song's", || 7)
         })
     };
-    until_waiting(&stages, Stage::Cover, 1);
+    until_waiting(&stages, Stage::Scenes, 1);
     until_waiting(&stages, Stage::Hearing, 1);
     stages.plan_once();
     assert_eq!(shine.join().unwrap(), 7, "the song's own job");
@@ -439,7 +439,7 @@ fn while_a_song_is_sung_a_model_not_loaded_waits_for_its_end() {
     stages.plan_once();
     started.recv_timeout(GUARD).unwrap();
     end.send(()).unwrap();
-    cover.join().unwrap();
+    scenes.join().unwrap();
 }
 
 /// A turn inside a turn panics rather than wait for ever; the outer turn
@@ -514,23 +514,24 @@ fn a_job_that_panicked_lets_the_next_go() {
 /// The models that run today register themselves where they are made: the
 /// background separator and the beat network with the analyses' worker,
 /// the speech recogniser and the speech model with the word timer, the
-/// cover's two with its splitter, the story's three with its models;
-/// their footprints said before loading.
+/// story's four (its three, and the scenes' depth and cut-out) with its
+/// models; their footprints said before loading.
 #[test]
 fn the_models_register_themselves_where_they_are_made() {
     crate::work::rhythm::register_networks();
     let models = crate::work::lyrics::models::Models::new("speech".into(), "asr".into());
     let _timer = crate::work::lyrics::timer::SpeechTimer::new(models, None);
-    let _covers = crate::work::cover::GpuSplitter::new(crate::work::cover::CoverModels {
-        depth: "depth".into(),
-        matte: "matte".into(),
-    });
-    let _story = crate::work::story::worker::GpuModels::new(&StoryModels {
+    let story = StoryModels {
         language: "gemma.gguf".into(),
         transformer: "transformer".into(),
         pipeline: "pipeline".into(),
         encoder: "encoder".into(),
-    });
+    };
+    let scenes = crate::work::scenes::SceneModels {
+        depth: "depth".into(),
+        matte: "matte".into(),
+    };
+    let _story = crate::work::story::worker::GpuModels::new(&story, scenes);
     let inner = Stages::global().lock();
     for stage in Stage::ALL {
         assert!(inner.models[stage as usize].is_some(), "{stage:?}");
@@ -546,7 +547,7 @@ fn the_process_planner_plans_on_its_own() {
     let counted = Arc::new(AtomicUsize::new(0));
     let ran = Arc::clone(&counted);
     thread::spawn(move || {
-        run(&[Stage::Cover], "a cover", || {
+        run(&[Stage::Scenes], "a song's scenes", || {
             ran.fetch_add(1, Ordering::SeqCst)
         });
     })

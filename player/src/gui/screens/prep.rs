@@ -1,16 +1,17 @@
 //! The right column's preparation view ([`crate::view::prep::PrepView`])
 //! in iced's widgets: in the cover's place a card with the latest result
 //! big (the beat's waveform with its ticks and the play head's pulse, the
-//! key on a keyboard, the stems' lanes filling, the words lit in time, the
-//! cover's subject lifting off it), the headline and the song under it,
-//! then the steps one under the other (each its icon, what it does or
-//! found, and a spinner while it runs or a tick once found). A story of
-//! the song, once one is told, shows in the card: its words typed out, its
-//! scenes fading in. The wheel over it scrolls the list.
+//! key on a keyboard, the stems' lanes filling, the words lit in time), or
+//! the song's cover; the headline and the song under it, then the steps
+//! one under the other (each its icon, what it does or found, and a
+//! spinner while it runs or a tick once found). While the song's story is
+//! made, it is built on the cover in the card: its words typed out over
+//! the cover darkened, its scenes taking the cover's place tile by tile.
+//! The wheel over it scrolls the list.
 
 use iced::widget::text::Wrapping;
-use iced::widget::{column, container, rich_text, row, span, text, Column, Row, Space};
-use iced::{Alignment, Background, Border, Element, Fill, Length, Rectangle, Size, Widget as _};
+use iced::widget::{column, container, rich_text, row, span, stack, text, Column, Space};
+use iced::{Alignment, Background, Border, Element, Fill, Rectangle, Size, Widget as _};
 
 use crate::core::State;
 use crate::gui::look::{self, radius, size, space};
@@ -29,8 +30,9 @@ const PULSE: f32 = 22.0;
 const LANE: f32 = 22.0;
 /// The column of a stem's name before its lane.
 const LANE_NAME: f32 = 52.0;
-/// A story scene's picture.
-const SCENE: f32 = 64.0;
+/// The most of a story's words shown over its cover, in characters: its
+/// last ones.
+const STORY_TAIL: usize = 360;
 /// The room the card leaves under it: the headline, the song and every
 /// step.
 const BELOW: f32 = 200.0;
@@ -124,17 +126,9 @@ fn hero<'a>(view: &PrepView, covers: &'a Covers, side: f32) -> Element<'a, Messa
     let padded =
         |content: Element<'a, Message>| container(content).padding(space::L).center(Fill).boxed();
     match &view.hero {
-        Hero::Waiting => padded(
-            column![
-                widgets::icon(Icon::Busy).size(28.0).color(look::TEXT_FAINT),
-                text("Its turn comes")
-                    .size(size::LABEL)
-                    .font(look::font::label())
-                    .color(look::TEXT_FAINT),
-            ]
-            .spacing(space::S)
-            .align_x(Alignment::Center)
-            .boxed(),
+        Hero::Cover => covers.card().map_or_else(
+            || super::karaoke::tab::placeholder(side, side),
+            |cover| container(cover).center(Fill).boxed(),
         ),
         Hero::Beat(b) => {
             let (lit, bar) = b.pulse;
@@ -245,11 +239,7 @@ fn hero<'a>(view: &PrepView, covers: &'a Covers, side: f32) -> Element<'a, Messa
             );
             padded(lines.boxed())
         }
-        Hero::Story(story) => padded(story_slot(story, covers)),
-        Hero::Cover(c) => match covers.cut(c.sway, c.lift) {
-            Some(cut) => container(cut).center(Fill).boxed(),
-            None => padded(Space::new().boxed()),
-        },
+        Hero::Story(story) => story_slot(story, covers, side),
     }
 }
 
@@ -261,7 +251,7 @@ fn stage<'a>(state: &State, s: &Stage) -> Element<'a, Message> {
         Kind::Key => Icon::Key,
         Kind::Stems => Icon::Stems,
         Kind::Words => Icon::Lyrics,
-        Kind::Cover => Icon::Cover,
+        Kind::Story => Icon::Story,
     };
     let (tone, words) = match s.stand {
         Stand::Found => (mix(look::TEXT_FAINT, look::ACCENT, s.reveal), look::TEXT),
@@ -296,23 +286,63 @@ fn stage<'a>(state: &State, s: &Stage) -> Element<'a, Message> {
     .boxed()
 }
 
-/// The story's slot: its words as written so far (a caret after them
-/// while they are), its scenes fading in as they are drawn under them.
-fn story_slot<'a>(story: &StoryView, covers: &'a Covers) -> Element<'a, Message> {
+/// The story built on the cover, `side` points across at most: the cover
+/// darkened, its scenes over their tiles as they are drawn
+/// ([`Covers::building`]; the card's raised ground without a cover), and
+/// over it the last of its words as written so far (a caret after them
+/// while they are), until its first scene is drawn.
+fn story_slot<'a>(story: &StoryView, covers: &'a Covers, side: f32) -> Element<'a, Message> {
+    let built = covers
+        .building(story)
+        .unwrap_or_else(|| Space::new().width(side).height(side).boxed());
+    if !story.scenes.is_empty() {
+        return container(built).center(Fill).boxed();
+    }
     let caret = if story.caret { "▏" } else { "" };
-    let words = text(format!("{}{caret}", story.text))
+    let words = text(format!("{}{caret}", tail(&story.text, STORY_TAIL)))
         .size(size::BODY)
         .font(look::font::body())
-        .color(look::TEXT_DIM)
+        .color(look::TEXT)
         .width(Fill);
-    let scenes = (0..story.scenes.len())
-        .filter_map(|k| covers.scene(k, story.scenes[k].1, SCENE))
-        .fold(
-            Row::<Element<'a, Message>>::new().spacing(space::S),
-            |r, scene| r.push(scene),
-        );
-    column![words, scenes]
-        .spacing(space::S)
-        .width(Length::Fill)
-        .boxed()
+    let over = container(words)
+        .padding(space::L)
+        .width(Fill)
+        .height(Fill)
+        .align_y(Alignment::End)
+        .clip(true);
+    container(stack![built, over]).center(Fill).boxed()
+}
+
+/// The last `most` characters of `text`, from a word's start where there
+/// is one in them.
+fn tail(text: &str, most: usize) -> &str {
+    let from = most
+        .checked_sub(1)
+        .and_then(|k| text.char_indices().rev().nth(k));
+    let Some((at, _)) = from else {
+        return if most == 0 { "" } else { text };
+    };
+    let rest = &text[at..];
+    if at == 0 || text[..at].ends_with(char::is_whitespace) {
+        return rest;
+    }
+    rest.find(char::is_whitespace)
+        .map_or(rest, |space| rest[space..].trim_start())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tail;
+
+    /// The story's last words shown over the cover: a text shorter than
+    /// the most whole; a longer one from a word's start within its last
+    /// characters, never inside a character of several bytes.
+    #[test]
+    fn the_story_s_last_words_start_on_a_word() {
+        assert_eq!(tail("A harbour at dusk", 40), "A harbour at dusk");
+        assert_eq!(tail("A harbour at dusk", 9), "at dusk");
+        assert_eq!(tail("Ünter dem Möwenflug über dem Kai", 12), "über dem Kai");
+        assert_eq!(tail("Möwenflug", 3), "lug", "no space: its last ones");
+        assert_eq!(tail("", 5), "");
+    }
 }

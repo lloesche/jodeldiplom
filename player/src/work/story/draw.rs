@@ -4,17 +4,18 @@
 //! character, and each scene with the portraits of those in it as its
 //! reference pictures). Out: the pictures, and last their description with
 //! the song's look ([`Scenes`]), in the song's folder in the data folder's
-//! `scenes/` ([`SceneStore::folder`]), where the covers' worker takes them
-//! up. The models they need, opened by whoever runs them (the image
-//! model's needs said before: [`memory`]):
+//! `scenes/` ([`SceneStore::folder`]), where the story's last step takes
+//! them apart. The models they need, opened by whoever runs them (the
+//! image model's needs said before: [`memory`]):
 //!
 //! - [`Drawing::encode`]: the text encoder (Qwen3-4B, as an [`Encoder`])
 //!   for the prompt of every picture still to draw;
 //! - [`Drawing::draw`]: the transformer and the decoder (FLUX.2 [klein]
 //!   4B, as a [`Painter`]) for every picture still to draw, the portraits
-//!   first, each kept as it lands and its prompt let go, each scene told to
-//!   the preparation view ([`Story::Scene`]), given up as soon as the song
-//!   is no longer wanted; then [`Drawing::keep`] describes them.
+//!   first, each kept as it lands and its prompt let go, each picture begun
+//!   ([`Story::Drawing`]) and each scene told to the preparation view
+//!   ([`Story::Scene`], a square of [`SCENE_SIDE`]), given up as soon as the
+//!   song is no longer wanted; then [`Drawing::keep`] describes them.
 //!
 //! The same plan always draws the same pictures: each picture's seed is
 //! the song's and the picture's ([`seed`]). A picture is kept in a file
@@ -23,10 +24,10 @@
 //! nothing again, and a plan made again draws again what it changed; the
 //! description is named by what it holds ([`Drawing::drawn`]).
 //!
-//! A prompt's embeddings take about 16 MB (512 tokens of 7680 floats):
-//! between its two turns a song holds that much for each picture still to
-//! draw (some 400 MB for a song of 25 pictures), each let go once its
-//! picture is drawn.
+//! A prompt's embeddings take about 16 MB (512 tokens of 7680 floats,
+//! [`PROMPT_BYTES`]): between its two turns a song holds that much for each
+//! picture still to draw (some 400 MB for a song of 25 pictures), each let
+//! go once its picture is drawn.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -37,7 +38,7 @@ use image::{imageops, DynamicImage, ImageFormat, RgbImage};
 use jodel_gpu::image::{Drawer, Embeds, Picture, Reference, TextEncoder};
 use jodel_gpu::Footprint;
 
-use crate::core::prep::Story;
+use crate::core::prep::{Picture as Begun, Story, SCENE_SIDE};
 use crate::core::story::pictures::{self, Ask, Pictures, MOST_REFERENCES};
 use crate::core::story::Plan;
 use crate::store::{cache, mover};
@@ -50,6 +51,10 @@ use crate::work::song_name;
 /// Qwen's) and how they are asked ([`pictures`]). Another raises it, and
 /// every picture is drawn again.
 pub const VERSION: u32 = 1;
+
+/// The bytes a picture's prompt takes encoded (the text encoder's: 512
+/// tokens of 7680 floats).
+pub const PROMPT_BYTES: usize = jodel_gpu::image::Embeds::BYTES;
 
 /// A reference picture's side: a portrait's head ([`head`]) made this
 /// size, as the scenes take a character in (the bake-off's).
@@ -144,7 +149,7 @@ impl Kind {
 type Which = (Kind, usize);
 
 /// The seed of the `index`th picture of `kind` of the song of `song_key`
-/// ([`crate::work::cover::song_key`]).
+/// ([`crate::work::scenes::song_key`]).
 pub fn seed(song_key: &str, kind: Kind, index: usize) -> u64 {
     jodel_dsp::fnv1a(format!("{song_key} {} {index}", kind.name()).as_bytes())
 }
@@ -186,7 +191,7 @@ impl Drawing {
     /// (looks at the song's file for its key: not for the window's
     /// thread).
     pub fn new(path: PathBuf, plan: Plan, store: &SceneStore) -> Drawing {
-        let key = crate::work::cover::song_key(&path);
+        let key = crate::work::scenes::song_key(&path);
         let folder = store.folder(&key);
         let Pictures { portraits, scenes } = pictures::pictures(&plan);
         let planned = |kind: Kind, asks: Vec<Ask>, portraits: &[Planned]| -> Vec<Planned> {
@@ -278,15 +283,16 @@ impl Drawing {
             .collect()
     }
 
-    /// Whether a picture of it is still to draw (not in its folder).
-    pub fn to_draw(&self) -> bool {
-        !self.missing().is_empty()
+    /// How many of its pictures are still to draw (not in its folder): the
+    /// prompts to encode, [`PROMPT_BYTES`] each.
+    pub fn to_encode(&self) -> usize {
+        self.missing().len()
     }
 
     /// Whether it is drawn: every picture in its folder, and described
     /// there by what made the description as this plan has it.
     pub fn drawn(&self) -> bool {
-        !self.to_draw() && Scenes::read(&self.folder).is_some_and(|s| s.made == self.made())
+        self.to_encode() == 0 && Scenes::read(&self.folder).is_some_and(|s| s.made == self.made())
     }
 
     /// The text encoder's unit of work: the prompt of each picture still
@@ -302,9 +308,9 @@ impl Drawing {
     /// The image model's unit of work: each picture of `encoded` painted
     /// by `painter` with its seed and its reference pictures (the
     /// portraits' heads, painted now or read from the folder), kept in the
-    /// folder as it lands and its prompt let go, each scene told to `tell`;
-    /// given up ([`Drawn::GivenUp`]) before a picture once `still` says the
-    /// song is no longer wanted.
+    /// folder as it lands and its prompt let go, each picture begun and
+    /// each scene told to `tell`; given up ([`Drawn::GivenUp`]) before a
+    /// picture once `still` says the song is no longer wanted.
     pub fn draw(
         &self,
         encoded: &mut Encoded,
@@ -319,6 +325,11 @@ impl Drawing {
             }
             let started = Instant::now();
             let p = self.planned(which);
+            let (kind, index) = which;
+            tell(Story::Drawing(match kind {
+                Kind::Portrait => Begun::Portrait(index + 1, self.portraits.len()),
+                Kind::Scene => Begun::Scene(index + 1, self.scenes.len()),
+            }));
             let mut refs = Vec::new();
             for &k in &p.ask.refs {
                 let head = match &heads[k] {
@@ -338,7 +349,6 @@ impl Drawing {
             let file = mover::current(&p.file);
             durable::write_atomic(&file, &png(|c| image.write_to(c, ImageFormat::Png)))
                 .map_err(|e| format!("{}: {e}", file.display()))?;
-            let (kind, index) = which;
             crate::trace::note(format_args!(
                 "story: {}: {} {index} drawn in {:.1} s ({:.1} s painted)",
                 song_name(&self.path),
@@ -351,7 +361,7 @@ impl Drawing {
                 Kind::Scene => tell(Story::Scene {
                     index,
                     of: self.scenes.len(),
-                    picture: Arc::new(DynamicImage::ImageRgb8(image).to_rgba8()),
+                    picture: Arc::new(told(&image)),
                 }),
             }
         }
@@ -374,6 +384,21 @@ impl Drawing {
         let _ = durable::sync_dir(&folder);
         Ok(())
     }
+}
+
+/// A scene's `picture` as it is told: the square from its middle, made
+/// [`SCENE_SIDE`] across.
+fn told(picture: &RgbImage) -> image::RgbaImage {
+    let (w, h) = picture.dimensions();
+    let side = w.min(h);
+    let square = imageops::crop_imm(picture, (w - side) / 2, (h - side) / 2, side, side);
+    let small = imageops::resize(
+        &square.to_image(),
+        SCENE_SIDE,
+        SCENE_SIDE,
+        imageops::FilterType::Triangle,
+    );
+    DynamicImage::ImageRgb8(small).to_rgba8()
 }
 
 /// A file's name, as the pictures are named and listed by.

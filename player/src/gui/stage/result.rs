@@ -1,7 +1,7 @@
 //! The result screen, one more scene of the stage: a diploma (headed
 //! "Jodeldiplom") handed out for the song before, filled in beat by beat
-//! ([`crate::core::karaoke::result::Reveal`]) over the backdrop (the cover's
-//! layers, lit by the music), in Karaoke mode's faces, with the stage's
+//! ([`crate::core::karaoke::result::Reveal`]) over the backdrop (the
+//! story's scene, moving with the music), in Karaoke mode's faces, with the stage's
 //! light and bursts. The sheet unrolls, its border tinted, its heading and
 //! the song's title (landing on its beat) certified as yodelled
 //! ([`sheet`]); the entries are written in by hand as their beats come:
@@ -20,8 +20,8 @@
 //! ([`ResultShown::t`]) and the day the result was first drawn on (read
 //! once a result, [`Kept`]): each frame is made afresh from them, the
 //! bursts included (each from its beat's time, on the reveal's clock).
-//! The diploma is tinted with the cover's palette where its layers have
-//! one ([`Tint::of`]), else the stage's own colours. Once settled it
+//! The diploma is tinted with the palette of the scene showing where there
+//! is one ([`Tint::of`]), else the stage's own colours. Once settled it
 //! twinkles a while, the twinkle calming down as the reveal's time comes
 //! to its still point, where it stops ([`crate::core::karaoke::result::Motion`]).
 

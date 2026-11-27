@@ -202,8 +202,8 @@ fn the_built_in_manifest_names_the_models_at_fixed_revisions() {
         [
             models::MODEL_FILE,
             models::ASR_FILE,
-            crate::work::cover::DEPTH_FILE,
-            crate::work::cover::MATTE_FILE,
+            crate::work::scenes::DEPTH_FILE,
+            crate::work::scenes::MATTE_FILE,
             story::LANGUAGE_FILE,
             story::TRANSFORMER_DIR,
             story::PIPELINE_DIR,
@@ -268,7 +268,7 @@ fn the_models_found_are_known_by_their_paths() {
             .collect();
         let found = Found::of(&paths).unwrap();
         assert_eq!(found.speech, store.join(models::MODEL_FILE));
-        assert_eq!(found.covers.is_some(), gpu);
+        assert_eq!(found.scenes.is_some(), gpu);
         assert_eq!(
             found.story,
             gpu.then(|| story::StoryModels {

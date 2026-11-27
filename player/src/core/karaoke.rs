@@ -50,7 +50,6 @@ pub mod pointer;
 mod ready;
 pub mod result;
 mod show;
-mod story;
 pub use countdown::{
     countdown_for, counts_from, first_sung, resume_count, title_shown, Countdown, COUNT,
     COUNT_STEP, TITLE_FADE, TITLE_HOLD,
@@ -62,14 +61,12 @@ pub use lyrics::{
 };
 pub(crate) use lyrics::{lyrics_arrived, want_lyrics};
 pub use show::Show;
-pub(crate) use story::want_stories;
-pub use story::{stories_wanted, StorySong};
 
 /// The songs after the one sung that Karaoke gets ready ahead: their
-/// titles shown, their lyrics looked up, their stories made.
+/// titles shown, their lyrics looked up.
 pub const SONGS_AHEAD: usize = 2;
 pub(crate) use ready::start_when_ready;
-pub use ready::{no_karaoke, not_singable, NotSingable};
+pub use ready::{no_karaoke, not_singable, NotSingable, NO_STORY};
 pub(crate) use result::ended;
 pub use result::{clock_ms, result_motion, result_now, result_shown};
 
@@ -126,9 +123,6 @@ pub struct KaraokeState {
     pub lyrics: HashMap<PathBuf, SongLyrics>,
     /// The files whose lyrics were last wanted, in order.
     pub lyrics_wanted: Vec<PathBuf>,
-    /// The songs whose stories were last wanted, in order
-    /// ([`stories_wanted`]).
-    pub stories_wanted: Vec<StorySong>,
     /// The slider the arrow keys move on the tab.
     pub focus: Slider,
     /// The slider being dragged with the mouse.

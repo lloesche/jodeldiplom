@@ -1,4 +1,4 @@
-//! Depth Anything 3 Small (Apache-2.0) on the GPU: a cover's relative depth.
+//! Depth Anything 3 Small (Apache-2.0) on the GPU: a picture's relative depth.
 //!
 //! The network as its authors' code runs it on one view: a ViT-S/14 (384
 //! wide, 12 layers of 6 heads) whose layers from the fifth on have their

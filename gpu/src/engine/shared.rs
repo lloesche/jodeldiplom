@@ -1,8 +1,9 @@
 //! A device the process keeps for the parts of models that each hold
-//! their own memory on it ([`SharedDevice`]: the cover's vision networks',
-//! the picture models'): set up when first asked for and kept (never torn
-//! down while it works), set up again on the next ask once it is lost (the
-//! parts on the lost one say so); a setup that failed stands a while
+//! their own memory on it ([`SharedDevice`]: the scenes' depth and
+//! cut-out networks', the picture models'): set up when first asked for
+//! and kept (never torn down while it works), set up again on the next
+//! ask once it is lost (the parts on the lost one say so); a setup that
+//! failed stands a while
 //! ([`RETRY`] at first, doubled after each failure in a row up to half an
 //! hour: [`Retrying`]), as a [`super::Kept`] network's does.
 

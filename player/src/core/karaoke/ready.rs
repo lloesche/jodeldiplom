@@ -1,11 +1,16 @@
 //! Whether a song can be sung now ([`not_singable`]): karaoke needs a
 //! graphics card, the song fully prepared (every job the queue's icons
-//! show for it done: [`crate::core::still_to_do`]) and lyrics to sing. A
-//! Next pressed in the mode on a song still being prepared waits for it
+//! show for it done, [`needed_to_sing`]: its story only for the game,
+//! whose backdrop it is) and lyrics to sing; where stories are made, the
+//! game a story ([`NO_STORY`]).
+//! A Next pressed in the mode on a song still being prepared waits for it
 //! ([`start_when_ready`]).
 
 use super::{in_mode, lyrics_of, song_index, SongLyrics};
-use crate::core::{job_words, still_to_do, Effect, Gpu, Job, State};
+use crate::core::{job_done, job_words, Effect, Gpu, Job, State, StoryFact};
+
+/// Why a song with no story cannot be played in the game.
+pub const NO_STORY: &str = "no story could be made for it (it can be sung with the game off)";
 
 /// Why a song cannot be sung now.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,8 +21,8 @@ pub enum NotSingable {
     /// the words of the queue's icons ([`job_words`]). It can be sung as
     /// soon as that is done.
     Preparing(String),
-    /// Nothing to sing: no lyrics found, an instrumental, the look-up
-    /// failed.
+    /// Nothing to sing (no lyrics found, an instrumental, the look-up
+    /// failed), or nothing to play the game over (no story: [`NO_STORY`]).
     Nothing(&'static str),
 }
 
@@ -49,32 +54,49 @@ pub fn no_karaoke(state: &State) -> Option<NotSingable> {
 /// Why track `index` cannot be sung now, if it cannot: without a graphics
 /// card no song can (while one is still looked for, none yet); a song
 /// with some of its preparation still to come waits for all of it (the
-/// jobs the queue's icons show, in their words); once prepared, a song
-/// with nothing to sing (no lyrics found, an instrumental, the look-up
-/// failed) cannot be sung at all. Words that cannot be timed (no speech
-/// model, or the timing failed) are sung as they are.
+/// jobs the queue's icons show, in their words, with the step each is at;
+/// its story only with the game on); once prepared, a song with nothing to
+/// sing (no lyrics found, an instrumental, the look-up failed) cannot be
+/// sung at all, nor one with no story in the game ([`NO_STORY`]). Words
+/// that cannot be timed (no speech model, or the timing failed) are sung
+/// as they are.
 pub fn not_singable(state: &State, index: usize) -> Option<NotSingable> {
     if let Some(none) = no_karaoke(state) {
         return Some(none);
     }
     let path = state.queue.paths.get(index)?;
-    let left = still_to_do(state, path);
+    let left: Vec<String> = (needed_to_sing(state))
+        .filter(|&job| !job_done(state, path, job))
+        .map(|job| job_words(state, path, job))
+        .collect();
     if !left.is_empty() {
-        let jobs: Vec<&str> = left.iter().map(|&job| job_words(state, job)).collect();
-        return Some(NotSingable::Preparing(jobs.join("; ")));
+        return Some(NotSingable::Preparing(left.join("; ")));
     }
     match lyrics_of(state, index) {
         // Done, but not here yet (read from the cache as they are wanted).
         None | Some(SongLyrics::Pending) => {
-            Some(NotSingable::Preparing(job_words(state, Job::Lyrics).into()))
+            Some(NotSingable::Preparing(job_words(state, path, Job::Lyrics)))
         }
         Some(SongLyrics::NotFound) => Some(NotSingable::Nothing("no lyrics were found for it")),
         Some(SongLyrics::Instrumental) => Some(NotSingable::Nothing("it is an instrumental")),
         Some(SongLyrics::Failed(_)) => {
             Some(NotSingable::Nothing("its lyrics could not be looked up"))
         }
-        Some(SongLyrics::Found { .. }) => None,
+        Some(SongLyrics::Found { .. }) => {
+            let story = state.facts.get(path).and_then(|f| f.story.as_ref());
+            let none = state.config.karaoke_game && story == Some(&StoryFact::NoStory);
+            none.then_some(NotSingable::Nothing(NO_STORY))
+        }
     }
+}
+
+/// The jobs a song must have done to be sung, of those the queue is got
+/// ready by ([`State::preparing`]), in their order: all of them, but the
+/// story only for the game (it is the game's backdrop; plain lyrics
+/// karaoke sings over the blurred cover).
+fn needed_to_sing(state: &State) -> impl Iterator<Item = Job> + '_ {
+    let game = state.config.karaoke_game;
+    (state.preparing.iter().copied()).filter(move |&job| game || job != Job::Story)
 }
 
 /// After every action: a Next waiting for its song

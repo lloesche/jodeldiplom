@@ -1,9 +1,9 @@
 //! The made-up song the stage's digest and its GPU timings sing
 //! (`tests/fx_digest.rs`, `examples/frame_cost.rs`, `examples/fx_frames.rs`,
-//! each taking this file as a module of its own): its words on their
-//! notes, a frame's picture of it, the music under it, a cover put back
-//! together from its layers, and effects put into a frame as the stage
-//! puts them.
+//! `examples/result_frames.rs`, each taking this file as a module of its
+//! own): its words on their notes, a frame's picture of it, a story of one
+//! scene to sing over, and effects put into a frame as the stage puts
+//! them.
 
 #![allow(dead_code)]
 
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::backdrop::music::Levels;
+use jodeldiplom::gui::backdrop::scenes::Showing;
 use jodeldiplom::gui::fx::{self, At, Board, By, Effects, Music, Out, Text};
 use jodeldiplom::gui::particles::Spray;
 use jodeldiplom::gui::shine::Glow;
@@ -20,7 +20,8 @@ use jodeldiplom::gui::stage::{Lane, Stage};
 use jodeldiplom::gui::streak::Step;
 use jodeldiplom::tiers::TIERS;
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
-use jodeldiplom::work::cover::CoverLayers;
+use jodeldiplom::work::picture::{palette, rgba};
+use jodeldiplom::work::scenes::{Moved, Ready, Story};
 
 /// Frames a second.
 pub const FPS: f64 = 60.0;
@@ -105,27 +106,23 @@ pub fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> 
     }
 }
 
-/// The music under it: every stem middling.
-pub fn levels() -> Levels {
-    Levels {
-        bass: 0.5,
-        vocals: 0.6,
-        other: 0.5,
-    }
-}
-
-/// The cover as it was: the subject over the plate.
-pub fn cover_of(l: &CoverLayers) -> image::RgbImage {
-    let mut cover = l.plate.clone();
-    if let Some(s) = &l.subject {
-        for (p, q) in cover.pixels_mut().zip(s.pixels()) {
-            let a = f32::from(q.0[3]) / 255.0;
-            for c in 0..3 {
-                p.0[c] = (f32::from(p.0[c]) * (1.0 - a) + f32::from(q.0[c]) * a).round() as u8;
-            }
-        }
-    }
-    cover
+/// A story of one scene, `picture` all through the song, whole (moved by
+/// a gentle warp of a flat nearness), lit by its own palette.
+pub fn one_scene(picture: &image::RgbImage) -> Arc<Showing> {
+    let size = picture.dimensions();
+    let shape_size = (size.0 / 2, size.1 / 2);
+    let scene = Ready {
+        span: (0.0, LENGTH),
+        size,
+        picture: rgba(picture),
+        shape_size,
+        shape: vec![128; (shape_size.0 * shape_size.1 * 4) as usize],
+        moved: Moved::Warp,
+        focus: [0.5, 0.5],
+        palette: palette(picture),
+    };
+    let story = Story::new(&["picture".to_owned()], vec![scene]);
+    Arc::new(Showing::new(Arc::new(story), None))
 }
 
 /// When and how effects are put into a frame ([`with_effects`]): fired

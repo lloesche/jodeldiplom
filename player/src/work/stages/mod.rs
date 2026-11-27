@@ -3,9 +3,9 @@
 //! Each model the background work runs has a queue of its own (a
 //! [`Stage`]): the separator of the stems in the background, the beat
 //! network, the speech recogniser, the speech model that times the
-//! words, the cover's depth and cut-out, and the karaoke story's three
-//! (its language model, its image model's text encoder, the image model
-//! itself). A job waits in the queues of
+//! words, and the karaoke story's four (its language model, its image
+//! model's text encoder, the image model itself, and the depth and
+//! cut-out models taking its scenes apart). A job waits in the queues of
 //! the models it needs, first in first out (the song playing next goes
 //! before no other), one job a model at a time, and runs on the thread
 //! that queued it once its turn comes ([`run`]).
@@ -26,7 +26,7 @@
 //!
 //! Singing takes the GPU first: while a song is sung ([`sing`]) nothing
 //! new is loaded but for that song's own jobs (a thread working for it
-//! says so: [`for_the_song_sung`], or a job: [`run_for_the_song_sung`]):
+//! says so: [`for_the_song_sung`]):
 //! a model's upload, and the memory it takes, would come out of the
 //! game's frames. The jobs of the models
 //! already loaded give way to the window's frames as all background work
@@ -84,14 +84,14 @@ pub enum Stage {
     Hearing,
     /// The speech model timing the words against the voice.
     Timing,
-    /// The cover's depth and cut-out.
-    Cover,
     /// The karaoke story's language model writing a song's plan.
     StoryPlan,
     /// The story's image model's text encoder, a song's prompts.
     StoryEncode,
     /// The story's image model drawing a song's pictures.
     StoryDraw,
+    /// The depth and cut-out models taking a song's story scenes apart.
+    Scenes,
 }
 
 impl Stage {
@@ -101,10 +101,10 @@ impl Stage {
         Stage::Beats,
         Stage::Hearing,
         Stage::Timing,
-        Stage::Cover,
         Stage::StoryPlan,
         Stage::StoryEncode,
         Stage::StoryDraw,
+        Stage::Scenes,
     ];
 }
 
@@ -124,12 +124,6 @@ thread_local! {
 /// Inside another job's turn: a turn inside a turn could wait for ever.
 pub fn run<T>(stages: &[Stage], what: &str, job: impl FnOnce() -> T) -> T {
     Stages::global().run(stages, what, job)
-}
-
-/// [`run`], the job for the song being sung (it loads its models while
-/// the song is sung), whatever its thread does otherwise.
-pub fn run_for_the_song_sung<T>(stages: &[Stage], what: &str, job: impl FnOnce() -> T) -> T {
-    Stages::global().run_as(stages, what, true, job)
 }
 
 /// `model` is `stage`'s in the process's stages from now on (in place of
@@ -244,18 +238,13 @@ impl Stages {
 
     /// [`run`] in these stages.
     pub fn run<T>(&self, stages: &[Stage], what: &str, job: impl FnOnce() -> T) -> T {
-        self.run_as(stages, what, SUNG.get(), job)
-    }
-
-    /// [`run`], for the song being sung where `sung`.
-    fn run_as<T>(&self, stages: &[Stage], what: &str, sung: bool, job: impl FnOnce() -> T) -> T {
         assert!(
             TURNS.get() == 0,
             "{what}: a turn on the GPU inside another job's turn"
         );
         let queued = self.clock.now();
         let mut inner = self.lock();
-        let ticket = inner.plan.queue(stages, sung);
+        let ticket = inner.plan.queue(stages, SUNG.get());
         self.tell(&mut inner);
         loop {
             if let Some(at) = inner.started.iter().position(|&t| t == ticket) {

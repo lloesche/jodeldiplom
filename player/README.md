@@ -49,7 +49,7 @@ without one).
 | `--headroom DB` | routes that change the samples play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; files played as they are are never touched |
 | `--config FILE` | the settings file (default: `config.toml` in the settings folder, see Folders and setup) |
 | `--list-devices` | list the devices and what each takes (its rate and format, as the system mixes it) |
-| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics, the songs' loudness, the original singer's phrases, the covers taken apart and the story scenes' parts in the data folder, and in the one a move is still taking it from (each made again when wanted); the models, the lyrics edited by hand and the best scores stay (`make clean-cache`) |
+| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics, the songs' loudness, the original singer's phrases, the songs' stories planned and the story scenes' parts in the data folder, and in the one a move is still taking it from (each made again when wanted); the models, the lyrics edited by hand and the best scores stay (`make clean-cache`) |
 | `--clean-diag` | forget the record of the last analyses `--diag` shows (`make clean-diag`) |
 | `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
 
@@ -73,7 +73,7 @@ The player keeps two folders (`store/dirs.rs`):
 | Folder | What | Where |
 |---|---|---|
 | Settings | `config.toml`, the session and the saved queues, the beat grids fixed by hand, the karaoke recordings, the record of a data move under way | fixed: `%APPDATA%\Jodeldiplom`, `~/Library/Application Support/Jodeldiplom`, `~/.config/Jodeldiplom` (`$XDG_CONFIG_HOME`); with `--config FILE`, that file's folder |
-| Data | what the player makes or gets and could make again: `models` (the models setup gets: the speech models, the covers' and, under `story`, karaoke story mode's), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `loudness` (the songs' loudness), `shine` (the original singer's phrases), `covers` (the covers taken apart), `scene-parts` (the story scenes' depth and layers); `stories` (each song's story planned) and `scenes` (its scenes, as drawn); and the user's own: `lyric-edits` (the lyrics edited by hand: text, words moved, words not to be sung, the voice's level over them) and `scores.txt`, the best scores sung | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
+| Data | what the player makes or gets and could make again: `models` (the models setup gets: the speech models, the story scenes' depth and cut-out and, under `story`, karaoke story mode's), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `loudness` (the songs' loudness), `shine` (the original singer's phrases), `scene-parts` (the story scenes' depth and layers); `stories` (each song's story planned) and `scenes` (its scenes, as drawn); and the user's own: `lyric-edits` (the lyrics edited by hand: text, words moved, words not to be sung, the voice's level over them) and `scores.txt`, the best scores sung | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
 
 Both are decided once, when the player starts, and every part of it is
 given them: a player started with `--config FILE` keeps its session,
@@ -100,7 +100,7 @@ everything in the old one moves there (`store/mover.rs`), with a bar on the row:
   not come over yet where it still is: nothing is analysed, separated,
   timed or taken apart again, and the best scores load. That the copy
   already in the new folder is the newer holds because what the player
-  writes there is either made afresh (an analysis, lyrics, a cover) or,
+  writes there is either made afresh (an analysis, lyrics, a story) or,
   for a file it adds to, made from what it read through the move: the
   best scores are written with every best the file held, wherever it
   was, so a best sung mid-move keeps all the earlier ones. A file the
@@ -111,7 +111,7 @@ big for that: the speech model that times karaoke's words
 (`wav2vec2-base-960h`, 378 MB) and the speech recogniser that checks
 fetched lyrics belong to the song (Qwen3-ASR-0.6B, packed at 4 bits to
 589 MB); and where the machine has a usable GPU (they run nowhere else)
-the covers' depth and cut-out models (518 MB) and karaoke story mode's
+karaoke story mode's depth and cut-out models for its scenes (518 MB) and its
 models (14.4 GB): its language model, Gemma 4 E4B-it at 4 bits (Unsloth's
 Q4_K_M GGUF, 4.98 GB), and its image model, FLUX.2 [klein] 4B at 8 bits
 (4.07 GB) with its VAE and settings (168 MB) and its text encoder Qwen3-4B
@@ -315,9 +315,11 @@ as soon as the file is decoded), `▥` its stems (separated alongside, on
 the GPU), `♩` its tempo (decided last, from the beats and the stems),
 `¶` its lyrics (looked up and timed alongside, by another worker; a song
 no source has lyrics for is heard from its voice instead, once a run, and
-the icon lights once it is) and `◐` its cover taken apart (for Karaoke
-mode's background). A step's last icon (the tempo, the lyrics, the cover)
-lights only once that step is done, so with every icon lit nothing is left
+the icon lights once it is) and `§`, an open book, its karaoke story (its
+scenes planned, drawn and taken apart in the background, by the GPU's
+models in turn; the game's backdrop). A step's last icon (the tempo, the
+lyrics, the story) lights only once that step is done, so with every icon
+lit nothing is left
 to do for the track. They show where the row has room for its title too. Left of its number, a
 spinner turns while work on the track is on (its analysis, its lyrics
 looked up or timed) and a dot shows while some is still to come. What is in the cache is handed over at once
@@ -326,13 +328,20 @@ when it is wanted, even while another track is being analysed.
 Getting a song ready takes a while, so the queue shows what the work is
 really doing, never more than it found. Beside a row's spinner a short
 caption says the step under way ("finding the beat…", "taking the song
-apart…", "looking up the words…") and, for a moment, what it found
-("123 BPM ✓"). With that song selected, the right column becomes its
-preparation: each step with what it does or found, and the latest result
-big: the beat's ticks coming in over a stretch of the song's waveform and
-pulsing as a play head passes them, the key's chord on a keyboard, the
-four stems' lanes filling chunk by chunk as they are separated, the words
-lit in time as they will be sung, the cover's subject lifting off it. With
+apart…", "looking up the words…", "planning the story…", "thinking…"
+(the language model, before it writes the plan), "drawing scene
+4 of 23…") and, for a moment, what it found ("123 BPM ✓", "scene 4 of 23
+✓"); the Karaoke tab and Karaoke mode say the same of a song they wait
+for. With that song selected, the right column becomes its preparation:
+each step with what it does or found, and in the cover's place the latest
+result big: the beat's ticks coming in over a stretch of the song's
+waveform and pulsing as a play head passes them, the key's chord on a
+keyboard, the four stems' lanes filling chunk by chunk as they are
+separated, the words lit in time as they will be sung. While its story is
+made, it is built on the song's cover: its words typed out over the cover
+darkened as the language model writes them, then its scenes taking the
+cover's place tile by tile as they are drawn; once it is made, the cover
+itself again. With
 no music playing, each result found sounds a soft pluck from the game's
 synth; while a track or a preview plays, nothing. The view rests when
 nothing changes, and goes 12 s after the song is ready.
@@ -959,7 +968,8 @@ next are at the bottom, and along the bottom edge the song's progress,
 its sung stretches apart from the breaks and instrumental parts (4 s or
 more without singing). All of it is drawn by the GPU each frame (shapes
 as signed distances in one shader, the text from an atlas), over the
-blurred cover; nothing of it is painted by the processor frame by frame.
+song's story's scenes (the blurred cover with the game off); nothing of it
+is painted by the processor frame by frame.
 
 As you sing, the microphone's pitch (YIN, 100 frames a second, at the
 time in the song it was sung: the output frame playing as it was caught,
@@ -1122,8 +1132,8 @@ its result, the last of the queue too, and one where nothing was scored
 asks, with a wink, whether the microphone fell asleep (no medal, no
 best). Next during the reveal shows it all at once; the next Next
 sings the next song (after the last, the same one again: "Again"). The
-screen takes its light from the cover's colours where the cover was
-taken apart; it twinkles a few seconds once settled, then holds still
+screen takes its light from the colours of the story's scene showing;
+it twinkles a few seconds once settled, then holds still
 (drawing nothing) until Next. The best
 score of each song is kept (`scores.txt` in the data folder).
 
@@ -1134,13 +1144,15 @@ the start, while one is still looked for, it says that. Everything else
 plays without one. A song is sung only once it is fully prepared: all
 of what the queue's icons show for it done (its analysis and waveforms,
 and its stems where they are separated; its lyrics, found or heard from
-the voice, and timed, or found where they cannot be timed; its cover
-taken apart, where covers are), and only if it has lyrics to sing. What
-cannot be done on the machine (no speech model to time the words, no
-covers taken apart) counts as done, as for the icons, so no song waits
-for it for ever. Until then the button into the mode is disabled, with
-what is still being done for the song beside it, job by job in the
-icons' words (or why it has nothing to sing: none found, an
+the voice, and timed, or found where they cannot be timed; with the game
+on, its story made, where stories are made), and only if it has lyrics
+to sing (and, for the game, a story: a song left with none for good is
+sung with the game off). What cannot be done on the machine (no speech
+model to time the words, no story's models) counts as done, as for the
+icons, so no song waits for it for ever. Until then the button into the
+mode is disabled, with what is still being done for the song beside it,
+job by job in the icons' words with the step each is at ("its story:
+drawing scene 4 of 23…"; or why it has nothing to sing: none found, an
 instrumental), its key does nothing but say so, and Next's button in the
 mode is greyed out. A big folder just queued is got ready a track at a
 time, so its songs come singable one by one. In the mode, a song held
@@ -1149,39 +1161,37 @@ prepared shows what is still to come for it; Next then waits for it,
 and the song starts, after its count-in, as soon as it is prepared
 (`N`, `P` or `esc` call that off).
 
-Karaoke mode fills the window (fullscreen): the song's cover blurred
-under a dark layer, its title and, once they are known, its lyrics. With
-the game or the notes on, the whole cover sits sharp in the middle over
-that blur, lit by the music (on the GPU, once it is taken apart: its
-subject cut out, the person or the thing that stands out, never its
-lettering, which two small built-in detectors of text and faces keep out;
-a close-up face the cut breaks up is grown from the depth instead; a
-cover whose cut is not sure of itself stays whole); with
-neither (plain lyrics karaoke) the blur alone fills the window, and
-switching either mid-song fades the cover out or in.
+Karaoke mode fills the window (fullscreen): its title and, once they are
+known, its lyrics, over the song's story with the game on (where stories
+are made), else (plain lyrics karaoke, the notes on or not, or a machine
+that makes no stories) over the song's cover blurred heavily under a
+dark layer, still; switching the game mid-song cuts to the other.
 
-A song with story scenes (a picture a scene, each with its span in the
-song, `work::scenes`) shows them instead of the cover while their spans
-last, cut in on the bars, each filling the window: a slow camera push
-and either a gentle warp by its depth or, where its depth splits
-cleanly, two or three layers in parallax, every head held flat so it
-moves as one piece; the song's look over it as over the cover. A song's
-scenes are where the story's drawing step leaves them: its folder in
-`scenes/` in the data folder, named by the song's key, its pictures and
-their `scenes.txt` (what made it, `made HASH`, the song's look, `look
-JSON`, then a line `scene START END PICTURE` a scene, seconds and a
-file in the folder).
+The game's backdrop is the song's story (`work::scenes`): a picture a
+scene, each with its span in the song, cut in on the bars, each filling
+the window, the first from the song's start and each held until the
+next one's cut: a slow camera push and either a gentle warp by its depth
+or, where its depth splits cleanly, two or three layers in parallax,
+every head held flat so it moves as one piece; the song's look over it.
+A song's scenes are where the story's drawing step leaves them: its
+folder in `scenes/` in the data folder, named by the song's key, its
+pictures and their `scenes.txt` (what made it, `made HASH`, the song's
+look, `look JSON`, then a line `scene START END PICTURE` a scene, seconds
+and a file in the folder).
 
-Where the GPU has the story's models, Karaoke mode makes the stories
-itself (`work::story::worker`): the song held and the next two, each
-once its words are timed, on a thread of its own in rounds by model,
-each turn a job of the GPU's stages (`work::stages`, where the story's
-models take turns with the others): Gemma plans every song wanted
-(`stories/`, a plan kept is not asked again; shaders over the budget
-lose their dearest passes, as the catalogue says), then Qwen3-4B
-encodes their pictures' prompts, then FLUX.2 [klein] draws them
-(`work::story::draw`), a song no longer wanted given up before its
-turns and between its pictures: a 1024² portrait of each
+Where the GPU has the story's models, every song of the queue gets its
+story made in the background as a step of its preparation, like its
+analysis and its lyrics, wherever the player is (`work::story::worker`):
+each once its lyrics are settled, in the queue's order from the song
+playing, on a thread of its own in rounds by model, each turn a job of
+the GPU's stages (`work::stages`, where the story's models take turns
+with the others): Gemma plans every song wanted (`stories/`, a plan kept
+is not asked again; shaders over the budget lose their dearest passes,
+as the catalogue says), then Qwen3-4B encodes their pictures' prompts,
+then FLUX.2 [klein] draws them (`work::story::draw`), then Depth
+Anything 3 Small and BEN2 take the scenes apart; a song no longer wanted
+(out of the queue) is given up before its turns and between its
+pictures. FLUX.2 [klein] draws a 1024² portrait of each
 character from its looks in the plan's style, then a 1344 × 768 picture
 of each scene from its prompt (the characters named by their looks, its
 shot, the style, and a sentence asking for no text at all), the heads of
@@ -1190,19 +1200,22 @@ pictures. Each picture's seed is the song's and the picture's, and its
 file is named by what made it (the drawing's version, the seed, the
 size, its references and its prompt), and its `scenes.txt` by what it
 holds (`made HASH`): an unchanged plan draws nothing again, a new one
-draws only what it changed. The preparation view tells "Scene N of M
-drawn" as each lands; once a song's scenes are described, the covers'
-worker is told and takes them up, at once if the song is playing, and
-the plan's look is the song's (`KaraokeState::look`).
-
-As the song plays the scenes are made ready after
-its cover, with the cover's models: each picture's depth, heads and
-layers derived once and kept (`scene-parts/<picture>.parts`, by its
-bytes; a cache, forgotten with the others, while the songs' scenes
-never are). `--example story_scenes SONG FOLDER` puts a folder of scenes
-made elsewhere in its song's place, makes them ready, prints each
-scene's split and timings, and shows the covers' worker holding the
-song's story as when it plays.
+draws only what it changed. Each scene's depth, heads and layers are
+derived once and kept (`scene-parts/<picture>.parts`, by its bytes; a
+cache, forgotten with the others, while the songs' scenes never are).
+The queue's caption, the preparation view (the story built on the cover)
+and the Karaoke tab and mode say each step as it goes; the story icon
+lights once the scenes are taken apart. A round plans no more songs than
+it can draw before the next (the song wanted first is made first); a
+model that fails, or a file not read now, leaves the song's story "not
+made now", said why, and tried again a minute later. As a song plays,
+the plan's look is the song's at once (`KaraokeState::look`), and its
+scenes are made ready for the game's backdrop from what was kept, on the
+processor alone, only while that backdrop shows (at once if the story is
+finished while the song plays). `--example story_scenes SONG FOLDER`
+puts a folder of scenes made elsewhere in its song's place, takes them
+apart and makes them ready, prints each scene's split and timings, and
+shows the song playing's story held as when it plays.
 
 The voice plays at its level (as on the tab). Going in stops the song and
 holds it at its start (with shift, it goes on where it is). Each song
@@ -1491,7 +1504,7 @@ preset of your own.
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects` (its concerns in `core::browse`, `core::queue`, `core::settings`, `core::work` and `core::help`), keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`, the view of a stretch of time it shares with the lyrics editor in `core::timeview`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads), a song's preparation as its workers tell it (`core::prep`: the key, the stems so far, the beat, the words, the cover, the story as it is written and drawn: `Heard::Story`), the songs Karaoke mode wants a story of (`core::karaoke::stories_wanted`). Pure. |
+| `core` | state, `Action`, `update(state, action) -> effects` (its concerns in `core::browse`, `core::queue`, `core::settings`, `core::work` and `core::help`), keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`, the view of a stretch of time it shares with the lyrics editor in `core::timeview`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads), a song's preparation as its workers tell it (`core::prep`: the key, the stems so far, the beat, the words, the story as it is planned, written and drawn: `Heard::Story`; the step each job is at, one source for every screen: `core::prep::doing`, `core::job_words`), the songs whose stories are made (`core::stories_wanted`: the queue's, once their lyrics are settled). Pure. |
 | `view` | the presentation models the window draws (the list, the info, a song's preparation (`view::prep`: the queue's captions, the right column's view, its story slot), the bottom bar with the spectrum's plot, the Transition tab with `view::lanes`, which the Karaoke tab shares, the Karaoke tab and Karaoke mode's picture, the settings, the help, Now playing) |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects (`app::effects`), answers the window's frames (`app::frame`); the microphone and the singing heard through it (`app::mic`) |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
@@ -1502,14 +1515,13 @@ preset of your own.
 | `work` | the background workers and what they are built of (a queue their threads wait on, the lanes of what is wanted now and ahead, a job with a retry), their results coming back to the app through `work::outbox` |
 | `work::rhythm` | the beat analysis in the background (decode, mono, resample to 22.05 kHz, [`jodel-rhythm`](../rhythm)), the waveforms, and their cache |
 | `work::lyrics` | the tracks' lyrics in the background: from the file's tag, an `.lrc` beside it, the cache or LRCLIB, timed word by word, and kept (`lyrics/`; the edits by hand in `lyric-edits/`) |
-| `work::cover` | a cover taken apart once for the karaoke background (its subject, the plate behind it, their depth, its palette), kept (`covers/`) |
-| `work::scenes` | a song's story scenes made ready for the karaoke background: found where the drawing step leaves them (`scenes/<song>/`), made ready on the covers' thread after the song playing's cover, each picture's depth, heads held flat, layers and plate derived once and kept (`scene-parts/<picture>.parts`); `gui::backdrop::scenes` draws them |
-| `work::picture` | the picture tools the covers and the story scenes share: float planes, the fill and the plate, masks, depth as nearness, the palette, and their codecs |
+| `work::scenes` | a song's story scenes, the game's backdrop: found where the drawing step leaves them (`scenes/<song>/`), each picture's depth and cut-out on the GPU (`work::scenes::GpuNets`, Depth Anything 3 Small and BEN2 Base, the story's last step in the song's preparation), its heads held flat by the faces found (YuNet, built in), layers and plate derived once and kept (`scene-parts/<picture>.parts`); the song playing's made ready from what is kept on a thread of its own (`work::scenes::PlayingStory`); `gui::backdrop::scenes` draws them |
+| `work::picture` | the picture tools the story scenes are taken apart with: float planes, the fill and the plate, masks, depth as nearness, the palette, and their codecs |
 | `work::art` | cover decoding and fitting |
 | `work::loudness` | each song's loudness as the karaoke plays it (ITU-R BS.1770, `jodel_rhythm::loudness`), measured once on a thread of its own and kept (`loudness/`), for the game's sounds to follow (`sfx::conductor::calibration`) |
 | `work::shine` | the original singer's phrases for the song in Karaoke mode, measured on a thread of their own and kept (`shine/`) |
 | `work::download` | the files the setup fetches, checked against their length and SHA-256 before they are put in place |
-| `work::story` | the karaoke story's plan: a unit of work for the language model (Gemma 4 E4B, greedy) from a song's timed lyrics and tags, asked again once when its answer does not hold, its prose told as it is written (`Heard::Story`), kept (`stories/`), the model behind a `Writer` (Gemma, or a fake in the tests); `core::story` the plan's types, its rules (every count the prompt asks for and the answer is held to), the prompt with the looks' catalogue in brief (`jodel_looks::catalogue::brief`), the strict reading of the answer, its shaders as a look held to the catalogue (`Look::faults`), what the image model is asked for the plan's pictures (`core::story::pictures`); `work::story::draw` the image model's two units of work (the prompts encoded, then the pictures painted, each kept by what made it, and the scenes described with the plan's look), `work::story::worker` the thread that runs the three in rounds by model over the songs wanted, each turn a job of the GPU's stages (`Stage::StoryPlan`, `Stage::StoryEncode`, `Stage::StoryDraw`), the models held in `Kept`s registered there |
+| `work::story` | the karaoke story's plan: a unit of work for the language model (Gemma 4 E4B, greedy, its thinking on: the thought left out of the answer, its tokens and time in the trace) from a song's timed lyrics and tags, asked again once when its answer does not hold, its prose told as it is written (`Heard::Story`), kept (`stories/`), the model behind a `Writer` (Gemma, or a fake in the tests); `core::story` the plan's types, its rules (every count the prompt asks for and the answer is held to), the prompt with the looks' catalogue in brief (`jodel_looks::catalogue::brief`), the strict reading of the answer, its shaders as a look held to the catalogue (`Look::faults`), what the image model is asked for the plan's pictures (`core::story::pictures`); `work::story::draw` the image model's two units of work (the prompts encoded, then the pictures painted, each kept by what made it, and the scenes described with the plan's look), `work::story::worker` the story's step of every queued song's preparation: the thread that runs the four in rounds by model over the songs wanted (the plan, the prompts, the pictures, the scenes taken apart), each turn a job of the GPU's stages (`Stage::StoryPlan`, `Stage::StoryEncode`, `Stage::StoryDraw`, `Stage::Scenes`) told to the app as `Job::Story`, the models held in `Kept`s registered there |
 | `store` | what is kept on disk between runs: the two folders (`store::dirs`), a move of the data folder (`store::mover`), the session and the queues saved (`store::session`), the singer's delays (`store::delays`), the best scores (`store::scores`), the singing kept (`store::keep`); the thread a store writes its files on, in order (`store::writer`) |
 | `store::cache` | the schemas of what is kept on disk between runs, and their versions |
 | `store::grids` | the beat grids fixed by hand, kept per track in the settings folder |

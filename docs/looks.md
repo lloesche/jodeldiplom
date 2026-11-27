@@ -1,8 +1,9 @@
 # The looks
 
 Every song in Karaoke mode can have a look of its own: a stack of shader
-passes over whatever the backdrop draws (the cover today, a song's scenes
-later), under the stage and the lyrics. The passes are a library
+passes over whatever the backdrop draws (the blurred cover, or with the
+game the song's story scenes),
+under the stage and the lyrics. The passes are a library
 (`looks/`, the `jodel-looks` crate); a look is data (JSON), written by a
 person, a preset, or a language model that picks from the catalogue and
 never writes shader code. The catalogue the model is given is generated
@@ -232,9 +233,10 @@ for the music, not for a people's flags or faiths).
 
 ## The Shader tab
 
-The seventh tab: the playing song's cover drawn as Karaoke mode draws it,
-through the tab's look, moved by the song as in the game (nothing
-playing: still). On the left a browser of every look: the presets by
+The seventh tab: the playing song drawn as Karaoke mode draws it (its
+story's scenes in the game, else its cover blurred), through the tab's
+look, moved by the song as in the game (nothing playing: still). On the
+left a browser of every look: the presets by
 family, then every pass as a look of its own under its pass family
 (`/` searches them all, `↑` `↓` steps through them);
 the stack in the middle: its passes (selected by a click or `[` `]`, moved

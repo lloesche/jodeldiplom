@@ -121,7 +121,7 @@ Learnt on the same Macs, and kept in the code:
   (`gui/shader_check.rs`).
 - **Retina screens:** the light that blooms is drawn at a texel a point
   (half each way on a Retina screen) and the backdrop at the share of the
-  window that still gives each of the cover's texels a pixel; at 3024 ×
+  window that still gives each of the scene's texels a pixel; at 3024 ×
   1964 a frame costs a third less GPU time.
 - **The mixer's thread is real time.** As an ordinary thread it could be
   held up behind a busy window and the sound stuttered. While it does

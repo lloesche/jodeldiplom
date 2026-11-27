@@ -156,9 +156,9 @@ impl Painter {
 
     /// The backdrop for the next frame (`None`: none, its textures
     /// dropped), in a frame of `size`: drawn now, at its share of the
-    /// window ([`backdrop_share`] of [`BackdropFrame::pictures`]).
+    /// window ([`backdrop_share`] of [`BackdropFrame::picture`]).
     fn set_backdrop(&mut self, frame: Option<&BackdropFrame>, size: (u32, u32)) {
-        let share = frame.map_or(1.0, |f| backdrop_share(f.pictures(size).into_iter()));
+        let share = frame.map_or(1.0, |f| backdrop_share(f.picture(size)));
         self.size = size;
         let drawn = |side: u32| ((side as f32 * share).round() as u32).max(1);
         let size = (drawn(size.0), drawn(size.1));
@@ -392,22 +392,21 @@ fn ground_pipeline(
 /// at.
 const LEAST_SHARE: f32 = 0.5;
 /// The steps the share goes in: its texture is made again only when the
-/// card's size or the cover changes by one.
+/// scene's picture's size changes by one.
 const SHARE_STEP: f32 = 1.0 / 16.0;
 
 /// The share of the window's width and height Karaoke mode's backdrop is
-/// drawn at (the ground reads it smoothly over the whole window), its
-/// covers' cards (each its size in window pixels, and the texels of its
-/// pictures, the larger of the layers' and the cover's): as few pixels as
-/// still give each texel on a card one of its own, so a card enlarging
-/// its cover (a 1000-pixel one on a Retina screen) is drawn with every
-/// detail it has, a quarter to a half of the pixels; the rest of the
-/// backdrop is blur and soft light. The whole window where a card shows
-/// its pictures at their size or smaller.
-fn backdrop_share(cards: impl Iterator<Item = ((f32, f32), (u32, u32))>) -> f32 {
-    let needed = cards
+/// drawn at (the ground reads it smoothly over the whole window), for the
+/// scene's picture it draws (its size in window pixels, and its texels):
+/// as few pixels as still give each of its texels one of its own, so a
+/// picture much enlarged (a 1344-pixel one on a Retina screen) is drawn
+/// with every detail it has, in half to three quarters of the pixels. The
+/// whole window where the picture shows at its size or smaller; the least
+/// for the plain ground.
+fn backdrop_share(picture: Option<((f32, f32), (u32, u32))>) -> f32 {
+    let needed = picture
         .map(|((w, h), (tw, th))| (tw as f32 / w.max(1.0)).max(th as f32 / h.max(1.0)))
-        .fold(LEAST_SHARE, f32::max);
+        .map_or(LEAST_SHARE, |n| n.max(LEAST_SHARE));
     ((needed / SHARE_STEP).ceil() * SHARE_STEP).min(1.0)
 }
 
@@ -416,23 +415,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_card_enlarging_its_cover_is_drawn_at_the_cover_s_texels() {
-        // A 1024 cover on a 16-inch MacBook Pro's card (1650 pixels).
-        let card = (1650.0, 1650.0);
-        let share = backdrop_share([(card, (1024, 1024))].into_iter());
-        assert_eq!(share, 0.625);
-        assert!(card.0 * share >= 1024.0);
-        // Its 3000-pixel picture: every pixel.
-        assert_eq!(backdrop_share([(card, (3000, 3000))].into_iter()), 1.0);
-        // A 5K screen's card, a small cover: half, no less.
-        assert_eq!(
-            backdrop_share([((2400.0, 2400.0), (600, 600))].into_iter()),
-            0.5
-        );
-        // Two covers crossing: the one with more texels.
-        let two = [(card, (1024, 1024)), (card, (1400, 1400))];
-        assert_eq!(backdrop_share(two.into_iter()), 0.875);
-        // No cover: the ground, blurred.
-        assert_eq!(backdrop_share(std::iter::empty()), LEAST_SHARE);
+    fn a_scene_much_enlarged_is_drawn_at_its_picture_s_texels() {
+        // A 1344 × 768 scene filling a 16-inch MacBook Pro's 3456 × 2234:
+        // half the pixels, no less, still give each texel one.
+        let window = (3456.0, 2234.0);
+        let share = backdrop_share(Some((window, (1344, 768))));
+        assert_eq!(share, LEAST_SHARE);
+        assert!(window.0 * share >= 1344.0);
+        // A picture larger than the window: every pixel.
+        assert_eq!(backdrop_share(Some(((1600.0, 900.0), (2000, 1200)))), 1.0);
+        // Between: on a step.
+        let mid = backdrop_share(Some(((1600.0, 900.0), (1344, 768))));
+        assert_eq!(mid, 0.875);
+        // The plain ground: the least.
+        assert_eq!(backdrop_share(None), LEAST_SHARE);
     }
 }

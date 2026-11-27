@@ -130,7 +130,7 @@ impl Need {
 
 /// The models the player needs beside its executable, with their
 /// checksums: the speech models, and where this machine has a usable GPU
-/// (they run nowhere else) the covers' models and karaoke story mode's.
+/// (they run nowhere else) karaoke story mode's models and its scenes'.
 pub fn manifest() -> Vec<Need> {
     manifest_for(jodel_gpu::gpu_name().is_ok())
 }
@@ -142,15 +142,16 @@ pub struct Found {
     pub speech: PathBuf,
     /// The speech recogniser ([`models::ASR_FILE`]).
     pub asr: PathBuf,
-    /// The covers' depth and cut-out models, where the machine needs them.
-    pub covers: Option<crate::work::cover::CoverModels>,
+    /// The story scenes' depth and cut-out models, where the machine needs
+    /// them.
+    pub scenes: Option<crate::work::scenes::SceneModels>,
     /// Karaoke story mode's models, where the machine needs them.
     pub story: Option<story::StoryModels>,
 }
 
 impl Found {
     /// The models among `paths` (setup's, each with its model's path in the
-    /// store); `None` without the speech models. A group (the covers', the
+    /// store); `None` without the speech models. A group (the scenes', the
     /// story's) is there whole or not at all.
     pub fn of(paths: &[(String, PathBuf)]) -> Option<Found> {
         let named = |file: &str| {
@@ -159,10 +160,10 @@ impl Found {
                 .find(|(f, _)| f == file)
                 .map(|(_, p)| p.clone())
         };
-        let covers = (|| {
-            Some(crate::work::cover::CoverModels {
-                depth: named(crate::work::cover::DEPTH_FILE)?,
-                matte: named(crate::work::cover::MATTE_FILE)?,
+        let scenes = (|| {
+            Some(crate::work::scenes::SceneModels {
+                depth: named(crate::work::scenes::DEPTH_FILE)?,
+                matte: named(crate::work::scenes::MATTE_FILE)?,
             })
         })();
         let story = (|| {
@@ -176,7 +177,7 @@ impl Found {
         Some(Found {
             speech: named(models::MODEL_FILE)?,
             asr: named(models::ASR_FILE)?,
-            covers,
+            scenes,
             story,
         })
     }
@@ -253,27 +254,27 @@ pub fn manifest_for(gpu: bool) -> Vec<Need> {
     let folder = |base: &str, table: &[(&str, u64, &str)]| Source::Folder(parts(base, table));
     needs.extend([
         need(
-            crate::work::cover::DEPTH_FILE,
+            crate::work::scenes::DEPTH_FILE,
             "the depth model",
             "Depth Anything 3 Small by ByteDance Seed",
-            "It sees how near each part of a cover is, so karaoke's background can move it in \
-             depth.",
+            "It sees how near each part of a story's scene is, so the game's background can \
+             move it in depth.",
             download(
-                crate::work::cover::DEPTH_URL,
-                crate::work::cover::DEPTH_BYTES,
-                crate::work::cover::DEPTH_SHA256,
+                crate::work::scenes::DEPTH_URL,
+                crate::work::scenes::DEPTH_BYTES,
+                crate::work::scenes::DEPTH_SHA256,
             ),
         ),
         need(
-            crate::work::cover::MATTE_FILE,
-            "the cover's cut-out model",
+            crate::work::scenes::MATTE_FILE,
+            "the scenes' cut-out model",
             "BEN2 by Prama",
-            "It cuts the singer (or whatever stands out) off a cover, so karaoke's background \
-             can light and move them on their own.",
+            "It cuts what stands out off a story's scene, so the game's background can move \
+             it on its own.",
             download(
-                crate::work::cover::MATTE_URL,
-                crate::work::cover::MATTE_BYTES,
-                crate::work::cover::MATTE_SHA256,
+                crate::work::scenes::MATTE_URL,
+                crate::work::scenes::MATTE_BYTES,
+                crate::work::scenes::MATTE_SHA256,
             ),
         ),
         need(

@@ -9,7 +9,7 @@
 // (`seat`: its edge taking a little of the light behind, lit on a bar's
 // first beat), the nearest's shadow on what is behind it. Then the haze by
 // nearness, the lift, the corners' shade, the light's tone and the
-// theme's grade, as the cover has them. Colours are linear light until
+// theme's grade. Colours are linear light until
 // they are shown (`tone`); `LINEAR` (set as the pipeline is made) says
 // whether the texture takes them so.
 
@@ -57,7 +57,7 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     var near = 0.0;
     if scene.layers.x == 1u {
         near = textureSampleLevel(shape, soft, uv, 0.0).r;
-        let at = shift(uv, near, slide, 0.0, vec2<f32>(0.5));
+        let at = shift(uv, near, slide);
         col = textureSample(picture, soft, at).rgb;
     } else {
         let uf = uv - slide * scene.depth.x;

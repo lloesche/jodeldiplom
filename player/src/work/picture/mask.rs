@@ -1,9 +1,8 @@
-//! Masks on a picture, as the taking apart of a cover and of a story's
-//! scene both work them: a picture's size and its lengths at a 1024's
-//! ([`Size`]), a face's box grown ([`face_rect`]), the median nearness in
-//! a box ([`median_in`]), the parts of a mask and the part joined to a
-//! point ([`parts`], [`joined`]), masks grown, shrunk, blurred, filled and
-//! opened.
+//! Masks on a picture, as the taking apart of a story's scene works them:
+//! a picture's size and its lengths at a 1024's ([`Size`]), a face's box
+//! grown ([`face_rect`]), the median nearness in a box ([`median_in`]),
+//! the parts of a mask and the part joined to a point ([`parts`],
+//! [`joined`]), masks grown, shrunk and blurred.
 
 use super::fill::{box_blur, dilate, Planes};
 
@@ -92,64 +91,6 @@ pub fn blur(mask: &[bool], size: Size, r: usize) -> Vec<f32> {
         data: mask.iter().map(|&m| f32::from(u8::from(m))).collect(),
     };
     box_blur(&p, r).data
-}
-
-/// `mask` with its holes (what the outside cannot reach) filled.
-pub fn filled(mask: &[bool], w: usize, h: usize) -> Vec<bool> {
-    let outside: Vec<bool> = mask.iter().map(|&m| !m).collect();
-    let (labels, count) = parts(&outside, w, h);
-    let mut border = vec![false; count + 1];
-    for x in 0..w {
-        border[labels[x] as usize] = true;
-        border[labels[(h - 1) * w + x] as usize] = true;
-    }
-    for y in 0..h {
-        border[labels[y * w] as usize] = true;
-        border[labels[y * w + w - 1] as usize] = true;
-    }
-    labels
-        .iter()
-        .map(|&l| l == 0 || !border[l as usize])
-        .collect()
-}
-
-/// `mask` opened by a disc of radius `r` (at a 1024 picture's size): what
-/// a disc rolled inside it reaches. Worked at a quarter of the size.
-pub fn open(mask: &[bool], size: Size, r: f32) -> Vec<bool> {
-    let (w, h) = (size.w, size.h);
-    let (sw, sh) = (w.div_ceil(4), h.div_ceil(4));
-    let small: Vec<bool> = (0..sw * sh)
-        .map(|i| mask[((i / sw) * 4).min(h - 1) * w + ((i % sw) * 4).min(w - 1)])
-        .collect();
-    let rr = (r * size.scale / 4.0).round().max(1.0) as isize;
-    let disc: Vec<(isize, isize)> = (-rr..=rr)
-        .flat_map(|dy| (-rr..=rr).map(move |dx| (dx, dy)))
-        .filter(|(dx, dy)| dx * dx + dy * dy <= rr * rr)
-        .collect();
-    let pass = |m: &[bool], all: bool| -> Vec<bool> {
-        (0..sw * sh)
-            .map(|i| {
-                let (x, y) = ((i % sw) as isize, (i / sw) as isize);
-                let at = |&(dx, dy): &(isize, isize)| {
-                    let (px, py) = (x + dx, y + dy);
-                    px >= 0
-                        && py >= 0
-                        && px < sw as isize
-                        && py < sh as isize
-                        && m[py as usize * sw + px as usize]
-                };
-                if all {
-                    disc.iter().all(at)
-                } else {
-                    disc.iter().any(at)
-                }
-            })
-            .collect()
-    };
-    let opened = pass(&pass(&small, true), false);
-    (0..w * h)
-        .map(|i| opened[((i / w) / 4) * sw + (i % w) / 4])
-        .collect()
 }
 
 /// The 4-connected parts of `on` (`w × h`): each pixel's part (0 off, 1

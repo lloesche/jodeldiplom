@@ -10,11 +10,10 @@
 //! than the GPU's scaling of a large image, which keeps no smaller copies),
 //! once for each art and size: [`Covers`] keeps it by art id.
 //!
-//! A cover taken apart, as a song's preparation shows it
-//! ([`crate::view::prep::CoverView`]), is its plate with its subject over
-//! it ([`Covers::cut`]): the subject lifted off a little and swaying, the
-//! plate still. Both are scaled the same way, once for each cover and
-//! place ([`Covers::show_cut`]).
+//! The preparation view's card is the cover of the song it shows
+//! ([`Covers::show_card`], [`Covers::card`]), and while that song's story
+//! is made, the story built on it ([`Covers::building`]): the cover
+//! darkened, each scene drawn so far over its tile.
 
 use std::f32::consts::PI;
 use std::sync::{Arc, OnceLock};
@@ -30,10 +29,9 @@ use iced::{
     Size, Theme, Vector, Widget as _,
 };
 
-use crate::core::prep::CoverCut;
 use crate::gui::look::{self, radius};
+use crate::view::prep::StoryView;
 use crate::work::art::{self, Art};
-use image::imageops::FilterType;
 
 /// How dark the cover gets at its bottom under text: 80 % (as the eye
 /// sees it).
@@ -115,46 +113,17 @@ impl<M> Widget<M, Theme, Renderer> for Loaded<'_> {
     }
 }
 
-/// A cover taken apart fitted to a place: which cover result and place,
-/// its plate and its subject, and their size (pixels).
-#[derive(Clone, Debug)]
-struct Cut {
-    key: String,
-    place: (u32, u32),
-    plate: Handle,
-    subject: Option<Handle>,
-    size: (u32, u32),
-}
-
-impl Cut {
-    fn new(cut: &CoverCut, place: (u32, u32)) -> Cut {
-        let layers = &cut.0.layers;
-        let (plate, _, _) = art::fit(&layers.plate, place.0.max(1), place.1.max(1));
-        let size = plate.dimensions();
-        let plate = image::DynamicImage::ImageRgb8(plate).into_rgba8();
-        let subject = layers.subject.as_ref().map(|s| {
-            let scaled = image::imageops::resize(s, size.0, size.1, FilterType::CatmullRom);
-            Handle::from_rgba(size.0, size.1, scaled.into_raw())
-        });
-        Cut {
-            key: cut.0.key.clone(),
-            place,
-            plate: Handle::from_rgba(size.0, size.1, plate.into_raw()),
-            subject,
-            size,
-        }
-    }
-}
-
 /// The covers that show, each with the art fitted to its place, at the
-/// window's scale; and a cover taken apart, fitted to the place of the
-/// first.
+/// window's scale; the cover of the song whose preparation shows, fitted
+/// to the preparation view's card; and its story's scenes as drawn so far.
 #[derive(Debug)]
 pub struct Covers {
     shown: Vec<Fitted>,
-    cut: Option<Cut>,
-    /// A story's scenes as drawn so far, each by its picture's address.
-    scenes: Vec<(usize, Handle)>,
+    /// The card's place (pixels), and the cover fitted to it.
+    card: Option<((u32, u32), Option<Fitted>)>,
+    /// A story's scenes as drawn so far, each by its picture (held, so its
+    /// address is its own while it is a key).
+    scenes: Vec<(Arc<image::RgbaImage>, Handle)>,
     /// Pixels a point.
     scale: f32,
 }
@@ -163,7 +132,7 @@ impl Default for Covers {
     fn default() -> Covers {
         Covers {
             shown: Vec::new(),
-            cut: None,
+            card: None,
             scenes: Vec::new(),
             scale: 1.0,
         }
@@ -190,35 +159,53 @@ impl Covers {
         }
     }
 
-    /// `cut` (none: no cover taken apart shows) fitted to `place` (in
-    /// pixels): kept as it was for the same cover and place.
-    pub fn show_cut(&mut self, cut: Option<&CoverCut>, place: Option<(u32, u32)>) {
-        let (Some(cut), Some(place)) = (cut, place) else {
-            self.cut = None;
+    /// `art` (none: no cover for the card) fitted to the preparation view's
+    /// card at `place` (in pixels; none: no card shows): kept as it was
+    /// for the same art and place.
+    pub fn show_card(&mut self, art: Option<&Art>, place: Option<(u32, u32)>) {
+        let Some(place) = place else {
+            self.card = None;
             return;
         };
-        if (self.cut.as_ref()).is_some_and(|c| c.key == cut.0.key && c.place == place) {
-            return;
-        }
-        self.cut = Some(Cut::new(cut, place));
+        let same = |f: &Fitted| art.is_some_and(|a| (f.id, f.place) == (a.id, place));
+        let kept = (self.card.take()).and_then(|(_, f)| f.filter(same));
+        let fitted = kept.or_else(|| art.map(|a| Fitted::new(a, place)));
+        self.card = Some((place, fitted));
     }
 
-    /// The cover taken apart, its subject `lift`ed off (0 to 1) and swayed
-    /// across by `sway` (-1 to 1); `None` while none is fitted.
-    pub fn cut<'a, M: 'a>(&'a self, sway: f32, lift: f32) -> Option<Element<'a, M>> {
-        let cut = self.cut.as_ref()?;
-        let size = Size::new(
-            cut.size.0 as f32 / self.scale,
-            cut.size.1 as f32 / self.scale,
+    /// The card's cover; `None` while none is fitted.
+    pub fn card<'a, M: 'a>(&'a self) -> Option<Element<'a, M>> {
+        let fitted = self.card.as_ref()?.1.as_ref()?;
+        Some(picture(fitted, self.size(fitted)))
+    }
+
+    /// The card's cover (the card's raised ground without one) with
+    /// `story`'s scenes taking its place tile by tile as they are drawn,
+    /// darkened under them (the story's words go over it); `None` while
+    /// no card shows.
+    pub fn building<'a, M: 'a>(&'a self, story: &StoryView) -> Option<Element<'a, M>> {
+        let (place, fitted) = self.card.as_ref()?;
+        let size = fitted.as_ref().map_or_else(
+            || {
+                let side = place.0.min(place.1) as f32 / self.scale;
+                Size::new(side, side)
+            },
+            |f| self.size(f),
         );
-        let lifted = Lifted {
-            plate: cut.plate.clone(),
-            subject: cut.subject.clone(),
-            sway,
-            lift,
+        // Each scene's picture as made ready for the GPU, by its picture.
+        let handle = |picture: &Arc<image::RgbaImage>| {
+            (self.scenes.iter()).find_map(|(k, h)| Arc::ptr_eq(k, picture).then(|| h.clone()))
+        };
+        let tiles = (story.scenes.iter())
+            .filter_map(|(index, picture, shown)| Some((*index, handle(picture)?, *shown)))
+            .collect();
+        let building = Building {
+            cover: fitted.as_ref().map(|f| f.image.clone()),
+            tiles,
+            of: story.of,
         };
         Some(
-            iced::widget::canvas::Canvas::new(lifted)
+            iced::widget::canvas::Canvas::new(building)
                 .width(size.width)
                 .height(size.height)
                 .boxed(),
@@ -230,31 +217,14 @@ impl Covers {
     pub fn show_scenes(&mut self, scenes: &[Arc<image::RgbaImage>]) {
         let before = std::mem::take(&mut self.scenes);
         for picture in scenes {
-            let id = Arc::as_ptr(picture) as usize;
-            let handle = (before.iter().find(|(k, _)| *k == id))
+            let handle = (before.iter().find(|(k, _)| Arc::ptr_eq(k, picture)))
                 .map(|(_, h)| h.clone())
                 .unwrap_or_else(|| {
                     let (w, h) = picture.dimensions();
                     Handle::from_rgba(w, h, picture.as_raw().clone())
                 });
-            self.scenes.push((id, handle));
+            self.scenes.push((Arc::clone(picture), handle));
         }
-    }
-
-    /// Scene `index`'s picture, `side` points across at `opacity`.
-    pub fn scene<'a, M: 'a>(
-        &'a self,
-        index: usize,
-        opacity: f32,
-        side: f32,
-    ) -> Option<Element<'a, M>> {
-        let (_, handle) = self.scenes.get(index)?;
-        let picture: Image<Handle> = Image::new(handle.clone())
-            .width(side)
-            .height(side)
-            .opacity(opacity)
-            .border_radius(radius::CONTROL);
-        Some(picture.boxed())
     }
 
     /// The images of the covers shown, in order.
@@ -278,23 +248,32 @@ impl Covers {
     }
 }
 
-/// How far the subject sways across, in points.
-const SWAY: f32 = 4.0;
-/// How far it lifts up off the plate, in points.
-const LIFT: f32 = 7.0;
-/// How much larger the subject grows as it lifts.
-const GROW: f32 = 0.04;
+/// How dark the cover is under a story being built on it (0 clear, 1
+/// black).
+const UNDER_STORY: f32 = 0.6;
+/// The gap between two of the story's tiles, in points.
+const TILE_GAP: f32 = 1.0;
 
-/// A cover taken apart: its plate still, its subject over it lifted off
-/// and swaying, drawn on a canvas.
-struct Lifted {
-    plate: Handle,
-    subject: Option<Handle>,
-    sway: f32,
-    lift: f32,
+/// The rows and columns of a grid of `of` tiles over a picture of
+/// `size`: as many columns as keep the tiles nearest to square.
+fn grid(of: usize, size: Size) -> (usize, usize) {
+    let of = of.max(1);
+    let aspect = (size.width / size.height.max(1.0)).max(0.01);
+    let columns = ((of as f32 * aspect).sqrt().ceil() as usize).clamp(1, of);
+    (of.div_ceil(columns), columns)
 }
 
-impl<M> iced::widget::canvas::Program<M> for Lifted {
+/// A song's story being built on its cover: the cover darkened (none: the
+/// card's ground), each scene drawn so far over its tile (the `of` tiles
+/// in the song's order, row by row), fading in as it came.
+struct Building {
+    cover: Option<Handle>,
+    /// Each scene drawn: which, its picture, how far it has faded in.
+    tiles: Vec<(usize, Handle, f32)>,
+    of: usize,
+}
+
+impl<M> iced::widget::canvas::Program<M> for Building {
     type State = ();
 
     fn draw(
@@ -308,22 +287,29 @@ impl<M> iced::widget::canvas::Program<M> for Lifted {
         use iced::advanced::image::Image as Picture;
         let mut frame = iced::widget::canvas::Frame::new(renderer, bounds.size());
         let whole = Rectangle::new(iced::Point::ORIGIN, bounds.size());
-        let mut plate = Picture::new(self.plate.clone());
-        plate.border_radius = radius::PANEL.into();
-        frame.draw_image(whole, plate);
-        if let Some(subject) = &self.subject {
-            let grow = 1.0 + GROW * self.lift;
-            let size = Size::new(bounds.width * grow, bounds.height * grow);
+        if let Some(cover) = &self.cover {
+            let mut cover = Picture::new(cover.clone());
+            cover.border_radius = radius::PANEL.into();
+            frame.draw_image(whole, cover);
+        }
+        let shade = look::alpha(Color::BLACK, UNDER_STORY);
+        frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), shade);
+        let (rows, columns) = grid(self.of, bounds.size());
+        let tile = Size::new(bounds.width / columns as f32, bounds.height / rows as f32);
+        for (index, handle, shown) in &self.tiles {
+            let (row, column) = (index / columns, index % columns);
             let at = iced::Point::new(
-                (bounds.width - size.width) / 2.0 + SWAY * self.sway,
-                (bounds.height - size.height) / 2.0 - LIFT * self.lift,
+                column as f32 * tile.width + TILE_GAP / 2.0,
+                row as f32 * tile.height + TILE_GAP / 2.0,
             );
-            frame.draw_image(Rectangle::new(at, size), Picture::new(subject.clone()));
+            let size = Size::new(tile.width - TILE_GAP, tile.height - TILE_GAP);
+            let mut scene = Picture::new(handle.clone());
+            scene.opacity = *shown;
+            frame.draw_image(Rectangle::new(at, size), scene);
         }
         vec![frame.into_geometry()]
     }
 }
-
 /// A place of `size` points in pixels at `scale` pixels a point, for
 /// [`Covers::show`].
 pub fn pixels(size: Size, scale: f32) -> (u32, u32) {
@@ -390,4 +376,24 @@ pub fn shade<'a, M: 'a>(content: Element<'a, M>) -> Container<'a, Element<'a, M>
         },
         ..container::Style::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The story's tiles are as near to square as their count lets them
+    /// be, every one of them in the grid, none of it a row too many.
+    #[test]
+    fn a_story_s_tiles_are_near_square_over_its_cover() {
+        let wide = Size::new(1600.0, 900.0);
+        let (rows, columns) = grid(23, wide);
+        assert_eq!((rows, columns), (4, 7));
+        assert!(rows * columns >= 23 && (rows - 1) * columns < 23);
+        assert_eq!(grid(4, Size::new(300.0, 300.0)), (2, 2));
+        assert_eq!(grid(1, wide), (1, 1));
+        assert_eq!(grid(0, wide), (1, 1), "none told yet: one");
+        let (rows, columns) = grid(23, Size::new(900.0, 1600.0));
+        assert!(rows > columns && rows * columns >= 23);
+    }
 }

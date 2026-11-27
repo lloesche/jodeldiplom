@@ -7,8 +7,8 @@
 //!   `~/Library/Application Support/Jodeldiplom`, `~/.config/Jodeldiplom`.
 //! - **Data** ([`Data`]): what the player makes or fetches and could make
 //!   again: the speech models, the beat analyses and waveforms, the stems
-//!   kept, the lyrics found and our timings, the covers taken apart, the
-//!   story scenes' parts; and
+//!   kept, the lyrics found and our timings, the songs' stories, their
+//!   scenes and the scenes' parts; and
 //!   the user's own: the lyrics edited by hand, the best scores sung and
 //!   the game's sounds' patches kept. Large. It is the folder [`DATA`] inside a parent
 //!   the settings name (`data_folder`), by default the system's place for
@@ -133,12 +133,6 @@ impl Data {
         self.0.join("looks")
     }
 
-    /// The covers taken apart, and which is each song's
-    /// ([`crate::work::cover::CoverStore`]).
-    pub fn covers(&self) -> PathBuf {
-        self.0.join("covers")
-    }
-
     /// The songs' story scenes: a folder a song, as the story's drawing
     /// step leaves them ([`crate::work::scenes::SceneStore::folder`]); not
     /// a cache (they are long to make again), never forgotten.
@@ -174,9 +168,8 @@ impl Data {
         self.0.join("scores.txt")
     }
 
-    /// The folders of what the player makes and can make again (but the
-    /// covers', [`crate::work::cover::CoverStore::dirs_in`]), and what each
-    /// holds: what [`forget_cache`] forgets.
+    /// The folders of what the player makes and can make again, and what
+    /// each holds: what [`forget_cache`] forgets.
     fn caches(&self) -> [(PathBuf, &'static str); 7] {
         [
             (
@@ -193,15 +186,22 @@ impl Data {
     }
 
     /// The folders a crash may have left a file half written in (never
-    /// under a file's name, so never read): the caches', the covers', the
-    /// models', the lyrics edited, the patches and looks kept.
+    /// under a file's name, so never read): the caches', the models', the
+    /// lyrics edited, the patches and looks kept, and the scenes' (each
+    /// song's folder, written a picture at a time), as they are now.
     pub fn swept(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = self.caches().into_iter().map(|(d, _)| d).collect();
         dirs.push(self.models());
         dirs.push(self.lyric_edits());
         dirs.push(self.patches());
         dirs.push(self.looks());
-        dirs.extend(crate::work::cover::CoverStore::dirs_in(&self.covers()));
+        let songs = std::fs::read_dir(self.scenes())
+            .into_iter()
+            .flatten()
+            .flatten();
+        let songs = songs.filter(|e| e.file_type().is_ok_and(|t| t.is_dir()));
+        dirs.extend(songs.map(|e| e.path()));
+        dirs.push(self.scenes());
         dirs
     }
 }
@@ -263,8 +263,9 @@ const RECENT: &str = "recent-analyses.txt";
 
 /// Forgets what the player made and can make again (`--clean-cache`): the
 /// beat analyses (not the record `--diag` shows), the stems kept, the
-/// lyrics, the songs' loudness, the original singer's phrases, the covers
-/// taken apart; in the data folder, and in the one a move is still taking
+/// lyrics, the songs' loudness, the original singer's phrases, the songs'
+/// stories and their scenes' parts (not the scenes drawn: long to make
+/// again); in the data folder, and in the one a move is still taking
 /// it from (left there, it would come over). The models stay. What it
 /// did, a line a folder.
 pub fn forget_cache(folders: &Folders) -> Vec<String> {
@@ -290,12 +291,6 @@ pub fn forget_cache(folders: &Folders) -> Vec<String> {
                 dir.display()
             ));
         }
-        let covers = crate::work::cover::CoverStore::new(data.covers());
-        said.push(format!(
-            "Forgot {} files of covers taken apart in {}",
-            covers.forget(),
-            data.covers().display()
-        ));
     }
     said
 }
@@ -347,8 +342,6 @@ mod tests {
                 std::fs::create_dir_all(&cache).unwrap();
                 std::fs::write(cache.join("a.txt"), b"made").unwrap();
             }
-            std::fs::create_dir_all(data.covers().join("songs")).unwrap();
-            std::fs::write(data.covers().join("songs/a.txt"), b"made").unwrap();
             std::fs::create_dir_all(data.models()).unwrap();
             std::fs::write(data.models().join("m.bin"), b"model").unwrap();
             std::fs::write(data.analyses().join(RECENT), b"record").unwrap();
@@ -374,13 +367,16 @@ mod tests {
             for (cache, what) in data.caches() {
                 assert!(!cache.join("a.txt").exists(), "{what}: {}", cache.display());
             }
-            assert!(!data.covers().join("songs/a.txt").exists());
         }
         for file in kept {
             assert!(file.is_file(), "{}", file.display());
         }
-        // The crash sweep goes over the phrases too.
+        // The crash sweep goes over the phrases too, and every song's
+        // scenes.
         assert!(folders.data.swept().contains(&folders.data.shine()));
+        let song = folders.data.scenes().join("a song");
+        std::fs::create_dir_all(&song).unwrap();
+        assert!(folders.data.swept().contains(&song));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

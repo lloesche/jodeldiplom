@@ -1,6 +1,8 @@
-//! Cover art: decoding (the track heard's on a thread: [`ArtWorker`]),
-//! fitting into a pixel rect, and a placeholder.
+//! Cover art: decoding (on a thread: [`ArtWorker`], the track heard's,
+//! or a song's read from its file), fitting into a pixel rect, and a
+//! placeholder.
 
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -19,12 +21,32 @@ pub struct Art {
     pub image: Arc<RgbImage>,
 }
 
-/// The cover of the track heard, decoded on a thread of its own: the one
-/// asked for last is the one shown.
+/// Which cover a song brings, as the window's thread can tell cheaply: a
+/// hash of all its bytes (where they came from does not count, so the same
+/// picture embedded or beside the file is the same cover). A cover is
+/// decoded again only where it changes.
+pub fn identity(cover: &Cover) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    cover.data.hash(&mut h);
+    h.finish()
+}
+
+/// Which cover an [`ArtWorker`] was asked for last.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Wanted {
+    /// A cover given, by its [`identity`].
+    Cover(u64),
+    /// The cover of the song at this path, read from its file.
+    Song(PathBuf),
+}
+
+/// A cover decoded on a thread of its own, the track heard's or a song's
+/// read from its file: the one asked for last is the one shown.
 pub struct ArtWorker {
     art: Option<Art>,
-    /// The [`crate::work::cover::identity`] of the cover `art` is decoded from.
-    key: Option<u64>,
+    /// The cover asked for last (none: none).
+    wanted: Option<Wanted>,
     tx: Sender<(u64, Option<RgbImage>)>,
     rx: Receiver<(u64, Option<RgbImage>)>,
     /// The id of the cover asked for last.
@@ -38,7 +60,7 @@ impl ArtWorker {
         let (tx, rx) = mpsc::channel();
         ArtWorker {
             art: None,
-            key: None,
+            wanted: None,
             tx,
             rx,
             next: 0,
@@ -46,27 +68,45 @@ impl ArtWorker {
         }
     }
 
+    /// The cover shown now is the song's at `path`, read from its file
+    /// and decoded, unless it is the one shown already (none: none shown).
+    pub fn want_song(&mut self, path: Option<&Path>) {
+        let wanted = path.map(|p| Wanted::Song(p.to_owned()));
+        let path = path.map(Path::to_owned);
+        self.ask(wanted, move || {
+            let cover = jodel_playback::source::probe(path?).ok()?.cover?;
+            decode(&cover.data)
+        });
+    }
+
     /// The cover of the track heard now is `cover`: decoded unless it is
     /// the one shown already (none: none shown).
     pub fn want(&mut self, cover: Option<&Cover>) {
-        let Some(cover) = cover else {
-            self.art = None;
-            self.key = None;
-            self.next += 1;
-            return;
-        };
-        let key = crate::work::cover::identity(cover);
-        if self.key == Some(key) {
+        let wanted = cover.map(|c| Wanted::Cover(identity(c)));
+        let data = cover.map(|c| c.data.clone());
+        self.ask(wanted, move || decode(&data?));
+    }
+
+    /// `wanted` shown now, made by `decoded` on a thread of its own, unless
+    /// it is the one asked for already (none: none shown).
+    fn ask(
+        &mut self,
+        wanted: Option<Wanted>,
+        decoded: impl FnOnce() -> Option<RgbImage> + Send + 'static,
+    ) {
+        if wanted == self.wanted && (wanted.is_some() || self.art.is_none()) {
             return;
         }
-        self.key = Some(key);
+        self.art = None;
         self.next += 1;
+        self.wanted = wanted;
+        if self.wanted.is_none() {
+            return;
+        }
         let id = self.next;
-        let data = cover.data.clone();
         let (tx, notify) = (self.tx.clone(), Arc::clone(&self.notify));
         thread::spawn(move || {
-            let image = decode(&data);
-            if tx.send((id, image)).is_ok() {
+            if tx.send((id, decoded())).is_ok() {
                 notify();
             }
         });
@@ -90,6 +130,7 @@ impl ArtWorker {
     /// Sets the cover directly, or none (tests and screenshots).
     pub fn set(&mut self, image: Option<RgbImage>) {
         self.next += 1;
+        self.wanted = None;
         self.art = image.map(|image| Art {
             id: self.next,
             image: Arc::new(image),
@@ -157,6 +198,28 @@ mod tests {
         assert_eq!((scaled.width(), scaled.height(), x, y), (100, 50, 0, 25));
         let (scaled, x, y) = fit(&sample_cover(64), 300, 120);
         assert_eq!((scaled.width(), scaled.height(), x, y), (120, 120, 90, 0));
+    }
+
+    /// Two embedded covers of the same length that differ in one byte
+    /// (any byte: all of them count) are two covers.
+    #[test]
+    fn covers_of_one_length_and_other_bytes_are_told_apart() {
+        let embedded = |data: Vec<u8>| Cover {
+            data: data.into(),
+            mime: "image/jpeg".into(),
+            origin: jodel_playback::CoverOrigin::Embedded,
+        };
+        let a: Vec<u8> = (0..4096u32).map(|i| (i * 7) as u8).collect();
+        for at in [1, 63, 2000, 4095] {
+            let mut b = a.clone();
+            b[at] ^= 1;
+            assert_ne!(
+                identity(&embedded(a.clone())),
+                identity(&embedded(b)),
+                "{at}"
+            );
+        }
+        assert_eq!(identity(&embedded(a.clone())), identity(&embedded(a)));
     }
 
     #[test]

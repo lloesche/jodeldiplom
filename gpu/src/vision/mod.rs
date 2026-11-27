@@ -1,6 +1,7 @@
-//! The cover's vision networks on the GPU: Depth Anything 3 Small (its
-//! depth, [`GpuDepth`], `depth.rs`) and BEN2 Base (its subject's matte,
-//! [`GpuMatte`], `matte.rs` with the Swin backbone in `swin.rs`).
+//! The pictures' vision networks on the GPU (a karaoke story's scenes taken
+//! apart): Depth Anything 3 Small (its depth, [`GpuDepth`], `depth.rs`) and
+//! BEN2 Base (its subject's matte, [`GpuMatte`], `matte.rs` with the Swin
+//! backbone in `swin.rs`).
 //!
 //! Both run on one small set of kernels (`prelude.wgsl` and
 //! `../common.wgsl`, then `conv.wgsl`, `ops.wgsl`, `attention.wgsl`): a

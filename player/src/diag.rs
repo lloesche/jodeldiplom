@@ -67,7 +67,10 @@ pub fn run(args: &Args) -> Result<(), String> {
         }],
     );
     section("GPU (wgpu)", gpu(&settings.effective));
-    section("Covers taken apart (karaoke's background)", covers(data));
+    section(
+        "Story scenes taken apart (the game's background)",
+        scenes(data),
+    );
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -103,12 +106,14 @@ pub fn recent_lines(entries: &[String], now: u64) -> Vec<String> {
     lines
 }
 
-/// Whether covers are taken apart on this machine: the two models'
-/// weights, whether they set up on the GPU, how long a cover of 1024 × 1024
-/// takes (the models, then the taking apart), the GPU memory they hold.
-fn covers(data: &crate::store::dirs::Data) -> Vec<String> {
+/// Whether the story's scenes are taken apart on this machine: the two
+/// models' weights, whether they set up on the GPU, how long a picture of
+/// 1024 × 1024 takes (set up and the first, then one), the GPU memory
+/// they hold.
+fn scenes(data: &crate::store::dirs::Data) -> Vec<String> {
     use crate::setup::Lookup;
-    use crate::work::cover::{self, GpuSplitter};
+    use crate::work::scenes::{self, GpuNets};
+    use crate::work::stages::{self, Stage};
     let places = crate::setup::Places::player(data);
     let found: crate::setup::Paths = crate::setup::manifest()
         .iter()
@@ -117,40 +122,35 @@ fn covers(data: &crate::store::dirs::Data) -> Vec<String> {
             Lookup::Missing => None,
         })
         .collect();
-    let Some(models) = crate::setup::Found::of(&found).and_then(|f| f.covers) else {
+    let Some(models) = crate::setup::Found::of(&found).and_then(|f| f.scenes) else {
         return vec![format!(
-            "the models are not here ({} and {}; setup gets them where there is a usable GPU): the background keeps its blur",
-            cover::DEPTH_FILE,
-            cover::MATTE_FILE
+            "the models are not here ({} and {}; setup gets them where there is a usable GPU): no stories are made",
+            scenes::DEPTH_FILE,
+            scenes::MATTE_FILE
         )];
     };
     let mut lines = vec![
         format!("found: {}", models.depth.display()),
         format!("found: {}", models.matte.display()),
     ];
-    let splitter = GpuSplitter::new(models);
-    let image = crate::work::art::sample_cover(1024);
-    let started = std::time::Instant::now();
-    match splitter.parts(&image) {
-        Err(e) => lines.push(format!(
-            "runs here: no ({e}); the background keeps its blur"
-        )),
-        Ok(_) => {
-            let setup = started.elapsed();
-            let started = std::time::Instant::now();
-            let parts = splitter.parts(&image);
-            let models = started.elapsed();
-            let started = std::time::Instant::now();
-            if let Ok(parts) = parts {
-                let _ = cover::split(&image, &parts);
-            }
+    let nets = GpuNets::new(models);
+    let picture = crate::work::art::sample_cover(1024);
+    let derive = || {
+        let started = std::time::Instant::now();
+        let derived = stages::run(&[Stage::Scenes], "a picture", || {
+            scenes::derive(&picture, "sample".into(), &nets)
+        });
+        derived.map(|(_, took)| (started.elapsed(), took))
+    };
+    match derive().and_then(|(first, _)| Ok((first, derive()?))) {
+        Err(e) => lines.push(format!("runs here: no ({e}); no stories are made")),
+        Ok((first, (_, took))) => {
+            let (resident, most) = nets.gpu_bytes();
             lines.push(format!(
-                "runs here: yes; set up and the first cover {} ms, then a cover {} ms on the GPU (depth and cut-out) and {} ms taking it apart; on the GPU {} MB between covers, at most {} MB while one is taken apart",
-                setup.as_millis(),
-                models.as_millis(),
-                started.elapsed().as_millis(),
-                splitter.gpu_bytes().0 >> 20,
-                splitter.gpu_bytes().1 >> 20
+                "runs here: yes; set up and the first picture {} ms, then a picture {took}; on the GPU {} MB between pictures, at most {} MB while one is taken apart",
+                first.as_millis(),
+                resident >> 20,
+                most >> 20
             ));
         }
     }

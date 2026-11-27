@@ -1,7 +1,9 @@
 //! Karaoke mode's ground under everything: the cover cropped to the
 //! screen's shape, shrunk, blurred and shaded (a plain dark gradient
 //! without one), made small ([`small`]): the GPU scales it up to the
-//! window under the cover's layers ([`super::Visualiser`]).
+//! window ([`super::Visualiser`]). Without the game it is the backdrop
+//! (the cover, [`super::Shows::Blur`]); with it, the plain gradient under
+//! the story's scenes ([`super::Shows::Story`]).
 
 use image::imageops::{self, FilterType};
 use image::RgbImage;

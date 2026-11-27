@@ -59,7 +59,7 @@ struct Level {
 /// `picture` with its pixels of weight 0 in `known` (0..=1 each) filled by
 /// push-pull; pixels of weight 1 kept as they are, partly known ones
 /// blended. Without a known pixel at all, it is returned as it is.
-pub fn push_pull(picture: &Planes, known: &[f32]) -> Planes {
+pub(super) fn push_pull(picture: &Planes, known: &[f32]) -> Planes {
     let ch = picture.channels;
     assert_eq!(known.len(), picture.width * picture.height);
     if known.iter().all(|&k| k <= 0.0) {
@@ -196,7 +196,7 @@ pub fn box_blur(p: &Planes, r: usize) -> Planes {
 
 /// `mask` (one value a pixel) grown by `r` pixels: each the largest within
 /// a square of 2r + 1.
-pub fn dilate(mask: &[f32], width: usize, height: usize, r: usize) -> Vec<f32> {
+pub(super) fn dilate(mask: &[f32], width: usize, height: usize, r: usize) -> Vec<f32> {
     let pass = |src: &[f32], horizontal: bool| -> Vec<f32> {
         let mut out = vec![0.0; src.len()];
         for y in 0..height {
@@ -271,7 +271,7 @@ fn smooth_noise(x: usize, y: usize, cell: usize) -> f32 {
 /// 3 × 3 mean) and mottled (that mean's from the 9 × 9 one), each filled in
 /// the same way. Pixels partly in the hole blend the fill in by how much
 /// they are.
-pub fn fill(picture: &Planes, hole: &[f32]) -> Planes {
+pub(super) fn fill(picture: &Planes, hole: &[f32]) -> Planes {
     let (w, h) = (picture.width, picture.height);
     let known: Vec<f32> = hole.iter().map(|&a| 1.0 - a.clamp(0.0, 1.0)).collect();
     let mut filled = push_pull(picture, &known);
@@ -324,7 +324,7 @@ const HOLE_FULL: f32 = 1.5;
 /// of each pixel (`alpha`): all it touches ([`HOLE_TOUCHED`]), grown
 /// ([`HOLE_GROWN`]: its glow and the matte's soft edge go with it), the
 /// edge softened ([`HOLE_SOFT`]); 1 where the plate is all fill.
-pub fn hole(alpha: &[f32], w: usize, h: usize) -> Vec<f32> {
+pub(super) fn hole(alpha: &[f32], w: usize, h: usize) -> Vec<f32> {
     let size = Size::of(w, h);
     let touched: Vec<f32> = alpha
         .iter()

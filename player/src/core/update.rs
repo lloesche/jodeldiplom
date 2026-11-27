@@ -215,13 +215,13 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     }
     work::want_rhythm(state, &mut fx);
     karaoke::want_lyrics(state, &mut fx);
-    karaoke::want_stories(state, &mut fx);
     super::stems::follow(state, &mut fx);
     super::sync::follow(state, &mut fx);
     desk::settle(state, &mut fx);
     super::synth_tab::settle(state, &mut fx);
     super::shader_tab::settle(state);
     work::prepare(state, &mut fx);
+    work::want_stories(state, &mut fx);
     karaoke::start_when_ready(state, &mut fx);
     if check_details {
         work::want_details(state, &mut fx);

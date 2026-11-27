@@ -6,9 +6,7 @@
 //! by the picture's file's bytes ([`super::picture_hash`]), so a picture is
 //! taken apart once whichever song shows it, and one drawn again is taken
 //! apart again; parts made otherwise ([`super::VERSION`], in the file) are
-//! made again. (A cover's result is kept by its decoded pixels instead,
-//! `crate::work::cover::pixel_hash`: a song's cover comes re-encoded, a
-//! scene's picture never.)
+//! made again.
 
 use std::path::{Path, PathBuf};
 
@@ -40,7 +38,7 @@ impl SceneStore {
         }
     }
 
-    /// The folder the song of `song_key` ([`crate::work::cover::song_key`])
+    /// The folder the song of `song_key` ([`crate::work::scenes::song_key`])
     /// has its scenes in.
     pub fn folder(&self, song_key: &str) -> PathBuf {
         self.scenes.join(song_key)
@@ -50,7 +48,7 @@ impl SceneStore {
     /// none where it left none. Looks at the song's file (its key): not for
     /// the window's thread.
     pub fn scenes_of(&self, song: &Path) -> Option<Scenes> {
-        Scenes::read(&self.folder(&crate::work::cover::song_key(song)))
+        Scenes::read(&self.folder(&crate::work::scenes::song_key(song)))
     }
 
     fn file(&self, hash: &str) -> PathBuf {

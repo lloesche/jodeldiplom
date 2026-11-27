@@ -4,15 +4,6 @@ Work agreed on but not started, roughly in the order it was raised.
 
 ## Karaoke
 
-- **The cover's subject: a different model.** Tuning around BEN v2
-  never satisfied (half a face cut off on Amy Macdonald's "This Is the
-  Life", the title torn out of the background as blurred blocks). A
-  "most eye-catching thing" model guesses; the plan is to say what the
-  subject is: faces and a person detector give the boxes, SAM 2.1
-  (Apache-2.0) cuts what they point at, a "stands out" model only for
-  covers without a person; text left in the background or filled by a
-  real inpainting model (LaMa) instead of the cheap fill. A bake-off on
-  the owner's covers decides (kept outside the repository).
 - **Next, in this order:** the look shaders finished (the rest of the
   passes, hundreds of presets, every one dancing to the song, the
   guards), then the story generator's first version in the player, as
@@ -64,10 +55,6 @@ Work agreed on but not started, roughly in the order it was raised.
   (no background, card, frame or label), glowing ones on black and added
   as light, and refused when its outline is box-like (straight runs
   along its edge, its box mostly filled).
-- **The rays on the ladder?** The backdrop's spotlight rays follow how
-  well the singing shines (the phrase's tier), everything else that
-  builds up follows the multiplier. If they should come in order with
-  the rest for every singer, they move to the rungs too.
 - **The Synth tab's layers:** the layers a tier or rung switches on are
   shown over the sound, not edited there (they are the tier table's
   rows); if they should be tried out on the tab too, a row's layers
@@ -99,8 +86,8 @@ Work agreed on but not started, roughly in the order it was raised.
   memory out to system memory silently and everything crawls. Each
   model says what it holds and its peak while it works, so the plan is
   made before loading. The existing workers (stems, the speech model,
-  word timing, the cover's vision) under the same scheduler; each stage
-  its icon in the queue, lit only when done.
+  word timing, the scenes' depth and cut-out) under the same scheduler;
+  each stage its icon in the queue, lit only when done.
 - **A theme as one file** (the owner, 2026-11-27): rework theming so a
   theme is a single file (YAML or similar) holding everything, loaded
   from disk instead of compiled in: its assets, its sounds' patches (in
@@ -127,9 +114,9 @@ Work agreed on but not started, roughly in the order it was raised.
 
 All our networks run on our own WGSL kernels, so one engine's speed-ups
 help the speech model, the stems, the beats, the word timing and the
-cover's vision alike. Measure first (per-kernel GPU time, submissions
-and waits per network, bandwidth- or compute-bound), then in order of
-what it buys:
+scenes' depth and cut-out alike. Measure first (per-kernel GPU time,
+submissions and waits per network, bandwidth- or compute-bound), then in
+order of what it buys:
 
 - **Next, once the story in pre-processing lands: Gemma's context, as
   large as the card allows** (the owner, 2026-11-27: "optimize the heck

@@ -7,8 +7,9 @@ use std::cell::RefCell;
 use super::*;
 use crate::core::story::tests::{song, GOOD};
 
-/// A writer that answers each prompt with the next of its answers, its
-/// text streamed in pieces of seven characters, and keeps the prompts.
+/// A writer that answers each prompt with the next of its answers (said
+/// to think first where the answer has a thought), its text streamed in
+/// pieces of seven characters, and keeps the prompts.
 struct Fake {
     answers: RefCell<Vec<Result<Written, Failure>>>,
     asked: RefCell<Vec<String>>,
@@ -28,13 +29,16 @@ impl Writer for Fake {
         &self,
         prompt: &str,
         _most: usize,
-        seen: &mut dyn FnMut(&str),
+        seen: &mut dyn FnMut(Writing),
     ) -> Result<Written, Failure> {
         self.asked.borrow_mut().push(prompt.to_owned());
         let answer = self.answers.borrow_mut().remove(0)?;
+        if answer.thought_tokens > 0 {
+            seen(Writing::Thinking);
+        }
         let chars: Vec<char> = answer.text.chars().collect();
         for piece in chars.chunks(7) {
-            seen(&piece.iter().collect::<String>());
+            seen(Writing::Answer(&piece.iter().collect::<String>()));
         }
         Ok(answer)
     }
@@ -58,16 +62,56 @@ fn broken() -> String {
     )
 }
 
-/// The plan `fake` writes for [`song`], and what it told.
+/// The plan `fake` writes for [`song`], and what it told (its thinking
+/// as `[thinking]`).
 fn planned_by(fake: &Fake) -> (Planned, String) {
     let song = song();
     let mut told = String::new();
-    let planned = plan(fake, &song, &prompt::prompt(&song), &mut |story| {
-        if let Story::Words(words) = story {
-            told.push_str(&words);
-        }
-    });
+    let planned = plan(
+        fake,
+        &song,
+        &prompt::prompt(&song),
+        &mut |story| match story {
+            Story::Words(words) => told.push_str(&words),
+            Story::Thinking => told.push_str("[thinking]"),
+            _ => {}
+        },
+    );
     (planned, told)
+}
+
+/// The model thinks before it writes: "thinking…" told first, the
+/// thought not in the answer read.
+#[test]
+fn a_thought_is_told_before_the_plan() {
+    let thought = Written {
+        thought_tokens: 900,
+        ..says(GOOD).unwrap()
+    };
+    let (planned, told) = planned_by(&Fake::new(vec![Ok(thought)]));
+    assert!(planned.plan.is_ok());
+    assert!(told.starts_with("[thinking]A woman remembers"), "{told}");
+}
+
+/// A thought that never ends is cut off: no story, not asked again (the
+/// model writes greedily: it would think as long again).
+#[test]
+fn a_thought_that_never_ends_is_cut_off() {
+    let endless = Written {
+        thinking: true,
+        thought_tokens: 3_000,
+        ..Written::default()
+    };
+    let (planned, told) = planned_by(&Fake::new(vec![Ok(endless)]));
+    let Err(Failure::CutOff(why)) = planned.plan else {
+        panic!("cut off: {:?}", planned.plan);
+    };
+    assert_eq!(
+        why,
+        "the model's thought did not end (cut off after 3000 tokens)"
+    );
+    assert_eq!(planned.tries.len(), 1, "not asked again");
+    assert!(told.starts_with("[thinking]") && told.contains("No story for this song"));
 }
 
 /// A good answer is taken at once, its prose told as it came.
@@ -96,8 +140,9 @@ fn a_refused_answer_is_asked_again_with_its_error() {
 }
 
 /// Two answers refused: the song has no story (kept as such); the last
-/// cut off at its length: none either, but the length is to blame (not
-/// kept); a prompt too long or a model that fails: no second try.
+/// cut off at its length: none either (kept as such too: written greedily,
+/// it would be cut off again); a prompt too long or a model that fails: no
+/// second try.
 #[test]
 fn a_plan_that_never_holds_is_refused_cut_off_or_failed() {
     let fake = Fake::new(vec![says(&broken()), says(&broken())]);
@@ -179,7 +224,8 @@ fn a_plan_is_kept_with_what_made_it() {
 
 /// A job runs its plan, tells it and keeps it, found again for the song
 /// as it is asked (other words: planned again); a song that has no story
-/// is kept as such, a model that failed is not kept.
+/// is kept as such (its answers refused, or cut off), a model that failed
+/// is not kept.
 #[test]
 fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
     let dir = jodel_testkit::TempDir::new("story");
@@ -205,6 +251,21 @@ fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
     ));
     assert!(told.iter().any(|s| matches!(s, Story::Words(_))));
     assert!(matches!(other.kept(), Some(Kept::NoStory(_))));
+    // An answer cut off at its length: kept as none too, for this ask.
+    let mut third = song();
+    third.lines[0].text = "I swam out past the harbour".into();
+    let third = StoryJob::new(dir.join("song.flac"), third, dir.join("stories"));
+    let cut = Written {
+        text: GOOD[..GOOD.len() / 2].to_owned(),
+        stopped: false,
+        ..Written::default()
+    };
+    let cut = Fake::new(vec![Ok(cut)]);
+    assert!(matches!(
+        third.run(&cut, &mut |_| {}),
+        Err(Failure::CutOff(_))
+    ));
+    assert!(matches!(third.kept(), Some(Kept::NoStory(_))));
 }
 
 /// The whole job on the model, end to end: `JODEL_GEMMA` names the

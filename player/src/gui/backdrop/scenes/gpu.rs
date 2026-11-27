@@ -17,18 +17,16 @@ use crate::work::scenes::{Moved, Ready, Story};
 const LOOK_BYTES: u64 = std::mem::size_of::<SceneLook>() as u64;
 
 /// The scenes' shader for a target that takes linear light (`linear`) or
-/// not: the backdrop's maths (the layers' shift, the corners' shade, the
-/// full-screen triangle and the finish), the scenes' own
-/// ([`super::look`]), the light's tone and `scenes.wgsl`.
+/// not: the backdrop's full-screen triangle, the scenes' maths and how
+/// their light is shown ([`super::look`]), the light's tone and
+/// `scenes.wgsl`.
 pub fn shader(linear: bool) -> String {
-    use super::super::look;
     format!(
-        "const LINEAR: f32 = {};\n{}{}{}{}{}{}",
+        "const LINEAR: f32 = {};\n{}{}{}{}{}",
         if linear { "1.0" } else { "0.0" },
-        look::wgsl(),
-        look::SCREEN,
-        look::FINISH,
+        super::super::look::SCREEN,
         super::look::wgsl(),
+        super::look::FINISH,
         crate::gui::bloom::TONE,
         include_str!("scenes.wgsl")
     )
@@ -158,8 +156,8 @@ impl ScenePass {
             return None;
         };
         let story = &frame.story;
-        let index = frame.drawn.map(|(i, _)| i);
-        let wanted: Vec<usize> = [index, frame.next].into_iter().flatten().collect();
+        let (drawn, look) = frame.drawn;
+        let wanted: Vec<usize> = [Some(drawn), frame.next].into_iter().flatten().collect();
         self.held.retain(|h| wanted.iter().any(|&i| h.is(story, i)));
         for &index in &wanted {
             let at = match self.held.iter().position(|h| h.is(story, index)) {
@@ -169,7 +167,7 @@ impl ScenePass {
                     self.held.len() - 1
                 }
             };
-            let whole = frame.drawn.is_some_and(|(i, _)| i == index);
+            let whole = index == drawn;
             let scene = &story.scenes[index];
             let held = &mut self.held[at];
             while held.bind.is_none() {
@@ -188,15 +186,14 @@ impl ScenePass {
                 }
             }
         }
-        let (index, look) = frame.drawn?;
         let held = self
             .held
             .iter()
-            .find(|h| h.is(story, index) && h.bind.is_some())?;
+            .find(|h| h.is(story, drawn) && h.bind.is_some())?;
         queue.write_buffer(&held.uniforms, 0, bytemuck::bytes_of(&look));
         Some(Drawn {
             story: story.id,
-            index,
+            index: drawn,
             look,
         })
     }

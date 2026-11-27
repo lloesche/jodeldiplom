@@ -1,9 +1,10 @@
-//! What a frame of Karaoke mode costs, step by step: the backdrop (a cover
-//! taken apart, its `.layers` file from the player's data folder, moving
-//! with a steady beat) and the
-//! stage over it, stepped at 60 frames a second through a made-up song
-//! sung on the notes (`tests/common/sung.rs`), drawn offscreen as the
-//! window draws them, and each step's GPU time read from timestamps (the
+//! What a frame of Karaoke mode costs, step by step: the backdrop (a
+//! story's scenes, from a picture: a story scene's from the player's data
+//! folder, `scenes/<song>/scene-*.png`, or any; moving with a steady
+//! beat) and the stage over it, stepped at 60 frames a second through a
+//! made-up song sung on the notes (`tests/common/sung.rs`), drawn
+//! offscreen as the window draws them, and each step's GPU time read from
+//! timestamps (the
 //! window's pass drawn a step a pass; the first, `ground`, the backdrop
 //! over the window): a normal frame (the singing at no tier), the lyrics
 //! set in the middle (`lyrics`: no lane, as with the notes off), each
@@ -27,11 +28,11 @@
 //! what the processor spent making each frame's stage and backdrop; which
 //! frame was the worst (its number, its time in the scene, the beats that
 //! had just landed or the phrase just decided, and how much it drew),
-//! and how many frames went over the budgets. The `story` scene is the
-//! normal one over the story's scenes instead of the cover (the cover's
-//! picture and depth taken for three scenes, each in three layers, a head
-//! held flat in the middle: the dearest a scene draws), one cut in and the
-//! next scene sent over within the second timed. The GPU must write
+//! and how many frames went over the budgets. The story is the picture
+//! three times, each scene in three layers by a made-up depth (nearer
+//! towards its middle), a head held flat in the middle: the dearest a
+//! scene draws; one cut in and the next scene sent over within the second
+//! timed. The GPU must write
 //! timestamps (Vulkan, DirectX 12, Metal on Apple's chips). `--png
 //! OUT_DIR`: the last frame of each as a PNG (`<scene>-<W>x<H>.png`,
 //! written whole), to hold the look to. Each scene's stage is also timed
@@ -45,8 +46,9 @@
 //! `--look ID`: every scene with that look over its backdrop (a preset's
 //! id, [`jodel_looks::presets`]; `--look heaviest`: each of the presets
 //! that cost the most in turn, two scenes each over the normal scene's
-//! singing: over the cover and over the story's scenes), moving with a made-up song at the steady grid's tempo
-//! ([`jodel_looks::demo`]); its passes are the `look` step.
+//! singing: the normal one and the lyrics set in the middle), moving with
+//! a made-up song at the steady grid's tempo ([`jodel_looks::demo`]); its
+//! passes are the `look` step.
 //!
 //! `--theme NAME`: the game in that theme ([`jodeldiplom::theme`]: its
 //! colours, its effects' looks, what it holds throughout and its grade
@@ -62,7 +64,7 @@
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example frame_cost --
-//!     COVER.layers [--size WxH ...] [--density D] [--png OUT_DIR]
+//!     PICTURE [--size WxH ...] [--density D] [--png OUT_DIR]
 //!     [--budget MS] [--step-budget MS] [--theme NAME] [--look ID]
 //! ```
 
@@ -76,21 +78,19 @@ use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::scenes::Showing;
 use jodeldiplom::gui::backdrop::song_look::LookCue;
-use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
+use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Shows, Visualiser};
 use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::theme::Theme;
 use jodeldiplom::view::karaoke::{KaraokePicture, ResultShown};
-use jodeldiplom::work::art::Art;
-use jodeldiplom::work::cover::{Apart, CoverLayers, Layers};
-use jodeldiplom::work::picture::Planes;
+use jodeldiplom::work::picture::{palette, NearMap, Planes};
 use jodeldiplom::work::scenes::{alphas, half, Cuts, Derived, Head, Ready, Split, Story};
 
 #[path = "../tests/common/sung.rs"]
 mod sung;
-use sung::{cover_of, levels, picture_at, song, with_effects, Fired, FPS, LENGTH};
+use sung::{picture_at, song, with_effects, Fired, FPS, LENGTH};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -115,8 +115,7 @@ const CLIMBS: f64 = AT - TIMED;
 /// its frames at once ([`every_effect`]), and how its frames are judged
 /// against the budgets; whether the stage draws the song's lane (else the
 /// lyrics set in the middle, as with the notes off); the look over its
-/// backdrop (none: none); whether the story's scenes show instead of the
-/// cover.
+/// backdrop (none: none).
 struct Scene {
     name: String,
     tier: Option<Tier>,
@@ -125,7 +124,6 @@ struct Scene {
     judge: Judge,
     lane: bool,
     look: Option<Arc<jodel_looks::Checked>>,
-    story: bool,
 }
 
 /// How many of the dearest presets `--look heaviest` times.
@@ -148,8 +146,7 @@ fn looks_asked(asked: Option<&str>) -> Option<Vec<Arc<jodel_looks::Checked>>> {
     Some(vec![Arc::new(look.check())])
 }
 
-/// The scenes: the normal one, the normal one over the story's scenes, the
-/// lyrics set in the middle (no lane), a
+/// The scenes: the normal one, the lyrics set in the middle (no lane), a
 /// tier's each, every effect at once and the diploma (at the top, judged by
 /// the lesser of two runs).
 fn scenes() -> Vec<Scene> {
@@ -161,11 +158,6 @@ fn scenes() -> Vec<Scene> {
         judge: Judge::Worst,
         lane: true,
         look: None,
-        story: false,
-    };
-    let story = Scene {
-        story: true,
-        ..scene("story", None, false, false)
     };
     let lyrics = Scene {
         lane: false,
@@ -177,7 +169,7 @@ fn scenes() -> Vec<Scene> {
         judge: Judge::MinOfTwo,
         ..scene("diploma", Some(Tier::TOP), true, false)
     };
-    [scene("normal", None, false, false), story, lyrics]
+    [scene("normal", None, false, false), lyrics]
         .into_iter()
         .chain(tiers)
         .chain([scene("all", Some(Tier::TOP), false, true), diploma])
@@ -395,8 +387,6 @@ fn time(
 struct Rig<'a> {
     stage: Stage,
     visualiser: Visualiser,
-    art: &'a Art,
-    layers: &'a Layers,
     sung: &'a [&'a jodel_lyrics::Line],
     size: (u32, u32),
     /// Whether the stage draws the song's lane.
@@ -409,8 +399,8 @@ struct Rig<'a> {
     phrase: Option<f64>,
     /// The look over the backdrop, and the made-up song it moves with.
     look: Option<(Arc<jodel_looks::Checked>, Arc<jodel_looks::Curves>)>,
-    /// The story's scenes instead of the cover (none: the cover).
-    story: Option<Arc<Showing>>,
+    /// The story's scenes.
+    story: Arc<Showing>,
 }
 
 impl Rig<'_> {
@@ -425,17 +415,14 @@ impl Rig<'_> {
         let (w, h) = self.size;
         self.made += 1;
         let started = Instant::now();
-        // A phrase landing flares the subject; the backdrop moves with the
+        // A phrase landing flares the scene; the backdrop moves with the
         // steady grid's beat.
         let last = singing.last_phrase().map(|p| p.end);
         let phrase = self.made > 1 && last.is_some() && last != self.phrase;
         self.phrase = last;
         let signals = (self.look.as_ref()).map_or(jodel_looks::Signals::QUIET, |(_, c)| c.at(now));
         let cue = Cue {
-            art: Some(self.art.clone()),
-            layers: Some(self.layers.clone()),
             heard: Hearing {
-                levels: levels(),
                 glow: singing.glow(true),
                 section: false,
                 phrase,
@@ -451,7 +438,7 @@ impl Rig<'_> {
                 seed: jodel_looks::seed(&look.id, "frame_cost"),
                 band: Some(jodel_looks::BAND),
             }),
-            story: self.story.clone(),
+            shows: Shows::Story(Some(Arc::clone(&self.story))),
             at: now,
             signals,
         };
@@ -482,17 +469,29 @@ impl Rig<'_> {
     }
 }
 
-/// The story's scenes the `story` scene shows: the cover's `picture` and
-/// its depth (of its `layers`) three times, each cut in three layers with a
-/// head held flat in the middle, the cover's plate behind; the second cut
-/// in 9.4 s into the song, the third sent over just after (within the
+/// The story's scenes every scene shows: `picture` three times, each cut
+/// in three layers by a made-up depth (nearer towards its middle) with a
+/// head held flat in the middle, the picture itself behind; the second
+/// cut in 9.4 s into the song, the third sent over just after (within the
 /// second timed).
-fn story_of(layers: &CoverLayers, picture: &image::RgbImage) -> Arc<Story> {
-    let near = Planes::from(&layers.depth);
+fn story_of(picture: &image::RgbImage) -> Arc<Story> {
+    let (w, h) = (picture.width() / 2, picture.height() / 2);
+    let depth = NearMap {
+        width: w,
+        height: h,
+        near: (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 / w as f32, (i / w) as f32 / h as f32);
+                let d = ((x - 0.5).powi(2) + (y - 0.5).powi(2)).sqrt() * 2.0;
+                ((1.0 - d.min(1.0)) * 65535.0) as u16
+            })
+            .collect(),
+    };
+    let near = Planes::from(&depth);
     let cuts = Cuts::Three(0.35, 0.65);
     let parts = Derived {
-        picture: "cover".into(),
-        near: layers.depth.clone(),
+        picture: "picture".into(),
+        near: depth,
         heads: vec![Head {
             face: [0.42, 0.3, 0.16, 0.2],
             near: 0.8,
@@ -500,21 +499,19 @@ fn story_of(layers: &CoverLayers, picture: &image::RgbImage) -> Arc<Story> {
         split: Split::Layers {
             cuts,
             alphas: alphas(&near, &cuts, half(picture.dimensions()), None),
-            plate: image::imageops::resize(
-                &layers.plate,
-                picture.width(),
-                picture.height(),
-                image::imageops::FilterType::Triangle,
-            ),
+            plate: picture.clone(),
         },
-        palette: layers.palette.clone(),
+        palette: palette(picture),
     };
     let scenes = [(0.0, 9.4), (9.4, 12.3), (12.3, LENGTH)]
         .map(|span| Ready::new(span, picture, &parts))
         .to_vec();
-    let hashes = ["cover".to_owned(), "cover".to_owned(), "cover".to_owned()];
-    let look = jodel_looks::presets::all()[0].clone();
-    Arc::new(Story::new(&hashes, scenes, look))
+    let hashes = [
+        "picture".to_owned(),
+        "picture".to_owned(),
+        "picture".to_owned(),
+    ];
+    Arc::new(Story::new(&hashes, scenes))
 }
 
 /// How a scene's frames are judged against the budgets: by its worst
@@ -722,7 +719,7 @@ fn in_reveal(reveal: &Reveal, t: f64) -> String {
 fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let cover = args.first().expect("COVER.layers");
+    let picture = args.first().expect("PICTURE");
     let mut sizes: Vec<(u32, u32)> = args
         .iter()
         .zip(args.iter().skip(1))
@@ -743,19 +740,8 @@ fn main() {
     let theme = after("--theme").map_or(&jodeldiplom::theme::CLASSIC, |name| {
         Theme::named(name).unwrap_or_else(|| panic!("no theme named {name:?}"))
     });
-    let bytes = std::fs::read(cover).expect("the layers");
-    let layers = jodeldiplom::work::cover::from_bytes(&bytes)
-        .expect("layers")
-        .layers;
-    let art = Art {
-        id: 1,
-        image: Arc::new(cover_of(&layers)),
-    };
-    let key = Path::new(cover)
-        .file_stem()
-        .map_or(String::new(), |s| s.to_string_lossy().into_owned());
-    let story = story_of(&layers, &art.image);
-    let layers: Layers = Arc::new(Apart::new(key, layers));
+    let picture = image::open(picture).expect("the picture").to_rgb8();
+    let story = story_of(&picture);
     let (lyrics, melody) = song();
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
     // The adapter chosen first: what is timed is the device and the
@@ -808,8 +794,6 @@ fn main() {
             let mut rig = Rig {
                 stage: Stage::default(),
                 visualiser: Visualiser::default(),
-                art: &art,
-                layers: &layers,
                 sung: &sung,
                 size: (w, h),
                 lane: scene.lane,
@@ -817,9 +801,7 @@ fn main() {
                 made: 0,
                 phrase: None,
                 look: scene.look.clone().map(|l| (l, Arc::clone(&curves))),
-                story: scene
-                    .story
-                    .then(|| Arc::new(Showing::new(Arc::clone(&story), None))),
+                story: Arc::new(Showing::new(Arc::clone(&story), None)),
             };
             let mut frames = Vec::new();
             let (mut kinds, mut effects) = (Alone::default(), Alone::default());

@@ -153,8 +153,9 @@ Nunito, Fredoka, M PLUS Rounded 1c).
 With a GPU, Karaoke mode is one surface drawn in iced's render pass, in
 this order (`gui::present::Painter::PARTS`):
 
-1. **ground:** the backdrop (`gui::backdrop`): the cover taken apart and
-   lit by the music, a triangle over the window reading it;
+1. **ground:** the backdrop (`gui::backdrop`): the song's cover blurred,
+   or with the game its story's scenes moving with the music, a
+   triangle over the window reading it;
 2. **stage:** the stage's shapes (`gui::stage`, `gui::stage::gpu`): the lane,
    the bubbles as tubes with their liquid, the arrow, the lyrics, the
    count-in, the score, the meter, the badge, Next, the result's

@@ -8,7 +8,7 @@
 [to do] Packing the speech recogniser at 4 bits, then checking it
 [to do] Removing the download (1.88 GB)
 [to do] Downloading the depth model (Depth Anything 3 Small by ByteDance Seed, 137 MB)
-[to do] Downloading the cover's cut-out model (BEN2 by Prama, 381 MB)
+[to do] Downloading the scenes' cut-out model (BEN2 by Prama, 381 MB)
 [folded to do] 4 more to come
 [label] All of it: 6 %
 [bar good] 6 %

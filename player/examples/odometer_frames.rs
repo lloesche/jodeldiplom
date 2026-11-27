@@ -1,5 +1,5 @@
 //! Karaoke mode's score rolling up, frame by frame, as the GPU draws it
-//! (the stage over a sample cover's blur): a word's points at ×4
+//! (the stage over the plain ground): a word's points at ×4
 //! (12 400 to 12 800) and at ×32 (to 15 600), and a jackpot (to 186 000),
 //! each at several moments into its roll. Saved as PNGs into `OUT_DIR`: the top right
 //! corner five times as large (`<roll>-<ms>.png`) and the whole frame
@@ -10,14 +10,11 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::pixels::unpack;
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::karaoke::{KaraokePicture, Score};
-use jodeldiplom::work::art::{sample_cover, Art};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -61,18 +58,9 @@ fn save(file: &Path, img: &image::RgbImage) {
 fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     let out = PathBuf::from(std::env::args().nth(1).expect("OUT_DIR"));
-    let art = Art {
-        id: 1,
-        image: Arc::new(sample_cover(256)),
-    };
     let (w, h) = (W as u32, H as u32);
     let mut gpu = Offscreen::new(false).expect("a GPU");
-    let cue = Cue {
-        art: Some(art),
-        ..Cue::default()
-    };
-    let ground = Visualiser::default().step(&cue, (w, h), 0.0);
-    gpu.set_backdrop(Some(&ground), w, h);
+    gpu.set_plain_ground(w, h);
     let singing = jodeldiplom::core::singing::Singing::default();
     let song = Song::new(&singing, Vec::new(), None);
     let area = (0.0, 0.0, W as f32, H as f32);

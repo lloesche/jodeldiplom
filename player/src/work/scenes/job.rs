@@ -1,22 +1,23 @@
-//! A song's scenes made ready for the backdrop ([`prepare`], [`story`]):
-//! each picture's parts as kept, or derived on the GPU ([`SceneNets`]: the
-//! cover's two models, `crate::work::cover::GpuSplitter`'s) and kept;
-//! then each scene's texels made ([`super::Ready`]), on the covers'
-//! thread, after the song playing's cover.
+//! A song's scenes taken apart ([`take_apart`]): each picture's parts
+//! derived on the GPU ([`SceneNets`]: the two models,
+//! [`super::GpuNets`]'s) and kept, as the last step of the song's story
+//! in its preparation (`crate::work::story::worker`); then, as the song
+//! plays, made ready for the backdrop from what is kept ([`prepare`],
+//! each scene's texels, on the processor alone).
 
 use std::fmt;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use image::RgbImage;
 use jodel_gpu::vision::prep::Rgb;
 use jodel_gpu::vision::{Depth, Matte};
 
-use super::split::derive;
-use super::{picture_hash, Ready, SceneStore, Scenes, Story};
+use super::split::{derive, Derived};
+use super::{picture_hash, Ready, Scene, SceneStore, Scenes, Story};
 
-/// What derives a scene's parts on the GPU: the cover's depth and matte
-/// models (or a stand-in), each as the caller holds it.
+/// What derives a scene's parts on the GPU: the depth and matte models
+/// (or a stand-in), each as the caller holds it.
 pub trait SceneNets {
     /// The depth of `picture`.
     fn depth(&self, picture: &Rgb) -> Result<Depth, String>;
@@ -59,78 +60,78 @@ impl fmt::Display for Took {
     }
 }
 
-/// What the one making a story ready is asked as it goes: whether it is
-/// still wanted (asked before each picture taken apart: none is, once it
-/// is not), and a word before each picture the models take apart.
-pub type Asked<'a> = (&'a dyn Fn() -> bool, &'a mut dyn FnMut());
-
-/// `scenes` made ready: each one's parts as kept in `store` for its
-/// picture, else derived by `nets` (none: not derived, and it fails on
-/// them) and kept, while still wanted (`asked`: what is kept stays, so a
-/// story given up goes on from there the next time); the scenes ready for
-/// the backdrop, and how long deriving each took (none: kept).
-pub fn prepare(
-    scenes: &Scenes,
-    store: &SceneStore,
-    nets: Option<&dyn SceneNets>,
-    (still, running): Asked,
-) -> Result<(Arc<Story>, Vec<Option<Took>>), String> {
-    let (mut took, mut ready, mut hashes) = (Vec::new(), Vec::new(), Vec::new());
-    for scene in &scenes.scenes {
-        let path = &scene.picture;
-        let bytes = std::fs::read(crate::store::mover::locate(path))
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        let hash = picture_hash(&bytes);
-        let picture = image::load_from_memory(&bytes)
-            .map_err(|e| format!("{}: {e}", path.display()))?
-            .to_rgb8();
-        let (parts, t) = match store.load(&hash) {
-            Some(parts) => (parts, None),
-            None => {
-                let nets = nets.ok_or_else(|| format!("{}: not prepared", path.display()))?;
-                if !still() {
-                    return Err("no longer wanted".into());
-                }
-                running();
-                let (parts, t) = derive(&picture, hash.clone(), nets)?;
-                store.keep(&parts)?;
-                (parts, Some(t))
-            }
-        };
-        ready.push(Ready::new((scene.start, scene.end), &picture, &parts));
-        took.push(t);
-        hashes.push(hash);
-    }
-    let story = Story::new(&hashes, ready, scenes.look.clone());
-    Ok((Arc::new(story), took))
+/// A scene's picture as its file holds it: its bytes' hash (what its parts
+/// are kept by) and its pixels.
+fn picture_of(scene: &Scene) -> Result<(String, RgbImage), String> {
+    let path = &scene.picture;
+    let bytes = std::fs::read(crate::store::mover::locate(path))
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let picture = image::load_from_memory(&bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .to_rgb8();
+    Ok((picture_hash(&bytes), picture))
 }
 
-/// The story of the song at `song`: its scenes in `store`, made ready
-/// ([`prepare`], `asked` as it goes; each picture derived now noted in the
-/// trace with its time); none where it has none, or they cannot be made
-/// ready (why noted in the trace).
-pub fn story(
-    store: &SceneStore,
-    song: &Path,
-    nets: Option<&dyn SceneNets>,
-    asked: Asked,
-) -> Option<Arc<Story>> {
-    let scenes = store.scenes_of(song)?;
-    let name = song.file_name().unwrap_or_default().to_string_lossy();
-    match prepare(&scenes, store, nets, asked) {
-        Ok((story, took)) => {
-            for (i, t) in took.iter().enumerate() {
-                if let Some(t) = t {
-                    crate::trace::note(format_args!("scenes: {name} scene {i}: {t}"));
-                }
-            }
-            Some(story)
-        }
-        Err(why) => {
-            crate::trace::note(format_args!("scenes: {name}: {why}"));
-            None
+/// Whether every one of `scenes` has its parts kept in `store` (each
+/// picture read for its hash).
+pub fn taken_apart(scenes: &Scenes, store: &SceneStore) -> Result<bool, String> {
+    for scene in &scenes.scenes {
+        if store.load(&picture_of(scene)?.0).is_none() {
+            return Ok(false);
         }
     }
+    Ok(true)
+}
+
+/// How taking a story's scenes apart ended ([`take_apart`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum TakenApart {
+    /// Every scene: how long deriving each took (none: kept already).
+    All(Vec<Option<Took>>),
+    /// Given up, no longer wanted (what is kept stays).
+    GivenUp,
+}
+
+/// `scenes` taken apart: each one's parts not kept in `store` derived by
+/// `nets` and kept, while `still` says they are wanted (asked before each
+/// picture: what is kept stays, so a story given up goes on from there the
+/// next time).
+pub fn take_apart(
+    scenes: &Scenes,
+    store: &SceneStore,
+    nets: &dyn SceneNets,
+    still: &dyn Fn() -> bool,
+) -> Result<TakenApart, String> {
+    let mut took = Vec::new();
+    for scene in &scenes.scenes {
+        let (hash, picture) = picture_of(scene)?;
+        if store.load(&hash).is_some() {
+            took.push(None);
+            continue;
+        }
+        if !still() {
+            return Ok(TakenApart::GivenUp);
+        }
+        let (parts, t) = derive(&picture, hash, nets)?;
+        store.keep(&parts)?;
+        took.push(Some(t));
+    }
+    Ok(TakenApart::All(took))
+}
+
+/// `scenes` made ready for the backdrop from their parts kept in `store`;
+/// it fails on a scene whose parts are not kept (not taken apart yet).
+pub fn prepare(scenes: &Scenes, store: &SceneStore) -> Result<Arc<Story>, String> {
+    let (mut ready, mut hashes) = (Vec::new(), Vec::new());
+    for scene in &scenes.scenes {
+        let (hash, picture) = picture_of(scene)?;
+        let parts: Derived = store
+            .load(&hash)
+            .ok_or_else(|| format!("{}: not taken apart", scene.picture.display()))?;
+        ready.push(Ready::new((scene.start, scene.end), &picture, &parts));
+        hashes.push(hash);
+    }
+    Ok(Arc::new(Story::new(&hashes, ready)))
 }
 
 #[cfg(test)]
@@ -142,7 +143,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::work::scenes::{Moved, Scene};
     use image::RgbImage;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Depth and a matte from the picture's red: a red disc nearer (and
@@ -199,7 +200,7 @@ pub(crate) mod tests {
     /// where the drawing step leaves them (the song at `song`, a file
     /// there): a disc in front, then a slope of light; their pictures.
     pub(crate) fn drawn(store: &SceneStore, song: &Path) -> [PathBuf; 2] {
-        let folder = store.folder(&crate::work::cover::song_key(song));
+        let folder = store.folder(&crate::work::scenes::song_key(song));
         std::fs::create_dir_all(&folder).unwrap();
         let paths = ["00.png", "01.png"].map(|n| folder.join(n));
         picture(Some(60.0)).save(&paths[0]).unwrap();
@@ -222,8 +223,16 @@ pub(crate) mod tests {
         paths
     }
 
+    /// The times of every scene taken apart (none given up).
+    fn all(taken: Result<TakenApart, String>) -> Vec<Option<Took>> {
+        match taken {
+            Ok(TakenApart::All(took)) => took,
+            other => panic!("every scene taken apart: {other:?}"),
+        }
+    }
+
     #[test]
-    fn a_song_s_scenes_are_derived_once_and_read_back_after() {
+    fn a_song_s_scenes_are_taken_apart_once_and_made_ready_from_what_is_kept() {
         let dir = std::env::temp_dir().join(format!("jodel-scenes-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -232,25 +241,22 @@ pub(crate) mod tests {
         let store = SceneStore::new(dir.join("scenes"), dir.join("scene-parts"));
         // Nothing left for the song: no story.
         assert_eq!(store.scenes_of(&song), None);
-        let (yes, mut quiet) = (|| true, || {});
-        assert!(story(&store, &song, None, (&yes, &mut quiet)).is_none());
         let paths = drawn(&store, &song);
         let scenes = store.scenes_of(&song).expect("the song's scenes");
         let nets = ByRed::default();
-        // Without the models, nothing kept: it fails.
-        assert!(prepare(&scenes, &store, None, (&yes, &mut quiet)).is_err());
+        // Not taken apart yet: nothing to make ready.
+        assert_eq!(taken_apart(&scenes, &store), Ok(false));
+        assert!(prepare(&scenes, &store).is_err());
         // No longer wanted: given up before the first picture, nothing
         // derived.
-        let (no, mut told) = (|| false, 0);
-        let given_up = prepare(&scenes, &store, Some(&nets), (&no, &mut || told += 1));
-        assert!(given_up.is_err() && told == 0);
+        let given_up = take_apart(&scenes, &store, &nets, &|| false);
+        assert_eq!(given_up, Ok(TakenApart::GivenUp));
         assert_eq!(nets.calls.load(Ordering::SeqCst), 0);
-        let mut told = 0;
-        let (story, took) =
-            prepare(&scenes, &store, Some(&nets), (&yes, &mut || told += 1)).unwrap();
-        assert_eq!(told, 2);
+        let took = all(take_apart(&scenes, &store, &nets, &|| true));
         assert_eq!(nets.calls.load(Ordering::SeqCst), 2);
         assert!(took.iter().all(Option::is_some));
+        assert_eq!(taken_apart(&scenes, &store), Ok(true));
+        let story = prepare(&scenes, &store).unwrap();
         let [disc, plain] = &story.scenes[..] else {
             panic!("two scenes");
         };
@@ -276,24 +282,27 @@ pub(crate) mod tests {
         // The slope of light alone: the warp.
         assert_eq!(plain.moved, Moved::Warp);
         assert_eq!(disc.span, (0.0, 8.0));
-        // Kept by picture, in a cache apart from the songs' scenes: read
-        // back the same, the models not asked again.
+        // Kept by picture, in a cache apart from the songs' scenes: taken
+        // apart again, the models are not asked again.
         assert_eq!(
             std::fs::read_dir(dir.join("scene-parts")).unwrap().count(),
             2
         );
-        let (again, took) = prepare(&scenes, &store, None, (&yes, &mut quiet)).unwrap();
-        assert!(took.iter().all(Option::is_none));
-        assert_eq!(again.id, story.id);
-        for (a, b) in again.scenes.iter().zip(&story.scenes) {
+        let again = all(take_apart(&scenes, &store, &nets, &|| true));
+        assert!(again.iter().all(Option::is_none));
+        assert_eq!(nets.calls.load(Ordering::SeqCst), 2);
+        let ready = prepare(&scenes, &store).unwrap();
+        assert_eq!(ready.id, story.id);
+        for (a, b) in ready.scenes.iter().zip(&story.scenes) {
             assert!(a.shape == b.shape && a.moved == b.moved && a.picture == b.picture);
         }
-        // A picture drawn again: that scene alone is derived again.
+        // A picture drawn again: that scene alone is taken apart again.
         picture(Some(100.0)).save(&paths[1]).unwrap();
-        let (redrawn, took) = prepare(&scenes, &store, Some(&nets), (&yes, &mut quiet)).unwrap();
+        assert_eq!(taken_apart(&scenes, &store), Ok(false));
+        let took = all(take_apart(&scenes, &store, &nets, &|| true));
         assert_eq!(nets.calls.load(Ordering::SeqCst), 3);
         assert!(took[0].is_none() && took[1].is_some());
-        assert_ne!(redrawn.id, story.id);
+        assert_ne!(prepare(&scenes, &store).unwrap().id, story.id);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

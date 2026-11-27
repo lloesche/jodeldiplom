@@ -962,7 +962,7 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     assert!(state.working.is_empty());
     // Grey until the track has each thing, lit once it has, in the order
     // the work finds them (the key, the stems, the tempo, the lyrics).
-    use jodeldiplom::core::{Facts, LyricsFacts, RhythmFacts};
+    use jodeldiplom::core::{Facts, LyricsFacts, RhythmFacts, SettledLyrics};
     use jodeldiplom::view::list::{Body, Fact};
     const ACCENT: bool = true;
     const DIM: bool = false;
@@ -1013,7 +1013,10 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
         Action::Ready {
             path: busy.clone(),
             job: Job::Lyrics,
-            facts: Some(Facts::Lyrics(LyricsFacts::Timed)),
+            facts: Some(Facts::Lyrics(SettledLyrics {
+                how: LyricsFacts::Timed,
+                print: 1,
+            })),
         },
     );
     assert_eq!(colors(&state), [ACCENT; 4]);
@@ -1023,7 +1026,10 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
         Action::Ready {
             path: busy.clone(),
             job: Job::Lyrics,
-            facts: Some(Facts::Lyrics(LyricsFacts::NotFound)),
+            facts: Some(Facts::Lyrics(SettledLyrics {
+                how: LyricsFacts::NotFound,
+                print: 1,
+            })),
         },
     );
     assert_eq!(colors(&state)[3], DIM);
@@ -1035,11 +1041,13 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
 #[test]
 fn a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it() {
     use jodeldiplom::core::karaoke::{ModelState, SongLyrics};
-    use jodeldiplom::core::{readiness, Facts, Heard, Job, LyricsFacts, Readiness, RhythmFacts};
+    use jodeldiplom::core::{
+        readiness, Facts, Heard, Job, LyricsFacts, Readiness, RhythmFacts, SettledLyrics, StoryFact,
+    };
     use jodeldiplom::view::list::Body;
     use std::sync::Arc;
     let mut base = common::playing_state(120, 40);
-    base.preparing.extend([Job::Lyrics, Job::Cover]);
+    base.preparing.extend([Job::Lyrics, Job::Story]);
     base.side = Side::Queue;
     base.karaoke.model = ModelState::Ready;
     // Got ready with the tempo on, as the app.
@@ -1054,13 +1062,19 @@ fn a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it() {
             key: Some("10B".into()),
             stems: true,
         }),
-        Job::Lyrics => Facts::Lyrics(LyricsFacts::Timed),
-        Job::Cover => Facts::Cover(true),
+        Job::Lyrics => Facts::Lyrics(SettledLyrics {
+            how: LyricsFacts::Timed,
+            print: 1,
+        }),
+        Job::Story => Facts::Story {
+            lyrics: 1,
+            fact: StoryFact::Made,
+        },
     };
     // Every step done but `skip`'s.
     let done = |skip: Option<Job>| {
         let mut state = base.clone();
-        for job in [Job::Rhythm, Job::Lyrics, Job::Cover] {
+        for job in [Job::Rhythm, Job::Lyrics, Job::Story] {
             if Some(job) == skip {
                 continue;
             }
@@ -1086,7 +1100,7 @@ fn a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it() {
     let state = done(None);
     assert!(lit(&state));
     assert_eq!(readiness(&state, &path), Readiness::Done);
-    for job in [Job::Rhythm, Job::Lyrics, Job::Cover] {
+    for job in [Job::Rhythm, Job::Lyrics, Job::Story] {
         // Still to come, what it found so far known.
         let mut state = done(Some(job));
         match job {
@@ -1125,7 +1139,7 @@ fn a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it() {
                     },
                 );
             }
-            Job::Cover => {}
+            Job::Story => {}
         }
         assert!(!lit(&state), "{job:?} to come");
         assert_eq!(readiness(&state, &path), Readiness::Waiting, "{job:?}");

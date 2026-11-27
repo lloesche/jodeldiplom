@@ -93,14 +93,12 @@ pub struct TierSpec {
     /// The effects it shows: while the singing is at it, when a phrase
     /// reaches it, at its rung of the multiplier.
     pub fx: Effects,
-    /// How brightly the backdrop's subject is lit, 0 to 1 (held).
+    /// How much the singer's glow lifts the backdrop's light, 0 to 1
+    /// (held: [`crate::gui::backdrop::music::Felt::lift`]).
     pub backdrop_glow: f32,
-    /// How strong the spotlight rays from behind it are, 0 none, 1 full
-    /// (held; the top's past 1, overdriven).
-    pub backdrop_rays: f32,
-    /// How much harder the subject moves with the beat (its push, its
-    /// rim's light, a phrase landing's flare), 0 to 1 over none (held:
-    /// [`crate::gui::backdrop::pulse`]).
+    /// How much harder the backdrop's scene moves with the beat (the
+    /// camera's push, its layers' edges' light, a phrase landing's flare),
+    /// 0 to 1 over none (held: [`crate::gui::backdrop::pulse`]).
     pub backdrop_beat: f32,
     /// How large its phrases' marks on the song's progress are, in the
     /// bar's heights.
@@ -146,7 +144,6 @@ pub static TIERS: [TierSpec; 5] = [
             ..Effects::NONE
         },
         backdrop_glow: 0.0,
-        backdrop_rays: 0.0,
         backdrop_beat: 0.1,
         mark: 1.8,
         sticker: Sticker {
@@ -177,7 +174,6 @@ pub static TIERS: [TierSpec; 5] = [
             ..Effects::NONE
         },
         backdrop_glow: 0.35,
-        backdrop_rays: 0.0,
         backdrop_beat: 0.25,
         mark: 1.8,
         sticker: Sticker {
@@ -209,7 +205,6 @@ pub static TIERS: [TierSpec; 5] = [
             at_rung: &[Use::of(Fx::Flick, 1.0), Use::of(Fx::Bulbs, 0.6)],
         },
         backdrop_glow: 0.5,
-        backdrop_rays: 0.35,
         backdrop_beat: 0.45,
         mark: 1.8,
         sticker: Sticker {
@@ -249,7 +244,6 @@ pub static TIERS: [TierSpec; 5] = [
             ],
         },
         backdrop_glow: 0.65,
-        backdrop_rays: 1.0,
         backdrop_beat: 0.7,
         mark: 1.8,
         sticker: Sticker {
@@ -299,7 +293,6 @@ pub static TIERS: [TierSpec; 5] = [
             ],
         },
         backdrop_glow: 1.0,
-        backdrop_rays: 1.6,
         backdrop_beat: 1.0,
         mark: 2.4,
         sticker: Sticker {
@@ -458,7 +451,6 @@ mod tests {
             t.bands as f32,
             t.lane_light,
             t.backdrop_glow,
-            t.backdrop_rays,
             t.backdrop_beat,
             t.mark,
             s.halo,

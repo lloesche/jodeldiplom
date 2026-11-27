@@ -12,17 +12,18 @@ use std::time::Duration;
 use jodel_rhythm::key::Key;
 use jodel_rhythm::waveform::Lane;
 use jodeldiplom::core::prep::{
-    BeatsFound, Preview, Separating, Story, Words, CAPTION_MS, HOLD_MS, REVEAL_MS, SHOWN_MS,
+    BeatsFound, Picture, Preview, Separating, Story, Words, CAPTION_MS, HOLD_MS, REVEAL_MS,
+    SHOWN_MS,
 };
-use jodeldiplom::core::{update, Action, Heard, Job, Side, State};
+use jodeldiplom::core::{update, Action, Facts, Heard, Job, Side, State, StoryFact};
 use jodeldiplom::view::list::{Body, Pane};
 use jodeldiplom::view::prep::{self, Hero, Kind, PrepView, Stand};
 
 /// The playing state on the queue, its second song selected, lyrics and
-/// covers got ready too (as the app), at `now`; that song.
+/// stories got ready too (as the app), at `now`; that song.
 fn on_the_queue(now: u64) -> (State, PathBuf) {
     let mut state = common::playing_state(120, 40);
-    state.preparing.extend([Job::Lyrics, Job::Cover]);
+    state.preparing.extend([Job::Lyrics, Job::Story]);
     state.side = Side::Queue;
     state.queue.cursor = 1;
     update(&mut state, Action::Tick(now));
@@ -117,7 +118,7 @@ fn partial_results_fill_the_songs_preparation_and_its_view() {
         stage(&view, Kind::Key),
         (Stand::Running, "Listening for the key…".into())
     );
-    assert_eq!(view.hero, Hero::Waiting);
+    assert_eq!(view.hero, Hero::Cover, "its cover, nothing found yet");
     // The key, then the stems so far: half the song separated.
     heard(&mut state, &path, Heard::Key(Some(Key::on(0, true))));
     let half = [
@@ -221,16 +222,20 @@ fn partial_results_fill_the_songs_preparation_and_its_view() {
     assert_eq!(first, "one");
     assert!((lit - 0.5).abs() < 0.01, "{lit}");
     assert_eq!(words.lines[0][1].1, 0.0);
-    // Everything but the cover done: still shown, waiting for it.
+    // Everything but the story done: still shown, waiting for it.
     let view = PrepView::of(&state).unwrap();
-    assert_eq!(stage(&view, Kind::Cover).0, Stand::Waiting);
+    assert_eq!(
+        stage(&view, Kind::Story),
+        (Stand::Waiting, "The story".into())
+    );
     assert!(!view.done);
 }
 
 /// A queue row's caption says the step under way: the key listened for,
 /// the song taken apart, the beat found, the words looked up, heard or
-/// timed, the cover cut out; each result found shows instead for a
-/// moment, with a tick; with nothing under way, none.
+/// timed, the story planned, each of its pictures drawn, its scenes given
+/// depth; each result found shows instead for a moment, with a tick; with
+/// nothing under way, none.
 #[test]
 fn a_rows_caption_follows_the_step_running() {
     let (mut state, path) = on_the_queue(1_000);
@@ -283,11 +288,163 @@ fn a_rows_caption_follows_the_step_running() {
     assert_eq!(caption(&state), running("listening for the words…"));
     heard(&mut state, &path, Heard::Lyrics(Words::Timing));
     assert_eq!(caption(&state), running("timing the words…"));
-    // The cover, started last, says its step.
-    working(&mut state, &path, Job::Cover, true);
-    assert_eq!(caption(&state), running("cutting out the cover…"));
-    working(&mut state, &path, Job::Cover, false);
+    // The story, started last, says its step, then each picture begun,
+    // each scene drawn for a moment.
+    working(&mut state, &path, Job::Story, true);
+    heard(&mut state, &path, Heard::Story(Story::Planning));
+    assert_eq!(caption(&state), running("planning the story…"));
+    heard(&mut state, &path, Heard::Story(Story::Reading));
+    assert_eq!(caption(&state), running("reading the scenes' prompts…"));
+    let portrait = Story::Drawing(Picture::Portrait(2, 3));
+    heard(&mut state, &path, Heard::Story(portrait));
+    assert_eq!(caption(&state), running("drawing character 2 of 3…"));
+    heard(
+        &mut state,
+        &path,
+        Heard::Story(Story::Drawing(Picture::Scene(4, 23))),
+    );
+    assert_eq!(caption(&state), running("drawing scene 4 of 23…"));
+    let drawn = Story::Scene {
+        index: 3,
+        of: 23,
+        picture: Arc::new(image::RgbaImage::new(2, 2)),
+    };
+    heard(&mut state, &path, Heard::Story(drawn));
+    assert_eq!(caption(&state), found("scene 4 of 23 ✓"));
+    now += CAPTION_MS;
+    at(&mut state, now);
+    heard(&mut state, &path, Heard::Story(Story::Cutting));
+    assert_eq!(caption(&state), running("giving the scenes depth…"));
+    working(&mut state, &path, Job::Story, false);
     assert_eq!(caption(&state), running("timing the words…"));
+}
+
+/// While its story is made, the preparation view's card is the story built
+/// on the song's cover: its words typed out as they are written (a caret
+/// blinking after them), then its scenes over their tiles as each is
+/// drawn, fading in, the step its headline ("Drawing scene 2 of 3…") and
+/// the story's line; once the story is made, the card is the song's cover
+/// again, as it is for a song whose story was made before (nothing of it
+/// told now).
+#[test]
+fn the_story_is_built_on_the_cover_and_the_cover_comes_back() {
+    let (mut state, path) = on_the_queue(1_000);
+    state
+        .ready
+        .insert(path.clone(), vec![Job::Rhythm, Job::Lyrics]);
+    working(&mut state, &path, Job::Story, true);
+    heard(&mut state, &path, Heard::Story(Story::Planning));
+    let view = PrepView::of(&state).expect("shown");
+    let Hero::Story(story) = &view.hero else {
+        panic!("{view}");
+    };
+    assert!(story.text.is_empty() && story.scenes.is_empty());
+    assert_eq!(view.headline, "Planning the story…");
+    assert_eq!(
+        stage(&view, Kind::Story),
+        (Stand::Running, "Planning the story…".into())
+    );
+    heard(
+        &mut state,
+        &path,
+        Heard::Story(Story::Words("A harbour".into())),
+    );
+    heard(
+        &mut state,
+        &path,
+        Heard::Story(Story::Words(" at dusk".into())),
+    );
+    at(&mut state, 1_000);
+    let Hero::Story(story) = PrepView::of(&state).unwrap().hero else {
+        panic!("the story");
+    };
+    assert_eq!(story.text, "A harbour at dusk");
+    assert!(story.caret, "written");
+    // Its scenes, as they are drawn: on their tiles, fading in.
+    heard(&mut state, &path, Heard::Story(Story::Reading));
+    heard(
+        &mut state,
+        &path,
+        Heard::Story(Story::Drawing(Picture::Scene(1, 3))),
+    );
+    let picture = Arc::new(image::RgbaImage::new(2, 2));
+    let scene = |index| Story::Scene {
+        index,
+        of: 3,
+        picture: Arc::clone(&picture),
+    };
+    heard(&mut state, &path, Heard::Story(scene(0)));
+    heard(
+        &mut state,
+        &path,
+        Heard::Story(Story::Drawing(Picture::Scene(2, 3))),
+    );
+    at(&mut state, 1_000 + HOLD_MS);
+    let view = PrepView::of(&state).unwrap();
+    let Hero::Story(story) = &view.hero else {
+        panic!("{view}");
+    };
+    assert_eq!((story.scenes.len(), story.of), (1, 3));
+    assert_eq!(story.scenes[0].0, 0);
+    assert_eq!(story.scenes[0].2, 1.0, "faded in");
+    assert_eq!(view.headline, "Drawing scene 2 of 3…");
+    heard(&mut state, &path, Heard::Story(scene(1)));
+    let Hero::Story(story) = PrepView::of(&state).unwrap().hero else {
+        panic!("the story");
+    };
+    assert_eq!(story.scenes[1].2, 0.0, "just in");
+    assert_eq!(
+        view.to_string().lines().nth(2),
+        Some("[hero] story: A harbour at dusk (1 of 3 scenes)")
+    );
+    // Not made now (the model failed): the cover again, why said; then
+    // made after all, tried again.
+    working(&mut state, &path, Job::Story, false);
+    let not_now = StoryFact::NotNow("no GPU".into());
+    update(
+        &mut state,
+        Action::Ready {
+            path: path.clone(),
+            job: Job::Story,
+            facts: Some(Facts::Story {
+                lyrics: 0,
+                fact: not_now,
+            }),
+        },
+    );
+    let view = PrepView::of(&state).unwrap();
+    assert_eq!(view.hero, Hero::Cover);
+    assert_eq!(
+        stage(&view, Kind::Story),
+        (Stand::Waiting, "Not made now (no GPU)".into())
+    );
+    working(&mut state, &path, Job::Story, true);
+    // Made: the song's cover again, the story's step found.
+    heard(&mut state, &path, Heard::Story(scene(2)));
+    working(&mut state, &path, Job::Story, false);
+    update(
+        &mut state,
+        Action::Ready {
+            path: path.clone(),
+            job: Job::Story,
+            facts: Some(Facts::Story {
+                lyrics: 0,
+                fact: StoryFact::Made,
+            }),
+        },
+    );
+    let view = PrepView::of(&state).unwrap();
+    assert_eq!(view.hero, Hero::Cover);
+    assert_eq!(stage(&view, Kind::Story), (Stand::Found, "Made".into()));
+    // Another song, its story made before: its cover while it is got
+    // ready.
+    let other = state.queue.paths[2].clone();
+    state.queue.cursor = 2;
+    state.ready.insert(other.clone(), vec![Job::Story]);
+    working(&mut state, &other, Job::Rhythm, true);
+    let view = PrepView::of(&state).unwrap();
+    assert_eq!(view.path, other);
+    assert_eq!(view.hero, Hero::Cover);
 }
 
 /// The preparation view moves only while it shows and something changes:
@@ -295,7 +452,8 @@ fn a_rows_caption_follows_the_step_running() {
 /// ready. Its song waiting for the rest of its work with nothing new, it
 /// rests (the window draws no frames for it, and nothing is due), as it
 /// does once its song has been ready a while (the view goes). Its story
-/// slot shows what is told of it, the scene drawn last its headline.
+/// shows what is told of it, the scene drawn last its headline, until the
+/// story is made.
 #[test]
 fn an_idle_preparation_view_rests() {
     let (mut state, path) = on_the_queue(1_000);
@@ -305,7 +463,7 @@ fn an_idle_preparation_view_rests() {
     heard(&mut state, &path, Heard::Key(Some(Key::on(4, false))));
     working(&mut state, &path, Job::Rhythm, false);
     assert!(prep::moving(&state), "a result held");
-    // Past the hold, waiting for its lyrics and its cover: at rest, and
+    // Past the hold, waiting for its lyrics and its story: at rest, and
     // nothing due but what is to come of it.
     at(&mut state, 1_000 + HOLD_MS);
     assert!(PrepView::of(&state).is_some(), "still shown");
@@ -334,7 +492,7 @@ fn an_idle_preparation_view_rests() {
     // Every step done: it shows for a while (and moves), then goes.
     let now = 1_000 + 2 * HOLD_MS;
     at(&mut state, now);
-    use jodeldiplom::core::{Facts, LyricsFacts, RhythmFacts};
+    use jodeldiplom::core::{LyricsFacts, RhythmFacts, SettledLyrics};
     let analysed = Facts::Rhythm(RhythmFacts {
         bpm: Some(120.0),
         key: Some("12B".into()),
@@ -342,8 +500,20 @@ fn an_idle_preparation_view_rests() {
     });
     for (job, facts) in [
         (Job::Rhythm, analysed),
-        (Job::Lyrics, Facts::Lyrics(LyricsFacts::Timed)),
-        (Job::Cover, Facts::Cover(true)),
+        (
+            Job::Lyrics,
+            Facts::Lyrics(SettledLyrics {
+                how: LyricsFacts::Timed,
+                print: 1,
+            }),
+        ),
+        (
+            Job::Story,
+            Facts::Story {
+                lyrics: 1,
+                fact: StoryFact::Made,
+            },
+        ),
     ] {
         update(
             &mut state,
@@ -357,6 +527,7 @@ fn an_idle_preparation_view_rests() {
     let view = PrepView::of(&state).unwrap();
     assert!(view.done && prep::moving(&state));
     assert_eq!(view.headline, "Ready");
+    assert_eq!(view.hero, Hero::Cover, "the song's cover again");
     assert_eq!(jodeldiplom::core::prep::due(&state), Some(now + SHOWN_MS));
     at(&mut state, now + SHOWN_MS);
     assert!(PrepView::of(&state).is_none() && !prep::moving(&state));

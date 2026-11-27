@@ -137,8 +137,9 @@ pub struct Options {
     pub told: Option<Arc<Told>>,
 }
 
-/// Told when a file's lyrics are settled, and how (for the queue's icons).
-pub type Done = dyn Fn(&Path, crate::core::LyricsFacts) + Send + Sync;
+/// Told when a file's lyrics are settled: how (for the queue's icons), and
+/// which they are (what its story is made from).
+pub type Done = dyn Fn(&Path, crate::core::SettledLyrics) + Send + Sync;
 
 /// Told when work on a file starts (`true`) and ends.
 pub type Working = dyn Fn(&Path, bool) + Send + Sync;
@@ -162,6 +163,27 @@ impl Options {
             edits: None,
             told: None,
         }
+    }
+}
+
+/// The lyrics of the track at `path` as the worker of `options` settled
+/// them (never fetched nor timed here): its edits by hand, else its text
+/// found here or kept, with our word times of it where they are kept and
+/// still stand ([`Finder::lookup`] offline); none where it has none, why
+/// not where they cannot be read now (its file, the look-up). What a
+/// song's story is made from (`crate::work::story::worker`).
+pub fn settled(options: &Options, path: &Path) -> Result<Option<Lyrics>, String> {
+    let lrclib = web::Lrclib::new(Arc::clone(&options.http), options.base.clone());
+    let finder = Finder {
+        online: false,
+        ..Finder::of(options, lrclib)
+    };
+    let track = (options.probe)(path).ok_or("its file could not be read")?;
+    let (answer, _) = finder.lookup(&track, store::now(), &|_| false, &|_| {});
+    match answer {
+        Answer::Found { lyrics, timed } => Ok(Some(timed.unwrap_or(lyrics))),
+        Answer::Instrumental | Answer::NotFound => Ok(None),
+        Answer::Failed(why) => Err(why),
     }
 }
 

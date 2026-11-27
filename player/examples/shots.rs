@@ -13,9 +13,9 @@
 //! The queue with a song being got ready, its preparation in the right
 //! column at each step: the stems being separated (`gui-prep-stems`), the
 //! key found (`gui-prep-key`), the beat found (`gui-prep-beat`), the words
-//! timed (`gui-prep-words`), the cover cut out (`gui-prep-cover`), and a
-//! story told (`gui-prep-story`, the seam for what is to come); made-up
-//! results, as the workers would tell them.
+//! timed (`gui-prep-words`), its story planned, its words typed over the
+//! cover (`gui-prep-plan`), and its scenes drawn over the cover's tiles
+//! (`gui-prep-story`); made-up results, as the workers would tell them.
 //! The setup screen comes first, on a made-up web: under way
 //! (`gui-setup`) and stopped by a failure (`gui-setup-failed`), each with
 //! its outline as the text. The fonts are the player's own, as built in.
@@ -602,7 +602,7 @@ fn main() {
             ("prep-key", prep::preparing(&state, "key")),
             ("prep-beat", prep::preparing(&state, "beat")),
             ("prep-words", prep::preparing(&state, "words")),
-            ("prep-cover", prep::preparing(&state, "cover")),
+            ("prep-plan", prep::preparing(&state, "plan")),
             ("prep-story", prep::preparing(&state, "story")),
             ("nowplaying", now),
             ("settings", settings),

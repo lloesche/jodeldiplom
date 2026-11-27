@@ -5,11 +5,12 @@ Metal; no WebGPU or GLES), each giving what its CPU version gives to within
 rounding: the stem separator and the beat network of
 [`jodel-rhythm`](../rhythm) (`GpuSeparator`, `GpuNetwork`), the speech
 model and the speech recogniser of [`jodel-lyrics`](../lyrics)
-(`GpuSpeech`, `GpuAsr`), the cover's depth and cut-out (`GpuDepth`,
-`GpuMatte`), karaoke story mode's language model (`Gemma`, Gemma 4
-E4B's text decoder) and the story's pictures (FLUX.2 [klein] 4B:
-`image::TextEncoder`, `image::Drawer`). Each is a program of kernels on one bind group layout, its
-dispatches planned on the processor and run in short submissions
+(`GpuSpeech`, `GpuAsr`), the story scenes' depth and cut-out
+(`GpuDepth`, `GpuMatte`), karaoke story mode's language model (`Gemma`,
+Gemma 4 E4B's text decoder) and the story's pictures (FLUX.2 [klein] 4B:
+`image::TextEncoder`, `image::Drawer`). Each is a program of kernels on
+one bind group layout, its dispatches planned on the processor and run
+in short submissions
 (`src/engine/`: the program, its buffers, parameters and bind groups;
 every matrix multiply as a `Mul`, what it reads and writes and what becomes
 of the products; the separator, the beat network and the speech model keep
@@ -235,12 +236,13 @@ On an RTX 5080:
   time, and the GPU's submissions and waits; `gpu_asr_songs` prints it for
   each file on stderr (`--glimpses`: the glimpses' too).
 
-## The cover's depth and cut-out
+## The scenes' depth and cut-out
 
 `GpuDepth` runs Depth Anything 3 Small (Apache-2.0, `depth-anything/DA3-SMALL`)
 and `GpuMatte` BEN2 Base (MIT, `PramaLLC/BEN2`) on their checkpoints as
 published (read through `jodel-tensors`), in full precision, for the player
-to take covers apart (`jodeldiplom::cover`). Both run on one small set of
+to take the story's scenes apart (`jodeldiplom::work::scenes`: its
+`layers` and `split`). Both run on one small set of
 kernels (`src/vision/*.wgsl` after the shared `src/common.wgsl`): a
 convolution as a matrix multiply that reads its patches where they lie (a
 linear layer is a 1 × 1 one; a transposed one with its stride as its size
@@ -255,7 +257,7 @@ The two share one device (`vision::net::Gpu`, an `engine::SharedDevice`:
 set up when first needed, and again once it is lost). Each network keeps its weights on it, with a tail for its size's
 constants, and makes its plan's buffers when it runs: another input size
 rewrites the tail and makes the plan again, nothing more; `release` lets the
-plan's buffers go (the player does after each cover, so one network's are
+plan's buffers go (the player does after each run, so one network's are
 held at a time).
 
 - **Depth Anything 3 Small** at 504 × 504 (the longest side 504, as its
@@ -269,7 +271,7 @@ held at a time).
   128 rows at a time, twice (first for its instance norm's statistics), so
   neither of those 512 MB maps is ever held.
 
-On an RTX 5080: a cover's depth takes 21 ms (PyTorch's own: 36 ms) and its
+On an RTX 5080: a picture's depth takes 21 ms (PyTorch's own: 36 ms) and its
 matte 270 ms (PyTorch in full precision: 149 ms, in its default half
 precision 113 ms). On the GPU the depth holds 129 MB of weights and 247 MB
 while it runs, the matte 359 MB and 808 MB. On 42 covers, against the
@@ -312,12 +314,25 @@ same plan (`src/llm/`).
   `Gemma::planned(gguf, context)` says what each takes
   before anything is loaded (from the file's header): 4698 MB of weights (in
   15 buffers, the layers three to one, each above the allocator's 256 MB
-  blocks: a layer a buffer, two to a block, held 1.3 GB more), and 536 MB
-  for 4041 positions (the story prompt and 2500 tokens). A context takes at
-  most `llm::MOST_CONTEXT` positions (16 368).
+  blocks: a layer a buffer, two to a block, held 1.3 GB more), and the
+  room for a context. A context takes at most `llm::MOST_CONTEXT`
+  positions (18 416), as the story's does (`work::story::CONTEXT`: its
+  prompt, the model's thought and its answer): the cache of keys and
+  values (112 KB a position, one buffer) stays within the 2 GB of a
+  storage binding on Direct3D 12, 2153 MB of room (6851 MB with the
+  weights; 16 368 positions took 1922 MB). More would be over it (32 752
+  positions: a cache of 3.8 GB, 8463 MB in all; 65 520: 7.5 GB,
+  12 149 MB), and over an 8 GB card's budget too.
 - **Text:** `Gemma::generate_text` gives the answer as it is read, in whole
   characters: each token decoded once, a character that comes in byte
   pieces over several tokens held until it is whole (`Tokenizer::stream`).
+  `Gemma::generate`'s `seen` may end it early (`ControlFlow::Break`).
+- **Thinking:** `Tokenizer::chat_thinking` writes the prompt as the chat
+  template does with `enable_thinking` (a system turn of `<|think|>`); the
+  answer then begins with its thought, between the `<|channel>` and
+  `<channel|>` specials, which `Tokenizer::thinking` tells apart from the
+  answer token by token (decoding leaves the specials out), each in the
+  room it is given, the first token past either over.
 - **The architecture** is the reference's (Hugging Face's
   `Gemma4TextModel`): 42 layers of 2560, five sliding-window layers (a window
   of 512, heads of 256) to a global one (heads of 512, a quarter turned);

@@ -2,16 +2,17 @@
 //! and made ready as the player makes them: the scenes of `FOLDER` (its
 //! `scenes.txt` and pictures, as a drawing step made them elsewhere)
 //! copied into the song's folder in the data folder's `scenes/` (named by
-//! the song's key: `SONG` is only read), each picture taken apart
-//! ([`prepare`], its parts kept by its bytes in `scene-parts/`; run again,
-//! read back). For each scene it prints how it moves (the warp, or its
-//! layers and their cuts), its heads, where its subject is, and how long
-//! each step took (the depth and the matte on the GPU, the faces and the
-//! split on the processor). Then the song is asked of the covers' worker
-//! as the player asks it when the song plays, and the story it holds for
-//! the app is shown to be that one. The models are the cover's, from the
-//! data folder's `models` (or `--models DIR`); `--data DIR` for another
-//! data folder than the usual.
+//! the song's key: `SONG` is only read), each picture taken apart as the
+//! story's last step does ([`take_apart`], its parts kept by its bytes in
+//! `scene-parts/`; run again, read back), then made ready as the backdrop
+//! takes it ([`prepare`]). For each scene it prints how it moves (the
+//! warp, or its layers and their cuts), its heads, where its subject is,
+//! and how long each step took (the depth and the matte on the GPU, the
+//! faces and the split on the processor). Then the song is asked of the
+//! song playing's story as the player asks it when the song plays, and
+//! the story it holds for the app is shown to be that one. The models are
+//! the scenes' depth and cut-out, from the data folder's `models` (or
+//! `--models DIR`); `--data DIR` for another data folder than the usual.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example story_scenes -- SONG FOLDER [--data DIR] [--models DIR]
@@ -22,9 +23,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use jodeldiplom::store::dirs::Data;
-use jodeldiplom::work::cover::{CoverModels, CoverWorker, GpuSplitter, DEPTH_FILE, MATTE_FILE};
-use jodeldiplom::work::outbox::Outbox;
-use jodeldiplom::work::scenes::{picture_hash, prepare, Asked, Scene, SceneStore, Scenes, Split};
+use jodeldiplom::work::scenes::{
+    picture_hash, prepare, song_key, take_apart, GpuNets, PlayingStory, Scene, SceneModels,
+    SceneStore, Scenes, Split, TakenApart, DEPTH_FILE, MATTE_FILE,
+};
+use jodeldiplom::work::stages::{self, Stage};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -39,7 +42,7 @@ fn main() {
     let store = || SceneStore::new(data.scenes(), data.scene_parts());
     // The scenes copied in, as the drawing step would leave them.
     let made = Scenes::read(&source).expect("the folder's scenes.txt");
-    let dir = store().folder(&jodeldiplom::work::cover::song_key(&song));
+    let dir = store().folder(&song_key(&song));
     std::fs::create_dir_all(&dir).expect("the song's folder");
     let scenes = Scenes {
         made: made.made.clone(),
@@ -60,16 +63,19 @@ fn main() {
     };
     scenes.write(&dir).expect("the scenes described");
     println!("{} scenes in {}", scenes.scenes.len(), dir.display());
-    let files = CoverModels {
+    let nets = GpuNets::new(SceneModels {
         depth: models.join(DEPTH_FILE),
         matte: models.join(MATTE_FILE),
-    };
-    let nets = GpuSplitter::new(files.clone());
+    });
     let started = Instant::now();
     let found = store().scenes_of(&song).expect("the song's scenes");
-    let (still, mut running) = (|| true, || {});
-    let asked: Asked = (&still, &mut running);
-    let (story, took) = prepare(&found, &store(), Some(&nets), asked).expect("made ready");
+    let taken = stages::run(&[Stage::Scenes], "the scenes", || {
+        take_apart(&found, &store(), &nets, &|| true)
+    });
+    let Ok(TakenApart::All(took)) = taken else {
+        panic!("taken apart: {taken:?}");
+    };
+    let story = prepare(&found, &store()).expect("made ready");
     let all = started.elapsed().as_secs_f64();
     drop(nets);
     let name = |p: &Path| {
@@ -96,19 +102,12 @@ fn main() {
         );
     }
     println!("{} scenes ready in {all:.1} s", story.scenes.len());
-    // As the player: the song asked of the covers' worker, its story held.
-    let info = jodel_playback::source::probe(&song).expect("the song");
-    let (tx, _rx) = std::sync::mpsc::channel();
-    let covers = CoverWorker::start(
-        data.covers(),
-        files,
-        store(),
-        Outbox::new(tx, Arc::new(|| {})),
-    );
-    covers.want(&info);
+    // As the player: the song playing's story made ready, and held.
+    let playing = PlayingStory::start(store(), Arc::new(|| {}));
+    playing.want(&song);
     let started = Instant::now();
     let held = loop {
-        if let Some(held) = covers.story() {
+        if let Some(held) = playing.story() {
             break held;
         }
         assert!(
@@ -119,7 +118,7 @@ fn main() {
     };
     assert_eq!(held.id, story.id);
     println!(
-        "the covers' worker holds its story for the app: {} scenes, {:.1} s after the song was asked",
+        "the song playing's story is held for the app: {} scenes, {:.1} s after the song was asked",
         held.scenes.len(),
         started.elapsed().as_secs_f64()
     );

@@ -576,7 +576,7 @@ fn queue_row<'a>(state: &State, r: &QueueRow, slot: usize, shown: usize) -> Elem
             Fact::Stems => Icon::Stems,
             Fact::Tempo => Icon::Tempo,
             Fact::Lyrics => Icon::Lyrics,
-            Fact::Cover => Icon::Cover,
+            Fact::Story => Icon::Story,
         };
         let color = match (s.lit, s.heard) {
             (true, true) => look::WARN,

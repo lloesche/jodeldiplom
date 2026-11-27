@@ -14,7 +14,9 @@
 //!
 //! Decoding turns `▁` back into spaces and byte pieces into their bytes,
 //! the specials left out: each piece's text worked out once, read back by
-//! the BPE core's decoding half (`jodel_tensors::bpe::Pieces`).
+//! the BPE core's decoding half (`jodel_tensors::bpe::Pieces`). A thinking
+//! answer's thought is told apart from the answer by its specials
+//! ([`Thinking`]), as the decoding leaves them out.
 use std::collections::HashMap;
 
 use jodel_tensors::bpe::{Merges, Part, Pieces, Specials};
@@ -30,14 +32,23 @@ const STOP_PIECES: [&str; 3] = ["<eos>", "<turn|>", "<|tool_response>"];
 const CONTROL: i64 = 3;
 const USER_DEFINED: i64 = 4;
 
-/// What the chat template must write for [`Tokenizer::chat`]'s turns (as
-/// the template's text has it).
-const TURNS: [&str; 4] = [
+/// What the chat template must write for [`Tokenizer::chat`]'s turns, the
+/// system turn of [`Tokenizer::chat_thinking`] (its thinking switched on)
+/// and the thought an answer begins with ([`Thinking`]), as the template's
+/// text has it.
+const TURNS: [&str; 8] = [
     "bos_token",
     "'<|turn>' + role + '\\n'",
     "'<turn|>\\n'",
     "'<|turn>model\\n'",
+    "'<|turn>system\\n'",
+    "'<|think|>\\n'",
+    "'<|channel>thought\\n'",
+    "'\\n<channel|>'",
 ];
+
+/// The specials a thought is between.
+const THOUGHT_PIECES: [&str; 2] = ["<|channel>", "<channel|>"];
 
 /// The tokeniser.
 pub struct Tokenizer {
@@ -55,6 +66,8 @@ pub struct Tokenizer {
     bos: u32,
     /// The tokens that end an answer.
     stop: Vec<u32>,
+    /// The specials a thought is between.
+    thought: [u32; 2],
 }
 
 /// `▁`, which stands for a space in the pieces.
@@ -146,11 +159,15 @@ impl Tokenizer {
             .zip(&pieces)
             .map(|(i, p): (u32, &Vec<u8>)| (p.clone(), i))
             .collect();
+        let piece = |p: &str| {
+            ids.get(p.as_bytes())
+                .copied()
+                .ok_or_else(|| format!("no piece {p}"))
+        };
+        let thought = [piece(THOUGHT_PIECES[0])?, piece(THOUGHT_PIECES[1])?];
         let mut stop = vec![eos];
         for p in STOP_PIECES {
-            let i = *ids
-                .get(p.as_bytes())
-                .ok_or_else(|| format!("no piece {p}"))?;
+            let i = piece(p)?;
             if !stop.contains(&i) {
                 stop.push(i);
             }
@@ -202,6 +219,7 @@ impl Tokenizer {
             bytes,
             bos,
             stop,
+            thought,
         })
     }
 
@@ -265,12 +283,118 @@ impl Tokenizer {
     /// (no thinking): the beginning token, the turn, then the model's turn
     /// opened.
     pub fn chat(&self, user: &str) -> Vec<u32> {
+        self.turns("", user)
+    }
+
+    /// [`Tokenizer::chat`]'s prompt with the model's thinking switched on,
+    /// as the template writes it (`enable_thinking`): a system turn of the
+    /// thinking token only before the user's. The answer begins with its
+    /// thought ([`Tokenizer::thinking`]).
+    pub fn chat_thinking(&self, user: &str) -> Vec<u32> {
+        self.turns("<|turn>system\n<|think|>\n<turn|>\n", user)
+    }
+
+    /// The beginning token, `system`, the user's turn, the model's opened.
+    fn turns(&self, system: &str, user: &str) -> Vec<u32> {
         let mut ids = vec![self.bos];
         ids.extend(self.encode(&format!(
-            "<|turn>user\n{}<turn|>\n<|turn>model\n",
+            "{system}<|turn>user\n{}<turn|>\n<|turn>model\n",
             user.trim()
         )));
         ids
+    }
+
+    /// The answer's tokens told apart as they come, the thought it begins
+    /// with (if any) of at most `thought` tokens, then the answer of at
+    /// most `answer` ([`Thinking`]).
+    pub fn thinking(&self, thought: usize, answer: usize) -> Thinking {
+        Thinking {
+            marks: self.thought,
+            rooms: [thought, answer],
+            taken: [0, 0],
+            last: None,
+            over: false,
+        }
+    }
+}
+
+/// What a token of an answer is ([`Thinking::take`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Take {
+    /// The special that opens the thought, the answer's first.
+    Opened,
+    /// A token of the thought (its channel's name, `thought`, the first).
+    Thought,
+    /// The special that closes it.
+    Closed,
+    /// A token of the answer.
+    Answer,
+    /// One past the thought's room or the answer's: it is cut off there
+    /// (every token after too).
+    Over,
+}
+
+/// An answer's tokens told apart as they come ([`Tokenizer::thinking`]):
+/// those between the thought's specials, where the answer begins with
+/// its opening one, and the answer after it (all of it, where it begins
+/// with none); each in its room, the first past it over.
+#[derive(Clone, Debug)]
+pub struct Thinking {
+    marks: [u32; 2],
+    /// The thought's room and the answer's, and the tokens each took.
+    rooms: [usize; 2],
+    taken: [usize; 2],
+    /// The last token taken in its rooms.
+    last: Option<Take>,
+    over: bool,
+}
+
+impl Thinking {
+    /// What token `id`, the next, is.
+    pub fn take(&mut self, id: u32) -> Take {
+        if self.over {
+            return Take::Over;
+        }
+        let [open, close] = self.marks;
+        let (take, room) = match self.last {
+            None if id == open => (Take::Opened, None),
+            _ if self.in_thought() && id == close => (Take::Closed, None),
+            _ if self.in_thought() => (Take::Thought, Some(0)),
+            _ => (Take::Answer, Some(1)),
+        };
+        if let Some(r) = room {
+            if self.taken[r] == self.rooms[r] {
+                self.over = true;
+                return Take::Over;
+            }
+            self.taken[r] += 1;
+        }
+        self.last = Some(take);
+        take
+    }
+
+    /// Whether the thought is under way (opened, not closed: where the
+    /// answer ends there, it was cut off in its thought).
+    pub fn in_thought(&self) -> bool {
+        matches!(self.last, Some(Take::Opened | Take::Thought))
+    }
+
+    /// The thought's tokens taken (between its specials), and the
+    /// answer's.
+    pub fn taken(&self) -> [usize; 2] {
+        self.taken
+    }
+
+    /// The tokens a generation may write for it at most: both rooms, the
+    /// thought's two specials, and one past to find it over.
+    pub fn most(&self) -> usize {
+        self.rooms[0] + self.rooms[1] + 3
+    }
+
+    /// Whether the answer ended by itself where its generation `stopped`
+    /// on a stop token: within its room, its thought closed.
+    pub fn ended(&self, stopped: bool) -> bool {
+        stopped && !self.over && !self.in_thought()
     }
 }
 
@@ -332,8 +456,9 @@ mod tests {
     use super::*;
 
     /// A small vocabulary's pieces: `<bos>` (0), the bytes, letters, `▁`,
-    /// the stop pieces (`<turn|>` a special); and a few merges.
-    const LETTERS: [&str; 11] = [
+    /// the stop pieces (`<turn|>` a special), the thought's specials; and
+    /// a few merges.
+    const LETTERS: [&str; 13] = [
         "a",
         "b",
         "c",
@@ -345,6 +470,8 @@ mod tests {
         "<eos>",
         "<turn|>",
         "<|tool_response>",
+        "<|channel>",
+        "<channel|>",
     ];
     const MERGES: [(&str, &str); 4] = [("a", "b"), ("ab", "c"), (SPACE, "a"), ("b", "c")];
 
@@ -360,6 +487,11 @@ mod tests {
         pieces().iter().position(|q| q == p.as_bytes()).unwrap() as u32
     }
 
+    /// Its specials.
+    fn specials() -> Vec<u32> {
+        vec![0, id("<turn|>"), id("<|channel>"), id("<channel|>")]
+    }
+
     /// Its tokeniser.
     fn small() -> Tokenizer {
         Tokenizer::new(Parts {
@@ -368,7 +500,7 @@ mod tests {
                 .iter()
                 .map(|(a, b)| (a.as_bytes(), b.as_bytes()))
                 .collect(),
-            specials: vec![0, id("<turn|>")],
+            specials: specials(),
             bos: 0,
             eos: id("<turn|>"),
         })
@@ -394,6 +526,64 @@ mod tests {
             t.encode("<|turn>user\nab<turn|>\n<|turn>model\n")
         );
         assert!(chat.contains(&id("<turn|>")));
+        let thinking = t.chat_thinking(" ab ");
+        assert_eq!(thinking[0], 0);
+        assert_eq!(
+            thinking[1..],
+            t.encode("<|turn>system\n<|think|>\n<turn|>\n<|turn>user\nab<turn|>\n<|turn>model\n")
+        );
+    }
+
+    /// A thought is what is between its specials at the answer's start;
+    /// an answer that begins with none is all answer, its specials too.
+    /// Each fills its room exactly, the next token over (and all after);
+    /// the answer ended by itself only on a stop, within its room, its
+    /// thought closed.
+    #[test]
+    fn a_thought_is_told_apart_from_the_answer_each_in_its_room() {
+        use Take::{Answer, Closed, Opened, Over, Thought};
+        let t = small();
+        let (open, close, a) = (id("<|channel>"), id("<channel|>"), id("a"));
+        let takes = |thinking: &mut Thinking, ids: &[u32]| -> Vec<Take> {
+            ids.iter().map(|&i| thinking.take(i)).collect()
+        };
+        // Both rooms filled exactly, a stop after: ended.
+        let mut both = t.thinking(2, 3);
+        let ids = [open, a, a, close, a, open, close];
+        assert_eq!(
+            takes(&mut both, &ids),
+            [Opened, Thought, Thought, Closed, Answer, Answer, Answer]
+        );
+        assert_eq!(both.taken(), [2, 3]);
+        assert!(!both.in_thought() && both.ended(true));
+        assert!(!both.ended(false), "at a limit");
+        assert_eq!(both.most(), 2 + 3 + 3);
+        // A thought one past its room: over, cut off in its thought.
+        let mut long = t.thinking(2, 3);
+        assert_eq!(
+            takes(&mut long, &[open, a, a, a, close]),
+            [Opened, Thought, Thought, Over, Over]
+        );
+        assert!(long.in_thought() && !long.ended(true));
+        // An answer one past its room: over.
+        let mut wordy = t.thinking(2, 1);
+        assert_eq!(
+            takes(&mut wordy, &[open, close, a, a]),
+            [Opened, Closed, Answer, Over]
+        );
+        assert!(!wordy.ended(true));
+        // A thought never closed (a stop inside it): cut off.
+        let mut cut = t.thinking(4, 3);
+        takes(&mut cut, &[open, a]);
+        assert!(cut.in_thought() && !cut.ended(true), "never closed");
+        // No thought: all answer, its specials too.
+        let mut none = t.thinking(0, 3);
+        assert_eq!(
+            takes(&mut none, &[a, close, open]),
+            [Answer, Answer, Answer]
+        );
+        assert_eq!(none.taken(), [0, 3]);
+        assert!(none.ended(true));
     }
 
     /// A character in byte pieces over several tokens comes out whole once
@@ -453,7 +643,7 @@ mod tests {
         out.extend((pieces.len() as u64).to_le_bytes());
         for i in 0..pieces.len() {
             let kind: i32 = match i {
-                i if i == 0 || i == id("<turn|>") as usize => 3,
+                i if specials().contains(&(i as u32)) => 3,
                 1..=256 => 6,
                 _ => 1,
             };
@@ -488,13 +678,14 @@ mod tests {
 
     #[test]
     fn it_reads_from_a_gguf() {
-        let template = "{{- bos_token -}}{{- '<|turn>' + role + '\\n' }}{{- '<turn|>\\n' -}}{{- '<|turn>model\\n' -}}";
+        let template = "{{- bos_token -}}{{- '<|turn>' + role + '\\n' }}{{- '<turn|>\\n' -}}{{- '<|turn>model\\n' -}}{{- '<|turn>system\\n' -}}{{- '<|think|>\\n' -}}{{- '<|channel>thought\\n' + text + '\\n<channel|>' -}}";
         let (t, back) = (small(), read(gguf(template)).unwrap());
         for s in ["abc", " abc ab", "<bos>cba é<turn|>"] {
             assert_eq!(back.encode(s), t.encode(s));
         }
         assert_eq!(back.stop(), t.stop());
         assert_eq!(back.chat("ab"), t.chat("ab"));
+        assert_eq!(back.chat_thinking("ab"), t.chat_thinking("ab"));
         let err = read(gguf("{{ messages }}")).err().unwrap();
         assert!(err.contains("chat template"), "{err}");
     }

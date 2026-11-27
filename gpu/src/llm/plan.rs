@@ -62,8 +62,11 @@ const LOCAL_SPLITS: usize = 8;
 const GLOBAL_SPLITS: usize = 16;
 /// The head's workgroups.
 const HEAD_GROUPS: usize = VOCAB / GEMV_ROWS;
-/// The most positions of a context.
-const MOST_POSITIONS: usize = 16_384;
+/// The most positions of a context: as many as keep the cache (every
+/// layer's keys and values, 112 KB a position, in one buffer) within the
+/// 2 GB a storage binding takes on most GPUs (Direct3D 12's), in whole
+/// chunks (2.1 GB; a chunk more is over it).
+const MOST_POSITIONS: usize = 18_432;
 /// The positions past a context the steps may run (those made after a
 /// stop, before it is read: two runs of steps).
 const PAST: usize = 2 * STEPS_A_READ;
@@ -820,5 +823,9 @@ mod tests {
         assert_eq!(more.held_bytes() - room.held_bytes(), a_position);
         assert_eq!(room.peak_bytes(), room.held_bytes() + prompt * PARAM_STRIDE);
         assert!(ContextPlan::new(&layout, MOST_CONTEXT + 1).is_err());
+        // The largest cache within the 2 GB of a binding, in whole chunks.
+        let binding = 1 << 31;
+        assert!(Sizes::new(MOST_POSITIONS).cache * 4 <= binding);
+        assert!(Sizes::new(MOST_POSITIONS + CHUNK).cache * 4 > binding);
     }
 }

@@ -17,16 +17,6 @@ pub struct NearMap {
     pub near: Vec<u16>,
 }
 
-impl NearMap {
-    /// The nearness at (u, v) in 0..1 of the picture, in 0..1 (nearest
-    /// sample).
-    pub fn at(&self, u: f32, v: f32) -> f32 {
-        let x = ((u * self.width as f32) as u32).min(self.width - 1);
-        let y = ((v * self.height as f32) as u32).min(self.height - 1);
-        f32::from(self.near[(y * self.width + x) as usize]) / 65535.0
-    }
-}
-
 impl From<&Planes> for NearMap {
     /// One channel of nearness in 0..1, kept in 16 bits.
     fn from(p: &Planes) -> NearMap {

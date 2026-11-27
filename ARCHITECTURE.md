@@ -3,7 +3,7 @@
 Jodeldiplom is a music player for folders of files that turns into a
 karaoke game. Every song queued is got ready in the background: its beats
 and bars found, its stems separated, its lyrics fetched and timed word by
-word, its cover taken apart into layers. It then plays as it is, mixes
+word, its karaoke story planned and drawn. It then plays as it is, mixes
 into the next song with the beats matched, or is sung: the microphone is
 listened to (never played), the singer's pitch held against the original
 singer's, and every reward drawn on the GPU and sounded by a synthesizer
@@ -66,7 +66,7 @@ are no cycles.
 | `jodel-looks` | `looks/` | Karaoke mode's looks: shader passes as data (each its WGSL and its maths on the processor), the presets, the catalogue a model chooses from, the music's curves that move them, the guards (ranges, flashes, the lyric band, the budget) | `jodel-rhythm` |
 | `jodel-rhythm-tools` | `rhythm/tools/` | the tools that pack and measure the pitch network's built-in weights | `jodel-rhythm`, `jodel-tensors`, `jodel-dsp`, `durable` |
 | `jodel-lyrics` | `lyrics/` | lyrics as data, LRC in and out, the speech model and the recogniser on the CPU, forced alignment, whether a text fits a recording | `durable`, `jodel-tensors`, `jodel-dsp` |
-| `jodel-gpu` | `gpu/` | every network on the GPU through `wgpu`: stems, beats, speech, the recogniser, the covers' depth and cut-out; the GPU shared with the window in short submissions | `jodel-rhythm`, `jodel-lyrics`, `jodel-tensors` |
+| `jodel-gpu` | `gpu/` | every network on the GPU through `wgpu`: stems, beats, speech, the recogniser, the story scenes' depth and cut-out, the story's language and picture models; the GPU shared with the window in short submissions | `jodel-rhythm`, `jodel-lyrics`, `jodel-tensors` |
 | `jodel-output` | `output/` | the device, shared through the system's mixer (WASAPI, Core Audio HAL, ALSA); the mixer (the desk); microphone capture, the echo canceller and the singer's isolation | `durable`, `jodel-synth`, `jodel-tensors`, `jodel-dsp` |
 | `jodel-playback` | `playback/` | the engine: files decoded, routed, resampled, gapless; seeks, bar jumps, stems as parts of the output, transitions on two heads, the key shift | `durable`, `jodel-output`, `jodel-rhythm`, `jodel-dsp` |
 | `jodeldiplom` | `player/` | the application: the pure core, the window, the workers, the stores, the game | all of the above |
@@ -98,8 +98,8 @@ side effects is outside it and driven by what it returns.
 | The game's data | `tiers`, `theme` | the tier table: everything a tier takes, looks like and sounds like, a row each; the themes that override its colours, the effects' looks and the sounds' patches by key. |
 | Presentation models | `view` | what each screen says, as plain data (rows, labels, tones, the Karaoke picture, the bubbles' fill). |
 | The running player | `app`, `desk_wiring`, `preview`, `sync`, `clock` | `App` holds the `State`, carries out the effects (`app::effects`), pumps the channels, answers the window's frames (`app::frame`); its subsystems own their parts: the microphone and the singing (`app::mic`), the cover heard (`work::art`), the spectrum (`spectrum`), the session kept (`store::session`), a data folder's move (`store::mover`); `desk_wiring` builds the desk and the engine on it; `preview` and `sync` play on it beside the engine. |
-| Workers | `work` (`work::rhythm`, `work::lyrics`, `work::cover`, `work::art`, `work::shine`, `work::loudness`, `work::download`), `browser` (details, search), `setup`, `store::mover`, `store::grids` | background threads, each with its queue (`work`: a `Queue` its threads wait on, the `Lanes` of what is wanted now and ahead, a `Job` that tells how it stands and waits for a retry); results come back as `Action`s through an `Outbox` (`work::outbox`). Their GPU work goes by model, a queue a model (`work::stages`). |
-| Stores | `store` (`store::cache`, `store::dirs`, `store::mover`, `store::session`, `store::grids`, `store::delays`, `store::scores`, `store::keep`, `store::patches`, `store::stems`), `config`; the workers keep their own (`work::rhythm`, `work::lyrics`, `work::cover`, `work::shine`, `work::loudness`) | what is kept on disk, where, and in which schema. |
+| Workers | `work` (`work::rhythm`, `work::lyrics`, `work::story`, `work::scenes`, `work::art`, `work::shine`, `work::loudness`, `work::download`), `browser` (details, search), `setup`, `store::mover`, `store::grids` | background threads, each with its queue (`work`: a `Queue` its threads wait on, the `Lanes` of what is wanted now and ahead, a `Job` that tells how it stands and waits for a retry); results come back as `Action`s through an `Outbox` (`work::outbox`). Their GPU work goes by model, a queue a model (`work::stages`). |
+| Stores | `store` (`store::cache`, `store::dirs`, `store::mover`, `store::session`, `store::grids`, `store::delays`, `store::scores`, `store::keep`, `store::patches`, `store::stems`), `config`; the workers keep their own (`work::rhythm`, `work::lyrics`, `work::story`, `work::scenes`, `work::shine`, `work::loudness`) | what is kept on disk, where, and in which schema. |
 | Sounds | `sfx` | the game's moments as sounds: the conductor plans notes on the song's grid and key for the synth on the desk's effects input. |
 | The window | `gui` | the iced application (`gui::window`), its screens (`gui::screens`) built from the look's tokens and shared widgets (`gui::look`, `gui::widgets`), the Mixer tab (`gui::mixer`), the lanes (`gui::lanes`), and Karaoke mode on the GPU: the stage (`gui::stage`, its GPU side `gui::stage::gpu` and its shader's shapes `gui::stage::shapes`), the effects (`gui::fx`), the backdrop (`gui::backdrop`), the light (`gui::bloom`), the bursts (`gui::particles`). |
 | Platform | `cli`, `diag`, `single`, `icon`, `calendar`, `trace` | the command line, `--diag`, one player at a time, the icon, the date, the timing trace. |
@@ -148,8 +148,9 @@ fader ramps on the mixer's clock.
 
 ### A song got ready
 
-`Effect::Prepare` sends the queue's songs to three workers at once, the
-song playing first:
+`Effect::Prepare` sends the queue's songs to two workers at once, the
+song playing first, and `Effect::WantStories` each song to a third once
+its lyrics are settled, in the same order:
 
 ```text
  rhythm worker ─ decode once ─┬─ mono at 22.05 kHz ─► jodel_rhythm::Analyzer:
@@ -163,8 +164,11 @@ song playing first:
               ─► the text that fits the recording (the recogniser's hearing)
               ─► the words aligned to the vocal stem (wav2vec2, CTC), the source's
                  line times as the scaffold ─► lyrics/*.timed.lrc
- cover worker ─ depth and cut-out on the GPU, text and faces found on the CPU
-              ─► plate, subject, depth, rim, palette ─► covers/*.layers
+ story worker ─ the lyrics as settled ─► Gemma 4 E4B plans the story ─► stories/*.txt
+              ─► Qwen3-4B encodes the pictures' prompts ─► FLUX.2 [klein] draws
+                 a portrait a character, a picture a scene ─► scenes/<song>/
+              ─► depth and cut-out on the GPU, faces found on the CPU
+                 ─► each scene's layers and plate ─► scene-parts/*.parts
 ```
 
 Each answers with `Action::Rhythm`, `Action::Lyrics` or a job's state, and
@@ -225,7 +229,7 @@ sounds, by the same clock.
 | `jodel-stems` | playback | a playing track's stems: read from the file kept, or separated live on the GPU | the playing track's separator never rests for the window |
 | `jodel-drop` | playback | drops what the engine is done with (closing a file on a network share can take a while) | |
 | `jodel-sync` | player | the sync's clicks, on an output of their own | |
-| workers | player | details, rhythm, lyrics, covers, shine, loudness, grids, the stems store's pruning, the mover, setup, the sweep of crash leftovers, device and microphone opening, the art's decode | each owns its queue; answers as `Action`s plus a wake of the window; GPU work marks itself background and gives way to the window |
+| workers | player | details, rhythm, lyrics, stories (and their scenes), shine, loudness, grids, the stems store's pruning, the mover, setup, the sweep of crash leftovers, device and microphone opening, the art's decode | each owns its queue; answers as `Action`s plus a wake of the window; GPU work marks itself background and gives way to the window |
 
 Real-time rules, and what holds them:
 
@@ -265,7 +269,7 @@ Real-time rules, and what holds them:
 | The engine, the mixer and the game's sounds | `desk_wiring::Engine` (inside `App`), with `sfx::Sfx` and its conductor | `App`, as effects come |
 | The settings | `config.toml` in the settings folder, read into `Config` (in `State`) | the Settings screen and the keys, saved by `Effect::SaveConfig` |
 | The user's own records | the settings folder: the session and saved queues, grids fixed by hand, the singer's delays, kept singing (`recordings/`), the data move's journal | their stores; every older version of them is still read |
-| What can be made again | the data folder: the models, analyses and waveforms, stems, lyrics, shine, loudness, covers, and the best scores | the workers, through `durable`; read only in the schema version written (`store/cache.rs`) |
+| What can be made again | the data folder: the models, analyses and waveforms, stems, lyrics, shine, loudness, stories, scenes and scene parts, and the best scores | the workers, through `durable`; read only in the schema version written (`store/cache.rs`) |
 
 Two folders, decided once at the start (`store::dirs::Folders`) and handed to
 everything that reads or writes there:
@@ -282,7 +286,8 @@ rename, the folder fsynced); clippy refuses any other write
 (`clippy.toml`). The cache contract is in `player/src/store/cache.rs`: a schema
 version per kind of file, a sample of each version pinned byte for byte
 in `player/tests/schemas/`, content versions (the analysis's, the
-aligner's, the covers') apart from the schemas.
+aligner's, the story's (`work::story::VERSION`) and the scenes'
+(`work::scenes::VERSION`)) apart from the schemas.
 
 ## How to add things
 
@@ -365,7 +370,7 @@ name means in the standard words, and where it is.
 |---|---|---|
 | along | playback along a time map (time-warped reading) | `playback/src/engine/along.rs` |
 | atom (palette atom) | an instrument preset: one synth patch a sound is made of | `player/src/sfx/conductor/palette.rs` |
-| backdrop | the karaoke background visualiser: the cover in depth layers, lit by the stems | `player/src/gui/backdrop` |
+| backdrop | the karaoke background visualiser: the blurred cover, or with the game the song's story scenes in depth layers, lit by the stems | `player/src/gui/backdrop` |
 | badge | the combo multiplier's display ("Amazing 82 in a row ×16") | `player/src/gui/stage/badge.rs` |
 | board | the effects' strength envelopes, eased frame by frame | `player/src/gui/fx/board.rs` |
 | bubble | a word's note target: the capsule under a sung word that fills as it is hit | `player/src/core/bubbles.rs`, `player/src/gui/stage/shapes/pop.rs` |

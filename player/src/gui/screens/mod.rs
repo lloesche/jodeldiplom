@@ -328,8 +328,8 @@ pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
 }
 
 /// The place of the preparation view's card in a window of `size`, in
-/// pixels at `scale` pixels a point, while the view shows: a cover taken
-/// apart is fitted to it.
+/// pixels at `scale` pixels a point, while the view shows: the cover of its
+/// song is fitted to it.
 pub(super) fn prep_card(state: &State, size: Size, scale: f32) -> Option<(u32, u32)> {
     if state.screen != Screen::Main {
         return None;

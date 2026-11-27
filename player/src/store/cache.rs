@@ -15,9 +15,6 @@
 //! | [`SHINE`] | the original singer's phrases measured, the shine's yardstick (`shine/*.txt`) |
 //! | [`LOUDNESS`] | a song's loudness as the karaoke plays it (`loudness/*.txt`) |
 //! | [`DELAYS`] | the singer's delays, an output and a microphone each (`delays.txt`, beside the settings) |
-//! | [`COVER_LAYERS`] | a cover taken apart (`covers/*.layers`, binary: `JDLC` and the version byte) |
-//! | [`COVER_SONG`] | which cover taken apart is a song's (`covers/songs/*.txt`) |
-//! | [`COVER_ALBUM`] | an album's covers taken apart, with their perceptual hashes (`covers/albums/*.txt`) |
 //! | [`PATCH`] | a game sound's patch kept on the Synth tab (`patches/*.txt`) |
 //! | [`STORY_PLAN`] | a song's story planned for the karaoke (`stories/*.txt`) |
 //! | [`STORY_SCENES`] | a song's story scenes: what made them, the look over them, each one's span and picture (`scenes/<song>/scenes.txt`, beside the pictures) |
@@ -52,13 +49,12 @@
 //! [`jodel_rhythm::VERSION`] (in the name of its file, so another one is
 //! made afresh), timed lyrics on their aligner (named in the file, and a
 //! timing by another than the one the player times with now is timed
-//! again: `crate::work::lyrics::WordTimer::maker`), a cover taken apart on its
-//! models and the way it is taken apart (`crate::work::cover::VERSION`, in the
-//! file, compared when it is read), a story's plan on its language model and
-//! what it was asked (`crate::work::story::VERSION` and the prompt's hash, in
-//! the file, compared when it is read), a song's scenes' parts on theirs
-//! (`crate::work::scenes::VERSION`, in the file, compared when it is read, and
-//! each picture's hash). That is apart from the schema: a
+//! again: `crate::work::lyrics::WordTimer::maker`), a story's plan on its
+//! language model and what it was asked (`crate::work::story::VERSION` and
+//! the prompt's hash, in the file, compared when it is read), a song's
+//! scenes' parts on theirs (`crate::work::scenes::VERSION`, in the file,
+//! compared when it is read, and each picture's hash). That is apart from
+//! the schema: a
 //! better aligner raises its own version (`jodel_lyrics::VERSION`,
 //! `jodel_lyrics::speech::maker`), not the schema's.
 
@@ -176,30 +172,6 @@ pub const DELAYS: Schema = Schema {
     user_data: true,
 };
 
-/// A cover taken apart: what made it and its palette, then its plate,
-/// subject, depth, plate's depth and rim as PNGs (binary, versioned by its
-/// own byte).
-pub const COVER_LAYERS: Schema = Schema {
-    name: "cover-layers",
-    version: 1,
-    user_data: false,
-};
-
-/// A song's cover: which cover taken apart is its (or none).
-pub const COVER_SONG: Schema = Schema {
-    name: "cover-song",
-    version: 1,
-    user_data: false,
-};
-
-/// An album's covers taken apart: each one's pixels' hash and perceptual
-/// hash.
-pub const COVER_ALBUM: Schema = Schema {
-    name: "cover-album",
-    version: 1,
-    user_data: false,
-};
-
 /// A game sound's patch as kept on the Synth tab ([`crate::store::patches`]):
 /// its theme and atom, its engine, then each parameter that applies by
 /// its name.
@@ -238,7 +210,7 @@ pub const SCENE_PARTS: Schema = Schema {
 };
 
 /// Every schema.
-pub const ALL: [Schema; 19] = [
+pub const ALL: [Schema; 16] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -251,9 +223,6 @@ pub const ALL: [Schema; 19] = [
     SHINE,
     LOUDNESS,
     DELAYS,
-    COVER_LAYERS,
-    COVER_SONG,
-    COVER_ALBUM,
     PATCH,
     STORY_PLAN,
     STORY_SCENES,
@@ -303,9 +272,9 @@ impl Schema {
     }
 }
 
-/// A binary cache file of `schema` (the covers' layers, the story scenes'
-/// parts): `magic`, the schema's version byte, then each of `parts` after
-/// its length (four bytes, little-endian).
+/// A binary cache file of `schema` (the story scenes' parts): `magic`, the
+/// schema's version byte, then each of `parts` after its length (four
+/// bytes, little-endian).
 pub fn frame(magic: &[u8; 4], schema: &Schema, parts: &[&[u8]]) -> Vec<u8> {
     let mut out = magic.to_vec();
     out.push(schema.version as u8);

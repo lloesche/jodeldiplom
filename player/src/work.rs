@@ -3,14 +3,12 @@
 //! of.
 //!
 //! - The workers: the beats and tempo of the tracks ([`rhythm`]), their
-//!   lyrics ([`lyrics`]), the covers taken apart for the karaoke
-//!   background ([`cover`]) and the story scenes' pictures made ready for
-//!   it ([`scenes`]; the picture tools both share in [`picture`]), the
-//!   cover art decoded ([`art`]), each
-//!   song's loudness ([`loudness`]) and the original singer's phrases
-//!   ([`shine`]) as the karaoke sings it, the files the setup fetches
-//!   ([`download`]), and the karaoke story's plan as the language model
-//!   writes it ([`story`], a unit of work for whoever runs the model).
+//!   lyrics ([`lyrics`]), their karaoke stories planned, drawn and their
+//!   scenes taken apart ([`story`]), the song playing's scenes made ready
+//!   for the karaoke background ([`scenes`]; the picture tools in
+//!   [`picture`]), the cover art decoded ([`art`]), each song's loudness
+//!   ([`loudness`]) and the original singer's phrases ([`shine`]) as the
+//!   karaoke sings it, and the files the setup fetches ([`download`]).
 //!   Each keeps what it makes in the data folder. Their work on the GPU
 //!   goes by model, each model's jobs in a queue of its own ([`stages`]),
 //!   a song's voice taken from its kept stems or separated there
@@ -23,7 +21,6 @@
 //!   their results come back to the app through the [`outbox`].
 
 pub mod art;
-pub mod cover;
 pub mod download;
 pub mod loudness;
 pub mod lyrics;
@@ -147,18 +144,39 @@ impl<W> Queue<W> {
     /// The next thing to do, as `take` takes it from the work, waited for;
     /// `None` once stopped.
     pub fn next<T>(&self, mut take: impl FnMut(&mut W) -> Option<T>) -> Option<T> {
+        self.next_by(None, |work, _| take(work))
+    }
+
+    /// [`Queue::next`], `take` asked again once `due` comes too (told it
+    /// has: whether it is due), as well as at every change before.
+    pub fn next_by<T>(
+        &self,
+        due: Option<Instant>,
+        mut take: impl FnMut(&mut W, bool) -> Option<T>,
+    ) -> Option<T> {
         let mut work = self.lock();
         loop {
             if self.stopped() {
                 return None;
             }
-            if let Some(found) = take(&mut work) {
+            let now = Instant::now();
+            let late = due.is_some_and(|due| now >= due);
+            if let Some(found) = take(&mut work, late) {
                 return Some(found);
             }
-            work = self
-                .ready
-                .wait(work)
-                .unwrap_or_else(PoisonError::into_inner);
+            work = match due.filter(|_| !late) {
+                Some(due) => {
+                    let (work, _) = self
+                        .ready
+                        .wait_timeout(work, due - now)
+                        .unwrap_or_else(PoisonError::into_inner);
+                    work
+                }
+                None => self
+                    .ready
+                    .wait(work)
+                    .unwrap_or_else(PoisonError::into_inner),
+            };
         }
     }
 
@@ -376,6 +394,25 @@ mod tests {
         for thread in threads {
             assert_eq!(thread.join().unwrap(), None);
         }
+    }
+
+    /// A wait until a time ends there, told it is due; a change before
+    /// ends it early, not due yet.
+    #[test]
+    fn a_wait_until_a_time_ends_there_or_at_a_change_before() {
+        let queue = Arc::new(Queue::new(0u32));
+        let due = Instant::now() + Duration::from_millis(50);
+        let took = queue.next_by(Some(due), |_, late| late.then_some(()));
+        assert!(took.is_some() && Instant::now() >= due);
+        let far = Instant::now() + Duration::from_secs(600);
+        let asked = Arc::clone(&queue);
+        let changer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            asked.change(|w| *w = 1);
+        });
+        let early = queue.next_by(Some(far), |w, late| (*w == 1).then_some(late));
+        assert_eq!(early, Some(false), "a change before: not due");
+        changer.join().unwrap();
     }
 
     #[test]

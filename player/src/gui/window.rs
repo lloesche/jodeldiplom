@@ -650,9 +650,8 @@ impl Gui {
                 self.paint.draw(plan, parts, app, place, (heard, at));
                 let places = super::screens::covers(&app.state, self.size, self.scale);
                 self.covers.show(app.art(), &places, self.scale);
-                let cut = crate::view::prep::shown_cut(&app.state);
                 let card = super::screens::prep_card(&app.state, self.size, self.scale);
-                self.covers.show_cut(cut, card);
+                self.covers.show_card(app.prep_art(), card);
                 self.covers
                     .show_scenes(&crate::view::prep::shown_scenes(&app.state));
                 // Karaoke mode is fullscreen; leaving it, the window comes

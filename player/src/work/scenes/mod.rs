@@ -1,32 +1,52 @@
-//! A song's story scenes made ready for karaoke's backdrop, which shows
-//! them instead of the cover (`crate::gui::backdrop::scenes`).
+//! A song's story scenes, karaoke's backdrop in the game
+//! (`crate::gui::backdrop::scenes`).
 //!
 //! The story's drawing step leaves a song's scenes in its folder in the
 //! data folder's `scenes/` ([`SceneStore::folder`]): a picture a scene and
 //! their description with the song's look ([`Scenes`], [`FILE`]),
-//! `crate::work::story::draw`'s. As the song plays, the covers'
-//! thread makes them ready after its cover ([`story`], from
-//! `crate::work::cover::CoverWorker`, with the cover's models): each
-//! picture taken apart once (`split.rs`: its depth and the matte of its
-//! subject on the GPU, its heads held flat, two or three layers or a warp,
-//! the plate behind the layers filled) and kept by the picture's bytes in
-//! a cache of its own ([`SceneStore`], made again where [`VERSION`]
-//! changes); then each scene's texels made ready for the GPU ([`Ready`]),
-//! so a scene showing costs the window no more than sending them over.
+//! `crate::work::story::draw`'s. The story's last step in the song's
+//! preparation takes each picture apart once ([`take_apart`], on the GPU
+//! by [`GpuNets`], `split.rs`: its depth and the matte of its subject, its
+//! heads held flat by the faces found ([`FaceNet`], on the processor), two
+//! or three layers or a warp, the plate behind the layers filled) and
+//! keeps it by the picture's bytes in a cache of its own ([`SceneStore`],
+//! made again where [`VERSION`] changes). As the song plays, its scenes'
+//! texels are made ready for the GPU from what is kept ([`Ready`], on a
+//! thread of their own: [`PlayingStory`]), so a scene showing costs the
+//! window no more than sending them over.
 
 mod describe;
+mod faces;
 mod job;
+mod layers;
+mod models;
+mod playing;
 mod split;
 mod store;
 
-use std::sync::Arc;
+use std::path::Path;
 
 use image::RgbImage;
 
 pub use describe::{Scene, Scenes, FILE};
-pub use job::{prepare, story, Asked, SceneNets, Took};
-pub use split::{alphas, half, Cuts, Derived, Head, Split};
+pub use faces::{Face, FaceNet};
+pub use job::{prepare, take_apart, taken_apart, SceneNets, TakenApart, Took};
+pub use models::{
+    GpuNets, SceneModels, DEPTH_BYTES, DEPTH_FILE, DEPTH_SHA256, DEPTH_URL, MATTE_BYTES,
+    MATTE_FILE, MATTE_SHA256, MATTE_URL,
+};
+pub use playing::PlayingStory;
+pub use split::{alphas, derive, half, Cuts, Derived, Head, Split};
 pub use store::{from_bytes, to_bytes, SceneStore};
+
+/// A song's key, its scenes' folder's name ([`SceneStore::folder`]) and
+/// its pictures' seeds' (`crate::work::story::draw::seed`): as the lyrics'
+/// cache keys a song (its path, size and modification time: a file
+/// retagged is drawn afresh), or its path's hash where it cannot be read.
+pub fn song_key(path: &Path) -> String {
+    crate::work::lyrics::store::cache_key(path)
+        .unwrap_or_else(|| crate::store::cache::name(&path.display().to_string()))
+}
 
 #[cfg(test)]
 pub(crate) use describe::tests::look;
@@ -172,22 +192,19 @@ fn focus(parts: &Derived) -> [f32; 2] {
 }
 
 /// A song's scenes ready for the backdrop: which they are (a hash of
-/// their pictures' and their spans), each scene, in the song's order, and
-/// the song's look over them.
+/// their pictures' and their spans), and each scene, in the song's order
+/// (the song's look over them is its [`Scenes::look`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Story {
     /// Which they are: what tells two stories apart.
     pub id: u64,
     /// The scenes.
     pub scenes: Vec<Ready>,
-    /// The look over them, the song's own
-    /// ([`crate::core::karaoke::KaraokeState::look`] while it plays).
-    pub look: Arc<jodel_looks::Look>,
 }
 
 impl Story {
-    /// The `scenes`, of pictures of `hashes`, with `look` over them.
-    pub fn new(hashes: &[String], scenes: Vec<Ready>, look: jodel_looks::Look) -> Story {
+    /// The `scenes`, of pictures of `hashes`.
+    pub fn new(hashes: &[String], scenes: Vec<Ready>) -> Story {
         let spans: Vec<String> = (scenes.iter())
             .map(|s| format!("{} {}", s.span.0, s.span.1))
             .collect();
@@ -195,7 +212,6 @@ impl Story {
         Story {
             id: jodel_dsp::fnv1a(which.as_bytes()),
             scenes,
-            look: Arc::new(look),
         }
     }
 }

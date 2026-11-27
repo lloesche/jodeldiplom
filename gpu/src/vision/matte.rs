@@ -1,4 +1,4 @@
-//! BEN2 Base (MIT) on the GPU: the matte of a cover's subject.
+//! BEN2 Base (MIT) on the GPU: the matte of a picture's subject.
 //!
 //! As the checkpoint's own code runs it: the picture at 1024 × 1024 is cut
 //! into its four quarters and also shrunk to half, five views of 512 that

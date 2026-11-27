@@ -9,10 +9,10 @@
 //! ring, the marks, [`crate::gui::stage::shapes::glory`]), the diploma's shapes
 //! (a star sticker, a wax seal, the rays, [`crate::gui::stage::shapes::seal`];
 //! its paper, a rubber stamp, a signature,
-//! [`crate::gui::stage::shapes::paper`]), the backdrop's maths
-//! ([`super::backdrop::look`]), the story scenes'
-//! ([`super::backdrop::scenes::look`]) and its smooth read of a texture (a cubic
-//! B-spline of its texels), each worked out by the shader's own functions in a
+//! [`crate::gui::stage::shapes::paper`]), the story scenes' maths
+//! ([`super::backdrop::scenes::look`]) and the backdrop's smooth read of a
+//! texture (a cubic B-spline of its texels, [`super::backdrop::look`]),
+//! each worked out by the shader's own functions in a
 //! compute pass over the shader as the window composes it, at sample points,
 //! against the processor's; and every pipeline the stage, its light and the
 //! bursts make, made. Skipped (with a note) without a GPU.
@@ -687,94 +687,14 @@ fn the_stage_shader_s_tube_is_its_reference() {
     assert!(close_by > 60, "{close_by}");
 }
 
-/// The backdrop's maths at points across the window and through time: the
-/// shader's `rounded_box` ([`jodel_looks::math::round_box`]),
-/// [`look::card_edge`], [`look::falloff`], [`look::bspline`],
-/// [`look::shift`], [`look::vignette`], [`look::sweep`], [`look::drift`],
-/// [`look::ray_fan`], [`look::defocus`] and [`look::kicked`] as the
-/// processor's.
-#[test]
-fn the_backdrop_shader_s_maths_is_its_reference() {
-    use super::backdrop::look;
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let samples: Vec<[f32; 4]> = (0..500)
-        .map(|k| {
-            let f = k as f32;
-            let fr = |m: f32| (f * m).fract();
-            [fr(0.613), fr(0.377), fr(0.291), fr(0.733) * 60.0]
-        })
-        .collect();
-    let body = "
-    let s = ins[i];
-    let sh = shift(s.xy, s.z, vec2<f32>(0.01, -0.006), 0.008, vec2<f32>(0.45, 0.4));
-    let d = rounded_box((s.x - 0.5) * 400.0, (s.y - 0.5) * 300.0, 120.0, 100.0, 9.0);
-    outs[i * 5u] = vec4<f32>(d, card_edge(d, 2000.0), sh);
-    let rays = ray_fan(s.x - 0.5, s.y - 0.4, s.w, 0.2);
-    let blur = defocus(s.z, s.x);
-    outs[i * 5u + 1u] = vec4<f32>(vignette(s.x, s.y), blur, sweep(s.x, s.y, s.w), rays);
-    outs[i * 5u + 2u] = vec4<f32>(drift(s.w), falloff(d, 30.0));
-    outs[i * 5u + 3u] = bspline(s.z);
-    outs[i * 5u + 4u] = vec4<f32>(kicked(s.xy, vec2<f32>(0.45, 0.4), s.z * 0.05), 0.0, 0.0);";
-    let source = super::backdrop::gpu::shader(false);
-    let outs = run(&gpu, &source, body, &samples, (samples.len(), 5));
-    let close = |g: &[f32], c: &[f32], what: &str| {
-        for (x, y) in g.iter().zip(c) {
-            assert!(near(*x, *y, 3e-3, 2e-3), "{what}: {g:?} {c:?}");
-        }
-    };
-    let (mut edged, mut swept, mut blurred) = (0, 0, 0);
-    for (k, s) in samples.iter().enumerate() {
-        let g = &outs[k * 5..k * 5 + 5];
-        let what = format!("sample {k}: {s:?}");
-        let sh = look::shift([s[0], s[1]], s[2], [0.01, -0.006], 0.008, [0.45, 0.4]);
-        let d = jodel_looks::math::round_box(
-            jodel_looks::math::v2((s[0] - 0.5) * 400.0, (s[1] - 0.5) * 300.0),
-            jodel_looks::math::v2(120.0, 100.0),
-            9.0,
-        );
-        let edge = look::card_edge(d, 2000.0);
-        close(
-            &g[0],
-            &[d, edge, sh[0], sh[1]],
-            &format!("{what}: box, edge, shift"),
-        );
-        let sweep = look::sweep(s[0], s[1], s[3]);
-        close(
-            &g[1],
-            &[
-                look::vignette(s[0], s[1]),
-                look::defocus(s[2], s[0]),
-                sweep,
-                look::ray_fan(s[0] - 0.5, s[1] - 0.4, s[3], 0.2),
-            ],
-            &format!("{what}: vignette, defocus, sweep, rays"),
-        );
-        let w = look::drift(s[3]);
-        close(
-            &g[2],
-            &[w[0], w[1], w[2], look::falloff(d, 30.0)],
-            &format!("{what}: drift, falloff"),
-        );
-        close(&g[3], &look::bspline(s[2]), &format!("{what}: bspline"));
-        let kicked = look::kicked([s[0], s[1]], [0.45, 0.4], s[2] * 0.05);
-        close(&g[4], &[kicked[0], kicked[1]], &format!("{what}: kicked"));
-        blurred += usize::from(g[1][1] > look::DEFOCUS_BASE && g[1][1] < 1.0);
-        edged += usize::from(edge > 0.0 && edge < 1.0);
-        swept += usize::from(sweep > 0.3);
-    }
-    assert!(
-        edged > 20 && swept > 20 && blurred > 20,
-        "{edged} {swept} {blurred}"
-    );
-}
-
 /// The story scenes' shader's maths, worked out by the shader as the
 /// backdrop composes it (`scenes.wgsl` with it, so the whole shader is
-/// made too): [`scenes::look::view`], [`scenes::look::seat`] and
-/// [`scenes::look::haze`] as the processor's.
+/// made too): [`scenes::look::shift`], [`scenes::look::vignette`],
+/// [`scenes::look::view`], [`scenes::look::seat`] and
+/// [`scenes::look::haze`], as the processor's.
 ///
+/// [`scenes::look::shift`]: super::backdrop::scenes::look::shift
+/// [`scenes::look::vignette`]: super::backdrop::scenes::look::vignette
 /// [`scenes::look::view`]: super::backdrop::scenes::look::view
 /// [`scenes::look::seat`]: super::backdrop::scenes::look::seat
 /// [`scenes::look::haze`]: super::backdrop::scenes::look::haze
@@ -795,8 +715,9 @@ fn the_scene_shader_s_maths_is_its_reference() {
     let s = ins[i];
     let v = scene_view(s.xy, vec2<f32>(0.8, 1.0), vec2<f32>(0.45, 0.55), s.w);
     let c = seat(vec3<f32>(s.x, s.y, s.z), vec3<f32>(s.z, 0.2, s.x), s.y, vec4<f32>(0.9, 0.6, 0.3, s.x));
-    outs[i * 3u] = vec4<f32>(v, 0.0, 0.0);
-    outs[i * 3u + 1u] = vec4<f32>(c, 0.0);
+    let sh = shift(s.xy, s.z, vec2<f32>(0.01, -0.006));
+    outs[i * 3u] = vec4<f32>(v, sh);
+    outs[i * 3u + 1u] = vec4<f32>(c, vignette(s.x, s.y));
     outs[i * 3u + 2u] = vec4<f32>(haze(vec3<f32>(s.x, s.y, s.z), vec3<f32>(0.1, 0.2, 0.3), 0.4, s.z), 0.0);";
     let source = super::backdrop::scenes::gpu::shader(false);
     let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
@@ -809,14 +730,17 @@ fn the_scene_shader_s_maths_is_its_reference() {
         let g = &outs[k * 3..k * 3 + 3];
         let what = format!("sample {k}: {s:?}");
         let v = look::view([s[0], s[1]], [0.8, 1.0], [0.45, 0.55], s[3]);
-        close(&g[0][..2], &v, &format!("{what}: view"));
+        let sh = look::shift([s[0], s[1]], s[2], [0.01, -0.006]);
+        let at = [v[0], v[1], sh[0], sh[1]];
+        close(&g[0], &at, &format!("{what}: view, shift"));
         let c = look::seat(
             [s[0], s[1], s[2]],
             [s[2], 0.2, s[0]],
             s[1],
             [0.9, 0.6, 0.3, s[0]],
         );
-        close(&g[1][..3], &c, &format!("{what}: seat"));
+        let lit = [c[0], c[1], c[2], look::vignette(s[0], s[1])];
+        close(&g[1], &lit, &format!("{what}: seat, vignette"));
         let h = look::haze([s[0], s[1], s[2]], [0.1, 0.2, 0.3], 0.4, s[2]);
         close(&g[2][..3], &h, &format!("{what}: haze"));
     }
@@ -876,7 +800,7 @@ fn the_backdrop_s_smooth_read_is_a_b_spline_of_its_texels() {
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var soft: sampler;
 ",
-        super::backdrop::look::wgsl(),
+        super::backdrop::look::BSPLINE,
         super::backdrop::gpu::SMOOTH
     );
     let body = "

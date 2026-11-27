@@ -6,10 +6,10 @@
 //! times karaoke's words ([`crate::work::lyrics::models::MODEL_FILE`]), the
 //! speech recogniser that checks fetched lyrics belong to the song
 //! ([`crate::work::lyrics::models::ASR_FILE`]), and where the machine has a
-//! usable GPU the depth and cut-out models that take covers apart for
-//! karaoke's background ([`crate::work::cover::DEPTH_FILE`],
-//! [`crate::work::cover::MATTE_FILE`]) and karaoke story mode's language
-//! and image models ([`crate::work::story_models`]). A model is one file,
+//! usable GPU karaoke story mode's language and image models
+//! ([`crate::work::story_models`]) and the depth and cut-out models that
+//! take its scenes apart ([`crate::work::scenes::DEPTH_FILE`],
+//! [`crate::work::scenes::MATTE_FILE`]). A model is one file,
 //! or a folder of files as its repository has them; every file's name,
 //! length and SHA-256 is built in.
 //!

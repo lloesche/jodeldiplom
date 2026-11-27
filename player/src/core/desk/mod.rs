@@ -248,20 +248,6 @@ impl DeskState {
         self.strips[strip.index()]
     }
 
-    /// What `strip`'s own inputs are heard at as the desk is set (a linear
-    /// gain): its fader and mute times its group's, and its solo gate as
-    /// the mixer's strips have it: while any strip is soloed, a strip is
-    /// heard only where it or the group it sits in is.
-    pub fn heard_gain(&self, strip: StripKind) -> f64 {
-        let soloed = |k: StripKind| self.setting(k).solo;
-        let any = StripKind::ALL.into_iter().any(soloed);
-        let group = strip.parent();
-        if any && !soloed(strip) && !group.is_some_and(soloed) {
-            return 0.0;
-        }
-        self.setting(strip).gain() * group.map_or(1.0, |g| self.setting(g).gain())
-    }
-
     /// `strip` as last looked at.
     pub fn view(&self, strip: StripKind) -> Option<&StripView> {
         self.views[strip.index()].as_ref()

@@ -1,8 +1,8 @@
-//! The subject moving with the beat, from the music's clock (the shared
-//! grid, [`Music`]): a small push outwards on each beat, like a speaker's
-//! cone, and a stronger kick on each bar's first with a soft light round
-//! the subject's rim and the rays behind it swelling ([`Beat`], shaped
-//! here from where the music is in the beat and the bar). The singer's
+//! A story's scene moving with the beat, from the music's clock (the shared
+//! grid, [`Music`]): a small push inwards of the camera on each beat, like
+//! a speaker's cone, and a stronger kick on each bar's first with a soft
+//! light on the layers' edges ([`Beat`], shaped here from where the music
+//! is in the beat and the bar). The singer's
 //! tier makes it all stronger (its row's [`crate::tiers::TierSpec::backdrop_beat`],
 //! held through the rows), and a phrase landing flares it for a moment
 //! ([`Pulse::of`]). The beat fades only where the grid is really unsure
@@ -14,22 +14,20 @@
 use crate::gui::fx::Music;
 use jodel_looks::math::smoothstep;
 
-/// How far the subject grows on each beat, a share of its size.
+/// How far the camera pushes in on each beat, a share of the picture.
 pub const BEAT: f32 = 0.009;
 /// How much further on a bar's first beat.
 pub const DOWNBEAT: f32 = 0.006;
 /// How much more the top tier's row moves it all (the row's `backdrop_beat`
-/// of 1: twice as far, the rim twice as bright).
+/// of 1: twice as far, the edges twice as bright).
 pub const TIER: f32 = 1.0;
-/// How bright the rim lights on a bar's first beat.
+/// How bright the edges light on a bar's first beat.
 pub const RIM: f32 = 0.9;
-/// The share of the rim's light without a tier (the row's adds the rest).
+/// The share of the edges' light without a tier (the row's adds the rest).
 pub const RIM_BASE: f32 = 0.35;
-/// How much the rays swell on a bar's first beat (a share of their light).
-pub const SWELL: f32 = 1.5;
-/// A phrase landing: how far the subject grows more, how much the rim and
-/// the rays light more, at the flare's height.
-pub const FLARE: (f32, f32, f32) = (0.012, 0.8, 0.6);
+/// A phrase landing: how far the camera pushes in more, and how much the
+/// edges light more, at the flare's height.
+pub const FLARE: (f32, f32) = (0.012, 0.8);
 /// How long a push takes to rise, in seconds: quick, but not a jump.
 pub const ATTACK: f32 = 0.02;
 /// How fast a beat's push falls back, then a bar's: to about a third in
@@ -77,20 +75,14 @@ pub fn cone(since: f32, fall: f32) -> f32 {
     }
 }
 
-/// What the beat does to the subject in a frame: how far it grows (a share
-/// of its size, round its middle), how bright its rim lights, how much the
-/// rays behind it swell (1: as they are) and how much the phrase landing
-/// flares it (0 to 1).
+/// What the beat does to a scene in a frame: how far the camera pushes in
+/// (a share of the picture) and how bright the layers' edges light.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pulse {
-    /// How far the subject grows.
+    /// How far the camera pushes in.
     pub grow: f32,
-    /// How bright its rim lights.
+    /// How bright the edges light.
     pub rim: f32,
-    /// How much the rays swell.
-    pub swell: f32,
-    /// How much a phrase landing flares it.
-    pub flare: f32,
 }
 
 impl Pulse {
@@ -102,8 +94,6 @@ impl Pulse {
         Pulse {
             grow: (BEAT * beat.beat + DOWNBEAT * beat.downbeat) * k + FLARE.0 * flare,
             rim: RIM * beat.downbeat * (RIM_BASE + (1.0 - RIM_BASE) * tier) + FLARE.1 * flare,
-            swell: 1.0 + SWELL * beat.downbeat + FLARE.2 * flare,
-            flare,
         }
     }
 }
@@ -184,6 +174,6 @@ mod tests {
         let quiet = Beat::default();
         let flared = |tier: f32| Pulse::of(quiet, tier, 1.0);
         assert!(flared(0.0).grow > 0.0 && flared(1.0).grow > 2.0 * flared(0.0).grow);
-        assert!(flared(1.0).swell > 1.5 && Pulse::of(quiet, 1.0, 0.0).swell == 1.0);
+        assert!(flared(1.0).rim > 0.5 && Pulse::of(quiet, 1.0, 0.0).rim == 0.0);
     }
 }

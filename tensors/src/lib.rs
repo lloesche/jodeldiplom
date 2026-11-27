@@ -1,6 +1,6 @@
 //! The networks' numeric base, depending on nothing: a `.safetensors`
 //! file's tensors as f32 or as stored ([`SafeTensors`]), the checkpoints
-//! the speech models (`jodel-lyrics`) and the covers' depth and matte
+//! the speech models (`jodel-lyrics`) and the story scenes' depth and matte
 //! models and the picture model (`jodel-gpu`) are read from, as published
 //! (a checkpoint in several files through its index: [`Shards`]; either
 //! read by name: [`Tensors`]); a GGUF file's metadata and tensors as it

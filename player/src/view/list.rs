@@ -16,6 +16,7 @@ use jodel_playback::PlayState;
 use crate::browser::{self, EntryKind};
 use crate::core::karaoke::SongLyrics;
 use crate::core::keymap::{self, Context, Op};
+use crate::core::prep::StoryStand;
 use crate::core::text::{self, clock};
 use crate::core::{
     browser_rows, list_cursor, list_height, readiness, row_entry, Job, ListKind, LyricsFacts,
@@ -214,8 +215,8 @@ pub enum Fact {
     Tempo,
     /// Its lyrics (looked up and timed alongside).
     Lyrics,
-    /// Its cover, taken apart.
-    Cover,
+    /// Its story, its scenes drawn.
+    Story,
 }
 
 impl Fact {
@@ -226,7 +227,7 @@ impl Fact {
             Fact::Stems => "▥",
             Fact::Tempo => "♩",
             Fact::Lyrics => "¶",
-            Fact::Cover => "◐",
+            Fact::Story => "§",
         }
     }
 }
@@ -481,8 +482,9 @@ fn facts(state: &State, path: &Path) -> Vec<Status> {
         stems,
         tempo,
         lyrics,
-        cover,
+        ..
     } = facts;
+    let lyrics = lyrics.map(|l| l.how);
     let known = state.karaoke.lyrics.get(path);
     let heard = lyrics == Some(LyricsFacts::Heard) || known.is_some_and(SongLyrics::heard);
     let lyrics = heard
@@ -497,7 +499,7 @@ fn facts(state: &State, path: &Path) -> Vec<Status> {
     // come, none under way): all lit, nothing is left for the track.
     let done = |job| crate::core::job_done(state, path, job);
     let mut out = Vec::new();
-    for job in [Job::Rhythm, Job::Lyrics, Job::Cover] {
+    for job in [Job::Rhythm, Job::Lyrics, Job::Story] {
         if !state.preparing.contains(&job) {
             continue;
         }
@@ -512,7 +514,10 @@ fn facts(state: &State, path: &Path) -> Vec<Status> {
                 lit: lyrics && done(job),
                 heard,
             }),
-            Job::Cover => out.push(status(Fact::Cover, cover.filter(|_| done(job)))),
+            Job::Story => {
+                let made = StoryStand::of(state, path) == StoryStand::Made;
+                out.push(status(Fact::Story, Some(made)));
+            }
         }
     }
     out

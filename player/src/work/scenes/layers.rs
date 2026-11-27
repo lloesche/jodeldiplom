@@ -1,9 +1,8 @@
-//! The layers of a cover's two small detectors (its lettering, `text.rs`,
-//! and its faces, `faces.rs`), on the processor: feature maps as rows ×
-//! columns × channels of `f32`, convolutions as rows of patches through
-//! jodel-rhythm's matrix multiply ([`Linear`]), depthwise ones as plain
-//! loops the compiler vectorises, each spread over jodel-rhythm's share of
-//! the threads.
+//! The layers of the face detector (`faces.rs`), on the processor:
+//! feature maps as rows × columns × channels of `f32`, convolutions as
+//! rows of patches through jodel-rhythm's matrix multiply ([`Linear`]),
+//! depthwise ones as plain loops the compiler vectorises, each spread over
+//! jodel-rhythm's share of the threads.
 
 use jodel_rhythm::nn::layers::Linear;
 use jodel_rhythm::nn::weights::Weights;
@@ -80,39 +79,6 @@ impl Map {
         }
         out
     }
-
-    /// Each channel's mean.
-    pub fn means(&self) -> Vec<f32> {
-        let mut m = vec![0.0f32; self.c];
-        for px in self.data.chunks(self.c) {
-            m.iter_mut().zip(px).for_each(|(a, b)| *a += b);
-        }
-        let n = (self.h * self.w).max(1) as f32;
-        m.iter_mut().for_each(|v| *v /= n);
-        m
-    }
-
-    /// Each channel scaled by `scale`'s value for it.
-    pub fn scaled(mut self, scale: &[f32]) -> Map {
-        for px in self.data.chunks_mut(self.c) {
-            px.iter_mut().zip(scale).for_each(|(a, s)| *a *= s);
-        }
-        self
-    }
-
-    /// The maps' channels side by side (the same size).
-    pub fn concat(maps: &[&Map]) -> Map {
-        let c = maps.iter().map(|m| m.c).sum();
-        let mut out = Map::new(maps[0].h, maps[0].w, c);
-        for p in 0..out.h * out.w {
-            let mut at = p * c;
-            for m in maps {
-                out.data[at..][..m.c].copy_from_slice(&m.data[p * m.c..][..m.c]);
-                at += m.c;
-            }
-        }
-        out
-    }
 }
 
 /// The shape of tensor `name` in `w`.
@@ -122,11 +88,6 @@ pub fn shape(w: &Weights, name: &str) -> Result<Vec<usize>, String> {
         .find(|(n, _)| *n == name)
         .map(|(_, s)| s.to_vec())
         .ok_or_else(|| format!("no tensor {name}"))
-}
-
-/// The hard swish, `x · relu6(x + 3) / 6`.
-pub fn hard_swish(x: f32) -> f32 {
-    x * (x + 3.0).clamp(0.0, 6.0) / 6.0
 }
 
 /// A k × k convolution, padded by k / 2, with a bias: across all channels
@@ -302,91 +263,6 @@ impl Conv {
         }
     }
 }
-
-/// A 2 × 2 transposed convolution of stride 2 (each pixel becomes four),
-/// with a bias.
-pub struct Up2 {
-    cout: usize,
-    /// Rows `(dy·2 + dx)·out + o`.
-    layer: Linear,
-}
-
-impl Up2 {
-    /// `name` of `w`: `NAME.weight` `[in][out][2][2]`, `NAME.bias`.
-    pub fn load(w: &mut Weights, name: &str) -> Result<Up2, String> {
-        let s = shape(w, &format!("{name}.weight"))?;
-        let [cin, cout, 2, 2] = s[..] else {
-            return Err(format!("{name}: weight of shape {s:?}"));
-        };
-        let raw = w.take(&format!("{name}.weight"), &s)?;
-        let bias = w.take(&format!("{name}.bias"), &[cout])?;
-        let mut weight = vec![0.0f32; raw.len()];
-        let mut b = vec![0.0f32; 4 * cout];
-        for q in 0..4 {
-            for o in 0..cout {
-                b[q * cout + o] = bias[o];
-                for i in 0..cin {
-                    weight[(q * cout + o) * cin + i] = raw[(i * cout + o) * 4 + q];
-                }
-            }
-        }
-        Ok(Up2 {
-            cout,
-            layer: Linear::new(weight, Some(b), cin, 4 * cout),
-        })
-    }
-
-    /// `x` through it: twice the size.
-    pub fn apply(&self, x: &Map, threads: usize) -> Map {
-        let y = self.layer.apply(&x.data, threads);
-        let c = self.cout;
-        let mut out = Map::new(x.h * 2, x.w * 2, c);
-        for py in 0..x.h {
-            for px in 0..x.w {
-                let from = &y[(py * x.w + px) * 4 * c..][..4 * c];
-                for q in 0..4 {
-                    let (dy, dx) = (q / 2, q % 2);
-                    let at = ((2 * py + dy) * out.w + 2 * px + dx) * c;
-                    out.data[at..][..c].copy_from_slice(&from[q * c..][..c]);
-                }
-            }
-        }
-        out
-    }
-}
-
-/// A squeeze-excitation: the channels' means through two 1 × 1
-/// convolutions (a ReLU between), each channel scaled by `gate` of the
-/// result.
-pub struct Excite {
-    down: Linear,
-    up: Linear,
-}
-
-impl Excite {
-    /// `{down}` and `{up}` of `w`, each `.weight` `[out][in][1][1]` and
-    /// `.bias`.
-    pub fn load(w: &mut Weights, down: &str, up: &str) -> Result<Excite, String> {
-        let linear = |w: &mut Weights, name: &str| -> Result<Linear, String> {
-            let s = shape(w, &format!("{name}.weight"))?;
-            let weight = w.take(&format!("{name}.weight"), &s)?;
-            let bias = w.take(&format!("{name}.bias"), &[s[0]])?;
-            Ok(Linear::new(weight, Some(bias), s[1], s[0]))
-        };
-        Ok(Excite {
-            down: linear(w, down)?,
-            up: linear(w, up)?,
-        })
-    }
-
-    /// The scale of each of `x`'s channels.
-    pub fn scales(&self, x: &Map, gate: impl Fn(f32) -> f32) -> Vec<f32> {
-        let mid = self.down.apply(&x.means(), 1);
-        let mid: Vec<f32> = mid.into_iter().map(|v| v.max(0.0)).collect();
-        self.up.apply(&mid, 1).into_iter().map(gate).collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,10 +316,6 @@ mod tests {
         };
         assert_eq!(x.max_pool().data, vec![5.0]);
         assert_eq!(x.up(2).data[..4], [1.0, 1.0, 5.0, 5.0]);
-        assert_eq!(x.means(), vec![2.75]);
-        let both = Map::concat(&[&x, &x.clone().each(|v| -v)]);
-        assert_eq!(both.data[..4], [1.0, -1.0, 5.0, -5.0]);
-        assert_eq!(hard_swish(3.0), 3.0);
-        assert_eq!(hard_swish(-3.0), 0.0);
+        assert_eq!(x.clone().each(|v| -v).plus(&x).data, vec![0.0; 4]);
     }
 }
