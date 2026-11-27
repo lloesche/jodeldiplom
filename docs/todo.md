@@ -40,7 +40,15 @@ Work agreed on but not started, roughly in the order it was raised.
     - a value out of range clamped; a missing field its default;
     - a scene naming a character no one described: the name dropped,
       the scene kept.
-    Every repair in the trace, to see what to fix in the prompt.
+    What needs judgement goes back to the model in the same conversation
+    (its prompt and answer still in the cache, so a follow-up costs only
+    the new words): only what is wrong, its choices listed, and a small
+    patch for answer, merged into the plan (the owner: keep the context
+    and fix only what is wrong). Only if the patch is wrong too, the
+    nearest valid choice is taken. The same turn can ask a question
+    where it clearly helps (a repeated chorus drawn twice: reuse the
+    first?). Every repair and every follow-up in the trace, to see what
+    to fix in the prompt.
 - **Next, in this order:** the look shaders finished (the rest of the
   passes, hundreds of presets, every one dancing to the song, the
   guards), then the story generator's first version in the player, as
