@@ -1194,7 +1194,8 @@ Anything 3 Small and BEN2 take the scenes apart; a song no longer wanted
 pictures. FLUX.2 [klein] draws a 1024² portrait of each
 character from its looks in the plan's style, then a 1344 × 768 picture
 of each scene from its prompt (the characters named by their looks, its
-shot, the style, and a sentence asking for no text at all), the heads of
+shot, the style, and sentences asking for one single picture, not a
+collage of panels, and no text at all), the heads of
 the portraits of those in it (512², at most three) as its reference
 pictures. Each picture's seed is the song's and the picture's, and its
 file is named by what made it (the drawing's version, the seed, the

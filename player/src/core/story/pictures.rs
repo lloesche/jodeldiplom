@@ -3,12 +3,19 @@
 //! in the plan's art style, then a picture of each scene, from its prompt
 //! with the characters named by their looks, its shot and the style, the
 //! portraits of the characters seen as its reference pictures. Every
-//! prompt ends asking for no text at all ([`NO_TEXT`]): the model is
-//! distilled and takes no negative prompt, so the wish goes in the prompt
-//! itself. The wording is the image models' bake-off's, the one klein won
-//! with.
+//! prompt ends asking for one single picture ([`ONE_PICTURE`]) and no text
+//! at all ([`NO_TEXT`]): the model is distilled and takes no negative
+//! prompt, so the wishes go in the prompt itself. The no-text wording is
+//! the image models' bake-off's, the one klein won with.
 
 use super::{Character, Plan, Scene};
+
+/// What every prompt asks before [`NO_TEXT`]: one picture, one moment.
+/// Given reference pictures of the people in it, klein at times drew a
+/// grid of them instead (a scene on the owner's Mac came out four panels
+/// of one woman, its prompt asking for none).
+pub const ONE_PICTURE: &str =
+    "One single photograph of one moment: not a collage, grid, split screen or panels.";
 
 /// What every prompt ends with: nothing written in the picture.
 pub const NO_TEXT: &str = "Pure picture with no text anywhere: no writing, no letters, no words, \
@@ -66,7 +73,8 @@ pub fn pictures(plan: &Plan) -> Pictures {
     let portraits = (plan.characters.iter())
         .map(|c| Ask {
             prompt: format!(
-                "{style}, portrait of {}, head and shoulders, facing the viewer, plain soft background. {NO_TEXT}",
+                "{style}, portrait of {}, head and shoulders, facing the viewer, plain soft background. \
+                 {ONE_PICTURE} {NO_TEXT}",
                 clause(&c.looks)
             ),
             size: PORTRAIT,
@@ -102,6 +110,7 @@ fn scene(plan: &Plan, style: &str, scene: &Scene) -> Ask {
             k + 1
         )
     }));
+    sentences.push(ONE_PICTURE.to_owned());
     sentences.push(NO_TEXT.to_owned());
     Ask {
         prompt: sentences.join(" "),
@@ -228,7 +237,8 @@ mod tests {
             format!(
                 "watercolor painting, soft washes, paper texture, loose brush strokes, watercolor, \
                  soft washes, portrait of Woman, late 20s, slender, long dark hair, yellow raincoat, \
-                 head and shoulders, facing the viewer, plain soft background. {NO_TEXT}"
+                 head and shoulders, facing the viewer, plain soft background. {ONE_PICTURE} \
+                 {NO_TEXT}"
             )
         );
         let two = &scenes[1];
@@ -242,13 +252,16 @@ mod tests {
                  clouds over the sea, medium shot, Woman, late 20s, slender, long dark hair, \
                  yellow raincoat, Man, late 20s, tall, curly red hair, open navy coat. The woman, \
                  late 20s looks exactly like the person in image 1. The man, late 20s looks \
-                 exactly like the person in image 2. {NO_TEXT}"
+                 exactly like the person in image 2. {ONE_PICTURE} {NO_TEXT}"
             )
         );
         // A scene with no one in it takes no portrait.
         assert!(scenes[2].refs.is_empty());
         let every = portraits.iter().chain(&scenes);
-        assert!(every.into_iter().all(|a| a.prompt.ends_with(NO_TEXT)));
+        let one_and_no_text = format!("{ONE_PICTURE} {NO_TEXT}");
+        assert!(every
+            .into_iter()
+            .all(|a| a.prompt.ends_with(&one_and_no_text)));
     }
 
     /// A name is replaced as a whole word in any case, "the" before it but
