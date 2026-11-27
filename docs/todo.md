@@ -22,9 +22,13 @@ Work agreed on but not started, roughly in the order it was raised.
   repository; worth porting as an optional story mode). The language
   model (Gemma 4 E4B at 4 bits, greedy so the same song gives the same
   plan) reads the lyrics alone for the story (characters, scenes by the
-  song's sections) and, separately, the look from the file's tags, what
-  it knows of the artist and album, genre, era and mood (style from a
-  wide list, palette, motifs). SDXL-Lightning (Q8 looks as fp16) draws
+  song's sections); then, with that storyboard in its context, the look
+  from the file's tags, what it knows of the artist and album, genre,
+  era and mood: the art style from a wide list, palette, motifs, and the
+  song's look shaders (a preset from the catalogue, knob tweaks within
+  range, which music signal drives what, mood tags), its output held to
+  the catalogue's schema as it is written. One conversation, so the
+  storyboard is already in it when the look is chosen. SDXL-Lightning (Q8 looks as fp16) draws
   one whole picture per scene (characters from the lyrics, a portrait
   each as a face reference; the cover as a style reference only when it
   is striking, its lettering painted out first); no face redrawing
