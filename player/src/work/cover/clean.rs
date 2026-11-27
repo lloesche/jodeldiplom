@@ -25,14 +25,12 @@
 //! grown from the face through the depth instead: the near region joined
 //! to it, down to the cover's bottom.
 
-use super::faces::Face;
-use super::fill::{box_blur, dilate, Planes};
+use super::faces::{Face, NEAR_AS_FACE};
 use super::text::TextMap;
+use crate::work::picture::mask::{
+    blur, face_rect, fill_rect, filled, grow, joined, median_in, open, parts, Rect, Size,
+};
 
-/// The least score of a face that counts.
-const FACE_SCORE: f32 = 0.75;
-/// The least share of the cover a face that counts covers.
-const FACE_AREA: f32 = 0.002;
 /// How much of a face's box the matte must cover for the face to be in
 /// the subject.
 const FACE_HELD: f32 = 0.5;
@@ -67,29 +65,8 @@ const FACE_UNSURE: f32 = 0.16;
 /// the cover, or (a face filling the cover) the second pair.
 const SEED_FACE: (f32, f32) = (0.85, 0.03);
 const SEED_HUGE: (f32, f32) = (0.6, 0.15);
-/// How much less near than the face (its depth's nearness, 0 to 1) the
-/// grown subject may be.
-const SEED_DEPTH: f32 = 0.12;
 /// The grown subject's share of the cover: at least, at most.
 const SEED_SMALLEST: f32 = 0.05;
-
-/// A box on the cover: left, top, right, bottom (the last two past it).
-type Rect = (usize, usize, usize, usize);
-
-/// A `w × h` picture's masks and their sizes.
-#[derive(Clone, Copy)]
-struct Size {
-    w: usize,
-    h: usize,
-    /// A 1024 cover's pixels to this one's (lengths at 1024 are scaled).
-    scale: f32,
-}
-
-impl Size {
-    fn px(&self, at_1024: f32) -> usize {
-        ((at_1024 * self.scale).round() as usize).max(1)
-    }
-}
 
 /// `alpha` (a `w × h` matte, 0 to 1) cleaned of lettering, or a subject
 /// grown from a face through `near` (the depth's nearness, `w × h`, 0 to
@@ -102,11 +79,7 @@ pub fn subject(
     text: &TextMap,
     faces: &[Face],
 ) -> Result<Vec<f32>, String> {
-    let size = Size {
-        w,
-        h,
-        scale: w.max(h) as f32 / 1024.0,
-    };
+    let size = Size::of(w, h);
     let (boxes, core) = lettering(text, w, h);
     let cut = cleaned(alpha, size, &boxes, &core, faces);
     match cut {
@@ -137,11 +110,8 @@ fn cleaned(
     // Near the faces the matte holds, nothing is cut.
     let mut zone = vec![false; n];
     let mut held = false;
-    for f in faces
-        .iter()
-        .filter(|f| f.score >= FACE_SCORE && f.w * f.h >= FACE_AREA)
-    {
-        let (x0, y0, x1, y1) = rect(f, 0.0, 0.0, 0.0, size);
+    for f in faces.iter().filter(|f| f.counts()) {
+        let (x0, y0, x1, y1) = face_rect(f.bounds(), (0.0, 0.0, 0.0), size);
         if x1 <= x0 || y1 <= y0 {
             continue;
         }
@@ -150,7 +120,7 @@ fn cleaned(
             .sum();
         if sum / ((x1 - x0) * (y1 - y0)) as f32 >= FACE_HELD {
             held = true;
-            fill(&mut zone, w, rect(f, 0.25, 0.35, 1.0, size));
+            fill_rect(&mut zone, w, face_rect(f.bounds(), (0.25, 0.35, 1.0), size));
         }
     }
     let total: f32 = alpha.iter().sum();
@@ -252,7 +222,7 @@ fn decide(
         } else {
             &mut on
         };
-        fill(into, w, (x0, y0, x1, y1));
+        fill_rect(into, w, (x0, y0, x1, y1));
     }
     let whole = solid.iter().filter(|&&s| s).count().max(1) as f32;
     let printed = (0..n).filter(|&i| on[i] && solid[i]).count() as f32;
@@ -294,7 +264,7 @@ fn decide(
 
 /// A subject grown from the large, clear faces through the depth's
 /// nearness `near`: the region joined to each face no less near than it
-/// (by [`SEED_DEPTH`]), from a little above it down to the bottom, a face
+/// (by [`NEAR_AS_FACE`]), from a little above it down to the bottom, a face
 /// wide each side; its holes filled, its spurs opened away, its edge
 /// feathered, the lettering away from the faces taken out.
 fn grown(near: &[f32], size: Size, core: &[bool], faces: &[Face]) -> Option<Vec<f32>> {
@@ -311,23 +281,16 @@ fn grown(near: &[f32], size: Size, core: &[bool], faces: &[Face]) -> Option<Vec<
     let mut region = vec![false; n];
     let mut zone = vec![false; n];
     for f in &strong {
-        let (x0, y0, x1, y1) = rect(f, 0.0, 0.0, 0.0, size);
+        let (x0, y0, x1, y1) = face_rect(f.bounds(), (0.0, 0.0, 0.0), size);
         if x1 <= x0 || y1 <= y0 {
             continue;
         }
         let (fw, fh) = (x1 - x0, y1 - y0);
-        let mut inner: Vec<f32> = (y0 + fh / 5..y1 - fh / 5)
-            .flat_map(|y| {
-                near[y * w + x0 + fw / 5..y * w + x1 - fw / 5]
-                    .iter()
-                    .copied()
-            })
-            .collect();
-        if inner.is_empty() {
+        let inner = (x0 + fw / 5, y0 + fh / 5, x1 - fw / 5, y1 - fh / 5);
+        let Some(median) = median_in(near, w, inner) else {
             continue;
-        }
-        inner.sort_by(f32::total_cmp);
-        let level = inner[inner.len() / 2] - SEED_DEPTH;
+        };
+        let level = median - NEAR_AS_FACE;
         let (zx0, zx1) = (x0.saturating_sub(fw), (x1 + fw).min(w));
         let zy0 = y0.saturating_sub(fh * 3 / 5);
         let candidate: Vec<bool> = (0..n)
@@ -336,16 +299,14 @@ fn grown(near: &[f32], size: Size, core: &[bool], faces: &[Face]) -> Option<Vec<
                 x >= zx0 && x < zx1 && y >= zy0 && near[i] >= level
             })
             .collect();
-        let (labels, _) = parts(&candidate, w, h);
-        let centre = labels[((y0 + y1) / 2) * w + (x0 + x1) / 2];
-        if centre == 0 {
+        let centre = ((y0 + y1) / 2) * w + (x0 + x1) / 2;
+        let Some(part) = joined(&candidate, w, h, centre) else {
             continue;
-        }
-        labels
-            .iter()
+        };
+        part.iter()
             .zip(region.iter_mut())
-            .for_each(|(&l, r)| *r |= l == centre);
-        fill(&mut zone, w, rect(f, 0.25, 0.35, 1.0, size));
+            .for_each(|(&p, r)| *r |= p);
+        fill_rect(&mut zone, w, face_rect(f.bounds(), (0.25, 0.35, 1.0), size));
     }
     if !region.iter().any(|&r| r) {
         return None;
@@ -392,104 +353,6 @@ fn clear(alpha: &[f32], face: bool) -> Result<(), String> {
         return Err("unsure of itself".into());
     }
     Ok(())
-}
-
-/// Face `f`'s box on the cover, made `wide` wider each side (a share of
-/// its width), `up` higher and `down` lower (shares of its height).
-fn rect(f: &Face, wide: f32, up: f32, down: f32, size: Size) -> Rect {
-    let (w, h) = (size.w as f32, size.h as f32);
-    let px = |v: f32, most: f32| v.clamp(0.0, most) as usize;
-    (
-        px((f.x - wide * f.w) * w, w),
-        px((f.y - up * f.h) * h, h),
-        px((f.x + f.w + wide * f.w) * w, w),
-        px((f.y + f.h + down * f.h) * h, h),
-    )
-}
-
-/// Sets `rect` of the `w`-wide `mask`.
-fn fill(mask: &mut [bool], w: usize, (x0, y0, x1, y1): Rect) {
-    for y in y0..y1 {
-        mask[y * w + x0..y * w + x1].fill(true);
-    }
-}
-
-/// `mask` grown by `r` pixels each way.
-fn grow(mask: &[bool], size: Size, r: usize) -> Vec<bool> {
-    let as_f: Vec<f32> = mask.iter().map(|&m| f32::from(u8::from(m))).collect();
-    dilate(&as_f, size.w, size.h, r)
-        .into_iter()
-        .map(|v| v > 0.5)
-        .collect()
-}
-
-/// `mask` blurred over `r` pixels: 0 to 1.
-fn blur(mask: &[bool], size: Size, r: usize) -> Vec<f32> {
-    let p = Planes {
-        width: size.w,
-        height: size.h,
-        channels: 1,
-        data: mask.iter().map(|&m| f32::from(u8::from(m))).collect(),
-    };
-    box_blur(&p, r).data
-}
-
-/// `mask` with its holes (what the outside cannot reach) filled.
-fn filled(mask: &[bool], w: usize, h: usize) -> Vec<bool> {
-    let outside: Vec<bool> = mask.iter().map(|&m| !m).collect();
-    let (labels, count) = parts(&outside, w, h);
-    let mut border = vec![false; count + 1];
-    for x in 0..w {
-        border[labels[x] as usize] = true;
-        border[labels[(h - 1) * w + x] as usize] = true;
-    }
-    for y in 0..h {
-        border[labels[y * w] as usize] = true;
-        border[labels[y * w + w - 1] as usize] = true;
-    }
-    labels
-        .iter()
-        .map(|&l| l == 0 || !border[l as usize])
-        .collect()
-}
-
-/// `mask` opened by a disc of radius `r` (at a 1024 cover's size): what a
-/// disc rolled inside it reaches. Worked at a quarter of the size.
-fn open(mask: &[bool], size: Size, r: f32) -> Vec<bool> {
-    let (w, h) = (size.w, size.h);
-    let (sw, sh) = (w.div_ceil(4), h.div_ceil(4));
-    let small: Vec<bool> = (0..sw * sh)
-        .map(|i| mask[((i / sw) * 4).min(h - 1) * w + ((i % sw) * 4).min(w - 1)])
-        .collect();
-    let rr = (r * size.scale / 4.0).round().max(1.0) as isize;
-    let disc: Vec<(isize, isize)> = (-rr..=rr)
-        .flat_map(|dy| (-rr..=rr).map(move |dx| (dx, dy)))
-        .filter(|(dx, dy)| dx * dx + dy * dy <= rr * rr)
-        .collect();
-    let pass = |m: &[bool], all: bool| -> Vec<bool> {
-        (0..sw * sh)
-            .map(|i| {
-                let (x, y) = ((i % sw) as isize, (i / sw) as isize);
-                let at = |&(dx, dy): &(isize, isize)| {
-                    let (px, py) = (x + dx, y + dy);
-                    px >= 0
-                        && py >= 0
-                        && px < sw as isize
-                        && py < sh as isize
-                        && m[py as usize * sw + px as usize]
-                };
-                if all {
-                    disc.iter().all(at)
-                } else {
-                    disc.iter().any(at)
-                }
-            })
-            .collect()
-    };
-    let opened = pass(&pass(&small, true), false);
-    (0..w * h)
-        .map(|i| opened[((i / w) / 4) * sw + (i % w) / 4])
-        .collect()
 }
 
 /// The lettering on a `w × h` cover: each region's box (grown as DB grows
@@ -542,44 +405,6 @@ fn lettering(text: &TextMap, w: usize, h: usize) -> (Vec<Rect>, Vec<bool>) {
         })
         .collect();
     (boxes, core)
-}
-
-/// The 4-connected parts of `on` (`w × h`): each pixel's part (0 off, 1
-/// and up), and how many there are.
-fn parts(on: &[bool], w: usize, h: usize) -> (Vec<u32>, usize) {
-    let mut labels = vec![0u32; on.len()];
-    let mut count = 0u32;
-    let mut stack = Vec::new();
-    for start in 0..on.len() {
-        if !on[start] || labels[start] != 0 {
-            continue;
-        }
-        count += 1;
-        labels[start] = count;
-        stack.push(start);
-        while let Some(i) = stack.pop() {
-            let (x, y) = (i % w, i / w);
-            let mut visit = |j: usize| {
-                if on[j] && labels[j] == 0 {
-                    labels[j] = count;
-                    stack.push(j);
-                }
-            };
-            if x > 0 {
-                visit(i - 1);
-            }
-            if x + 1 < w {
-                visit(i + 1);
-            }
-            if y > 0 {
-                visit(i - w);
-            }
-            if y + 1 < h {
-                visit(i + w);
-            }
-        }
-    }
-    (labels, count as usize)
 }
 
 #[cfg(test)]

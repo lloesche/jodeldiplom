@@ -189,6 +189,11 @@ impl Song {
         &self.analysis
     }
 
+    /// Its analysis, shared: what is cut on it holds it, to know it again.
+    pub fn shared_analysis(&self) -> Arc<Analysis> {
+        Arc::clone(&self.analysis)
+    }
+
     /// Its waveform, where there is one.
     pub fn waveform(&self) -> Option<&Waveform> {
         self.lanes.as_ref().map(|l| &*l.waveform)
@@ -312,6 +317,14 @@ pub struct Felt {
     pub flare: f32,
     /// The beat's pushes now (as the grid has them: not smoothed).
     pub beat: Beat,
+}
+
+impl Felt {
+    /// How much the whole backdrop lifts: a section begun, and the
+    /// singer's glow a little.
+    pub fn lift(&self) -> f32 {
+        0.35 * self.section + 0.12 * self.glow
+    }
 }
 
 /// How long a section's swell holds before it fades, in seconds.

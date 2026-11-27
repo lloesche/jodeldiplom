@@ -7,7 +7,8 @@
 //!   `~/Library/Application Support/Jodeldiplom`, `~/.config/Jodeldiplom`.
 //! - **Data** ([`Data`]): what the player makes or fetches and could make
 //!   again: the speech models, the beat analyses and waveforms, the stems
-//!   kept, the lyrics found and our timings, the covers taken apart; and
+//!   kept, the lyrics found and our timings, the covers taken apart, the
+//!   story scenes' parts; and
 //!   the user's own: the lyrics edited by hand, the best scores sung and
 //!   the game's sounds' patches kept. Large. It is the folder [`DATA`] inside a parent
 //!   the settings name (`data_folder`), by default the system's place for
@@ -138,6 +139,19 @@ impl Data {
         self.0.join("covers")
     }
 
+    /// The songs' story scenes: a folder a song, as the story's drawing
+    /// step leaves them ([`crate::work::scenes::SceneStore::folder`]); not
+    /// a cache (they are long to make again), never forgotten.
+    pub fn scenes(&self) -> PathBuf {
+        self.0.join("scenes")
+    }
+
+    /// The parts derived from the story scenes' pictures
+    /// ([`crate::work::scenes::SceneStore`]): a cache.
+    pub fn scene_parts(&self) -> PathBuf {
+        self.0.join("scene-parts")
+    }
+
     /// The songs' loudness as the karaoke plays them
     /// ([`crate::work::loudness`]).
     pub fn loudness(&self) -> PathBuf {
@@ -163,7 +177,7 @@ impl Data {
     /// The folders of what the player makes and can make again (but the
     /// covers', [`crate::work::cover::CoverStore::dirs_in`]), and what each
     /// holds: what [`forget_cache`] forgets.
-    fn caches(&self) -> [(PathBuf, &'static str); 6] {
+    fn caches(&self) -> [(PathBuf, &'static str); 7] {
         [
             (
                 self.analyses(),
@@ -174,6 +188,7 @@ impl Data {
             (self.loudness(), "songs' loudness"),
             (self.shine(), "original singer's phrases"),
             (self.stories(), "songs' stories"),
+            (self.scene_parts(), "story scenes' depth and layers"),
         ]
     }
 

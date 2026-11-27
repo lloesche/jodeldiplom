@@ -4,7 +4,9 @@
 //!
 //! - The workers: the beats and tempo of the tracks ([`rhythm`]), their
 //!   lyrics ([`lyrics`]), the covers taken apart for the karaoke
-//!   background ([`cover`]) and the cover art decoded ([`art`]), each
+//!   background ([`cover`]) and the story scenes' pictures made ready for
+//!   it ([`scenes`]; the picture tools both share in [`picture`]), the
+//!   cover art decoded ([`art`]), each
 //!   song's loudness ([`loudness`]) and the original singer's phrases
 //!   ([`shine`]) as the karaoke sings it, the files the setup fetches
 //!   ([`download`]), and the karaoke story's plan as the language model
@@ -22,7 +24,9 @@ pub mod download;
 pub mod loudness;
 pub mod lyrics;
 pub mod outbox;
+pub mod picture;
 pub mod rhythm;
+pub mod scenes;
 pub mod shine;
 pub mod story;
 #[cfg(test)]

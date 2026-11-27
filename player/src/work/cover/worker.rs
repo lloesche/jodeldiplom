@@ -2,7 +2,11 @@
 //! the analysis and the lyrics, getting the queue's covers taken apart in
 //! the queue's order (the song playing first), each told to the app as
 //! [`Job::Cover`] (working, then ready), and holding the song playing's
-//! layers for the app ([`CoverWorker::current`]). Its GPU work gives way
+//! layers for the app ([`CoverWorker::current`]); after the song playing's
+//! cover, its story scenes made ready with the same models
+//! ([`crate::work::scenes::story`], told as the cover's work while its
+//! models run, given up as soon as another song is wanted; held for the
+//! app: [`CoverWorker::story`]). Its GPU work gives way
 //! to the window's frames ([`jodel_gpu::pace`]); the models are set up on
 //! the first cover and let go when the work has been done for a while.
 
@@ -13,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use image::RgbImage;
 use jodel_gpu::vision::prep::Rgb;
+use jodel_gpu::vision::{Depth, Matte};
 use jodel_gpu::{GpuDepth, GpuMatte};
 use jodel_playback::{Cover, Tags, TrackInfo};
 
@@ -22,6 +27,7 @@ use super::{
 };
 use crate::core::{Action, Facts, Job};
 use crate::work::outbox::Outbox;
+use crate::work::scenes::{SceneNets, SceneStore, Story};
 use crate::work::{Next, Queue};
 
 /// How long the models stay set up after the last cover.
@@ -99,45 +105,37 @@ impl GpuSplitter {
         }
     }
 
-    /// What the models find in `image`, setting them up first if need be
-    /// (and for the next cover again where their GPU was lost).
-    /// Each GPU model's working buffers go once it has run, so only one
-    /// model's are held at a time (their weights stay); the lettering and
-    /// the faces are found on the processor after them.
-    pub fn parts(&self, image: &RgbImage) -> Result<Parts, String> {
+    /// What `run` makes of the two models, setting them up first if need
+    /// be (and for the next picture again where their GPU was lost).
+    fn with_models<T>(
+        &self,
+        run: impl FnOnce(&GpuDepth, &GpuMatte) -> Result<T, String>,
+    ) -> Result<T, String> {
         let mut models = self.lock();
         self.set_up(&mut models)?;
         let Models::Ready(m) = &*models else {
             unreachable!("set up");
         };
-        let (depth, matte) = (&m.0, &m.1);
+        let done = run(&m.0, &m.1);
+        let lost = m.0.is_lost() || m.1.is_lost();
+        if done.is_err() && lost {
+            *models = Models::NotYet;
+        }
+        done
+    }
+
+    /// What the models find in `image`: its depth, then its matte (one
+    /// model's working buffers held at a time); the lettering and the
+    /// faces found on the processor after them.
+    pub fn parts(&self, image: &RgbImage) -> Result<Parts, String> {
         let rgb = Rgb::new(
             image.width() as usize,
             image.height() as usize,
             image.as_raw().clone(),
         );
-        let found = depth.depth(&rgb);
-        depth.release();
-        let done = found.and_then(|found| {
-            let cut = matte.matte(&rgb);
-            matte.release();
-            Ok((found, cut?))
-        });
-        let (found, cut) = match done {
-            Ok(done) => done,
-            Err(why) => {
-                // Models whose GPU was lost are set up again for the next
-                // cover.
-                if depth.is_lost() || matte.is_lost() {
-                    *models = Models::NotYet;
-                }
-                return Err(why);
-            }
-        };
-        drop(models);
         Ok(Parts {
-            depth: found,
-            matte: cut,
+            depth: SceneNets::depth(self, &rgb)?,
+            matte: SceneNets::matte(self, &rgb)?,
             text: TextNet::built_in().find(image),
             faces: FaceNet::built_in().find(image),
         })
@@ -157,9 +155,32 @@ impl GpuSplitter {
     }
 }
 
+/// Each model's working buffers let go once it has run (its weights stay).
+impl SceneNets for GpuSplitter {
+    fn depth(&self, picture: &Rgb) -> Result<Depth, String> {
+        self.with_models(|depth, _| {
+            let found = depth.depth(picture);
+            depth.release();
+            found
+        })
+    }
+
+    fn matte(&self, picture: &Rgb) -> Result<Matte, String> {
+        self.with_models(|_, matte| {
+            let cut = matte.matte(picture);
+            matte.release();
+            cut
+        })
+    }
+}
+
 impl Splitter for GpuSplitter {
     fn split(&self, image: &RgbImage) -> Result<CoverLayers, String> {
         Ok(split(image, &self.parts(image)?))
+    }
+
+    fn nets(&self) -> Option<&dyn SceneNets> {
+        Some(self)
     }
 
     fn rest(&self) {
@@ -205,6 +226,8 @@ struct Shared {
     queue: Queue<Asked>,
     /// The song playing's layers, once ready.
     current: Mutex<Option<Held>>,
+    /// The song playing's story scenes, once ready.
+    story: Mutex<Option<Arc<Story>>>,
 }
 
 /// The covers' worker thread.
@@ -220,32 +243,37 @@ impl Drop for CoverWorker {
 
 impl CoverWorker {
     /// Starts the thread: covers kept in `dir`, taken apart by the models
-    /// in `models`; each song prepared is told on `outbox` (which is also
-    /// woken when the song playing's layers arrive).
-    pub fn start(dir: PathBuf, models: CoverModels, outbox: Outbox) -> CoverWorker {
-        CoverWorker::start_with(
-            CoverStore::new(dir),
-            Box::new(GpuSplitter::new(models)),
-            outbox,
-        )
+    /// in `models`, the songs' story scenes in `scenes`; each song prepared
+    /// is told on `outbox` (which is also woken when the song playing's
+    /// layers or story arrive).
+    pub fn start(
+        dir: PathBuf,
+        models: CoverModels,
+        scenes: SceneStore,
+        outbox: Outbox,
+    ) -> CoverWorker {
+        let splitter = Box::new(GpuSplitter::new(models));
+        CoverWorker::start_with(CoverStore::new(dir), scenes, splitter, outbox)
     }
 
-    /// [`CoverWorker::start`] with a store and a splitter of its own.
+    /// [`CoverWorker::start`] with stores and a splitter of its own.
     pub fn start_with(
         store: CoverStore,
+        scenes: SceneStore,
         splitter: Box<dyn Splitter>,
         outbox: Outbox,
     ) -> CoverWorker {
         let shared = Arc::new(Shared {
             queue: Queue::new(Asked::default()),
             current: Mutex::new(None),
+            story: Mutex::new(None),
         });
         let worker = Arc::clone(&shared);
         std::thread::Builder::new()
             .name("covers".into())
             .spawn(move || {
                 jodel_gpu::pace::background();
-                work(&worker, &store, &*splitter, &outbox);
+                work(&worker, (&store, &scenes), &*splitter, &outbox);
             })
             .expect("a thread");
         CoverWorker { shared }
@@ -255,10 +283,12 @@ impl CoverWorker {
     /// first, and the last one's go at once unless its cover's bytes are
     /// the very same (an album's songs one after another keep them; the
     /// worker keeps them too where the store gives the song the same cover
-    /// result).
+    /// result); its story goes at once. Both let go under the queue's lock
+    /// as the song is asked for, so the worker never holds the last song's
+    /// for it (the lock taken first, always).
     pub fn want(&self, info: &TrackInfo) {
         let bytes = info.cover.as_ref().map(identity);
-        {
+        self.shared.queue.change(|asked| {
             let mut current = self
                 .shared
                 .current
@@ -270,8 +300,7 @@ impl CoverWorker {
             {
                 *current = None;
             }
-        }
-        self.shared.queue.change(|asked| {
+            *self.shared.story.lock().unwrap_or_else(|e| e.into_inner()) = None;
             asked.wanted = Some(Wanted {
                 path: info.path.clone(),
                 cover: info.cover.clone(),
@@ -279,6 +308,15 @@ impl CoverWorker {
                 bytes,
             });
         });
+    }
+
+    /// The song playing's story scenes, once ready (none: it has none).
+    pub fn story(&self) -> Option<Arc<Story>> {
+        self.shared
+            .story
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// The song playing's layers, once ready.
@@ -417,7 +455,12 @@ fn take_apart(
     }
 }
 
-fn work(shared: &Shared, store: &CoverStore, splitter: &dyn Splitter, outbox: &Outbox) {
+fn work(
+    shared: &Shared,
+    (store, scenes): (&CoverStore, &SceneStore),
+    splitter: &dyn Splitter,
+    outbox: &Outbox,
+) {
     let mut last_work: Option<Instant> = None;
     loop {
         // Nothing to do: the models go after a while.
@@ -482,9 +525,10 @@ fn work(shared: &Shared, store: &CoverStore, splitter: &dyn Splitter, outbox: &O
                     }
                 }
                 if playing {
-                    // Still the song playing (no other wanted since).
-                    let still = shared.queue.lock().wanted.is_none();
-                    if still {
+                    // Still the song playing (no other wanted since: held
+                    // under the queue's lock, as `want` lets go).
+                    let asked = shared.queue.lock();
+                    if asked.wanted.is_none() {
                         *shared.current.lock().unwrap_or_else(|e| e.into_inner()) =
                             layers.map(|layers| Held { bytes, layers });
                     }
@@ -497,11 +541,41 @@ fn work(shared: &Shared, store: &CoverStore, splitter: &dyn Splitter, outbox: &O
             }
         };
         if !outbox.send(Action::Ready {
-            path,
+            path: path.clone(),
             job: Job::Cover,
             facts: Some(Facts::Cover(has)),
         }) {
             return;
+        }
+        // The song playing's story scenes, after its cover, with its
+        // models (told as the cover's work while they run), given up as
+        // soon as another song is wanted; held while it is still the song
+        // playing (under the queue's lock, as `want` lets go).
+        if playing {
+            let still = || shared.queue.lock().wanted.is_none();
+            let mut ran = false;
+            let mut running = || {
+                if !ran {
+                    ran = true;
+                    working(true);
+                }
+            };
+            let story =
+                crate::work::scenes::story(scenes, &path, splitter.nets(), (&still, &mut running));
+            if ran {
+                working(false);
+            }
+            let held = {
+                let asked = shared.queue.lock();
+                let held = asked.wanted.is_none();
+                if held {
+                    *shared.story.lock().unwrap_or_else(|e| e.into_inner()) = story;
+                }
+                held
+            };
+            if held {
+                (outbox.notify())();
+            }
         }
     }
 }
@@ -510,6 +584,7 @@ fn work(shared: &Shared, store: &CoverStore, splitter: &dyn Splitter, outbox: &O
 mod tests {
     use super::*;
     use crate::work::cover::store::tests::Counting;
+    use crate::work::scenes::{drawn, ByRed};
     use std::sync::atomic::Ordering;
 
     /// A splitter shared with the test, to count its calls.
@@ -518,6 +593,19 @@ mod tests {
     impl Splitter for Shared2 {
         fn split(&self, image: &RgbImage) -> Result<CoverLayers, String> {
             self.0.split(image)
+        }
+    }
+
+    /// A splitter with the scenes' stand-in models.
+    struct WithNets(Counting, ByRed);
+
+    impl Splitter for WithNets {
+        fn split(&self, image: &RgbImage) -> Result<CoverLayers, String> {
+            self.0.split(image)
+        }
+
+        fn nets(&self) -> Option<&dyn SceneNets> {
+            Some(&self.1)
         }
     }
 
@@ -570,6 +658,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let worker = CoverWorker::start_with(
             CoverStore::new(dir.join("covers")),
+            SceneStore::new(dir.join("scenes"), dir.join("scene-parts")),
             Box::new(Shared2(Arc::clone(&counting))),
             Outbox::new(tx, Arc::new(|| {})),
         );
@@ -608,5 +697,45 @@ mod tests {
         ready(&rx, 1);
         assert!(worker.current().is_none());
         assert_eq!(counting.calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// The song playing's story scenes, where the drawing step left them,
+    /// are made ready after its cover with the splitter's models and held
+    /// for the app; another song playing lets them go at once.
+    #[test]
+    fn the_song_playing_s_story_is_made_ready_after_its_cover() {
+        let dir = temp("story");
+        let song = |name: &str| {
+            let p = dir.join(name);
+            durable::write_atomic(&p, &jodel_dsp::wav::pcm16(44_100, 1, &[0i16; 4410])).unwrap();
+            jodel_playback::source::probe(&p).unwrap()
+        };
+        let (first, other) = (song("01.wav"), song("02.wav"));
+        let scenes = SceneStore::new(dir.join("scenes"), dir.join("scene-parts"));
+        drawn(&scenes, &first.path);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let splitter = WithNets(Counting::default(), ByRed::default());
+        let worker = CoverWorker::start_with(
+            CoverStore::new(dir.join("covers")),
+            scenes,
+            Box::new(splitter),
+            Outbox::new(tx, Arc::new(|| {})),
+        );
+        worker.want(&first);
+        ready(&rx, 1);
+        let started = Instant::now();
+        let story = loop {
+            if let Some(story) = worker.story() {
+                break story;
+            }
+            assert!(started.elapsed() < Duration::from_secs(20), "no story");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(story.scenes.len(), 2);
+        assert_eq!(story.scenes[0].moved.count(), 2);
+        worker.want(&other);
+        assert!(worker.story().is_none());
+        ready(&rx, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -21,16 +21,17 @@
 //! covers' step works one song at a time, so a second song of an album
 //! finds what the first's made.
 
-use std::io::{Cursor, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use image::imageops::FilterType;
-use image::{GrayImage, ImageBuffer, ImageFormat, Luma, RgbImage};
+use image::{GrayImage, ImageFormat, RgbImage};
 
 use super::hash::{perceptual, pixel_hash, Perceptual};
-use super::{Apart, CoverLayers, Layers, NearMap, Swatch, VERSION};
+use super::{Apart, CoverLayers, Layers, VERSION};
 use crate::store::cache;
+use crate::work::picture::codec::{near_from, near_png, palette_from, palette_text, png};
 
 /// What takes a cover apart (the models on the GPU, or a stand-in).
 pub trait Splitter: Send + Sync {
@@ -38,6 +39,11 @@ pub trait Splitter: Send + Sync {
     fn split(&self, image: &RgbImage) -> Result<CoverLayers, String>;
     /// Nothing more to take apart for a while: what it holds may go.
     fn rest(&self) {}
+    /// Its models as a story's scenes are taken apart with (none: it has
+    /// none; a song's scenes are only made ready where already kept).
+    fn nets(&self) -> Option<&dyn crate::work::scenes::SceneNets> {
+        None
+    }
 }
 
 /// A song's cover, as its preparation finds it.
@@ -172,11 +178,11 @@ impl CoverStore {
         if f.read_exact(&mut head).is_err() {
             return false;
         }
-        let Some(len) = meta_len(&head) else {
+        let Some(len) = cache::first_len(&head, MAGIC, &cache::COVER_LAYERS) else {
             return false;
         };
         head.resize(9 + len, 0);
-        f.read_exact(&mut head[9..]).is_ok() && made(&head).as_deref() == Some(VERSION)
+        f.read_exact(&mut head[9..]).is_ok() && made(&head[9..]).as_deref() == Some(VERSION)
     }
 
     /// The cover result `hash`, when there and made as this player makes
@@ -291,63 +297,23 @@ impl CoverStore {
     }
 }
 
-/// The length of a result's header text, from its first 9 bytes, when
-/// they are of this layout.
-fn meta_len(head: &[u8]) -> Option<usize> {
-    (head.len() >= 9 && &head[..4] == MAGIC && u32::from(head[4]) == cache::COVER_LAYERS.version)
-        .then(|| u32::from_le_bytes([head[5], head[6], head[7], head[8]]) as usize)
-}
-
-/// What made a result, from its header (its first bytes, the header
-/// text whole).
-fn made(bytes: &[u8]) -> Option<String> {
-    let len = meta_len(bytes)?;
-    let text = std::str::from_utf8(bytes.get(9..9 + len)?).ok()?;
-    text.lines()
+/// What made a result, from its header text (`made ...`).
+fn made(meta: &[u8]) -> Option<String> {
+    std::str::from_utf8(meta)
+        .ok()?
+        .lines()
         .find_map(|l| l.strip_prefix("made "))
         .map(str::to_owned)
 }
 
-fn png(encode: impl FnOnce(&mut Cursor<&mut Vec<u8>>) -> image::ImageResult<()>) -> Vec<u8> {
-    let mut out = Vec::new();
-    encode(&mut Cursor::new(&mut out)).expect("PNG into memory");
-    out
-}
-
-fn near_png(n: &NearMap) -> Vec<u8> {
-    let img: ImageBuffer<Luma<u16>, Vec<u16>> =
-        ImageBuffer::from_raw(n.width, n.height, n.near.clone()).expect("its size");
-    png(|c| img.write_to(c, ImageFormat::Png))
-}
-
-fn near_from(bytes: &[u8]) -> Option<NearMap> {
-    let img = image::load_from_memory_with_format(bytes, ImageFormat::Png)
-        .ok()?
-        .to_luma16();
-    Some(NearMap {
-        width: img.width(),
-        height: img.height(),
-        near: img.into_raw(),
-    })
-}
-
-/// A result as kept: `JDLC`, the version byte, the length of a text of
-/// what made it and the palette, that text, then the parts as PNGs each
-/// after its length (the plate, the subject or nothing, the depth, the
-/// plate's depth, the rim, the thumbnail).
+/// A result as kept ([`cache::frame`]d, `JDLC`): a text of what made it
+/// and the palette, then the parts as PNGs (the plate, the subject or
+/// nothing, the depth, the plate's depth, the rim, the thumbnail).
 pub fn to_bytes(k: &Kept) -> Vec<u8> {
     let l = &k.layers;
-    let palette: Vec<String> = l
-        .palette
-        .iter()
-        .map(|s| format!("{},{},{},{:.4}", s.rgb[0], s.rgb[1], s.rgb[2], s.share))
-        .collect();
-    let meta = format!("made {}\npalette {}\n", k.made, palette.join(" "));
-    let mut out = MAGIC.to_vec();
-    out.push(cache::COVER_LAYERS.version as u8);
-    out.extend((meta.len() as u32).to_le_bytes());
-    out.extend(meta.as_bytes());
+    let meta = format!("made {}\npalette {}\n", k.made, palette_text(&l.palette));
     let parts = [
+        meta.into_bytes(),
         png(|c| l.plate.write_to(c, ImageFormat::Png)),
         l.subject
             .as_ref()
@@ -357,52 +323,31 @@ pub fn to_bytes(k: &Kept) -> Vec<u8> {
         png(|c| l.outline.write_to(c, ImageFormat::Png)),
         png(|c| k.thumb.write_to(c, ImageFormat::Png)),
     ];
-    for p in parts {
-        out.extend((p.len() as u32).to_le_bytes());
-        out.extend(p);
-    }
-    out
+    let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+    cache::frame(MAGIC, &cache::COVER_LAYERS, &parts)
 }
 
 /// A result from [`to_bytes`]'s bytes, when of this layout (whatever made
 /// it).
 pub fn from_bytes(bytes: &[u8]) -> Option<Kept> {
-    let made = made(bytes)?;
-    let mut at = 5;
-    let mut take = || -> Option<&[u8]> {
-        let len = u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?) as usize;
-        let part = bytes.get(at + 4..at + 4 + len)?;
-        at += 4 + len;
-        Some(part)
+    let parts = cache::unframe(bytes, MAGIC, &cache::COVER_LAYERS)?;
+    let [meta, plate, subject, depth, plate_depth, outline, thumb] = parts[..] else {
+        return None;
     };
-    let meta = std::str::from_utf8(take()?).ok()?.to_owned();
+    let made = made(meta)?;
+    let meta = std::str::from_utf8(meta).ok()?;
     let decode = |b: &[u8]| image::load_from_memory_with_format(b, ImageFormat::Png).ok();
-    let plate: RgbImage = decode(take()?)?.to_rgb8();
-    let subject_bytes = take()?;
-    let subject = if subject_bytes.is_empty() {
+    let plate: RgbImage = decode(plate)?.to_rgb8();
+    let subject = if subject.is_empty() {
         None
     } else {
-        Some(decode(subject_bytes)?.to_rgba8())
+        Some(decode(subject)?.to_rgba8())
     };
-    let depth = near_from(take()?)?;
-    let plate_depth = near_from(take()?)?;
-    let outline: GrayImage = decode(take()?)?.to_luma8();
-    let thumb = decode(take()?)?.to_rgb8();
-    let palette = meta
-        .lines()
-        .find_map(|l| l.strip_prefix("palette"))?
-        .split_whitespace()
-        .filter_map(|s| {
-            let v: Vec<&str> = s.split(',').collect();
-            let [r, g, b, share] = v[..] else {
-                return None;
-            };
-            Some(Swatch {
-                rgb: [r.parse().ok()?, g.parse().ok()?, b.parse().ok()?],
-                share: share.parse().ok()?,
-            })
-        })
-        .collect();
+    let depth = near_from(depth)?;
+    let plate_depth = near_from(plate_depth)?;
+    let outline: GrayImage = decode(outline)?.to_luma8();
+    let thumb = decode(thumb)?.to_rgb8();
+    let palette = palette_from(meta.lines().find_map(|l| l.strip_prefix("palette"))?);
     Some(Kept {
         made,
         thumb,

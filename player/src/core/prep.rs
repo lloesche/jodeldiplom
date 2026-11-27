@@ -666,7 +666,8 @@ pub fn due(state: &State) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work::cover::{Apart, CoverLayers, NearMap};
+    use crate::work::cover::{Apart, CoverLayers};
+    use crate::work::picture::NearMap;
 
     /// A cover taken apart, tiny.
     fn cut() -> CoverCut {

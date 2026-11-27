@@ -321,7 +321,14 @@ impl App {
             .as_ref()
             .zip(options.covers.clone())
             .map(|(data, models)| {
-                crate::work::cover::CoverWorker::start(data.covers(), models, outbox.clone())
+                let scenes =
+                    crate::work::scenes::SceneStore::new(data.scenes(), data.scene_parts());
+                crate::work::cover::CoverWorker::start(
+                    data.covers(),
+                    models,
+                    scenes,
+                    outbox.clone(),
+                )
             });
         if covers.is_some() {
             state.preparing.push(core::Job::Cover);
@@ -673,6 +680,15 @@ impl App {
         self.covers
             .as_ref()
             .and_then(crate::work::cover::CoverWorker::current)
+    }
+
+    /// The track heard's story scenes, once ready
+    /// ([`crate::work::cover::CoverWorker::story`]); `None` where it has
+    /// none or this machine cannot take covers apart.
+    pub fn story(&self) -> Option<Arc<crate::work::scenes::Story>> {
+        self.covers
+            .as_ref()
+            .and_then(crate::work::cover::CoverWorker::story)
     }
 
     /// Sets the cover directly, or none (tests and screenshots).

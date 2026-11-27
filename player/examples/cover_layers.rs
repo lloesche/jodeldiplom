@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use image::{GrayImage, Rgb, RgbImage, RgbaImage};
-use jodeldiplom::work::cover::{self, CoverLayers, GpuSplitter, NearMap};
+use jodeldiplom::work::cover::{self, CoverLayers, GpuSplitter};
+use jodeldiplom::work::picture::NearMap;
 
 /// Nearness as a heat colour (dark far, bright near).
 fn heat(n: &NearMap, w: u32, h: u32) -> RgbImage {
@@ -206,7 +207,7 @@ fn main() {
         if let Some(s) = &l.subject {
             let (w, h) = (s.width() as usize, s.height() as usize);
             let alpha: Vec<f32> = s.pixels().map(|p| f32::from(p[3]) / 255.0).collect();
-            let hole = cover::hole(&alpha, w, h);
+            let hole = jodeldiplom::work::picture::hole(&alpha, w, h);
             let hole_image = GrayImage::from_fn(w as u32, h as u32, |x, y| {
                 image::Luma([(hole[y as usize * w + x as usize] * 255.0) as u8])
             });

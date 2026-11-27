@@ -20,6 +20,8 @@
 //! | [`COVER_ALBUM`] | an album's covers taken apart, with their perceptual hashes (`covers/albums/*.txt`) |
 //! | [`PATCH`] | a game sound's patch kept on the Synth tab (`patches/*.txt`) |
 //! | [`STORY_PLAN`] | a song's story planned for the karaoke (`stories/*.txt`) |
+//! | [`STORY_SCENES`] | a song's story scenes: each one's span and picture (`scenes/<song>/scenes.txt`, beside the pictures) |
+//! | [`SCENE_PARTS`] | what is derived from a story scene's picture for the backdrop (`scene-parts/<picture>.parts`, binary: `JDLS` and the version byte) |
 //!
 //! A text file starts with a header naming its schema and the version of
 //! it the file was written in, and the player that wrote it (for the
@@ -54,7 +56,9 @@
 //! models and the way it is taken apart (`crate::work::cover::VERSION`, in the
 //! file, compared when it is read), a story's plan on its language model and
 //! what it was asked (`crate::work::story::VERSION` and the prompt's hash, in
-//! the file, compared when it is read). That is apart from the schema: a
+//! the file, compared when it is read), a song's scenes' parts on theirs
+//! (`crate::work::scenes::VERSION`, in the file, compared when it is read, and
+//! each picture's hash). That is apart from the schema: a
 //! better aligner raises its own version (`jodel_lyrics::VERSION`,
 //! `jodel_lyrics::speech::maker`), not the schema's.
 
@@ -214,8 +218,26 @@ pub const STORY_PLAN: Schema = Schema {
     user_data: false,
 };
 
+/// A song's story scenes as the story's drawing step leaves them: a line a
+/// scene, its span and its picture.
+pub const STORY_SCENES: Schema = Schema {
+    name: "story-scenes",
+    version: 1,
+    user_data: false,
+};
+
+/// What is derived from a story scene's picture: what made it, the
+/// picture's hash, its split, heads and palette, then its nearness and (in
+/// layers) its layers' shares and plate as PNGs (binary, versioned by its
+/// own byte).
+pub const SCENE_PARTS: Schema = Schema {
+    name: "scene-parts",
+    version: 1,
+    user_data: false,
+};
+
 /// Every schema.
-pub const ALL: [Schema; 17] = [
+pub const ALL: [Schema; 19] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -233,6 +255,8 @@ pub const ALL: [Schema; 17] = [
     COVER_ALBUM,
     PATCH,
     STORY_PLAN,
+    STORY_SCENES,
+    SCENE_PARTS,
 ];
 
 /// The first word of a header.
@@ -276,6 +300,40 @@ impl Schema {
         let (version, rest) = self.open(text)?;
         (version == self.version).then_some(rest)
     }
+}
+
+/// A binary cache file of `schema` (the covers' layers, the story scenes'
+/// parts): `magic`, the schema's version byte, then each of `parts` after
+/// its length (four bytes, little-endian).
+pub fn frame(magic: &[u8; 4], schema: &Schema, parts: &[&[u8]]) -> Vec<u8> {
+    let mut out = magic.to_vec();
+    out.push(schema.version as u8);
+    for part in parts {
+        out.extend((part.len() as u32).to_le_bytes());
+        out.extend(*part);
+    }
+    out
+}
+
+/// The length of a [`frame`]d file's first part, from its first 9 bytes,
+/// when it is of `magic` and `schema`'s version.
+pub fn first_len(head: &[u8], magic: &[u8; 4], schema: &Schema) -> Option<usize> {
+    (head.len() >= 9 && &head[..4] == magic && u32::from(head[4]) == schema.version)
+        .then(|| u32::from_le_bytes([head[5], head[6], head[7], head[8]]) as usize)
+}
+
+/// The parts of a [`frame`]d file of `magic` and `schema`'s version, when
+/// it is whole.
+pub fn unframe<'a>(bytes: &'a [u8], magic: &[u8; 4], schema: &Schema) -> Option<Vec<&'a [u8]>> {
+    first_len(bytes, magic, schema)?;
+    let mut parts = Vec::new();
+    let mut at = 5;
+    while at < bytes.len() {
+        let len = u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?) as usize;
+        parts.push(bytes.get(at + 4..at + 4 + len)?);
+        at += 4 + len;
+    }
+    Some(parts)
 }
 
 /// FNV-1a, 64 bits, of `text`: what the caches name their files by

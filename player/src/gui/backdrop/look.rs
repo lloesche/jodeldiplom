@@ -226,6 +226,48 @@ const TAU_: f32 = 6.2831855;
     )
 }
 
+/// The backdrop's passes' triangle over their whole target (the covers',
+/// the scenes', the stretch's), its corners read as the target's.
+pub const SCREEN: &str = r"
+struct Out {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> Out {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    var o: Out;
+    o.pos = vec4<f32>(p * 2.0 - vec2<f32>(1.0), 0.0, 1.0);
+    o.uv = vec2<f32>(p.x, 1.0 - p.y);
+    return o;
+}
+";
+
+/// How the covers' and the scenes' light is shown (with the light's tone,
+/// [`crate::gui::bloom::TONE`], and `LINEAR` before it): `finish` tones
+/// it, grades it by the theme (the colours mostly taken out, tinted; 0:
+/// none) and dithers it by the pixel; `luma` and `hash` with it.
+pub const FINISH: &str = r"
+// How much of its colour a graded colour keeps.
+const GRADE_KEPT: f32 = 0.4;
+
+fn luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+fn hash(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+}
+
+fn finish(col: vec3<f32>, grade: vec4<f32>, pos: vec2<f32>) -> vec3<f32> {
+    var seen = tone(col, LINEAR);
+    let graded = mix(vec3<f32>(luma(seen)), seen, GRADE_KEPT) * grade.rgb;
+    seen = mix(seen, graded, grade.w);
+    return seen + vec3<f32>((hash(pos) - 0.5) / 255.0);
+}
+";
+
 const WGSL: &str = r"
 fn rounded_box(dx: f32, dy: f32, hx: f32, hy: f32, r: f32) -> f32 {
     let q = vec2<f32>(abs(dx) - hx + r, abs(dy) - hy + r);

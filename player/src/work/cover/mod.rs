@@ -10,7 +10,9 @@
 //! cover's lettering out of the subject and let a face that fills the
 //! cover be one: PP-OCRv5 mobile det's text (Apache-2.0, `text.rs`) and
 //! YuNet's faces (MIT, `faces.rs`); the matte is cleaned with them in
-//! `clean.rs`. The rest is here (`split.rs`, the fill in `fill.rs`). It is
+//! `clean.rs`. The rest is here (`split.rs`; the picture tools it shares
+//! with a story's scenes, the fill and the masks among them, in
+//! [`crate::work::picture`]). It is
 //! a step of a song's
 //! preparation (`worker.rs`, beside the analysis and the lyrics), kept in
 //! two levels (`store.rs`): the cover's result once, keyed by its pixels
@@ -20,7 +22,6 @@
 
 mod clean;
 mod faces;
-mod fill;
 mod hash;
 mod nets;
 mod split;
@@ -33,16 +34,18 @@ use std::sync::Arc;
 
 use image::{GrayImage, RgbImage, RgbaImage};
 
-pub use faces::{Face, FaceNet};
+use crate::work::picture::{NearMap, Swatch};
+
+pub use faces::{Face, FaceNet, NEAR_AS_FACE};
 pub use hash::{album_keys, perceptual, pixel_hash, Perceptual};
-pub use split::{hole, split, Parts};
+pub use split::{split, Parts};
 pub use store::{from_bytes, to_bytes, CoverStore, Kept, SongCover, Splitter};
 pub use text::{TextMap, TextNet};
 pub use worker::{CoverWorker, GpuSplitter};
 
 /// What the shared results are made by: the models and the way they are
 /// taken apart. A result made otherwise is made again.
-pub const VERSION: &str = "da3-small ben2-base pp-ocrv5-det yunet split-2";
+pub const VERSION: &str = "da3-small ben2-base pp-ocrv5-det yunet split-3";
 
 /// The depth model's weights: Depth Anything 3 Small by ByteDance Seed
 /// (Apache-2.0), its checkpoint as published.
@@ -63,37 +66,6 @@ pub const MATTE_URL: &str = "https://huggingface.co/PramaLLC/BEN2/resolve/e48a20
 pub const MATTE_BYTES: u64 = 380_577_976;
 /// Its SHA-256.
 pub const MATTE_SHA256: &str = "ea8b7907176a09667c86343dc7d00de6a6d871076cb90bb5f753618fd6fb3ebb";
-
-/// A depth map: nearness in 0..=65535 (larger nearer: the parallax a pixel
-/// moves by), `width × height`, rows top to bottom.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NearMap {
-    /// Its size.
-    pub width: u32,
-    /// Its size.
-    pub height: u32,
-    /// The nearness of each pixel.
-    pub near: Vec<u16>,
-}
-
-impl NearMap {
-    /// The nearness at (u, v) in 0..1 of the picture, in 0..1 (nearest
-    /// sample).
-    pub fn at(&self, u: f32, v: f32) -> f32 {
-        let x = ((u * self.width as f32) as u32).min(self.width - 1);
-        let y = ((v * self.height as f32) as u32).min(self.height - 1);
-        f32::from(self.near[(y * self.width + x) as usize]) / 65535.0
-    }
-}
-
-/// A colour of the cover's palette and its share of the cover.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Swatch {
-    /// The colour.
-    pub rgb: [u8; 3],
-    /// Its share of the cover's pixels, 0..=1.
-    pub share: f32,
-}
 
 /// A cover taken apart: plain data for the background's shader.
 #[derive(Clone, Debug, PartialEq)]
@@ -161,11 +133,7 @@ pub struct Texels {
 impl Apart {
     /// The cover result `key`'s `layers`, with their texels.
     pub fn new(key: String, layers: CoverLayers) -> Apart {
-        let plate = layers
-            .plate
-            .pixels()
-            .flat_map(|p| [p.0[0], p.0[1], p.0[2], 255])
-            .collect();
+        let plate = crate::work::picture::rgba(&layers.plate);
         // The plate's nearness at the cover's depth's size (it is made at
         // it; read across where kept otherwise).
         let d = &layers.depth;

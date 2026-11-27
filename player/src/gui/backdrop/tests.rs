@@ -458,7 +458,7 @@ fn the_song_s_cover_is_kept_once_it_is_seen_to_be_theirs() {
 
 #[test]
 fn the_palette_lights_are_its_vivid_colours_at_full_strength() {
-    let swatch = |rgb, share| crate::work::cover::Swatch { rgb, share };
+    let swatch = |rgb, share| crate::work::picture::Swatch { rgb, share };
     let palette = [
         swatch([60, 60, 64], 0.6),
         swatch([220, 40, 120], 0.2),

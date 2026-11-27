@@ -3,7 +3,7 @@
 //! deep shade of it its ink), else the stage's own colours.
 
 use super::super::{Rgb, ACTIVE, CORAL, GOLD};
-use crate::work::cover::Swatch;
+use crate::work::picture::Swatch;
 
 /// The screen's tint: its light's colour (vivid), the ink's (deep), the
 /// border's and the ribbons' two, and a light one for its small words off

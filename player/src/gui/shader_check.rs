@@ -10,7 +10,8 @@
 //! (a star sticker, a wax seal, the rays, [`crate::gui::stage::shapes::seal`];
 //! its paper, a rubber stamp, a signature,
 //! [`crate::gui::stage::shapes::paper`]), the backdrop's maths
-//! ([`super::backdrop::look`]) and its smooth read of a texture (a cubic
+//! ([`super::backdrop::look`]), the story scenes'
+//! ([`super::backdrop::scenes::look`]) and its smooth read of a texture (a cubic
 //! B-spline of its texels), each worked out by the shader's own functions in a
 //! compute pass over the shader as the window composes it, at sample points,
 //! against the processor's; and every pipeline the stage, its light and the
@@ -971,6 +972,58 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
         edged > 20 && swept > 20 && blurred > 20,
         "{edged} {swept} {blurred}"
     );
+}
+
+/// The story scenes' shader's maths, worked out by the shader as the
+/// backdrop composes it (`scenes.wgsl` with it, so the whole shader is
+/// made too): [`scenes::look::view`], [`scenes::look::seat`] and
+/// [`scenes::look::haze`] as the processor's.
+///
+/// [`scenes::look::view`]: super::backdrop::scenes::look::view
+/// [`scenes::look::seat`]: super::backdrop::scenes::look::seat
+/// [`scenes::look::haze`]: super::backdrop::scenes::look::haze
+#[test]
+fn the_scene_shader_s_maths_is_its_reference() {
+    use super::backdrop::scenes::look;
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let samples: Vec<[f32; 4]> = (0..400)
+        .map(|k| {
+            let f = k as f32;
+            let fr = |m: f32| (f * m).fract();
+            [fr(0.613), fr(0.377), fr(0.291), 1.0 + fr(0.733) * 0.2]
+        })
+        .collect();
+    let body = "
+    let s = ins[i];
+    let v = scene_view(s.xy, vec2<f32>(0.8, 1.0), vec2<f32>(0.45, 0.55), s.w);
+    let c = seat(vec3<f32>(s.x, s.y, s.z), vec3<f32>(s.z, 0.2, s.x), s.y, vec4<f32>(0.9, 0.6, 0.3, s.x));
+    outs[i * 3u] = vec4<f32>(v, 0.0, 0.0);
+    outs[i * 3u + 1u] = vec4<f32>(c, 0.0);
+    outs[i * 3u + 2u] = vec4<f32>(haze(vec3<f32>(s.x, s.y, s.z), vec3<f32>(0.1, 0.2, 0.3), 0.4, s.z), 0.0);";
+    let source = super::backdrop::scenes::gpu::shader(false);
+    let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
+    let close = |g: &[f32], c: &[f32], what: &str| {
+        for (x, y) in g.iter().zip(c) {
+            assert!(near(*x, *y, 1e-4, 1e-4), "{what}: {g:?} {c:?}");
+        }
+    };
+    for (k, s) in samples.iter().enumerate() {
+        let g = &outs[k * 3..k * 3 + 3];
+        let what = format!("sample {k}: {s:?}");
+        let v = look::view([s[0], s[1]], [0.8, 1.0], [0.45, 0.55], s[3]);
+        close(&g[0][..2], &v, &format!("{what}: view"));
+        let c = look::seat(
+            [s[0], s[1], s[2]],
+            [s[2], 0.2, s[0]],
+            s[1],
+            [0.9, 0.6, 0.3, s[0]],
+        );
+        close(&g[1][..3], &c, &format!("{what}: seat"));
+        let h = look::haze([s[0], s[1], s[2]], [0.1, 0.2, 0.3], 0.4, s[2]);
+        close(&g[2][..3], &h, &format!("{what}: haze"));
+    }
 }
 
 /// The backdrop's smooth read ([`super::backdrop::gpu::SMOOTH`], the

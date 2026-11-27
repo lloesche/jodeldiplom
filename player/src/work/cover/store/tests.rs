@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 use crate::work::art::sample_cover;
-use crate::work::cover::NearMap;
+use crate::work::picture::{NearMap, Swatch};
 
 /// Takes a cover apart by copying it, counting.
 #[derive(Default)]

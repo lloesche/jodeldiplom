@@ -49,7 +49,7 @@ without one).
 | `--headroom DB` | routes that change the samples play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; files played as they are are never touched |
 | `--config FILE` | the settings file (default: `config.toml` in the settings folder, see Folders and setup) |
 | `--list-devices` | list the devices and what each takes (its rate and format, as the system mixes it) |
-| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics, the songs' loudness, the original singer's phrases and the covers taken apart in the data folder, and in the one a move is still taking it from (each made again when wanted); the models, the lyrics edited by hand and the best scores stay (`make clean-cache`) |
+| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics, the songs' loudness, the original singer's phrases, the covers taken apart and the story scenes' parts in the data folder, and in the one a move is still taking it from (each made again when wanted); the models, the lyrics edited by hand and the best scores stay (`make clean-cache`) |
 | `--clean-diag` | forget the record of the last analyses `--diag` shows (`make clean-diag`) |
 | `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
 
@@ -73,7 +73,7 @@ The player keeps two folders (`store/dirs.rs`):
 | Folder | What | Where |
 |---|---|---|
 | Settings | `config.toml`, the session and the saved queues, the beat grids fixed by hand, the karaoke recordings, the record of a data move under way | fixed: `%APPDATA%\Jodeldiplom`, `~/Library/Application Support/Jodeldiplom`, `~/.config/Jodeldiplom` (`$XDG_CONFIG_HOME`); with `--config FILE`, that file's folder |
-| Data | what the player makes or gets and could make again: `models` (the speech models), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `loudness` (the songs' loudness), `shine` (the original singer's phrases), `covers` (the covers taken apart); and the user's own: `lyric-edits` (the lyrics edited by hand: text, words moved, words not to be sung, the voice's level over them) and `scores.txt`, the best scores sung | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
+| Data | what the player makes or gets and could make again: `models` (the speech models), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `loudness` (the songs' loudness), `shine` (the original singer's phrases), `covers` (the covers taken apart), `scene-parts` (the story scenes' depth and layers); `scenes` (each song's story scenes, as drawn); and the user's own: `lyric-edits` (the lyrics edited by hand: text, words moved, words not to be sung, the voice's level over them) and `scores.txt`, the best scores sung | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
 
 Both are decided once, when the player starts, and every part of it is
 given them: a player started with `--config FILE` keeps its session,
@@ -1128,8 +1128,27 @@ lettering, which two small built-in detectors of text and faces keep out;
 a close-up face the cut breaks up is grown from the depth instead; a
 cover whose cut is not sure of itself stays whole); with
 neither (plain lyrics karaoke) the blur alone fills the window, and
-switching either mid-song fades the cover out or in. The
-voice plays at its level (as on the tab). Going in stops the song and
+switching either mid-song fades the cover out or in.
+
+A song with story scenes (a picture a scene, each with its span in the
+song, `work::scenes`) shows them instead of the cover while their spans
+last, cut in on the bars, each filling the window: a slow camera push
+and either a gentle warp by its depth or, where its depth splits
+cleanly, two or three layers in parallax, every head held flat so it
+moves as one piece; the song's look over it as over the cover. A song's
+scenes are where the story's drawing step leaves them: its folder in
+`scenes/` in the data folder, named by the song's key, its pictures and
+their `scenes.txt` (a line `scene START END PICTURE` a scene, seconds
+and a file in the folder). As the song plays they are made ready after
+its cover, with the cover's models: each picture's depth, heads and
+layers derived once and kept (`scene-parts/<picture>.parts`, by its
+bytes; a cache, forgotten with the others, while the songs' scenes
+never are). `--example story_scenes SONG FOLDER` puts a folder of scenes
+made elsewhere in its song's place, makes them ready, prints each
+scene's split and timings, and shows the covers' worker holding the
+song's story as when it plays.
+
+The voice plays at its level (as on the tab). Going in stops the song and
 holds it at its start (with shift, it goes on where it is). Each song
 waits for Next (`enter`, `space`, or a click on the gold Next button, an
 arrow pointing right on it, at the right edge a little above the middle,
@@ -1428,6 +1447,8 @@ preset of your own.
 | `work::rhythm` | the beat analysis in the background (decode, mono, resample to 22.05 kHz, [`jodel-rhythm`](../rhythm)), the waveforms, and their cache |
 | `work::lyrics` | the tracks' lyrics in the background: from the file's tag, an `.lrc` beside it, the cache or LRCLIB, timed word by word, and kept (`lyrics/`; the edits by hand in `lyric-edits/`) |
 | `work::cover` | a cover taken apart once for the karaoke background (its subject, the plate behind it, their depth, its palette), kept (`covers/`) |
+| `work::scenes` | a song's story scenes made ready for the karaoke background: found where the drawing step leaves them (`scenes/<song>/`), made ready on the covers' thread after the song playing's cover, each picture's depth, heads held flat, layers and plate derived once and kept (`scene-parts/<picture>.parts`); `gui::backdrop::scenes` draws them |
+| `work::picture` | the picture tools the covers and the story scenes share: float planes, the fill and the plate, masks, depth as nearness, the palette, and their codecs |
 | `work::art` | cover decoding and fitting |
 | `work::loudness` | each song's loudness as the karaoke plays it (ITU-R BS.1770, `jodel_rhythm::loudness`), measured once on a thread of its own and kept (`loudness/`), for the game's sounds to follow (`sfx::conductor::calibration`) |
 | `work::shine` | the original singer's phrases for the song in Karaoke mode, measured on a thread of their own and kept (`shine/`) |

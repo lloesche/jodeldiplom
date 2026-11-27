@@ -197,7 +197,8 @@ pub fn preparing(state: &State, step: &str) -> State {
 /// A cover taken apart, made up: the generated cover, a disc of it as the
 /// subject (its edge soft), the plate with the disc filled flat.
 fn sample_cut() -> jodeldiplom::work::cover::Apart {
-    use jodeldiplom::work::cover::{Apart, CoverLayers, NearMap, Swatch};
+    use jodeldiplom::work::cover::{Apart, CoverLayers};
+    use jodeldiplom::work::picture::{NearMap, Swatch};
     let side = 512;
     let cover = jodeldiplom::work::art::sample_cover(side);
     let (cx, cy, r) = (0.6 * side as f32, 0.45 * side as f32, 0.27 * side as f32);

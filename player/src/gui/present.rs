@@ -156,17 +156,9 @@ impl Painter {
 
     /// The backdrop for the next frame (`None`: none, its textures
     /// dropped), in a frame of `size`: drawn now, at its share of the
-    /// window ([`backdrop_share`]).
+    /// window ([`backdrop_share`] of [`BackdropFrame::pictures`]).
     fn set_backdrop(&mut self, frame: Option<&BackdropFrame>, size: (u32, u32)) {
-        let share = frame.map_or(1.0, |f| {
-            backdrop_share(f.slots.iter().map(|s| {
-                let (w, h) = (size.0 as f32, size.1 as f32);
-                let card = (2.0 * s.look.card[2] * w, 2.0 * s.look.card[3] * h);
-                let layers = s.layers.layers.size();
-                let art = s.art.as_ref().map_or((0, 0), |a| a.image.dimensions());
-                (card, (layers.0.max(art.0), layers.1.max(art.1)))
-            }))
-        });
+        let share = frame.map_or(1.0, |f| backdrop_share(f.pictures(size).into_iter()));
         self.size = size;
         let drawn = |side: u32| ((side as f32 * share).round() as u32).max(1);
         let size = (drawn(size.0), drawn(size.1));

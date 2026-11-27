@@ -1,19 +1,30 @@
 //! Filling a hole in a picture from what is around it, cheaply: push-pull
 //! (a pyramid of averages of the known pixels down to one, then each level's
 //! unknown pixels from the coarser one, up again), and grain on top as fine
-//! as the picture's around it, so the fill does not look smeared flat. And
-//! the image helpers the taking apart uses: box blurs, dilation, resizing.
+//! as the picture's around it, so the fill does not look smeared flat; a
+//! picture's plate behind what is taken out of it ([`plate`], [`hole`]).
+//! And the image helpers the taking apart uses: box blurs, dilation,
+//! resizing.
+
+use image::RgbImage;
+
+use super::mask::Size;
 
 /// A picture of `channels` floats a pixel, rows top to bottom.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Planes {
+    /// Its width in pixels.
     pub width: usize,
+    /// Its height in pixels.
     pub height: usize,
+    /// The floats a pixel.
     pub channels: usize,
+    /// The pixels, each its channels in turn.
     pub data: Vec<f32>,
 }
 
 impl Planes {
+    /// A picture of `width × height`, `channels` a pixel, all 0.
     pub fn new(width: usize, height: usize, channels: usize) -> Planes {
         Planes {
             width,
@@ -21,6 +32,15 @@ impl Planes {
             channels,
             data: vec![0.0; width * height * channels],
         }
+    }
+
+    /// Its pixels as an RGB picture (three channels, 0..255, rounded).
+    pub fn to_rgb(&self) -> RgbImage {
+        let w = self.width;
+        RgbImage::from_fn(self.width as u32, self.height as u32, |x, y| {
+            let i = (y as usize * w + x as usize) * 3;
+            image::Rgb([0, 1, 2].map(|k| self.data[i + k].round().clamp(0.0, 255.0) as u8))
+        })
     }
 
     fn at(&self, x: usize, y: usize, c: usize) -> f32 {
@@ -111,6 +131,26 @@ pub fn push_pull(picture: &Planes, known: &[f32]) -> Planes {
     Planes {
         data: colour,
         ..picture.clone()
+    }
+}
+
+/// `image`'s pixels as a texture takes them: four bytes a pixel, opaque.
+pub fn rgba(image: &RgbImage) -> Vec<u8> {
+    image
+        .pixels()
+        .flat_map(|p| [p.0[0], p.0[1], p.0[2], 255])
+        .collect()
+}
+
+impl From<&RgbImage> for Planes {
+    /// Its pixels, three channels, 0..255.
+    fn from(image: &RgbImage) -> Planes {
+        Planes {
+            width: image.width() as usize,
+            height: image.height() as usize,
+            channels: 3,
+            data: image.as_raw().iter().map(|&v| f32::from(v)).collect(),
+        }
     }
 }
 
@@ -268,6 +308,51 @@ pub fn fill(picture: &Planes, hole: &[f32]) -> Planes {
         }
     }
     filled
+}
+
+/// The least share of a pixel that is taken out with the rest.
+const HOLE_TOUCHED: f32 = 0.03;
+/// How far the hole is grown past what is taken out (pixels at a 1024
+/// picture's size; so many at least).
+const HOLE_GROWN: (f32, usize) = (8.0, 3);
+/// How softly its edge goes (pixels at a 1024 picture's size).
+const HOLE_SOFT: f32 = 2.0;
+/// How much of its softened edge is all hole (the share there times this).
+const HOLE_FULL: f32 = 1.5;
+
+/// The hole what is taken out leaves in a `w × h` picture, from its share
+/// of each pixel (`alpha`): all it touches ([`HOLE_TOUCHED`]), grown
+/// ([`HOLE_GROWN`]: its glow and the matte's soft edge go with it), the
+/// edge softened ([`HOLE_SOFT`]); 1 where the plate is all fill.
+pub fn hole(alpha: &[f32], w: usize, h: usize) -> Vec<f32> {
+    let size = Size::of(w, h);
+    let touched: Vec<f32> = alpha
+        .iter()
+        .map(|&a| if a > HOLE_TOUCHED { 1.0 } else { 0.0 })
+        .collect();
+    let grown = dilate(&touched, w, h, size.px(HOLE_GROWN.0).max(HOLE_GROWN.1));
+    let soft = box_blur(
+        &Planes {
+            width: w,
+            height: h,
+            channels: 1,
+            data: grown,
+        },
+        size.px(HOLE_SOFT),
+    );
+    soft.data
+        .iter()
+        .map(|&v| (v * HOLE_FULL).min(1.0))
+        .collect()
+}
+
+/// `image` with what is taken out of it (`alpha`, its share of each pixel,
+/// the image's size) gone and the hole filled from round it ([`fill`]): the
+/// plate behind, and the hole ([`hole`]).
+pub fn plate(image: &RgbImage, alpha: &[f32]) -> (RgbImage, Vec<f32>) {
+    let (w, h) = (image.width() as usize, image.height() as usize);
+    let hole = hole(alpha, w, h);
+    (fill(&Planes::from(image), &hole).to_rgb(), hole)
 }
 
 #[cfg(test)]

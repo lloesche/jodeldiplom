@@ -413,7 +413,8 @@ fn a_file_without_a_header_is_the_users_first_version_or_no_cache() {
 }
 
 fn small_layers() -> jodeldiplom::work::cover::CoverLayers {
-    use jodeldiplom::work::cover::{CoverLayers, NearMap, Swatch};
+    use jodeldiplom::work::cover::CoverLayers;
+    use jodeldiplom::work::picture::{NearMap, Swatch};
     let near = |v: u16| NearMap {
         width: 2,
         height: 2,
@@ -612,6 +613,72 @@ fn story_plan_files_are_pinned() {
         &Kept::NoStory("2 scenes: 15 to 30 were asked for".into()),
     );
     assert!(none.ends_with("\nnone 2 scenes: 15 to 30 were asked for\n"));
+}
+
+/// A song's story scenes as the drawing step leaves them, and the parts
+/// derived from a picture: pinned, read back the same.
+#[test]
+fn story_scene_files_are_pinned() {
+    use jodeldiplom::work::picture::{NearMap, Swatch};
+    use jodeldiplom::work::scenes::{
+        from_bytes, to_bytes, Cuts, Derived, Head, Scene, Scenes, Split,
+    };
+    let dir = Path::new("story");
+    let scenes = Scenes {
+        scenes: vec![
+            Scene {
+                start: 12.5,
+                end: 30.25,
+                picture: dir.join("00.png"),
+            },
+            Scene {
+                start: 30.25,
+                end: 41.0,
+                picture: dir.join("01.png"),
+            },
+        ],
+    };
+    let kept = pinned(&cache::STORY_SCENES, "txt", scenes.to_text(dir).as_bytes());
+    let kept = String::from_utf8(kept).unwrap();
+    assert_eq!(Scenes::from_text(&kept, dir), Some(scenes));
+    let near = |v: u16| NearMap {
+        width: 2,
+        height: 2,
+        near: vec![0, v, 30_000, 65_535],
+    };
+    // A picture's parts in layers (a warp's have no layers' shares nor
+    // plate, and read back as well).
+    let parts = Derived {
+        picture: "fedcba9876543210".into(),
+        near: near(500),
+        heads: vec![Head {
+            face: [0.25, 0.125, 0.3, 0.4],
+            near: 0.8125,
+        }],
+        split: Split::Layers {
+            cuts: Cuts::Three(0.35, 0.7),
+            alphas: image::GrayAlphaImage::from_fn(1, 1, |_, _| image::LumaA([10, 250])),
+            plate: image::RgbImage::from_fn(2, 2, |x, y| {
+                image::Rgb([x as u8 * 60, y as u8 * 60, 9])
+            }),
+        },
+        palette: vec![Swatch {
+            rgb: [200, 10, 20],
+            share: 0.6,
+        }],
+    };
+    // The layout pinned, whatever made it: a fixed maker here.
+    let kept = pinned(&cache::SCENE_PARTS, "bin", &to_bytes("a-maker", &parts));
+    assert_eq!(from_bytes(&kept), Some(("a-maker".to_owned(), parts)));
+    let warp = Derived {
+        picture: "0123456789abcdef".into(),
+        near: near(1_000),
+        heads: Vec::new(),
+        split: Split::Warp,
+        palette: Vec::new(),
+    };
+    let bytes = to_bytes("a-maker", &warp);
+    assert_eq!(from_bytes(&bytes), Some(("a-maker".to_owned(), warp)));
 }
 
 /// Every version of every schema keeps its sample.

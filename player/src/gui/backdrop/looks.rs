@@ -390,16 +390,16 @@ pub const PALETTE: [[f32; 3]; 3] = [[1.0, 0.85, 0.65], [0.45, 0.55, 0.8], [0.12,
 /// The cover's colours as a look takes them (encoded, 0 to 1): its most
 /// vivid, its next most vivid, and its largest; [`PALETTE`]'s for each it
 /// does not have.
-pub fn palette_of(swatches: &[crate::work::cover::Swatch]) -> [[f32; 3]; 3] {
-    let vivid = |s: &&crate::work::cover::Swatch| {
+pub fn palette_of(swatches: &[crate::work::picture::Swatch]) -> [[f32; 3]; 3] {
+    let vivid = |s: &&crate::work::picture::Swatch| {
         let c = s.rgb.map(f32::from);
         let (max, min) = (c[0].max(c[1]).max(c[2]), c[0].min(c[1]).min(c[2]));
         (max - min) * (0.25 + s.share).sqrt()
     };
-    let mut by: Vec<&crate::work::cover::Swatch> = swatches.iter().collect();
+    let mut by: Vec<&crate::work::picture::Swatch> = swatches.iter().collect();
     by.sort_by(|a, b| vivid(b).total_cmp(&vivid(a)));
     let largest = swatches.iter().max_by(|a, b| a.share.total_cmp(&b.share));
-    let of = |s: Option<&crate::work::cover::Swatch>, or: [f32; 3]| {
+    let of = |s: Option<&crate::work::picture::Swatch>, or: [f32; 3]| {
         s.map_or(or, |s| s.rgb.map(|v| f32::from(v) / 255.0))
     };
     [

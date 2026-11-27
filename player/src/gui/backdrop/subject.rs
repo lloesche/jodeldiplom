@@ -6,7 +6,8 @@
 use image::RgbImage;
 
 use crate::gui::wgsl_math::srgb_to_linear;
-use crate::work::cover::{CoverLayers, Swatch};
+use crate::work::cover::CoverLayers;
+use crate::work::picture::Swatch;
 
 /// Where a cover's subject is, in the cover's units (0 to 1 across and
 /// down): where the cut is centred (its upper part, where a face is), its

@@ -25,6 +25,13 @@ static WEIGHTS: &[u8] = include_bytes!("../../../models/yunet.bin");
 const SIDE: usize = 640;
 /// The least score a face is kept with.
 pub const MIN_SCORE: f32 = 0.5;
+/// The least score of a face that counts (taken for one).
+pub const COUNTS_SCORE: f32 = 0.75;
+/// The least share of the picture a face that counts covers.
+pub const COUNTS_AREA: f32 = 0.002;
+/// How much less near than a face (the depth's nearness, 0 to 1) what is
+/// of it may be: the head or the body joined to it.
+pub const NEAR_AS_FACE: f32 = 0.12;
 /// How much two faces may overlap (intersection over union) before the
 /// weaker goes.
 const OVERLAP: f32 = 0.3;
@@ -45,6 +52,20 @@ pub struct Face {
     pub h: f32,
     /// The detector's score, 0 to 1.
     pub score: f32,
+}
+
+impl Face {
+    /// Whether it counts: sure enough ([`COUNTS_SCORE`]) and large enough
+    /// ([`COUNTS_AREA`]) to be taken for a face (a weaker one is often a
+    /// pattern or a profile's guess).
+    pub fn counts(&self) -> bool {
+        self.score >= COUNTS_SCORE && self.w * self.h >= COUNTS_AREA
+    }
+
+    /// Its box: left, top, width, height (the picture's shares).
+    pub fn bounds(&self) -> [f32; 4] {
+        [self.x, self.y, self.w, self.h]
+    }
 }
 
 /// A 1 × 1 convolution and a depthwise 3 × 3 one, ReLU after.

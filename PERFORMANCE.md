@@ -469,6 +469,31 @@ every start. An M-series Mac's GPU is slower at whole-window passes:
 the budget there is to be measured (`frame_cost --look heaviest
 --budget 4 --step-budget 2.5`) before a look is given to a theme.
 
+**Story scenes.** A scene showing instead of the cover
+(`gui::backdrop::scenes`) is one full-screen pass of its own pipeline
+into the backdrop's texture, drawn at its share of the window like the
+cover's card (a 1344 × 768 picture: half the window's sides at
+3024 × 1964), the look over it as over the cover. A warp reads the
+shape once and the picture once; three layers read the shape six
+times (three of them a blurred level), the plate three and the picture
+twice. A scene is sent over ahead of its cut, a texture a frame (the
+picture, the plate, the shape, each with its levels made on the GPU),
+so no frame sends a whole one; only a scene that shows before it was
+sent ahead (the story ready in the middle of it) is sent whole on its
+frame. `frame_cost`'s
+`story` scene (the normal one over three scenes in three layers each,
+a cut in the second timed) on the RTX 5080 at 3024 × 1964 (the machine
+shared with other agents' builds and GPU work): the backdrop step's
+median 0.21 ms (the cover's 0.17 in the same run), its worst 1.6 ms, on
+the cut's frame; the GPU's total median 1.4 ms, worst 3.1, no frame over
+4 ms. With `--look heaviest` (each of the four over the cover and over
+the scenes) the story's backdrop step median was 0.18–0.32 ms, its worst
+1.1–2.0 ms (a frame sending a texture), the GPU's total median 2.1–3.3
+ms; its frames over 4 ms fell where the look's or every step spiked,
+as the cover's scenes' in the same runs did. Sending a scene whole in
+one frame, before it went a texture a frame, put the backdrop step's
+worst at 2.0–2.5 ms.
+
 **The diploma's paper, baked.** `frame_cost` on the M4 Max (Metal,
 3024 × 1964, two runs) had every scene within its budget but the
 diploma: 1016 frames, the GPU's total median 4.0 ms, mean 4.0, worst

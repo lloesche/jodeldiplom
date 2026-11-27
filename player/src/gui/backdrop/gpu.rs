@@ -13,8 +13,9 @@
 //! over a texture the window's size, then each cover's shader
 //! (`backdrop.wgsl`, its maths in [`super::look`]) over it by its share, in
 //! a submission of its own before the window's, and keeps it for the
-//! window's pass to read ([`BackdropPass::under`]) pixel for pixel. A frame
-//! like the last one is not drawn again.
+//! window's pass to read ([`BackdropPass::under`]) pixel for pixel. Where a
+//! story scene shows, it is drawn instead, filling the texture
+//! ([`super::scenes::gpu`]). A frame like the last one is not drawn again.
 
 use std::sync::Arc;
 
@@ -34,20 +35,6 @@ const LOOK_BYTES: u64 = std::mem::size_of::<Look>() as u64;
 const STRETCH: &str = r"
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var soft: sampler;
-
-struct Out {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-@vertex
-fn vs(@builtin(vertex_index) i: u32) -> Out {
-    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
-    var o: Out;
-    o.pos = vec4<f32>(p * 2.0 - vec2<f32>(1.0), 0.0, 1.0);
-    o.uv = vec2<f32>(p.x, 1.0 - p.y);
-    return o;
-}
 
 @fragment
 fn fs(o: Out) -> @location(0) vec4<f32> {
@@ -85,14 +72,15 @@ fn smooth_at(t: texture_2d<f32>, uv: vec2<f32>, at: u32) -> vec4<f32> {
 ";
 
 /// The backdrop's shader for a target that takes linear light (`linear`)
-/// or not: its maths ([`super::look`]), the light's tone
-/// ([`crate::gui::bloom::TONE`]), the smooth read ([`SMOOTH`]) and
-/// `backdrop.wgsl`.
+/// or not: its maths ([`super::look`], its triangle and its finish), the
+/// light's tone ([`crate::gui::bloom::TONE`]), the smooth read ([`SMOOTH`])
+/// and `backdrop.wgsl`.
 pub fn shader(linear: bool) -> String {
+    use super::look::{wgsl, FINISH, SCREEN};
     format!(
-        "const LINEAR: f32 = {};\n{}{}{SMOOTH}{}",
+        "const LINEAR: f32 = {};\n{}{SCREEN}{FINISH}{}{SMOOTH}{}",
         if linear { "1.0" } else { "0.0" },
-        super::look::wgsl(),
+        wgsl(),
         crate::gui::bloom::TONE,
         include_str!("backdrop.wgsl")
     )
@@ -105,7 +93,7 @@ pub(super) fn levels((w, h): (u32, u32)) -> u32 {
 
 /// The pipelines that make a texture's smaller levels, one for each
 /// texture format, and what the ground's smooth stretch is made of.
-struct Stretch {
+pub(super) struct Stretch {
     layout: wgpu::BindGroupLayout,
     module: wgpu::ShaderModule,
     pipeline_layout: wgpu::PipelineLayout,
@@ -127,7 +115,12 @@ impl Stretch {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("jodeldiplom backdrop stretch"),
             source: wgpu::ShaderSource::Wgsl(
-                format!("{}{SMOOTH}{STRETCH}", super::look::wgsl()).into(),
+                format!(
+                    "{}{}{SMOOTH}{STRETCH}",
+                    super::look::wgsl(),
+                    super::look::SCREEN
+                )
+                .into(),
             ),
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -216,7 +209,7 @@ impl Stretch {
 }
 
 /// A fragment texture's place in a layout.
-fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(super) fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -230,7 +223,7 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// A fragment sampler's place in a layout.
-fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(super) fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -241,7 +234,7 @@ fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 
 /// A pipeline of one triangle over its target (`vs` and the fragment entry
 /// `fs` of `module`), into `format`, blending as `blend` says.
-fn full_screen(
+pub(super) fn full_screen(
     device: &wgpu::Device,
     (layout, module): (&wgpu::PipelineLayout, &wgpu::ShaderModule),
     (format, fs): (wgpu::TextureFormat, &str),
@@ -300,16 +293,16 @@ fn begin<'e>(
 
 /// Texels for a texture: their format, the bytes a texel, the size, the
 /// texels row by row.
-struct Upload<'a> {
-    format: wgpu::TextureFormat,
-    texel: u32,
-    size: (u32, u32),
-    bytes: &'a [u8],
+pub(super) struct Upload<'a> {
+    pub(super) format: wgpu::TextureFormat,
+    pub(super) texel: u32,
+    pub(super) size: (u32, u32),
+    pub(super) bytes: &'a [u8],
 }
 
 /// A texture of `texels`, with `levels` levels (made by `stretch` in
 /// `encoder` below the first).
-fn texture(
+pub(super) fn texture(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     (encoder, stretch): (&mut wgpu::CommandEncoder, &mut Stretch),
     texels: &Upload,
@@ -422,9 +415,15 @@ struct Target {
     size: (u32, u32),
 }
 
-/// What was drawn last: the ground, each cover (by its key and its
-/// picture's) with its numbers, the target's size.
-type Drawn = ((u64, (u32, u32)), Vec<(Held, Look)>, (u32, u32));
+/// What was drawn last (with the target's size: [`BackdropPass::drawn`]).
+#[derive(Clone, Debug, PartialEq)]
+enum Drawn {
+    /// The story's scene.
+    Scene(super::scenes::gpu::Drawn),
+    /// The ground and each cover (by its key and its picture's) with its
+    /// numbers.
+    Covers((u64, (u32, u32)), Vec<(Held, Look)>),
+}
 
 /// Which cover a cover on the GPU is: its layers' key, its picture's id.
 type Held = (String, Option<u64>);
@@ -452,6 +451,8 @@ pub struct BackdropPass {
     smooth: wgpu::RenderPipeline,
     ground: Option<GroundTexture>,
     covers: Vec<Cover>,
+    /// The story's scenes, where one shows.
+    scenes: super::scenes::gpu::ScenePass,
     target: Option<Target>,
     /// What the window reads while there is none: one black texel.
     _empty: wgpu::Texture,
@@ -460,7 +461,8 @@ pub struct BackdropPass {
     format: wgpu::TextureFormat,
     /// Changes whenever what [`BackdropPass::under`] gives does.
     generation: u64,
-    drawn: Option<Drawn>,
+    /// What was drawn last, and the target's size then.
+    drawn: Option<(Drawn, (u32, u32))>,
 }
 
 impl BackdropPass {
@@ -540,6 +542,7 @@ impl BackdropPass {
             smooth,
             ground: None,
             covers: Vec::new(),
+            scenes: super::scenes::gpu::ScenePass::new(device, format, linear),
             target: None,
             _empty: empty,
             empty_view,
@@ -583,6 +586,7 @@ impl BackdropPass {
         let Some(frame) = frame else {
             if self.target.is_some() {
                 self.covers.clear();
+                self.scenes.clear();
                 self.ground = None;
                 self.target = None;
                 self.drawn = None;
@@ -603,29 +607,50 @@ impl BackdropPass {
                 self.covers.push(cover);
             }
         }
-        let size = (size.0.max(1), size.1.max(1));
-        if self.target.as_ref().is_none_or(|t| t.size != size) {
-            self.target = Some(self.target(device, size));
-            self.drawn = None;
-            self.generation += 1;
-        }
-        let now: Drawn = (
-            frame.ground.of,
-            frame.slots.iter().map(|s| (held(s), s.look)).collect(),
-            size,
+        let scene = self.scenes.set(
+            (device, queue),
+            (&mut encoder, &mut self.stretch),
+            frame.scene.as_ref(),
         );
+        let size = (size.0.max(1), size.1.max(1));
+        let target = match self.target.take() {
+            Some(t) if t.size == size => t,
+            _ => {
+                self.drawn = None;
+                self.generation += 1;
+                self.target(device, size)
+            }
+        };
+        let now = match scene {
+            Some(scene) => Drawn::Scene(scene),
+            None => Drawn::Covers(
+                frame.ground.of,
+                frame.slots.iter().map(|s| (held(s), s.look)).collect(),
+            ),
+        };
+        let now = (now, size);
         if self.drawn.as_ref() != Some(&now) {
-            self.draw(queue, &mut encoder, frame);
+            let view = &target.view;
+            match &now.0 {
+                Drawn::Scene(scene) => self.scenes.draw(&mut begin(&mut encoder, view), scene),
+                Drawn::Covers(..) => self.draw(queue, (&mut encoder, view), frame),
+            }
             self.drawn = Some(now);
         }
+        self.target = Some(target);
         queue.submit([encoder.finish()]);
     }
 
-    /// `frame` drawn into the target: the ground stretched smoothly over
-    /// it, then its covers back to front, each over what is under it by its
-    /// share.
-    fn draw(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, frame: &BackdropFrame) {
-        let (Some(target), Some(ground)) = (&self.target, &self.ground) else {
+    /// `frame`'s covers drawn into the target (its `view`): the ground
+    /// stretched smoothly over it, then its covers back to front, each over
+    /// what is under it by its share.
+    fn draw(
+        &self,
+        queue: &wgpu::Queue,
+        (encoder, view): (&mut wgpu::CommandEncoder, &wgpu::TextureView),
+        frame: &BackdropFrame,
+    ) {
+        let Some(ground) = &self.ground else {
             return;
         };
         let covers: Vec<&Cover> = frame
@@ -637,7 +662,7 @@ impl BackdropPass {
                 Some(cover)
             })
             .collect();
-        let mut pass = begin(encoder, &target.view);
+        let mut pass = begin(encoder, view);
         pass.set_pipeline(&self.smooth);
         pass.set_bind_group(0, &ground.bind, &[]);
         pass.draw(0..3, 0..1);
@@ -655,11 +680,7 @@ impl BackdropPass {
         encoder: &mut wgpu::CommandEncoder,
         ground: &Ground,
     ) -> GroundTexture {
-        let bytes: Vec<u8> = ground
-            .image
-            .pixels()
-            .flat_map(|p| [p.0[0], p.0[1], p.0[2], 255])
-            .collect();
+        let bytes = crate::work::picture::rgba(&ground.image);
         let texels = Upload {
             format: self.format,
             texel: 4,
@@ -686,12 +707,8 @@ impl BackdropPass {
         slot: &SlotFrame,
     ) -> Cover {
         let layers = &slot.layers;
-        let rgba: Option<Vec<u8>> = slot.art.as_ref().map(|a| {
-            a.image
-                .pixels()
-                .flat_map(|p| [p.0[0], p.0[1], p.0[2], 255])
-                .collect()
-        });
+        let rgba: Option<Vec<u8>> =
+            (slot.art.as_ref()).map(|a| crate::work::picture::rgba(&a.image));
         let original = slot
             .art
             .as_ref()

@@ -22,7 +22,7 @@ use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Stage, Tint};
 use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, ResultShown, Start};
 use jodeldiplom::work::art::Art;
-use jodeldiplom::work::cover::Swatch;
+use jodeldiplom::work::picture::Swatch;
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));

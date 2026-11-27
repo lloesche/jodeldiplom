@@ -37,6 +37,11 @@
 //! textures sent over once a cover and dropped once it no longer shows.
 //! The stage's widget ([`super::stage_view`]) draws it as Karaoke mode's
 //! ground, under the stage.
+//!
+//! Where the song has story scenes ready ([`crate::work::scenes`]), each
+//! shows instead in its span, cut in on the bars, filling the window
+//! ([`scenes`]); the cover shows round them as ever, and the song's look
+//! draws over either.
 
 pub mod gpu;
 pub mod ground;
@@ -44,6 +49,7 @@ pub mod look;
 pub mod looks;
 pub mod music;
 pub mod pulse;
+pub mod scenes;
 mod subject;
 
 use std::sync::Arc;
@@ -196,6 +202,10 @@ pub struct Cue {
     pub grade: [f32; 4],
     /// The song's look and its music this frame (none: no look).
     pub look: Option<looks::LookCue>,
+    /// The song's story scenes, where it has them ready.
+    pub story: Option<Arc<scenes::Showing>>,
+    /// Where the song is heard, in seconds: which scene shows.
+    pub at: f64,
 }
 
 /// A cover of a frame, for the shader: its layers, the picture they were
@@ -212,15 +222,40 @@ pub struct SlotFrame {
 
 /// A frame of the backdrop: the ground, the covers showing over it,
 /// back to front, each over what is under it by its share
-/// ([`Look::cam`]), and the song's look over them all (none: none).
+/// ([`Look::cam`]), or the story's scene instead where one shows; and the
+/// song's look over them all (none: none).
 #[derive(Clone, Debug)]
 pub struct BackdropFrame {
     /// The ground.
     pub ground: Ground,
     /// The covers.
     pub slots: Vec<SlotFrame>,
+    /// The story's scene showing (none: none).
+    pub scene: Option<scenes::SceneFrame>,
     /// The look.
     pub look: Option<looks::LookFrame>,
+}
+
+impl BackdropFrame {
+    /// What it draws in a `window` of pixels, for the share of the window
+    /// it is drawn at: each picture's size on the window (pixels) and its
+    /// texels; the story's scene filling the window where one is drawn,
+    /// else each cover's card (its texels the larger of its layers' and
+    /// its picture's).
+    pub fn pictures(&self, window: (u32, u32)) -> Vec<((f32, f32), (u32, u32))> {
+        let (w, h) = (window.0 as f32, window.1 as f32);
+        if let Some(picture) = self.scene.as_ref().and_then(scenes::SceneFrame::picture) {
+            return vec![((w, h), picture)];
+        }
+        (self.slots.iter())
+            .map(|s| {
+                let card = (2.0 * s.look.card[2] * w, 2.0 * s.look.card[3] * h);
+                let layers = s.layers.layers.size();
+                let art = s.art.as_ref().map_or((0, 0), |a| a.image.dimensions());
+                (card, (layers.0.max(art.0), layers.1.max(art.1)))
+            })
+            .collect()
+    }
 }
 
 /// The backdrop frame by frame: the ground, the covers showing, the music
@@ -238,6 +273,8 @@ pub struct Visualiser {
     phrase: Option<f64>,
     /// The look as it is drawn: what it was made safe from, its curves.
     looks: looks::Looks,
+    /// The song's story as shown, cut on its analysis.
+    showing: Option<Arc<scenes::Showing>>,
 }
 
 impl Visualiser {
@@ -275,6 +312,12 @@ impl Visualiser {
         let playing = state.playing.state == PlayState::Playing;
         // The look reads the song where it is, playing or not.
         let look = self.looks.cue(state, (song, app.art()), heard, window);
+        // The story too, cut on its bars again where it or the analysis is
+        // new.
+        self.showing = app.story().map(|story| match self.showing.take() {
+            Some(s) if s.is_of(&story, song) => s,
+            _ => Arc::new(scenes::Showing::new(story, song)),
+        });
         let gains = StripKind::PARTS.map(|k| state.desk.heard_gain(k).min(1.0) as f32);
         let song = song.filter(|_| playing);
         let levels = song.map_or(Levels::default(), |s| s.levels(heard).times(gains));
@@ -314,6 +357,8 @@ impl Visualiser {
             },
             grade: state.theme().grade,
             look,
+            story: self.showing.clone(),
+            at: heard,
         };
         Some(self.step(&cue, window, dt))
     }
@@ -373,9 +418,11 @@ impl Visualiser {
             looks::palette_of(&s.layers.layers.palette)
         });
         let look = (cue.look.as_ref()).map(|l| self.looks.frame(l, window, (dt, palette)));
+        let scene = (cue.story.as_ref()).and_then(|s| s.frame(cue.at, &felt, window, cue.grade));
         BackdropFrame {
             ground,
             slots,
+            scene,
             look,
         }
     }
@@ -461,7 +508,7 @@ impl Visualiser {
             card[0] + (2.0 * sub.centre.0 - 1.0) * card[2],
             card[1] + (2.0 * sub.centre.1 - 1.0) * card[3],
         );
-        let lift = 0.35 * felt.section + 0.12 * felt.glow;
+        let lift = felt.lift();
         let [accent, second, ground] = slot.lights.map(|c| [c[0], c[1], c[2], 0.0]);
         let cut = if slot.layers.layers.subject.is_some() {
             1.0

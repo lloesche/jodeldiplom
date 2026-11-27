@@ -1,0 +1,3 @@
+jodeldiplom-cache story-scenes 1 by jodeldiplom x
+scene 12.500 30.250 00.png
+scene 30.250 41.000 01.png

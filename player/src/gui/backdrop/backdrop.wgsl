@@ -62,20 +62,6 @@ struct Look {
 @group(0) @binding(5) var original: texture_2d<f32>;
 @group(0) @binding(6) var rim: texture_2d<f32>;
 
-struct Out {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-@vertex
-fn vs(@builtin(vertex_index) i: u32) -> Out {
-    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
-    var o: Out;
-    o.pos = vec4<f32>(p * 2.0 - vec2<f32>(1.0), 0.0, 1.0);
-    o.uv = vec2<f32>(p.x, 1.0 - p.y);
-    return o;
-}
-
 // Diva's gold, as light.
 const GOLD: vec3<f32> = vec3<f32>(1.0, 0.6, 0.16);
 // The card's light (its white shows a little under white).
@@ -90,17 +76,6 @@ const RIM_LIGHT: f32 = 0.7;
 // How much more of the plate's blur than the cover's is read for each
 // share of the subject's colours the cover's blur would carry.
 const BLEED: f32 = 3.0;
-
-// How much of its colour a graded colour keeps.
-const GRADE_KEPT: f32 = 0.4;
-
-fn luma(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
-fn hash(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453);
-}
 
 // `t` on the card at `uv`: as it is where the card is about its size, its
 // smaller level where the card is smaller, smoothly where much enlarged and
@@ -255,11 +230,6 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     }
 
     col = col * (1.0 + look.moments.w);
-    // The theme's grade, as shown (its brightest light tinted too): the
-    // colours mostly taken out, tinted.
-    var seen = tone(col, LINEAR);
-    let graded = mix(vec3<f32>(luma(seen)), seen, GRADE_KEPT) * look.grade.rgb;
-    seen = mix(seen, graded, look.grade.w);
-    let c = seen + vec3<f32>((hash(o.pos.xy) - 0.5) / 255.0);
-    return vec4<f32>(c, look.cam.w);
+    // Shown: toned, the theme's grade (its brightest light tinted too).
+    return vec4<f32>(finish(col, look.grade, o.pos.xy), look.cam.w);
 }
