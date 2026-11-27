@@ -101,6 +101,17 @@ Work agreed on but not started, roughly in the order it was raised.
   made before loading. The existing workers (stems, the speech model,
   word timing, the cover's vision) under the same scheduler; each stage
   its icon in the queue, lit only when done.
+- **A theme as one file** (the owner, 2026-11-27): rework theming so a
+  theme is a single file (YAML or similar) holding everything, loaded
+  from disk instead of compiled in: its assets, its sounds' patches (in
+  the Synth tab's patch text), its colours, fire, bulbs, coins, grade
+  and effects. Also instructions for the story's language model, so a
+  theme can have stories of its own, and shader preferences that change
+  the look shaders' inputs for every story (Spooky's foggier, say).
+  Today the theme's sounds are already swapped by atom
+  (`Theme::sounds`) and the Synth tab's patch files are read over them,
+  but the built-in themes are Rust constants and the conductor's
+  patterns (when a sound lands, the arpeggios) are code.
 
 ## The player
 
