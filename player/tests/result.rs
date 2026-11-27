@@ -182,7 +182,7 @@ fn press_at(view: &StageView, (x, y): (f32, f32)) -> Option<Action> {
     view.pressed(iced::Point::new(x, y))
 }
 
-/// Where the stage drew START's pill (window points).
+/// Where the stage drew Next's button (window points).
 fn start_box(view: &StageView) -> [f32; 4] {
     let mut found = None;
     for y in (0..900).step_by(2) {
@@ -194,20 +194,22 @@ fn start_box(view: &StageView) -> [f32; 4] {
             }
         }
     }
-    found.expect("START's pill")
+    found.expect("Next's button")
 }
 
-/// START's pill is START by click, as `enter` is: a press inside it gives
-/// START, one just outside nothing; drawn where the pointer finds it (one
-/// place says where), and never moved by the controls coming up. On a
-/// result a press during the reveal completes the reveal, the next starts
-/// the song; once the reveal is over the first starts it. Entering the
-/// mode, it is there before any result.
+/// Next's button is Next by click, as `enter` is: a press inside it gives
+/// Next, one just outside nothing; drawn where the pointer finds it (one
+/// place says where), at the right a little above the middle, the pointer
+/// over it never bringing the controls up, and never moved by them coming
+/// up. On a result a press during the reveal completes the reveal, the
+/// next plays the next song; once the reveal is over the first plays it.
+/// Entering the mode, it is there before any result and plays the song
+/// held.
 #[test]
-fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
+fn next_is_next_by_click_during_and_after_the_reveal() {
     let press = |state: &mut State, at: (f32, f32)| {
         let (view, _) = drawn(state);
-        let action = press_at(&view, at).expect("START");
+        let action = press_at(&view, at).expect("Next");
         assert!(matches!(action, Action::Op(Op::KaraokeStart)), "{action:?}");
         update(state, action)
     };
@@ -228,7 +230,7 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
     state.now_ms += 500;
     let (view, frame) = drawn(&state);
     let [x0, y0, x1, y1] = start_box(&view);
-    assert!(x0 > 0.0 && x1 < 1600.0 && y0 > 450.0 && y1 < 900.0 && x1 - x0 > 40.0);
+    assert!(x0 > 1200.0 && x1 < 1600.0 && y0 > 270.0 && y1 < 450.0 && x1 - x0 > 40.0);
     let middle = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
     // The pill drawn is round that box.
     let round = |i: &&Instance| {
@@ -245,7 +247,17 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
     ] {
         assert!(press_at(&view, outside).is_none(), "{outside:?}");
     }
-    // The controls up: START stays where it was.
+    // The pointer over it, at its lowest: the controls stay down.
+    update(
+        &mut state,
+        Action::PointerMoved {
+            from_bottom: 1.0 - y1 / 900.0,
+        },
+    );
+    let now = state.now_ms + 1;
+    update(&mut state, Action::Tick(now));
+    assert!(!karaoke::controls::shown(&state));
+    // The controls up: Next stays where it was.
     update(&mut state, Action::PointerMoved { from_bottom: 0.0 });
     let now = state.now_ms + karaoke::controls::FADE_MS;
     update(&mut state, Action::Tick(now));
@@ -255,7 +267,7 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
     let fx = press(&mut state, middle);
     assert!(engine(&fx).is_empty() && state.karaoke.countdown.is_none());
     assert_eq!(karaoke::result_motion(&state), Some(Motion::Twinkling));
-    // Pressed again: the song; then no START to press.
+    // Pressed again: the song; then no Next to press.
     assert!(starts(&press(&mut state, middle)));
     assert!(karaoke::result_shown(&state).is_none());
     let (view, _) = drawn(&state);
@@ -267,7 +279,7 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
     state.now_ms += (end * 1000.0) as u64 + 1;
     assert!(starts(&press(&mut state, middle)));
 
-    // Just entered, no result: START alone, a press starts the song held.
+    // Just entered, no result: Next alone, a press starts the song held.
     let mut state = tab();
     op(&mut state, Op::KaraokeEnter);
     let held = state.karaoke.held.expect("a song held");

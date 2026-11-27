@@ -1,11 +1,11 @@
 //! Karaoke mode on the screen: one picture over the whole screen
 //! ([`KaraokePicture`], made by [`picture`]: the lyrics as they are sung
-//! ([`lines_now`]), the count-in, the score, the song's result, START)
+//! ([`lines_now`]), the count-in, the score, the song's result, Next)
 //! that the window draws over the cover's ground (its stage on the GPU,
 //! else the lines in its own widgets), and its controls' bar over it
 //! while it shows ([`KaraokePicture::controls`]): the voice slider, the
-//! seek bar, the transport and the keys ([`hint`]). START is no control
-//! but the stage's pill ([`KaraokePicture::start`]).
+//! seek bar, the transport and the keys ([`hint`]). Next is no control
+//! but the stage's button ([`KaraokePicture::start`]).
 
 use super::super::palette;
 use super::{plain_lines, result_now, ResultShown};
@@ -15,7 +15,7 @@ use crate::core::singing::{notes_of, LineNotes, Note, Singing};
 use crate::core::text;
 use crate::core::State;
 
-/// START's pill on the stage, while the mode waits for it.
+/// Next's button on the stage, while the mode waits for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Start {
     /// Whether the song it plays can be sung yet (else greyed).
@@ -27,7 +27,7 @@ pub struct Start {
 pub fn hint() -> String {
     let key = |op| keymap::hint(Context::KaraokeMode, op);
     format!(
-        "{} leaves  ·  {} {} level  ·  {} / {} START  ·  {} next song  ·  hold {} demo",
+        "{} leaves  ·  {} {} level  ·  {} / {} Next  ·  {} skips the song  ·  hold {} demo",
         key(Op::Back),
         key(Op::SliderDown),
         key(Op::SliderUp),
@@ -51,7 +51,7 @@ pub fn picture(state: &State, bar: f32, heard: f64) -> KaraokePicture {
         }),
     };
     // Before the singing starts (however the song started) or comes back
-    // after a break: the count-in again, the first one as large as START's,
+    // after a break: the count-in again, the first one as large as Next's,
     // later ones half as large in the same place. Never two at once.
     let (count, cue) = match count {
         Some(c) => (Some(c), None),
@@ -66,7 +66,7 @@ pub fn picture(state: &State, bar: f32, heard: f64) -> KaraokePicture {
     let lines = lines_now(state, t);
     let (before, moved) = scrolling(&lines, t, |t| lines_now(state, t));
     let result = result_now(state);
-    // START lit once the song it plays can be sung (N goes on).
+    // Next lit once the song it plays can be sung (N goes on).
     let start = karaoke::waiting(state).then(|| Start {
         ready: karaoke::song_index(state).is_none_or(|i| karaoke::not_singable(state, i).is_none()),
     });
@@ -247,8 +247,8 @@ pub fn sung_on(
 #[derive(Clone, Debug, PartialEq)]
 pub struct KaraokePicture {
     /// How much of the screen's height, from its bottom, the controls' bar
-    /// takes, 0 to 1, shown or not: what START stays clear above. The
-    /// window says, as it lays the bar out.
+    /// takes, 0 to 1, shown or not: what the line under a result stays clear
+    /// above. The window says, as it lays the bar out.
     pub bar: f32,
     /// The lines, top to bottom, centred.
     pub lines: Vec<LyricLine>,
@@ -262,7 +262,7 @@ pub struct KaraokePicture {
     /// window's widgets over the picture), 0 to 1
     /// ([`karaoke::controls::fade`]).
     pub controls: Option<f64>,
-    /// START's pill (the stage's), while the mode waits for it.
+    /// Next's button (the stage's), while the mode waits for it.
     pub start: Option<Start>,
     /// The lines as they were just before they last changed, while they
     /// move to where they are now (empty once they are there).
@@ -271,7 +271,7 @@ pub struct KaraokePicture {
     pub moved: f64,
     /// The singing's score so far (the game on).
     pub score: Option<Score>,
-    /// How the song before was sung, while the next waits for START (the
+    /// How the song before was sung, while the next waits for Next (the
     /// game on): drawn on the stage, revealed beat by beat (its words are
     /// the lines then, for a window without one).
     pub result: Option<ResultShown>,
@@ -317,7 +317,11 @@ const PAUSE: f64 = 4.0;
 /// None: the title and artist and what is known.
 pub fn lines_now(state: &State, t: f64) -> Vec<LyricLine> {
     let Some(index) = karaoke::song_index(state) else {
-        return vec![line("Queue some songs, then START", 0.0, LineKind::Info)];
+        return vec![line(
+            "Queue some songs, then press Next",
+            0.0,
+            LineKind::Info,
+        )];
     };
     // How the song before was sung, until the next is started: its words
     // (the stage draws it instead where it draws: [`KaraokePicture::result`]).
@@ -353,8 +357,8 @@ pub fn lines_now(state: &State, t: f64) -> Vec<LyricLine> {
         }
         lines
     };
-    // Waiting for START while still being prepared: what is still to come
-    // for it (and, START pressed, that it starts once that is done).
+    // Waiting for Next while still being prepared: what is still to come
+    // for it (and, Next pressed, that it starts once that is done).
     if let (true, Some(karaoke::NotSingable::Preparing(what))) =
         (karaoke::waiting(state), karaoke::not_singable(state, index))
     {

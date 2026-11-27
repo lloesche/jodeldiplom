@@ -12,32 +12,32 @@ use crate::core::karaoke::result::{verdict_words, Shown, SongResult};
 use crate::core::State;
 
 /// A song's result as the mode shows it: what was shown, its reveal's time
-/// now ([`karaoke::result_now`]), and the song START plays.
+/// now ([`karaoke::result_now`]), and the song Next plays.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResultShown {
     /// The result and its reveal.
     pub shown: Arc<Shown>,
     /// Seconds into its reveal.
     pub t: f64,
-    /// The title of the song START plays (none queued: empty).
+    /// The title of the song Next plays (none queued: empty).
     pub next: String,
     /// Whether that is the song just sung, again (the queue played out).
     pub again: bool,
 }
 
 impl ResultShown {
-    /// The words for the song START plays: the next one, the one just sung
+    /// The words for the song Next plays: the next one, the one just sung
     /// again, or none queued.
     pub fn next_words(&self) -> String {
         match (self.next.is_empty(), self.again) {
-            (true, _) => "Queue some songs, then START".to_owned(),
+            (true, _) => "Queue some songs, then press Next".to_owned(),
             (false, true) => format!("Again: {}", self.next),
             (false, false) => format!("Next: {}", self.next),
         }
     }
 }
 
-/// The result shown now, at its reveal's time, with the song START plays:
+/// The result shown now, at its reveal's time, with the song Next plays:
 /// the one held, or (none held, the queue played out) the queue's current
 /// one, the song just sung.
 pub fn result_now(state: &State) -> Option<ResultShown> {
@@ -133,7 +133,7 @@ pub fn best_words(r: &SongResult) -> String {
 }
 
 /// The result as the picture's lines, all of it at once, `next` the words
-/// for the song START plays ([`ResultShown::next_words`]): what a window
+/// for the song Next plays ([`ResultShown::next_words`]): what a window
 /// that draws no stage shows of it (the stage draws it instead where it
 /// draws).
 pub fn plain_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
@@ -150,7 +150,7 @@ pub fn plain_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
         (format!("{name} {verdict}"), LineKind::Current),
         (counts, LineKind::Next),
         (best_words(r), LineKind::Info),
-        (format!("{next} · START"), LineKind::Info),
+        (format!("{next} · press Next"), LineKind::Info),
     ]
     .into_iter()
     .filter(|(text, _)| !text.is_empty())
@@ -179,7 +179,7 @@ mod tests {
     }
 
     /// Without a stage, the result is its words: the title, the verdict,
-    /// the numbers, the best, the next song and START.
+    /// the numbers, the best, the next song and Next.
     #[test]
     fn plain_lines_say_it_all() {
         let lines = plain_lines(&result(Some(Medal::Silver), true, None), "Next Song");
@@ -188,13 +188,13 @@ mod tests {
         assert!(text[1].starts_with("SILVER"), "{text:?}");
         assert!(text.iter().any(|t| t.contains("40 of 45 words")));
         let last = text.last().unwrap();
-        assert!(last.contains("Next Song") && last.ends_with("START"));
+        assert!(last.contains("Next Song") && last.ends_with("press Next"));
     }
 
-    /// The song START plays: the next, the one just sung again after the
+    /// The song Next plays: the next, the one just sung again after the
     /// last, or none queued.
     #[test]
-    fn the_next_words_name_the_song_start_plays() {
+    fn the_next_words_name_the_song_next_plays() {
         let shown = |next: &str, again| ResultShown {
             shown: Arc::new(Shown::new(result(None, true, None), 1, 0)),
             t: 0.0,
@@ -203,7 +203,10 @@ mod tests {
         };
         assert_eq!(shown("B", false).next_words(), "Next: B");
         assert_eq!(shown("A", true).next_words(), "Again: A");
-        assert_eq!(shown("", true).next_words(), "Queue some songs, then START");
+        assert_eq!(
+            shown("", true).next_words(),
+            "Queue some songs, then press Next"
+        );
     }
 
     #[test]

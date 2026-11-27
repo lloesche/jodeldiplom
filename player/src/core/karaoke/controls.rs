@@ -44,7 +44,7 @@ pub enum Controls {
 /// Whether the pointer, `from_bottom` of the window's height above its
 /// bottom, is near enough the bottom to bring the controls up: within the
 /// last [`REACH`] of the height, never less than the bar and two lines.
-fn in_reach(state: &State, from_bottom: f32) -> bool {
+pub(crate) fn in_reach(state: &State, from_bottom: f32) -> bool {
     from_bottom < REACH.max(state.fit.controls_reach)
 }
 

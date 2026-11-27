@@ -1,10 +1,10 @@
 //! Frames of Karaoke mode as the window draws it ([`Gui::view`] with
 //! iced's headless renderer: the stage over the cover's ground on the GPU,
 //! the controls' bar in the window's own widgets over it; without a GPU,
-//! `ICED_TEST_BACKEND=vello-cpu`, the lines as text), to look at START's
-//! pill and the controls' bar: the mode just entered
-//! (START alone), a song being sung (its lane, its progress along the
-//! bottom) and a song's result (the diploma, START under it), each with
+//! `ICED_TEST_BACKEND=vello-cpu`, the lines as text), to look at Next's
+//! button and the controls' bar: the mode just entered
+//! (Next alone), a song being sung (its lane, its progress along the
+//! bottom) and a song's result (the diploma, Next beside it), each with
 //! the controls hidden, fading in a quarter, half and three quarters of
 //! the way (the stage's progress going in the first half, the bar coming
 //! in the second) and shown (the pointer near the bottom). Saved as PNGs
@@ -144,7 +144,7 @@ fn cover() -> image::RgbImage {
     })
 }
 
-/// Karaoke mode, two songs queued, the first held for START
+/// Karaoke mode, two songs queued, the first held for Next
 /// (just entered), its lyrics and its notes ready.
 fn entered() -> State {
     let mut state = State::new("/music".into(), Config::default());

@@ -842,9 +842,9 @@ none kept). A change is heard within about a tenth of a second, without a
 click; back at 0 the file plays bit for bit again. The song's notes and
 the scoring move with the key heard, so singing in the new key scores as
 singing in the song's own did. The key stays for the songs the queue runs
-into, and for the song it is on started again (START in the mode); another
+into, and for the song it is on started again (Next in the mode); another
 song picked plays in its own key; a key set while nothing plays (a song
-held for START) is the next song's. Another output or the engine started
+held for Next) is the next song's. Another output or the engine started
 again keeps it. No transition is armed while the key is shifted, and the
 key stays while one is; new settings wait for the song's own key or the
 next song, and bar jumps are refused meanwhile (each says so).
@@ -1090,11 +1090,11 @@ then a medal by the words (bronze for half of them, silver 70 %, gold
 confetti, else the best before shows. Every song played to its end gets
 its result, the last of the queue too, and one where nothing was scored
 asks, with a wink, whether the microphone fell asleep (no medal, no
-best). START during the reveal shows it all at once; the next START
+best). Next during the reveal shows it all at once; the next Next
 sings the next song (after the last, the same one again: "Again"). The
 screen takes its light from the cover's colours where the cover was
 taken apart; it twinkles a few seconds once settled, then holds still
-(drawing nothing) until START. The best
+(drawing nothing) until Next. The best
 score of each song is kept (`scores.txt` in the data folder).
 
 Karaoke needs a GPU (a graphics card on Vulkan, Metal, DirectX 12 or
@@ -1111,11 +1111,11 @@ covers taken apart) counts as done, as for the icons, so no song waits
 for it for ever. Until then the button into the mode is disabled, with
 what is still being done for the song beside it, job by job in the
 icons' words (or why it has nothing to sing: none found, an
-instrumental), its key does nothing but say so, and START's pill in the
+instrumental), its key does nothing but say so, and Next's button in the
 mode is greyed out. A big folder just queued is got ready a track at a
 time, so its songs come singable one by one. In the mode, a song held
-for START (the one after a song's end, or `N`'s) while it is still being
-prepared shows what is still to come for it; START then waits for it,
+for Next (the one after a song's end, or `N`'s) while it is still being
+prepared shows what is still to come for it; Next then waits for it,
 and the song starts, after its count-in, as soon as it is prepared
 (`N`, `P` or `esc` call that off).
 
@@ -1131,12 +1131,14 @@ neither (plain lyrics karaoke) the blur alone fills the window, and
 switching either mid-song fades the cover out or in. The
 voice plays at its level (as on the tab). Going in stops the song and
 holds it at its start (with shift, it goes on where it is). Each song
-waits for START (`enter`, `space`, or a click on START's gold pill low
-in the middle, there whenever a song waits, from the moment the mode
-opens, and under a song's result with the song it plays named before it;
-the only START there is to click): "3", "2", "1" are counted a second each, numbers over the
+waits for Next (`enter`, `space`, or a click on the gold Next button, an
+arrow pointing right on it, at the right edge a little above the middle,
+far from where the pointer brings the controls up; there whenever a song
+waits, from the moment the mode opens, and beside a song's result with
+the song it plays named under the diploma; the only Next there is to
+click): "3", "2", "1" are counted a second each, numbers over the
 lines that shrink and fade, and "1" ends as the first word is sung.
-While a song waits, and for 2 s after START, its title and artist show
+While a song waits, and for 2 s after Next, its title and artist show
 alone, then fade out over a second; the first line then shows alone
 until it is sung, the lines after it coming up with it. A song with an
 intro plays at once, the title over its start and the count over the
@@ -1153,7 +1155,7 @@ a break (a note, an empty timed line, `[Instrumental]`, `(Guitar solo)`,
 and written as `♪` in our timing file; it is not sung, and the mode
 shows one `♪` through each long pause. Only whole: heard from less than
 three seconds before the words (the mode entered there, a seek), there
-is none. A song's end holds the next one for START; `N` skips to the
+is none. A song's end holds the next one for Next; `N` skips to the
 next one, held the same way; `space` pauses, and a paused song goes on
 after the same count-in: nothing plays in the mode without one. The
 words light up a little before they are sung, `karaoke_lead` in the
@@ -1162,7 +1164,7 @@ up into their places as the song goes on. The controls (a translucent
 bar rising out of the picture in a soft gradient: previous, pause and
 next, the time heard, the seek bar and the length as on the other
 screens, the voice slider, the way out, and the keys under them) come up
-over the bottom of the picture, never moving the lines or START: only while the
+over the bottom of the picture, never moving the lines or Next: only while the
 pointer is near the bottom (the bottom 15 % of the screen, never less
 than the bar and two lines) and while a slider or the seek bar is held
 (no key brings them up), fading in and out over 0.2 s, and going 1.5 s
@@ -1174,14 +1176,14 @@ video player: after 2.5 s without a move, the controls up or not; any
 move shows it at once, and leaving the mode does too. It hides only over
 the window, on Windows, macOS and Linux alike (iced's hidden pointer).
 The seek bar does nothing
-while a song is held for START or counting in. `esc` is the only way
+while a song is held for Next or counting in. `esc` is the only way
 out: back to the tab, fullscreen ends, the voice still at its level,
 playback where it is (a count-in under way is called off).
 
 | Key | Karaoke mode |
 |---|---|
-| `enter` / `space` / a click on START | START (`space` pauses a song playing) |
-| `N` `P` | the next or previous song, held for START |
+| `enter` / `space` / a click on Next | Next (`space` pauses a song playing) |
+| `N` `P` | the next or previous song, held for Next |
 | `←` `→` | the voice 1 dB down, up (`shift`: 1 % of its travel) |
 | `i` / `r` | the next microphone / record 30 s for the echo canceller |
 | hold `p` | the demo sings: a perfect singer in place of the microphone, to show the game off ("AUTO" in the corner); that song's score is no best and its singing is not kept |
@@ -1484,8 +1486,8 @@ for each art and size); the lanes are a widget in their part of the screen
 Karaoke mode is the window's own too (`gui::screens::karaoke::mode`): a
 widget of its own fills the window (`gui::stage_view`, iced's shader
 widget: the backdrop as the ground and the stage over it, `gui::stage`:
-the lane, the lyrics, the count-in, the score, START, the result; START's
-pill takes the press), the controls' bar in iced's widgets over it; drawn
+the lane, the lyrics, the count-in, the score, Next, the result; Next's
+button takes the press), the controls' bar in iced's widgets over it; drawn
 on the processor (no GPU) the mode only says that karaoke needs one.
 
 The lanes draw on the processor only what they must: their columns sit on

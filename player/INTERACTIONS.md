@@ -195,7 +195,7 @@ stem keys are their mutes.
   queue row) plays at once, heard with no more presses, as does the next
   or previous track; only a seek stays paused. The same after a pause in
   Karaoke mode and `esc` (in the mode itself a paused song goes on only at
-  START, after its count-in: K3).
+  Next, after its count-in: K3).
   - `a_song_picked_while_paused_plays`
   - `a_double_click_on_a_queue_row_is_two_clicks_on_it` (the window)
   - `another_track_played_while_paused_plays` (engine)
@@ -269,7 +269,7 @@ really found, as its workers tell it: never a progress they did not tell.
   - `the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there`
   - `without_a_gpu_the_voice_turns_down_the_kept_stems`
 - **K1b.** Karaoke needs a GPU: without one no song is sung by any way in
-  (the tab's button and its keys, the palette, START), and the tab says
+  (the tab's button and its keys, the palette, Next), and the tab says
   why in one line: karaoke needs a graphics card, and why none was found
   (none on any backend, only a software renderer); while one is still
   looked for at the start, it says that. With one, a song is sung only
@@ -283,28 +283,28 @@ really found, as its workers tell it: never a progress they did not tell.
   for ever. Until then the tab's button is disabled, with why beside it
   as its hint (what is still being done for the song, job by job in the
   icons' words), entering the mode by any way is refused with the same on
-  the status line, and in the mode START is greyed out. Plain playback is
+  the status line, and in the mode Next is greyed out. Plain playback is
   never held up by any of it.
   - `no_karaoke_without_a_gpu`
   - `no_karaoke_for_a_song_until_it_is_fully_prepared`
   - `no_karaoke_for_a_song_until_its_lyrics_are_ready`
   - `what_cannot_be_done_here_holds_no_song_up`
-- **K1c.** In the mode, a song held for START while it is still being
+- **K1c.** In the mode, a song held for Next while it is still being
   prepared (a song's end held it, or `N`) is not started: the stage says
-  what is still to come for it, and START (`enter`, `space`, its pill)
+  what is still to come for it, and Next (`enter`, `space`, its button)
   plays nothing then but waits for it: the song starts, with its
   count-in, as soon as its last job is done. `N`, `P` or `esc` call the
   wait off; a song that turns out to have nothing to sing is refused, as
-  at START.
+  at Next.
   - `in_the_mode_the_next_song_waits_until_it_is_prepared`
 - **K2.** `esc` is the only way out of the mode (`tab`, the screens and the
   palette's tabs are not reached from it). Going in stops the song playing
-  (or paused) and holds it at its start, START showing at once; going out
+  (or paused) and holds it at its start, Next showing at once; going out
   never moves playback and comes back to the tab, the voice still at its
   level. Going in with shift (`shift+enter`, shift+click on the button)
   leaves the song where it is: nothing stops or rewinds, no count-in (for
   trying things out). The song the tab and the mode are about is one: the
-  one held for START, else the one heard, else the queue's current one,
+  one held for Next, else the one heard, else the queue's current one,
   else the one selected in the queue. Going back in after a song's end
   held the next one holds that one (the one the tab shows, its lyrics the
   ones checked), until another song plays.
@@ -313,18 +313,18 @@ really found, as its workers tell it: never a progress they did not tell.
   - `held_then_esc_then_enter_keeps_the_song_held`
   - `a_song_played_after_the_mode_is_the_one_held_next`
 - **K3.** In the mode, a song's end holds the next song at its start: only
-  START (`enter`, `space`, a click on START's pill) plays it, after its
-  count-in. `N` holds the next song for START. The mode arms no
+  Next (`enter`, `space`, a click on Next's button) plays it, after its
+  count-in. `N` holds the next song for Next. The mode arms no
   transitions (one armed is called off going in), and `g`, bar jumps and
   the seek keys do nothing there; the controls' seek bar seeks, except
-  while a song is held for START or counting in. Nothing plays in the mode
-  without a count-in: `space` pauses a song playing and is START
-  otherwise, and a paused song goes on at START only after the same
+  while a song is held for Next or counting in. Nothing plays in the mode
+  without a count-in: `space` pauses a song playing and is Next
+  otherwise, and a paused song goes on at Next only after the same
   count-in. A song played to its end (the game on; sought on or not, the
   last of the queue too, nothing scored too) shows its result while the
   next waits, a diploma headed "Jodeldiplom" filled in beat by beat, each
   moment with its sound (heard after the song, on the device that stays
-  open): the first START during its reveal completes it at once
+  open): the first Next during its reveal completes it at once
   (nothing played or sounded again), the next plays the song.
   - `holding_stops_after_a_track_and_names_the_next` (engine)
   - `the_result_is_heard_after_the_song`
@@ -361,17 +361,20 @@ really found, as its workers tell it: never a progress they did not tell.
   - `the_progress_goes_before_the_bar_comes` (unit)
   - `the_progress_gives_way_to_the_controls_bar` (unit)
   - `space_never_plays_a_song_without_its_count_in`
-- **K3c.** START has one place to click: the stage's gold pill, low in the
-  middle and clear above the controls' bar (shown or not, it never
-  moves), whenever the mode waits for START: entering the mode, a song
-  held, under a song's result (the song it plays named before it). A
-  press on it is START, as `enter` is (during a result's reveal it
+- **K3c.** Next has one place to click: the stage's gold button ("Next"
+  and an arrow pointing right), at the right edge a little above the
+  middle, far above where the pointer brings the controls up (at any
+  window size, so going to it never does; it never moves), whenever the
+  mode waits for Next: entering the mode, a song held, beside a song's
+  result (never on the diploma; the song it plays named under it). A
+  press on it is Next, as `enter` is (during a result's reveal it
   completes it, the next starts the song); greyed while that song cannot
   be sung yet. The pointer shows a hand over it. The controls have no
-  START (their play button is greyed while nothing plays; while a song
+  Next (their play button is greyed while nothing plays; while a song
   plays it pauses it, as `space` does).
-  - `the_start_pill_is_start_by_click_during_and_after_the_reveal`
-  - `start_shows_alone_above_the_bar_and_is_its_target` (unit)
+  - `next_is_next_by_click_during_and_after_the_reveal`
+  - `next_shows_alone_at_the_right_out_of_the_controls_reach` (unit)
+  - `next_stands_beside_the_diploma` (unit)
 - **K4.** A change of the voice's level never moves playback and never
   touches a transition (as S1). In the mode it is heard at once. The
   Voice slider is a position along its travel (`karaoke_voice`, 0 to
@@ -385,7 +388,7 @@ really found, as its workers tell it: never a progress they did not tell.
   - `a_stem_level_on_the_desk_is_heard_at_once_and_untouched_is_the_file_again` (engine)
 - **K5.** The count-in is "3", "2", "1", a second each, and "1" ends as the
   song's first word is sung (its words timed; else at its start). Before
-  it, from START, the song's title and artist show alone for 2 s and fade
+  it, from Next, the song's title and artist show alone for 2 s and fade
   out over 1 s; then the first line alone until it is sung. A song sung
   from 6 s in or later plays at once (title and count over its intro);
   one sung sooner starts that much later, after silence.
@@ -401,7 +404,7 @@ really found, as its workers tell it: never a progress they did not tell.
   - `esc_during_a_count_in_calls_the_start_off`
 - **K5b.** The count-in comes again, whatever started the song (the mode
   entered with shift, `N`, a seek): before its first sung line, as large as
-  START's, and before the singing comes back after a break of 8 s or more,
+  Next's, and before the singing comes back after a break of 8 s or more,
   half as large in the same place at the top: apart from the lines, never
   moving with them. Whole or not at all: where
   the song has been heard from without a jump (the mode entered there, a
@@ -526,7 +529,7 @@ really found, as its workers tell it: never a progress they did not tell.
   click; at 0 the file plays bit for bit again. The song's notes and the
   scoring move with the key heard, and Keep records it. It stays for the
   songs the queue runs into and for the song it is on started again
-  (START), one set while nothing plays is the next song's, and another
+  (Next), one set while nothing plays is the next song's, and another
   output or an engine restarted keeps it; another song picked is in its
   own key. No transition while the key is shifted, and no key change
   while one is set up; new settings wait for the song's own key or the

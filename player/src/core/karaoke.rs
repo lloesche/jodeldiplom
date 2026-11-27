@@ -18,7 +18,7 @@
 //! - entering it stops the song and holds it at its start (entering it
 //!   with shift, [`Op::KaraokeEnterHere`], leaves the song where it is),
 //!   and a song's end holds the next one there: only [`Op::KaraokeStart`]
-//!   (START's pill on the stage, `enter`, `space`) plays a song, with a
+//!   (Next's button on the stage, `enter`, `space`) plays a song, with a
 //!   count-in of three seconds ([`Countdown`]) that ends as its first word
 //!   is sung, drawn from what is heard: the song plays at once and the
 //!   count comes in its intro, or, when it is sung from less than three

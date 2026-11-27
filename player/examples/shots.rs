@@ -781,7 +781,7 @@ fn main() {
                 k
             }),
             ("karaoke", {
-                // The mode, the song paused: START shows.
+                // The mode, the song paused: Next shows.
                 let mut k = state.clone();
                 k.side = Side::Karaoke;
                 k.screen = Screen::Karaoke;
@@ -789,7 +789,7 @@ fn main() {
                 k
             }),
             ("karaoke-entered", {
-                // Into the mode from the tab, nothing playing: START shows.
+                // Into the mode from the tab, nothing playing: Next shows.
                 let mut k = state.clone();
                 k.side = Side::Karaoke;
                 k.playing.state = jodel_playback::PlayState::Stopped;

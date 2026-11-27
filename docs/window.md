@@ -157,7 +157,7 @@ this order (`gui::present::Painter::PARTS`):
    lit by the music, a triangle over the window reading it;
 2. **stage:** the stage's shapes (`gui::stage`, `gui::stage::gpu`): the lane,
    the bubbles as tubes with their liquid, the arrow, the lyrics, the
-   count-in, the score, the meter, the badge, START, the result's
+   count-in, the score, the meter, the badge, Next, the result's
    diploma;
 3. **bursts:** the particles (`gui::particles`);
 4. **composite:** the light that blooms (`gui::bloom`), drawn apart at a

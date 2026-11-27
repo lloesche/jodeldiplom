@@ -496,7 +496,7 @@ song at the desk's rate, alone at unity, still comes out bit for bit.
   paced device. A track nothing of which is written takes it from its
   first frame (a count-in's silence first).
 - **The rules**: the key stays for the tracks the queue runs into and for
-  the track it is on picked again (Karaoke's START replays the song held
+  the track it is on picked again (Karaoke's Next replays the song held
   at its start), and one asked while nothing plays is for the track
   picked next; another track picked puts it back at 0. While shifted, new
   settings wait for the key's way back or the next track and jumps are

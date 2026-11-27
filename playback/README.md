@@ -388,7 +388,7 @@ lengths are exact); otherwise the samples go to the output as read.
   frame. Back at 0 on the identity map the head goes back
   onto its own route as above and plays the file bit for bit. The key
   stays for the tracks the queue runs into and for the track it is on
-  picked again (Karaoke's START), and goes back to 0 when another track
+  picked again (Karaoke's Next), and goes back to 0 when another track
   is picked (`Play`, `PlayIn`, `PlayAt`, `Next`, `Previous`); one asked
   while nothing plays is for the track picked next. Positions
   and lyrics' timing are unchanged: the tempo is. No key change while a

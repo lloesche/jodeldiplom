@@ -1875,9 +1875,9 @@ fn heard_at(messages: &[Message]) -> Option<f32> {
 /// too), fading in and out, over the picture: the lines stay where they
 /// are. The window hears every move of the pointer over the mode, a
 /// button held or not, as a share of its height. In the bar the seek bar
-/// seeks, except while the song is held for START; the transport, the
+/// seeks, except while the song is held for Next; the transport, the
 /// voice slider and the way out do what their keys do. They have no
-/// START: that is the stage's pill.
+/// Next: that is the stage's button.
 #[test]
 fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     use jodeldiplom::view::karaoke::picture;

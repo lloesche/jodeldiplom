@@ -214,7 +214,7 @@ pub const KEYMAP: &[Binding] = &[
     b(Sync, &[ch('r')], Op::SyncAgain, "again"),
     b(Sync, &[ESC], Op::Back, "cancel"),
     // Karaoke mode.
-    b(KaraokeMode, &[ENTER], Op::KaraokeStart, "START: the song after a count-in, a second a number (space too)"),
+    b(KaraokeMode, &[ENTER], Op::KaraokeStart, "Next: the song after a count-in, a second a number (space too)"),
     b(KaraokeMode, &[ESC], Op::Back, "leave Karaoke mode, back to the tab (the stems as before)"),
     b(KaraokeMode, &[ch('i')], Op::MicNext, "the next microphone"),
     b(KaraokeMode, &[ch('r')], Op::KaraokeRecordEcho, "record 30 s for tuning the echo canceller"),

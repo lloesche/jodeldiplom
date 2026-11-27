@@ -3,9 +3,9 @@
 //! at the widget's place and size), on iced's GPU through its shader
 //! widget, its backdrop
 //! the ground and the stage over it ([`super::present::Painter`]): the
-//! lyrics, the lane, the count-in, the score, START, the result. The
+//! lyrics, the lane, the count-in, the score, Next, the result. The
 //! frames step the stage ([`StageView::frame`]); iced draws the last one
-//! stepped. The buttons the stage draws in pixels (START's pill) take the
+//! stepped. The buttons the stage draws in pixels (Next's button) take the
 //! main button's press here and show the hand
 //! ([`super::stage::Stage::targets`]).
 //!
@@ -172,7 +172,7 @@ impl StageView {
 
     /// What a press of the main button at `at` (the window's points) does:
     /// the button the stage drew there in the frame shown, if there is
-    /// one (START's pill).
+    /// one (Next's button).
     pub fn pressed(&self, at: Point) -> Option<Action> {
         let shared = self.lock();
         if !shared.shown || !shared.gpu.unwrap_or(true) {
@@ -321,7 +321,7 @@ impl shader::Program<Message> for Input {
         Frame(self.0.clone())
     }
 
-    /// The hand over a button the stage drew (START's pill).
+    /// The hand over a button the stage drew (Next's button).
     fn mouse_interaction(
         &self,
         _state: &(),

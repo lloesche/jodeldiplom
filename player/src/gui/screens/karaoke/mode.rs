@@ -1,6 +1,6 @@
 //! Karaoke mode in the window's own widgets: the stage over the whole
 //! window ([`StageView`]: the lyrics, the lane, the count-in, the score,
-//! START, the result; karaoke needs a GPU, so a window drawn without one
+//! Next, the result; karaoke needs a GPU, so a window drawn without one
 //! only says so: [`NO_STAGE`]); and its controls' bar over the bottom while
 //! the pointer is near it ([`crate::core::karaoke::controls`]): the
 //! transport, the time heard, the seek bar and the length, the voice
@@ -31,8 +31,9 @@ use crate::gui::widgets::{self, Icon};
 use crate::gui::window::Message;
 use crate::view::bottom::Seek;
 
-/// The controls' bar's height in points: what the stage keeps START clear
-/// above ([`crate::view::karaoke::KaraokePicture::bar`]).
+/// The controls' bar's height in points: what the stage keeps the line
+/// under a result clear above
+/// ([`crate::view::karaoke::KaraokePicture::bar`]).
 pub const BAR: f32 = 96.0;
 /// How far its gradient rises over the stage above it, in points.
 const RISE: f32 = 56.0;

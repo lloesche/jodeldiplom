@@ -406,7 +406,7 @@ fn notes(state: &State) -> Vec<&'static str> {
     };
     vec![
         gpu,
-        "Each song waits for START, then counts in 3, 2, 1, a second each; again after a break of 8 s.",
+        "Each song waits for Next, then counts in 3, 2, 1, a second each; again after a break of 8 s.",
         "The microphone only listens: it is never played; the music stays as it is.",
         "The music's echo is taken out of what it hears; your voice never is.",
         "esc in the mode comes back here.",

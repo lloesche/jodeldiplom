@@ -740,16 +740,16 @@ fn the_speech_recogniser_is_found_beside_the_speech_model() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// In the mode, START is the stage's pill and nothing of the cells; the
+/// In the mode, Next is the stage's button and nothing of the cells; the
 /// game is set on the tab (the window's switches there:
 /// `the_sliders_and_buttons_take_clicks`), not in the mode.
 #[test]
-fn start_is_the_stages_pill_and_the_game_is_set_on_the_tab() {
+fn next_is_the_stages_button_and_the_game_is_set_on_the_tab() {
     let mut state = tab();
-    // In the mode, waiting: START is the stage's pill, from the moment the
+    // In the mode, waiting: Next is the stage's button, from the moment the
     // mode opens, never among the controls (which wait for the pointer
-    // near the bottom; a press on the pill is START:
-    // `the_start_pill_is_start_by_click_during_and_after_the_reveal`).
+    // near the bottom; a press on the button is Next:
+    // `next_is_next_by_click_during_and_after_the_reveal`).
     op(&mut state, Op::KaraokeEnter);
     stopped(&mut state);
     assert!(!karaoke::controls::shown(&state));
