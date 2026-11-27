@@ -953,9 +953,23 @@ fn the_small_kernels_match_the_processor() {
         (1, 0, 21 * 40),
     )
     .unwrap();
-    for r in 0..37 {
-        for c in 0..21 {
-            assert_eq!(got[c * 40 + r], m[r * 21 + c], "transpose");
-        }
-    }
+    // Every value out of place, and where in the source each came from
+    // (its row and column; none: not from the source), so a fault says
+    // its shape.
+    let wrong: Vec<String> = (0..37 * 21)
+        .filter(|&i| got[(i % 21) * 40 + i / 21] != m[i])
+        .map(|i| {
+            let (r, c) = (i / 21, i % 21);
+            let had = got[c * 40 + r];
+            let from = m.iter().position(|&v| v == had).map(|j| (j / 21, j % 21));
+            format!("({r},{c}) has {had} from {from:?}")
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "transpose: {} of {} out of place, first {:?}",
+        wrong.len(),
+        37 * 21,
+        &wrong[..wrong.len().min(12)]
+    );
 }
