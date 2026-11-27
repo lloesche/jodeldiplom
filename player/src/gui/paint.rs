@@ -127,7 +127,7 @@ pub struct Paint {
     /// bar draws it).
     pub spectrum: SpectrumFrame,
     /// What the guards measure on the Shader tab's picture.
-    readout: super::backdrop::looks::Readout,
+    readout: super::screens::shader::readout::Readout,
 }
 
 impl Paint {
@@ -312,7 +312,7 @@ impl Paint {
             .frame((app, song), gpu, heard, size, backdrop_dt);
         if tab {
             let small = self.backdrop.picture(app.art());
-            if let Some(r) = self.readout.step(app, (backdrop.as_ref(), &small), drawing) {
+            if let Some(r) = self.readout.step((backdrop.as_ref(), &small), drawing) {
                 app.dispatch(Action::Shader(
                     crate::core::shader_tab::ShaderAction::Readout(r),
                 ));
@@ -324,7 +324,7 @@ impl Paint {
         let lanes_gpu = lanes.gpu();
         lanes.show(spots, place.scale, lanes_gpu);
         lanes.frame(heard);
-        if crate::core::karaoke::in_mode(&app.state) || tab {
+        if crate::core::karaoke::stage_shown(&app.state) {
             let bar = if tab {
                 0.0
             } else {

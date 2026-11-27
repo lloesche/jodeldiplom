@@ -14,7 +14,7 @@
 
 use std::f32::consts::{FRAC_1_SQRT_2, PI, TAU};
 
-use crate::gui::wgsl_math::{clamp01, smoothstep};
+use jodel_looks::math::{sat, smoothstep};
 
 /// The angle between two of a star's points.
 const POINT: f32 = TAU / 5.0;
@@ -71,7 +71,7 @@ pub fn sticker_at(x: f32, y: f32, glint: f32) -> [f32; 3] {
     let side = if off < 0.0 { -1.0 } else { 1.0 };
     let facing = k * POINT + side * 1.15;
     let mut tone = 0.8 + 0.32 * (facing - LIGHT).cos();
-    tone += 0.3 * line(off * r, 0.03) * clamp01(r * 3.0);
+    tone += 0.3 * line(off * r, 0.03) * sat(r * 3.0);
     tone -= 0.15 * line((POINT * 0.5 - off.abs()) * r, 0.03);
     tone *= 1.0 - 0.35 * line(d + 0.02, 0.05);
     let sweep = line((x * 0.6 + y * 0.8) - glint, 0.22) * 0.75;

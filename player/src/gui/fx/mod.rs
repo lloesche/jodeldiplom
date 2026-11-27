@@ -58,7 +58,7 @@ pub mod step_up;
 pub mod wgsl;
 
 pub use board::{Board, Frame, Live};
-pub use music::{Music, Signal};
+pub use music::Music;
 
 use super::particles::Spray;
 use super::stage::LaneBox;
@@ -164,7 +164,7 @@ pub struct Mod {
     /// What it moves.
     pub param: Param,
     /// What moves it.
-    pub by: Signal,
+    pub by: jodel_looks::Driver,
     /// How far.
     pub amount: f32,
 }

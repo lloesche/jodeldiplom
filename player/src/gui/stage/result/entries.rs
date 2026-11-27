@@ -9,7 +9,7 @@
 
 use super::super::{disc, rgba, Face, Rgb, Stage, GOLD, WHITE};
 use super::sheet::{ENTRIES, LINE_FROM, LINE_TO};
-use super::{bump, burst, clamp01, fade, Pen, ResultShown, Room, Written, PRINT};
+use super::{bump, burst, fade, sat, Pen, ResultShown, Room, Written, PRINT};
 use crate::core::karaoke::result::{Beat, STAMP_DOWN, STREAK_WRITE, WORDS_FILL};
 use crate::gui::particles::confetti::shower;
 use crate::gui::particles::Kind;
@@ -131,7 +131,7 @@ impl Stage {
     ) -> (f32, f32) {
         let px = room.entry_px();
         let at = room.entry(i, px);
-        let share = clamp01(age / over);
+        let share = sat(age / over);
         let pen = rgba(room.inks.pen, 0.95);
         let text = (Face::NUMBER, text);
         let w = self.written(
@@ -208,7 +208,7 @@ impl Stage {
         match (new, calm) {
             (Some(a), _) => {
                 self.rubber_stamp(d, room, words, NEW_BEST, (t, a));
-                let share = clamp01((a - 0.3) / BEST_WRITE);
+                let share = sat((a - 0.3) / BEST_WRITE);
                 let pen = (Face::NUMBER, rgba(room.inks.pen, 0.9));
                 self.best_line(d, room, words, pen, Pen::writing(share));
                 let start = t - f64::from(a);
@@ -283,7 +283,7 @@ impl Stage {
         let ((cx, cy), k) = self.stamp_place(room, words, text);
         let down = STAMP_DOWN as f32;
         let (scale, shows) = if age < down {
-            (1.9 - 0.9 * (age / down) * (age / down), clamp01(age / 0.04))
+            (1.9 - 0.9 * (age / down) * (age / down), sat(age / 0.04))
         } else {
             let k = age - down;
             (1.0 + 0.07 * (-k * 12.0).exp() * (k * 34.0).cos(), 1.0)

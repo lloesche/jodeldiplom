@@ -164,20 +164,19 @@ the stage's shader; the fire every burning effect draws is one
 ## The music clock: `player/src/gui/fx/music.rs`
 
 Everything that moves with the song moves by one clock, worked out once a
-frame from the beat analysis's grid and the stems' levels (`fx::Music`):
-
-| Signal | What |
-|---|---|
-| `BeatPhase`, `BarPhase` | where it is in the beat and the bar, 0 to 1 |
-| `Beat`, `Downbeat` | a pulse on each beat and each bar's first, falling away |
-| `Tempo` | 1 at 120 beats a minute |
-| `Level`, `Stem(stem)` | how loud the music and each stem are |
-| `Melody`, `Sung` | the melody's pitch and the singer's |
-| `Progress`, `Singing`, `Section` | how far the song has gone, whether a line is being sung, a swell as a section starts |
-| `Sure` | how sure the beat grid is here: where it is unsure the beat signals fade and the looks run on their own clock |
+frame (`fx::Music`) through the one reader of the music,
+`jodel_looks::drive`: the beat from the analysis's grid (`drive::beat`:
+the phases, the pulses on each beat and each bar's first, the tempo, how
+sure the grid is: where it is unsure the beat fades and the looks run on
+their own clock), the lanes' levels against how loud they get
+(`drive::Range`), the melody's pitch and a swell as a section starts. The
+song's look moves by the same numbers: every driver of the looks'
+catalogue (`jodel_looks::Driver`: the song's curves read at the time, the
+singing's set live over them by `core::karaoke::live`), the frame's
+`Signals`, which the backdrop reads once for the look and the effects.
 
 A row can move an effect with the music through `Mod { param, by, amount
-}`: `param` is its strength or one of its look's numbers, `by` a signal,
+}`: `param` is its strength or one of its look's numbers, `by` a driver,
 as a synth routes a modulation (no row uses one today: the effects that
 move with the beat, the glow, the bulbs, the fire, do it in their own
 maths). The same signals go to the stage's pipelines as a small uniform,

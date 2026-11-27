@@ -66,7 +66,7 @@ pub(super) struct Painter {
     backdrop: super::backdrop::gpu::BackdropPass,
     /// The song's look over the backdrop, where one draws: the ground
     /// reads its output instead.
-    looks: super::backdrop::looks::LookPass,
+    looks: super::backdrop::song_look::LookPass,
     soft: wgpu::Sampler,
     bound: (u64, u64),
     /// The GPU's time after each step of a frame, where it is measured
@@ -121,7 +121,7 @@ impl Painter {
         let light = super::bloom::Light::new(&device, format);
         // The backdrop made in linear light where the frame takes it so.
         let backdrop = super::backdrop::gpu::BackdropPass::new(&device, &queue, format.is_srgb());
-        let looks = super::backdrop::looks::LookPass::new(&device, format.is_srgb());
+        let looks = super::backdrop::song_look::LookPass::new(&device, format.is_srgb());
         let soft = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("jodeldiplom ground"),
             mag_filter: wgpu::FilterMode::Linear,

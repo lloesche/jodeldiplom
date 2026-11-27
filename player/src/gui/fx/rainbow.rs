@@ -18,8 +18,8 @@ use crate::gui::shine::{hue, shine_at, Glow, SHOWS, WHOLE};
 use crate::gui::sparks::TAU;
 use crate::gui::stage::gpu::{Instance, Shape};
 use crate::gui::stage::LaneBox;
-use crate::gui::wgsl_math::{mix3, round_box, smoothstep};
 use crate::tiers::{held, wgsl_array, TIERS};
+use jodel_looks::math::{mix3, round_box, smoothstep, v2};
 
 /// A streak's rainbow bands fanning out from (`shape[0]`, `shape[1]`)
 /// over a lane `shape[2]`, `shape[3]` half wide and high, within the lane
@@ -155,14 +155,22 @@ pub fn rim(d: f32, x: f32, half_y: f32, s: &Glow, time: f32) -> [f32; 3] {
 /// The rainbow edge's light at `p` round a bar at `c`, `half` its size
 /// (its corners a little round), `s` at `time` ([`rim`]).
 pub fn rim_at(p: (f32, f32), c: (f32, f32), half: (f32, f32), s: &Glow, time: f32) -> [f32; 3] {
-    let d = round_box((p.0 - c.0, p.1 - c.1), half, half.0.min(half.1) * 0.3);
+    let d = round_box(
+        v2(p.0 - c.0, p.1 - c.1),
+        v2(half.0, half.1),
+        half.0.min(half.1) * 0.3,
+    );
     rim(d, p.0, half.1, s, time)
 }
 
 /// How much of the bands shows at `p` in a lane at `c`, `half` its size:
 /// all of it well inside, fading to none at its edge.
 pub fn lane_mask(p: (f32, f32), c: (f32, f32), half: (f32, f32)) -> f32 {
-    let d = round_box((p.0 - c.0, p.1 - c.1), half, half.0.min(half.1));
+    let d = round_box(
+        v2(p.0 - c.0, p.1 - c.1),
+        v2(half.0, half.1),
+        half.0.min(half.1),
+    );
     1.0 - smoothstep(-half.1 * 0.5, 0.0, d)
 }
 

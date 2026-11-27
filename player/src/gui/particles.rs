@@ -27,9 +27,9 @@ pub use motions::{Drawing, Motion, LOOKS, MOTIONS};
 
 use super::fx::Music;
 use super::sparks::{rand, TAU, WHITE};
-use super::wgsl_math::mix3;
 use crate::gui::stage::gpu::{Screen, SCREEN_BYTES};
 use crate::view::bubbles::BURST;
+use jodel_looks::math::mix3;
 use shards::{DROPS, FIRST_DROP, FIRST_SHARD};
 
 /// The sparkles a bubble throws.

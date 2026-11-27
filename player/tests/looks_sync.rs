@@ -17,8 +17,8 @@ use jodel_playback::{Captures, PlayState};
 use jodeldiplom::app::{App, AppClock, AppOptions, MemoryOutput, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, Rhythmed, Side};
-use jodeldiplom::gui::backdrop::looks::Looks;
 use jodeldiplom::gui::backdrop::music::Song;
+use jodeldiplom::gui::backdrop::song_look::Looks;
 
 const RATE: u32 = 48_000;
 const GUARD: Duration = Duration::from_secs(60);
@@ -170,10 +170,11 @@ fn the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause() {
     let mut looks = Looks::default();
     let mut seen = Vec::new();
     let mut look_at = |app: &App, heard: f64, seen: &mut Vec<Seen>| {
+        let song_heard = looks.hear(&app.state, Some(&song), heard);
         let cue = looks
             .cue(
                 &app.state,
-                (Some(&song), None),
+                (None, &song_heard),
                 (heard, 1.0 / 60.0),
                 (320, 180),
             )
@@ -233,9 +234,12 @@ fn the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause() {
     // where it held, one run with what came before it; the seek starts
     // another.
     assert!(runs.len() >= 2, "before and after the seek: {}", runs.len());
+    let bar_starts: Vec<f64> = (made.analysis.downbeats.iter())
+        .map(|&i| made.analysis.beats[i])
+        .collect();
     let (mut bars, mut kicks) = (0, 0);
     for run in &runs {
-        bars += lands(run, curves.bars(), |s| s.downbeat);
+        bars += lands(run, &bar_starts, |s| s.downbeat);
         kicks += lands(run, curves.kicks(), |s| s.kick);
     }
     assert!(bars >= 4 && kicks >= 8, "{bars} bars, {kicks} kicks");

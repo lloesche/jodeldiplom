@@ -1,7 +1,11 @@
 //! What the workspace's tests share, a dev-dependency only: one real-time
 //! test of a binary at a time ([`real_time`], [`heavy`]), the repository's
 //! PCM fixtures ([`fixture`]), a temporary folder removed when it goes
-//! ([`TempDir`]), and an allocator that counts its calls ([`Counting`]).
+//! ([`TempDir`]), an allocator that counts its calls ([`Counting`]), and
+//! with the `gpu` feature the shader checks' compute runner (`gpu`).
+
+#[cfg(feature = "gpu")]
+pub mod gpu;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};

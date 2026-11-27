@@ -523,9 +523,9 @@ mod tests {
                 c[0] + c[1] + c[2]
             }
             k if k == glow::GLOW => {
-                let d = crate::gui::wgsl_math::round_box(
-                    (p.0 - i.shape[0], p.1 - i.shape[1]),
-                    (i.shape[2], i.shape[3]),
+                let d = jodel_looks::math::round_box(
+                    jodel_looks::math::v2(p.0 - i.shape[0], p.1 - i.shape[1]),
+                    jodel_looks::math::v2(i.shape[2], i.shape[3]),
                     i.shape[3],
                 );
                 let [sure, kick, _, _] = i.color2;

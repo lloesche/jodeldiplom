@@ -73,9 +73,9 @@ use std::time::Instant;
 use jodeldiplom::core::karaoke::result::{Reveal, Shown, SongResult, UNROLL};
 use jodeldiplom::core::shine::{Reference, Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::backdrop::looks::LookCue;
 use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::scenes::Showing;
+use jodeldiplom::gui::backdrop::song_look::LookCue;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
 use jodeldiplom::gui::present::Offscreen;
@@ -430,12 +430,13 @@ impl Rig<'_> {
         let last = singing.last_phrase().map(|p| p.end);
         let phrase = self.made > 1 && last.is_some() && last != self.phrase;
         self.phrase = last;
+        let signals = (self.look.as_ref()).map_or(jodel_looks::Signals::QUIET, |(_, c)| c.at(now));
         let cue = Cue {
             art: Some(self.art.clone()),
             layers: Some(self.layers.clone()),
             heard: Hearing {
                 levels: levels(),
-                glow: jodeldiplom::gui::streak::level(singing, true),
+                glow: singing.glow(true),
                 section: false,
                 phrase,
                 music: steady(now),
@@ -445,13 +446,14 @@ impl Rig<'_> {
                 look: Arc::clone(look),
                 strength: 1.0,
                 t: now,
-                signals: curves.at(now),
+                signals,
                 curves: Some(Arc::clone(curves)),
                 seed: jodel_looks::seed(&look.id, "frame_cost"),
-                band: Some((0.68, 0.86)),
+                band: Some(jodel_looks::BAND),
             }),
             story: self.story.clone(),
             at: now,
+            signals,
         };
         let backdrop = self.visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
         let picture = KaraokePicture {

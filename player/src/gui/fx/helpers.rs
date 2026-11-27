@@ -8,7 +8,7 @@
 //! carries any effect's code ([`crate::gui::stage::gpu::shader`]).
 
 pub(super) use crate::gui::stage::shapes::glory::{lattice, vnoise};
-pub(super) use crate::gui::wgsl_math::{clamp01, mix3, smoothstep};
+pub(super) use jodel_looks::math::{mix3, sat, smoothstep};
 
 /// Fire's colour at `heat` (0 to 1): deep red, red, orange, yellow, white
 /// hot; `ghost` (0 to 1) of the way to a ghostly green, the same heat in
@@ -23,7 +23,7 @@ pub(super) fn heat(k: f32, ghost: f32) -> [f32; 3] {
     let c = mix3(c, [1.0, 0.88, 0.35], smoothstep(0.5, 0.8, k));
     let c = mix3(c, [1.0, 0.98, 0.85], smoothstep(0.8, 1.0, k));
     let green = [c[2] * 0.8 + c[1] * 0.25, c[0], c[1] * 0.45 + c[2] * 0.5];
-    mix3(c, green, clamp01(ghost))
+    mix3(c, green, sat(ghost))
 }
 
 /// Fire's heat at `a` along the line it burns from and `d` out from it

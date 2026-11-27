@@ -91,7 +91,7 @@ fn frame_at(
             layers: Some(layers.clone()),
             heard: Hearing {
                 levels: levels(),
-                glow: jodeldiplom::gui::streak::level(&singing, true),
+                glow: singing.glow(true),
                 ..Hearing::default()
             },
             ..Cue::default()

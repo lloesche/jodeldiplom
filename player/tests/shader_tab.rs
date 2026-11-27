@@ -19,9 +19,9 @@ use jodel_looks::{presets, Driver, Look};
 use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::shader_tab::{self, ShaderAction};
+use jodeldiplom::core::shader_tab::{self, KnobRef, Part, ShaderAction};
 use jodeldiplom::core::{update, Action, Effect, Side, State};
-use jodeldiplom::gui::backdrop::looks::LookCue;
+use jodeldiplom::gui::backdrop::song_look::LookCue;
 use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::pointer::Grab;
 use jodeldiplom::gui::shader;
@@ -139,14 +139,17 @@ fn a_knob_s_driver_is_chosen_and_a_pass_added() {
     assert_eq!(pass.name, "grain");
     let natural = shader_tab::drive(layer, pass, 0);
     assert_eq!(natural, Some((Driver::Bass, 0.8)), "the pass's own");
-    act(&mut state, ShaderAction::Driver { knob: 0, by: 1 });
+    act(&mut state, ShaderAction::Driver { slot: 0, by: 1 });
     let (_, layer, pass) = shader_tab::layer(&state).unwrap();
     let next = Driver::ALL[Driver::Bass as usize + 1];
     assert_eq!(shader_tab::drive(layer, pass, 0), Some((next, 0.8)));
     act(
         &mut state,
-        ShaderAction::Amount {
-            knob: 0,
+        ShaderAction::Set {
+            at: KnobRef {
+                slot: 0,
+                part: Part::Amount,
+            },
             share: 0.0,
         },
     );
@@ -191,7 +194,11 @@ fn a_shader_slider_moves_its_knob() {
     state.shader.layer = 2;
     gui.show(state);
     let _ = gui.update(Message::Frame(Instant::now()));
-    let id: Id = shader::knob_id(0, false).into();
+    let knob = KnobRef {
+        slot: 0,
+        part: Part::Value,
+    };
+    let id: Id = shader::knob_id(knob).into();
     let track = simulator(&gui).find(id).unwrap().bounds();
     let mut sim = simulator(&gui);
     sim.point_at(Point::new(track.x + track.width - 0.5, track.center_y()));
@@ -200,7 +207,7 @@ fn a_shader_slider_moves_its_knob() {
     ))]);
     let pressed: Vec<Message> = sim.into_messages().collect();
     assert!(
-        matches!(&pressed[..], [Message::Grab(Grab::ShaderKnob(0, false, b), _)] if *b == track),
+        matches!(&pressed[..], [Message::Grab(Grab::ShaderKnob(k, b), _)] if *k == knob && *b == track),
         "{pressed:?}"
     );
     for m in pressed {
@@ -211,7 +218,7 @@ fn a_shader_slider_moves_its_knob() {
         let (_, layer, pass) = shader_tab::layer(s).unwrap();
         shader_tab::value(layer, pass, 0)
     };
-    assert_eq!(gui.state().unwrap().shader.dragging, Some((0, false)));
+    assert_eq!(gui.state().unwrap().shader.dragging, Some(knob));
     assert!((amount(&gui) - 1.0).abs() < 0.01, "{}", amount(&gui));
     hear(
         &mut gui,

@@ -5,6 +5,15 @@ edition = "2021"
 rust-version = "1.85"
 license = "MIT"
 publish = false
-description = "What the workspace's tests share: one real-time test at a time, the PCM fixtures, a temporary folder that goes, an allocator that counts"
+description = "What the workspace's tests share: one real-time test at a time, the PCM fixtures, a temporary folder that goes, an allocator that counts, and (gpu) the shader checks' compute runner"
+
+[features]
+# The shader checks' small compute runner, on the window's GPU.
+gpu = ["dep:jodel-gpu", "dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dependencies]
+# The window's GPU and the turn its devices are set up in (gpu).
+jodel-gpu = { path = "../gpu", optional = true }
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"], optional = true }
+pollster = { version = "1.0.1", optional = true }
+bytemuck = { version = "1.25.2", optional = true }

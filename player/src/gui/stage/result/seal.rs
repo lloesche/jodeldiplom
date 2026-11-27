@@ -13,8 +13,7 @@
 
 use super::super::{disc, pill, rgba, segment, Face, Rgb, Stage, GOLD, GOLD_TOP, WHITE};
 use super::{
-    burst, clamp01, fade, land, shape, sparkle, sticker, Pen, ResultShown, Room, Tint, Written,
-    PRINT,
+    burst, fade, land, sat, shape, sparkle, sticker, Pen, ResultShown, Room, Tint, Written, PRINT,
 };
 use crate::core::karaoke::result::{ease_out, verdict_words, Medal, Verdict, DROP, GRADE_WRITE};
 use crate::gui::particles::Kind;
@@ -161,7 +160,7 @@ impl Stage {
         let c = room.at(SEAL_AT.0, SEAL_AT.1);
         // A seal shows from its fall.
         let shown_from = if look.medal.is_some() { -FALL } else { 0.0 };
-        let waiting = hit.map_or(1.0, |h| 1.0 - clamp01((h - shown_from) / 0.12));
+        let waiting = hit.map_or(1.0, |h| 1.0 - sat((h - shown_from) / 0.12));
         self.slot(d, room, (c, radius), t, waiting);
         let Some(hit) = hit.filter(|&h| h >= shown_from) else {
             return;
@@ -208,7 +207,7 @@ impl Stage {
         let grade = r.verdict().grade();
         let px = (look.grade_px * s).round().max(12.0);
         let (grade, px) = self.fitted(Face::NUMBER, grade, px, room.across(0.6));
-        let share = clamp01(hit / GRADE_WRITE as f32);
+        let share = sat(hit / GRADE_WRITE as f32);
         let c = room.at(0.5, GRADE_Y);
         let pen = rgba(look.ink.unwrap_or(room.inks.pen), 0.95);
         let text = (Face::NUMBER, &*grade);
@@ -259,12 +258,12 @@ impl Stage {
         let t = shown.t;
         let (light, deep) = (room.look.light, room.look.deep);
         let scale = if hit < 0.0 {
-            let falling = clamp01((hit + FALL) / FALL);
+            let falling = sat((hit + FALL) / FALL);
             2.2 - 1.2 * falling * falling
         } else {
             1.0 + 0.1 * (-hit * 10.0).exp() * (hit * 28.0).cos()
         };
-        let shows = clamp01((hit + FALL) / 0.08);
+        let shows = sat((hit + FALL) / 0.08);
         let r_now = radius * scale;
         ribbons(d, (c, r_now), tint, shows);
         // Its sheen sweeping over it as it lands, then every few seconds

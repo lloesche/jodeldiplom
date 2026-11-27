@@ -154,7 +154,15 @@ pub fn strength(
         for back in (0..=run_in).rev() {
             let at = (t - back as f64 * f64::from(dt)).max(0.0);
             let signals = curves.map_or(crate::Signals::QUIET, |c| c.at(at));
-            let moment = crate::Moment::measuring(size, (at, dt), prev.is_none(), (seed, strength));
+            let moment = crate::Moment {
+                size,
+                t: at,
+                seed,
+                dt,
+                forget: prev.is_none(),
+                strength,
+                ..crate::Moment::MEASURING
+            };
             prev = Some(crate::render::draw(
                 &look.frame(&moment, &signals, curves),
                 picture,
@@ -216,8 +224,14 @@ pub fn over_song(
     for f in 0..frames {
         let t = f as f64 / f64::from(fps);
         let moment = crate::Moment {
+            size,
+            t,
+            seed,
+            dt: 1.0 / fps,
+            forget: f == 0,
             band: Some(band),
-            ..crate::Moment::measuring(size, (t, 1.0 / fps), f == 0, (seed, strength))
+            strength,
+            ..crate::Moment::MEASURING
         };
         let frame = crate::render::draw(
             &look.frame(&moment, &curves.at(t), Some(curves)),
@@ -295,32 +309,22 @@ pub fn flashes(lights: &[f32], fps: f32) -> usize {
         if l > lights[hi] {
             hi = i;
         }
-        match rising {
-            None => {
-                if l - lights[lo] >= 0.1 && lights[lo].min(l) < 0.8 {
-                    turns.push((lo, lights[lo]));
-                    rising = Some(true);
-                    hi = i;
-                } else if lights[hi] - l >= 0.1 && lights[hi].min(l) < 0.8 {
-                    turns.push((hi, lights[hi]));
-                    rising = Some(false);
-                    lo = i;
-                }
+        // A change of a tenth up from the darkest since the last turn, or
+        // down from the lightest, its darker side under 0.8.
+        let up = l - lights[lo] >= 0.1 && lights[lo].min(l) < 0.8;
+        let down = lights[hi] - l >= 0.1 && lights[hi].min(l) < 0.8;
+        match (rising, up, down) {
+            (None | Some(false), true, _) => {
+                turns.push((lo, lights[lo]));
+                rising = Some(true);
+                hi = i;
             }
-            Some(true) => {
-                if lights[hi] - l >= 0.1 && l.min(lights[hi]) < 0.8 {
-                    turns.push((hi, lights[hi]));
-                    rising = Some(false);
-                    lo = i;
-                }
+            (None | Some(true), _, true) => {
+                turns.push((hi, lights[hi]));
+                rising = Some(false);
+                lo = i;
             }
-            Some(false) => {
-                if l - lights[lo] >= 0.1 && l.min(lights[lo]) < 0.8 {
-                    turns.push((lo, lights[lo]));
-                    rising = Some(true);
-                    hi = i;
-                }
-            }
+            _ => {}
         }
     }
     // Each two changes a flash; the most whose changes start within a

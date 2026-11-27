@@ -8,13 +8,13 @@
 //! the examiner signs it in one stroke and writes the day.
 
 use super::super::{disc, rgba, segment, Face, Rgb, Stage, GOLD, GOLD_TOP};
-use super::{burst, clamp01, fade, land, sticker, Pen, ResultShown, Room, Tint, Written, PRINT};
+use super::{burst, fade, land, sat, sticker, Pen, ResultShown, Room, Tint, Written, PRINT};
 use crate::core::karaoke::result::signature::signature_point;
 use crate::core::karaoke::result::{signed, unrolled, Beat, Side, DATE_FROM, DATING};
 use crate::gui::particles::Kind;
 use crate::gui::stage::gpu::{Instance, Shape, StageFrame};
-use crate::gui::wgsl_math::mix3;
 use crate::view::karaoke::DIPLOMA;
+use jodel_looks::math::mix3;
 /// Where the entries' lines are down the sheet, and where they run across
 /// (their names right of the first).
 pub(super) const ENTRIES: [f32; 3] = [0.43, 0.505, 0.575];
@@ -96,7 +96,7 @@ impl Stage {
             strain: [0.0; 4],
         });
         // What shows of something printed `fy` down the sheet.
-        let printed = |fy: f32| clamp01((open - fy) * sh / (3.0 * s));
+        let printed = |fy: f32| sat((open - fy) * sh / (3.0 * s));
         let ink = |a: f32| rgba(inks.ink, a);
         // The heading, two gold stars popping on beside it: one word, whole
         // (smaller where the sheet is narrow, never cut short).
@@ -255,7 +255,7 @@ impl Stage {
         };
         let px = (3.2 * s).round().max(10.0);
         let (date, px) = self.fitted(Face::NUMBER, date, px, room.across(0.28));
-        let share = clamp01((a - DATE_FROM as f32) / DATING as f32);
+        let share = sat((a - DATE_FROM as f32) / DATING as f32);
         let at = (room.at(DATE_X, SIGNED_Y), 0.5);
         let text = (Face::NUMBER, &*date);
         self.written(

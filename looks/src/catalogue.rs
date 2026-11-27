@@ -11,21 +11,10 @@
 use serde::Serialize;
 
 use crate::drive::{Driver, Speed};
-use crate::pass::{Family, Knob, Natural};
+use crate::pass::{Family, Pass};
 use crate::passes::PASSES;
 use crate::presets::Kind;
 use crate::{guard, presets};
-
-#[derive(Serialize)]
-struct PassEntry {
-    name: &'static str,
-    family: Family,
-    about: &'static str,
-    cost: f32,
-    knobs: &'static [Knob],
-    moved_by: &'static [Natural],
-    pairs: &'static [&'static str],
-}
 
 #[derive(Serialize)]
 struct DriverEntry {
@@ -55,7 +44,7 @@ struct Rules {
 #[derive(Serialize)]
 struct Catalogue<'a> {
     rules: Rules,
-    passes: Vec<PassEntry>,
+    passes: Vec<&'static Pass>,
     drivers: Vec<DriverEntry>,
     presets: Vec<PresetEntry<'a>>,
 }
@@ -69,18 +58,7 @@ fn catalogue() -> Catalogue<'static> {
             slow_light: guard::SLOW_LIGHT,
             lyric_ceiling: guard::CEILING,
         },
-        passes: PASSES
-            .iter()
-            .map(|p| PassEntry {
-                name: p.name,
-                family: p.family,
-                about: p.about,
-                cost: p.cost,
-                knobs: p.knobs,
-                moved_by: p.natural,
-                pairs: p.pairs,
-            })
-            .collect(),
+        passes: PASSES.to_vec(),
         drivers: Driver::ALL
             .iter()
             .map(|d| DriverEntry {
@@ -148,12 +126,12 @@ pub fn brief() -> &'static str {
                 knobs.join(", ")
             ));
         }
-        for (speed, name) in [(Speed::Fast, "fast"), (Speed::Slow, "slow")] {
+        for speed in [Speed::Fast, Speed::Slow] {
             let of: Vec<&str> = (c.drivers.iter())
                 .filter(|d| d.speed == speed)
                 .map(|d| d.name)
                 .collect();
-            out.push_str(&format!("Drivers, {name}: {}\n", of.join(", ")));
+            out.push_str(&format!("Drivers, {}: {}\n", speed.name(), of.join(", ")));
         }
         out
     })
@@ -230,7 +208,9 @@ pub fn markdown() -> String {
     ));
     out.push_str("## Passes\n\n");
     for family in Family::ALL {
-        let of: Vec<&PassEntry> = c.passes.iter().filter(|p| p.family == family).collect();
+        let of: Vec<&Pass> = (c.passes.iter().copied())
+            .filter(|p| p.family == family)
+            .collect();
         if of.is_empty() {
             continue;
         }
@@ -251,16 +231,16 @@ pub fn markdown() -> String {
                         n(k.lo),
                         n(k.hi),
                         n(k.default),
-                        k.unit,
+                        k.unit.name(),
                         n(k.swing),
                         k.about
                     ));
                 }
                 out.push('\n');
             }
-            if !p.moved_by.is_empty() {
+            if !p.natural.is_empty() {
                 let by: Vec<String> = p
-                    .moved_by
+                    .natural
                     .iter()
                     .map(|m| format!("`{}` by `{}` ({})", m.knob, m.by.name(), n(m.amount)))
                     .collect();
@@ -276,11 +256,12 @@ pub fn markdown() -> String {
         "## Drivers\n\n| driver | speed | what it is, what it is good for |\n|---|---|---|\n",
     );
     for d in &c.drivers {
-        let speed = match d.speed {
-            Speed::Fast => "fast",
-            Speed::Slow => "slow",
-        };
-        out.push_str(&format!("| `{}` | {speed} | {} |\n", d.name, d.about));
+        out.push_str(&format!(
+            "| `{}` | {} | {} |\n",
+            d.name,
+            d.speed.name(),
+            d.about
+        ));
     }
     out.push_str("\n## Presets\n\n");
     for f in presets::families() {

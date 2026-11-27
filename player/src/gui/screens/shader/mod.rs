@@ -5,18 +5,21 @@
 //! and meaning, its driver a step either way and how far it moves it; the
 //! passes to add, by family), and on the right the song's pictures drawn
 //! through the look as Karaoke mode draws them (its stage: the backdrop,
-//! the look over it, the lyrics), what the guards measure under it, Copy
-//! and Keep. A slider's press holds the pointer ([`Grab::ShaderKnob`]).
+//! the look over it, the lyrics), what the guards measure under it
+//! ([`readout`]), Copy and Keep. A slider's press holds the pointer
+//! ([`Grab::ShaderKnob`]).
+
+pub mod readout;
 
 use std::fmt::Write as _;
 
 use iced::widget::{column, container, opaque, row, scrollable, stack, text, Column, Space};
 use iced::{Alignment, Element, Fill, Padding, Size, Widget as _};
 use jodel_looks::passes::PASSES;
-use jodel_looks::{guard, Family, MIX};
+use jodel_looks::{guard, Family};
 
 use super::list;
-use crate::core::shader_tab::{self, ShaderAction};
+use crate::core::shader_tab::{self, KnobRef, Part, Search, ShaderAction};
 use crate::core::{Action, State};
 use crate::gui::look::{self, size, space};
 use crate::gui::pointer::Grab;
@@ -31,15 +34,14 @@ const STACK_WIDTH: f32 = 400.0;
 const NAME: f32 = 96.0;
 const VALUE: f32 = 64.0;
 
-/// The id of a knob's track (its place, or `mix`), and of its driver's
-/// amount.
-pub fn knob_id(knob: usize, amount: bool) -> String {
-    let which = if knob == MIX {
-        "mix".to_owned()
-    } else {
-        knob.to_string()
+/// The id of a slider's track: its part and slot (`shader-knob-0`,
+/// `shader-amount-8`, ...).
+pub fn knob_id(at: KnobRef) -> String {
+    let part = match at.part {
+        Part::Value => "knob",
+        Part::Amount => "amount",
     };
-    format!("shader-{}-{which}", if amount { "amount" } else { "knob" })
+    format!("shader-{part}-{}", at.slot)
 }
 
 /// What keeps the preset the keys are on in view.
@@ -92,8 +94,8 @@ pub fn view<'a>(state: &State, size: Size, stage: &StageView) -> Element<'a, Mes
 fn presets<'a>(state: &State) -> Element<'a, Message> {
     let listed = shader_tab::listed(state);
     let search = match &state.shader.search {
-        Some((s, true)) => format!("search: {s}▏"),
-        Some((s, false)) => format!("search: {s}"),
+        Some(Search::Typing(s)) => format!("search: {s}▏"),
+        Some(Search::Held(s)) => format!("search: {s}"),
         None => "/ to search".to_owned(),
     };
     let title = format!("Looks: {} by family, and every pass", listed.len());
@@ -114,12 +116,7 @@ fn presets<'a>(state: &State) -> Element<'a, Message> {
             );
         }
         let selected = k == state.shader.preset;
-        let name = if l.name.is_empty() {
-            l.id.clone()
-        } else {
-            l.name.clone()
-        };
-        let line = text(name)
+        let line = text(l.title().to_owned())
             .size(size::BODY)
             .color(if selected { look::TEXT } else { look::TEXT_DIM })
             .wrapping(text::Wrapping::None)
@@ -180,13 +177,8 @@ fn stack_view<'a>(state: &State) -> Element<'a, Message> {
             .on_press(act(ShaderAction::Layer(i)));
         passes = passes.push(container(r).boxed());
     }
-    let title = if look.name.is_empty() {
-        look.id.clone()
-    } else {
-        look.name.clone()
-    };
     column![
-        text(title)
+        text(look.title().to_owned())
             .size(size::TITLE)
             .font(look::font::title())
             .color(look::TEXT)
@@ -237,22 +229,20 @@ fn knobs<'a>(state: &State) -> Element<'a, Message> {
             .color(look::TEXT_DIM)
             .boxed(),
     );
-    let slots: Vec<usize> = (0..pass.knobs.len()).chain([MIX]).collect();
-    for knob in slots {
-        let (lo, hi) = shader_tab::range(pass, knob);
-        let v = shader_tab::value(layer, pass, knob);
-        let k = pass.knobs.get(knob);
-        let name = shader_tab::knob_name(pass, knob);
-        let about = k.map_or("how much of the pass shows over what is under it", |k| {
-            k.about
-        });
-        let unit = k.map_or("share", |k| k.unit);
+    for (slot, k) in pass.slots() {
+        let (lo, hi) = (k.lo, k.hi);
+        let v = shader_tab::value(layer, pass, slot);
+        let name = k.name;
+        let value = KnobRef {
+            slot,
+            part: Part::Value,
+        };
         let share = f64::from((v - lo) / (hi - lo).max(1e-6));
         let track = widgets::track(share)
-            .held(held == Some((knob, false)))
-            .id(knob_id(knob, false))
-            .on_press(move |bounds, at| Message::Grab(Grab::ShaderKnob(knob, false, bounds), at));
-        let off = k.is_some_and(|k| (v - k.default).abs() > 1e-4) || (knob == MIX && v != 1.0);
+            .held(held == Some(value))
+            .id(knob_id(value))
+            .on_press(move |bounds, at| Message::Grab(Grab::ShaderKnob(value, bounds), at));
+        let off = (v - k.default).abs() > 1e-4;
         rows = rows.push(
             row![
                 text(name)
@@ -272,22 +262,26 @@ fn knobs<'a>(state: &State) -> Element<'a, Message> {
             .align_y(Alignment::Center)
             .boxed(),
         );
-        let drive = shader_tab::drive(layer, pass, knob);
+        let drive = shader_tab::drive(layer, pass, slot);
         let driver = drive.map_or("still".to_owned(), |(d, _)| d.name().to_owned());
         let step = |label: &'static str, by: i32| {
             Element::from(
                 widgets::ghost(label)
                     .small()
-                    .on_press(act(ShaderAction::Driver { knob, by })),
+                    .on_press(act(ShaderAction::Driver { slot, by })),
             )
         };
         let amount: Element<'a, Message> = match drive {
             Some((_, a)) => {
+                let amount = KnobRef {
+                    slot,
+                    part: Part::Amount,
+                };
                 let t = widgets::track(f64::from((a + 1.0) / 2.0))
-                    .held(held == Some((knob, true)))
-                    .id(knob_id(knob, true))
+                    .held(held == Some(amount))
+                    .id(knob_id(amount))
                     .on_press(move |bounds, at| {
-                        Message::Grab(Grab::ShaderKnob(knob, true, bounds), at)
+                        Message::Grab(Grab::ShaderKnob(amount, bounds), at)
                     });
                 row![
                     container(t).width(Fill),
@@ -306,7 +300,7 @@ fn knobs<'a>(state: &State) -> Element<'a, Message> {
         };
         rows = rows.push(
             row![
-                text(format!("{lo}–{hi} {unit}"))
+                text(format!("{lo}–{hi} {}", k.unit.name()))
                     .size(size::CAPTION)
                     .color(look::TEXT_FAINT)
                     .wrapping(text::Wrapping::None)
@@ -330,7 +324,7 @@ fn knobs<'a>(state: &State) -> Element<'a, Message> {
             .boxed(),
         );
         rows = rows.push(
-            text(about.to_owned())
+            text(k.about.to_owned())
                 .size(size::CAPTION)
                 .color(look::TEXT_FAINT)
                 .boxed(),
@@ -347,6 +341,8 @@ fn knobs<'a>(state: &State) -> Element<'a, Message> {
 /// Keep.
 fn picture<'a>(state: &State, stage: &StageView) -> Element<'a, Message> {
     let r = &state.shader.readout;
+    let checked = shader_tab::look(state).check();
+    let cost = checked.cost();
     let ok = |good: bool| if good { look::GOOD } else { look::WARN };
     let readout = row![
         text(format!("flashes {} a second at most", r.flashes))
@@ -355,9 +351,9 @@ fn picture<'a>(state: &State, stage: &StageView) -> Element<'a, Message> {
         text(format!("lyrics {:.1} : 1", r.contrast))
             .size(size::LABEL)
             .color(ok(r.contrast >= 3.0)),
-        text(format!("cost {:.1} of {}", r.cost, guard::BUDGET))
+        text(format!("cost {cost:.1} of {}", guard::BUDGET))
             .size(size::LABEL)
-            .color(ok(r.cost <= guard::BUDGET && r.dropped.is_empty())),
+            .color(ok(cost <= guard::BUDGET && checked.dropped.is_empty())),
         text(format!(
             "clipped {:.0} %, light {:.2}, strength {:.0} %",
             r.clipped * 100.0,
@@ -380,13 +376,16 @@ fn picture<'a>(state: &State, stage: &StageView) -> Element<'a, Message> {
     ]
     .spacing(space::L)
     .align_y(Alignment::Center);
-    let dropped: Element<'a, Message> = if r.dropped.is_empty() {
+    let dropped: Element<'a, Message> = if checked.dropped.is_empty() {
         Space::new().boxed()
     } else {
-        text(format!("dropped for the budget: {}", r.dropped.join(", ")))
-            .size(size::CAPTION)
-            .color(look::WARN)
-            .boxed()
+        text(format!(
+            "dropped for the budget: {}",
+            checked.dropped.join(", ")
+        ))
+        .size(size::CAPTION)
+        .color(look::WARN)
+        .boxed()
     };
     let shown: Element<'a, Message> = if stage.gpu() {
         stage.view()
@@ -418,11 +417,11 @@ pub fn outline(state: &State) -> String {
         let _ = writeln!(out, "  {}", l.pass);
     }
     if let Some((_, layer, pass)) = shader_tab::layer(state) {
-        for knob in (0..pass.knobs.len()).chain([MIX]) {
-            let v = shader_tab::value(layer, pass, knob);
-            let d = shader_tab::drive(layer, pass, knob)
+        for (slot, k) in pass.slots() {
+            let v = shader_tab::value(layer, pass, slot);
+            let d = shader_tab::drive(layer, pass, slot)
                 .map_or(String::new(), |(d, a)| format!(" by {} {a:+.2}", d.name()));
-            let _ = writeln!(out, "  {} = {v:.3}{d}", shader_tab::knob_name(pass, knob));
+            let _ = writeln!(out, "  {} = {v:.3}{d}", k.name);
         }
     }
     out

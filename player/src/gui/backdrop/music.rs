@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use jodel_looks::drive::Range;
 use jodel_rhythm::stems::Stem;
 use jodel_rhythm::waveform::{Lane, Waveform, FPS};
 use jodel_rhythm::Analysis;
@@ -78,44 +79,6 @@ impl Levels {
             vocals: self.vocals * vocals,
             other: self.other * other,
         }
-    }
-}
-
-/// How quiet and how loud a lane gets: its levels' 30th and 97th
-/// percentiles (on the lane's byte scale).
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Range {
-    quiet: f32,
-    loud: f32,
-}
-
-impl Range {
-    fn of(levels: &[u8]) -> Range {
-        let mut counts = [0usize; 256];
-        for &v in levels {
-            counts[usize::from(v)] += 1;
-        }
-        let at = |q: f64| {
-            let wanted = (levels.len() as f64 * q) as usize;
-            let mut seen = 0;
-            for (v, &n) in counts.iter().enumerate() {
-                seen += n;
-                if seen > wanted {
-                    return v as f32;
-                }
-            }
-            255.0
-        };
-        let quiet = at(0.3);
-        Range {
-            quiet,
-            loud: at(0.97).max(quiet + 12.0),
-        }
-    }
-
-    /// `v` (the byte scale, 0 to 1) between quiet and loud, 0 to 1.
-    fn share(&self, v: f32) -> f32 {
-        ((v * 255.0 - self.quiet) / (self.loud - self.quiet)).clamp(0.0, 1.0)
     }
 }
 
@@ -212,7 +175,12 @@ impl Song {
 
     /// How loud the mix is at `t` seconds, and each stem (in
     /// [`Stem::ALL`]'s order) where there are stems, each against how loud
-    /// it gets in this song (0 to 1); none without a waveform.
+    /// it gets in this song (0 to 1, by the drivers' own
+    /// [`jodel_looks::drive::Range`]); none without a waveform. Raw: the
+    /// loudest of the last [`WINDOW`], for the backdrop's light, which
+    /// follows it at its own pace ([`Follower`]) through the desk's gains
+    /// (what is muted lights nothing); the look and the effects move by the
+    /// drivers' eased levels instead ([`jodel_looks::Driver::Level`]).
     pub fn loudness(&self, t: f64) -> Option<(f32, Option<[f32; 4]>)> {
         let l = self.lanes.as_ref()?;
         let from = t - WINDOW;

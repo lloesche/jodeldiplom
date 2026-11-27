@@ -451,7 +451,7 @@ runs had single frames over the budgets, in steps that draw no fog
 (the lyrics scene's bursts and composite, a tier's bloom), as often in
 classic as in Spooky: the machine's.
 
-**Looks.** A song's look (`gui::backdrop::looks`, `docs/looks.md`) is
+**Looks.** A song's look (`gui::backdrop::song_look`, `docs/looks.md`) is
 not a screen pass: after the backdrop, each of its passes draws the
 whole window once (a pipeline a pass, made the first time it draws),
 each reading what the one before drew, in half floats; the stage is
@@ -498,7 +498,7 @@ The strength a look is drawn at (`jodel_looks::guard::strength`: the
 look drawn on the processor over the song's picture made 48 × 27, at 64
 moments, each strength tried, a look that feeds back drawn two seconds
 before each moment) is found once a look, song and picture on a thread
-of its own (`gui::backdrop::looks`), never on the window's: over the
+of its own (`gui::backdrop::song_look`), never on the window's: over the
 383 presets on this machine (release build, one core) it took 119 ms
 on average, 2.3 s at most (a visualizer that feeds back). Only the
 newest asked is found next (a look edited on the Shader tab asks each

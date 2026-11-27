@@ -5,53 +5,10 @@
 
 use crate::drive::Driver;
 use crate::math::*;
-use crate::pass::{knob, natural, Ctx, Family, Pass, Src};
+use crate::pass::{knob, natural, Ctx, Family, Pass, Src, Unit};
+use crate::passes::common::{dot_at, edges, screen_cell};
 
 const P: Family = Family::Print;
-
-/// The screen's cell `uv` is in, its dots `s` pixels apart at `a` turns:
-/// the cell's middle (as a `uv`) and where in the cell it is (-0.5 to
-/// 0.5).
-pub(crate) fn screen_cell(u: &Ctx, uv: V2, s: f32, a: f32) -> (V2, V2) {
-    let size = v2(u.size[0], u.size[1]);
-    let q = turn(uv * size, a * TAU) / s;
-    let c = q.floor() + 0.5;
-    (turn(c * s, -a * TAU) / size, q - c)
-}
-
-/// A dot `r` across (in cells: 0.71 fills one) at `local`, its edge a
-/// pixel soft in cells `s` pixels wide.
-pub(crate) fn dot_at(local: V2, r: f32, s: f32) -> f32 {
-    let aa = 0.7 / s;
-    1.0 - smoothstep(r - aa, r + aa, local.length())
-}
-
-/// The print family's WGSL the passes share.
-pub const SHARED: &str = r"
-fn lk_screen_cell(uv: vec2<f32>, s: f32, a: f32) -> vec4<f32> {
-    let q = lk_turn(uv * u.size.xy, a * LK_TAU) / s;
-    let c = floor(q) + 0.5;
-    return vec4<f32>(lk_turn(c * s, -a * LK_TAU) / u.size.xy, q - c);
-}
-fn lk_dot(local: vec2<f32>, r: f32, s: f32) -> f32 {
-    let aa = 0.7 / s;
-    return 1.0 - smoothstep(r - aa, r + aa, length(local));
-}
-fn lk_edges(uv: vec2<f32>, w: f32) -> f32 {
-    let d = u.size.zw * w;
-    let gx = lk_luma(lk_src(uv + vec2<f32>(d.x, 0.0))) - lk_luma(lk_src(uv - vec2<f32>(d.x, 0.0)));
-    let gy = lk_luma(lk_src(uv + vec2<f32>(0.0, d.y))) - lk_luma(lk_src(uv - vec2<f32>(0.0, d.y)));
-    return abs(gx) + abs(gy);
-}
-";
-
-/// How much the picture changes across `w` pixels at `uv` (four reads).
-pub(crate) fn edges(u: &Ctx, s: &dyn Src, uv: V2, w: f32) -> f32 {
-    let d = v2(u.size[2], u.size[3]) * w;
-    let gx = luma(s.src(uv + v2(d.x, 0.0))) - luma(s.src(uv - v2(d.x, 0.0)));
-    let gy = luma(s.src(uv + v2(0.0, d.y))) - luma(s.src(uv - v2(0.0, d.y)));
-    gx.abs() + gy.abs()
-}
 
 const PAPER: V3 = v3(0.96, 0.95, 0.92);
 
@@ -74,28 +31,27 @@ pub const HALFTONE: Pass = Pass {
     family: P,
     about: "a halftone screen: the picture as dots on paper, black ink or the picture's own colours (newsprint, comics, posters)",
     knobs: &[
-        knob("dot", "the dots' spacing", (3.0, 30.0, 8.0), "px", (6.0, 0.08)),
-        knob("angle", "the screen's angle", (0.0, 1.0, 0.125), "turns", (0.1, 0.0)),
-        knob("ink", "black ink (0) to the picture's colours (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.16)),
-        knob("paper", "white (0) to yellowed (1) paper", (0.0, 1.0, 0.3), "share", (0.0, 0.02)),
-        knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
+        knob("dot", "the dots' spacing", (3.0, 30.0, 8.0), Unit::Px, (6.0, 0.08)),
+        knob("angle", "the screen's angle", (0.0, 1.0, 0.125), Unit::Turns, (0.1, 0.0)),
+        knob("ink", "black ink (0) to the picture's colours (1)", (0.0, 1.0, 0.0), Unit::Share, (0.0, 0.16)),
+        knob("paper", "white (0) to yellowed (1) paper", (0.0, 1.0, 0.3), Unit::Share, (0.0, 0.02)),
+        knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.2)),
     ],
     cost: 1.5,
     relief: 0.5,
-    cells: true,
     natural: &[natural("dot", Driver::Drums, 0.8), natural("angle", Driver::Part, 0.5)],
     pairs: &["duotone", "posterize_ink", "curve"],
     wgsl: r"
 fn look_halftone(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let size = u.k0.x * lk_scale();
-    let cell = lk_screen_cell(uv, size, u.k0.y);
+    let size = lk_k(0u) * lk_scale();
+    let cell = lk_screen_cell(uv, size, lk_k(1u));
     let col = lk_src(cell.xy);
-    let cover = 1.0 - lk_luma(col) * mix(1.0, 0.85, u.k0.z);
+    let cover = 1.0 - lk_luma(col) * mix(1.0, 0.85, lk_k(2u));
     let ink = lk_dot(cell.zw, sqrt(max(cover, 0.0)) * 0.62, size);
-    let paper = mix(vec3<f32>(0.96, 0.95, 0.92), vec3<f32>(0.97, 0.92, 0.82), u.k0.w);
-    let inkc = mix(vec3<f32>(0.07, 0.07, 0.09), lk_saturate(col, 1.3) * 0.9, u.k0.z);
-    return mix(c, mix(paper, inkc, ink), u.k1.x);
+    let paper = mix(vec3<f32>(0.96, 0.95, 0.92), vec3<f32>(0.97, 0.92, 0.82), lk_k(3u));
+    let inkc = mix(vec3<f32>(0.07, 0.07, 0.09), lk_saturate(col, 1.3) * 0.9, lk_k(2u));
+    return mix(c, mix(paper, inkc, ink), lk_k(4u));
 }
 ",
     cpu: halftone,
@@ -115,9 +71,8 @@ fn halftone_cmyk(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let size = k[0] * u.scale();
     let mut o = PAPER;
     for (i, (angle, ink)) in PLATES.into_iter().enumerate() {
-        let off = v2((i as f32 * 1.7).cos(), (i as f32 * 1.7).sin())
-            * (k[2] * 4.0 * u.scale())
-            * v2(u.size[2], u.size[3]);
+        let off =
+            v2((i as f32 * 1.7).cos(), (i as f32 * 1.7).sin()) * (k[2] * 4.0 * u.scale()) * u.px();
         let (centre, local) = screen_cell(u, uv + off, size, angle + k[1]);
         let col = s.src(centre);
         let kk = 1.0 - col.x.max(col.y).max(col.z);
@@ -140,27 +95,26 @@ pub const HALFTONE_CMYK: Pass = Pass {
     family: P,
     about: "four-colour process print: cyan, magenta, yellow and black screens at their angles, slightly off register if wanted (comics, magazines, pop art)",
     knobs: &[
-        knob("dot", "the dots' spacing", (3.0, 24.0, 7.0), "px", (4.0, 0.03)),
-        knob("angle", "the screens turned together", (0.0, 1.0, 0.0), "turns", (0.05, 0.0)),
-        knob("registration", "how far the plates are off register (up to 4 pixels)", (0.0, 1.0, 0.2), "share", (0.6, 0.0)),
-        knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
+        knob("dot", "the dots' spacing", (3.0, 24.0, 7.0), Unit::Px, (4.0, 0.03)),
+        knob("angle", "the screens turned together", (0.0, 1.0, 0.0), Unit::Turns, (0.05, 0.0)),
+        knob("registration", "how far the plates are off register (up to 4 pixels)", (0.0, 1.0, 0.2), Unit::Share, (0.6, 0.0)),
+        knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.2)),
     ],
     cost: 2.5,
     relief: 0.5,
-    cells: true,
     natural: &[natural("registration", Driver::Snare, 0.9), natural("dot", Driver::Kick, 0.6)],
     pairs: &["posterize_ink", "saturation", "ben_day"],
     wgsl: r"
 fn look_halftone_cmyk(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let size = u.k0.x * lk_scale();
+    let size = lk_k(0u) * lk_scale();
     var o = vec3<f32>(0.96, 0.95, 0.92);
     var angles = array<f32, 4>(0.042, 0.208, 0.0, 0.125);
     var inks = array<vec3<f32>, 4>(vec3<f32>(0.0, 0.62, 0.9), vec3<f32>(0.9, 0.05, 0.55), vec3<f32>(1.0, 0.92, 0.0), vec3<f32>(0.12, 0.12, 0.14));
     for (var i = 0u; i < 4u; i = i + 1u) {
         let fi = f32(i);
-        let off = vec2<f32>(cos(fi * 1.7), sin(fi * 1.7)) * (u.k0.z * 4.0 * lk_scale()) * u.size.zw;
-        let cell = lk_screen_cell(uv + off, size, angles[i] + u.k0.y);
+        let off = vec2<f32>(cos(fi * 1.7), sin(fi * 1.7)) * (lk_k(2u) * 4.0 * lk_scale()) * u.size.zw;
+        let cell = lk_screen_cell(uv + off, size, angles[i] + lk_k(1u));
         let col = lk_src(cell.xy);
         let kk = 1.0 - max(max(col.x, col.y), col.z);
         let inv = 1.0 / (1.0 - kk + 1e-4);
@@ -168,7 +122,7 @@ fn look_halftone_cmyk(uv: vec2<f32>) -> vec3<f32> {
         let cov = lk_dot(cell.zw, sqrt(lk_sat(vs[i])) * 0.62, size);
         o = o * mix(vec3<f32>(1.0), inks[i], cov);
     }
-    return mix(c, o, u.k0.w);
+    return mix(c, o, lk_k(3u));
 }
 ",
     cpu: halftone_cmyk,
@@ -203,34 +157,33 @@ pub const BEN_DAY: Pass = Pass {
             "dot",
             "the dots' spacing",
             (4.0, 20.0, 10.0),
-            "px",
+            Unit::Px,
             (5.0, 0.02),
         ),
         knob(
             "levels",
             "how many steps each colour has",
             (2.0, 5.0, 3.0),
-            "steps",
+            Unit::Steps,
             (0.0, 0.1),
         ),
         knob(
             "outline",
             "how black the outlines",
             (0.0, 1.0, 0.7),
-            "share",
+            Unit::Share,
             (0.3, 0.05),
         ),
         knob(
             "amount",
             "how much of the print over the picture",
             (0.0, 1.0, 1.0),
-            "share",
+            Unit::Share,
             (0.3, 0.2),
         ),
     ],
     cost: 2.0,
     relief: 0.5,
-    cells: true,
     natural: &[
         natural("dot", Driver::Kick, 0.8),
         natural("outline", Driver::Drums, 0.5),
@@ -240,16 +193,16 @@ pub const BEN_DAY: Pass = Pass {
 fn look_ben_day(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let l = lk_luma(c);
-    let n = u.k0.y;
+    let n = lk_k(1u);
     let vivid = floor(clamp(lk_saturate(c, 1.6), vec3<f32>(0.0), vec3<f32>(1.0)) * n + 0.5) / n;
-    let size = u.k0.x * lk_scale();
+    let size = lk_k(0u) * lk_scale();
     let cell = lk_screen_cell(uv, size, 0.125);
     let dot = lk_dot(cell.zw, 0.36, size);
     let mid = smoothstep(0.35, 0.45, l) * (1.0 - smoothstep(0.7, 0.8, l));
     let flat = mix(vivid, mix(vec3<f32>(1.0, 0.98, 0.94), vivid, dot), mid);
     let e = smoothstep(0.08, 0.22, lk_edges(uv, 1.5 * lk_scale()));
-    let o = mix(flat, vec3<f32>(0.04, 0.03, 0.05), e * u.k0.z);
-    return mix(c, o, u.k0.w);
+    let o = mix(flat, vec3<f32>(0.04, 0.03, 0.05), e * lk_k(2u));
+    return mix(c, o, lk_k(3u));
 }
 ",
     cpu: ben_day,
@@ -273,10 +226,10 @@ pub const POSTERIZE_INK: Pass = Pass {
     family: P,
     about: "cel shading: the tones in a few flat steps and ink lines round the edges (comics, cartoons, anime)",
     knobs: &[
-        knob("steps", "how many tones", (2.0, 8.0, 4.0), "steps", (0.0, 0.05)),
-        knob("ink", "how dark the lines", (0.0, 1.0, 0.7), "share", (0.3, 0.05)),
-        knob("width", "how wide the lines", (0.5, 4.0, 1.5), "px", (1.5, 0.03)),
-        knob("vivid", "the colours' saturation", (0.0, 2.0, 1.2), "share", (0.5, 0.05)),
+        knob("steps", "how many tones", (2.0, 8.0, 4.0), Unit::Steps, (0.0, 0.05)),
+        knob("ink", "how dark the lines", (0.0, 1.0, 0.7), Unit::Share, (0.3, 0.05)),
+        knob("width", "how wide the lines", (0.5, 4.0, 1.5), Unit::Px, (1.5, 0.03)),
+        knob("vivid", "the colours' saturation", (0.0, 2.0, 1.2), Unit::Share, (0.5, 0.05)),
     ],
     cost: 1.5,
     relief: 0.3,
@@ -286,11 +239,11 @@ pub const POSTERIZE_INK: Pass = Pass {
 fn look_posterize_ink(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let l = lk_luma(c);
-    let x = l * u.k0.x;
-    let q = (floor(x) + smoothstep(0.42, 0.58, fract(x))) / u.k0.x;
-    let cel = clamp(lk_saturate(c, u.k0.w) * (q / max(l, 0.02)), vec3<f32>(0.0), vec3<f32>(1.2));
-    let e = smoothstep(0.06, 0.2, lk_edges(uv, u.k0.z * lk_scale()));
-    return mix(cel, vec3<f32>(0.04, 0.03, 0.05), e * u.k0.y);
+    let x = l * lk_k(0u);
+    let q = (floor(x) + smoothstep(0.42, 0.58, fract(x))) / lk_k(0u);
+    let cel = clamp(lk_saturate(c, lk_k(3u)) * (q / max(l, 0.02)), vec3<f32>(0.0), vec3<f32>(1.2));
+    let e = smoothstep(0.06, 0.2, lk_edges(uv, lk_k(2u) * lk_scale()));
+    return mix(cel, vec3<f32>(0.04, 0.03, 0.05), e * lk_k(1u));
 }
 ",
     cpu: posterize_ink,
@@ -300,7 +253,7 @@ fn look_posterize_ink(uv: vec2<f32>) -> vec3<f32> {
 fn risograph(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
-    let d = v2(1.0, 0.4) * (k[2] * 6.0 * u.scale()) * v2(u.size[2], u.size[3]);
+    let d = v2(1.0, 0.4) * (k[2] * 6.0 * u.scale()) * u.px();
     let a = s.src(uv + d);
     let b = s.src(uv - d);
     let px = u.px1080(uv);
@@ -318,11 +271,11 @@ pub const RISOGRAPH: Pass = Pass {
     family: P,
     about: "a risograph print: two bright inks laid one over the other, slightly off register, grainy (zines, indie, lo-fi)",
     knobs: &[
-        knob("first", "the first ink's hue (fluorescent pink by default)", (0.0, 1.0, 0.93), "turns", (0.05, 0.22)),
-        knob("second", "the second ink's hue (blue by default)", (0.0, 1.0, 0.6), "turns", (0.05, 0.18)),
-        knob("misregister", "how far the inks are apart (up to 6 pixels)", (0.0, 1.0, 0.35), "share", (0.6, 0.0)),
-        knob("grain", "how grainy the ink", (0.0, 1.0, 0.5), "share", (0.4, 0.02)),
-        knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.2)),
+        knob("first", "the first ink's hue (fluorescent pink by default)", (0.0, 1.0, 0.93), Unit::Turns, (0.05, 0.22)),
+        knob("second", "the second ink's hue (blue by default)", (0.0, 1.0, 0.6), Unit::Turns, (0.05, 0.18)),
+        knob("misregister", "how far the inks are apart (up to 6 pixels)", (0.0, 1.0, 0.35), Unit::Share, (0.6, 0.0)),
+        knob("grain", "how grainy the ink", (0.0, 1.0, 0.5), Unit::Share, (0.4, 0.02)),
+        knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.2)),
     ],
     cost: 2.0,
     relief: 0.4,
@@ -331,14 +284,14 @@ pub const RISOGRAPH: Pass = Pass {
     wgsl: r"
 fn look_risograph(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let d = vec2<f32>(1.0, 0.4) * (u.k0.z * 6.0 * lk_scale()) * u.size.zw;
+    let d = vec2<f32>(1.0, 0.4) * (lk_k(2u) * 6.0 * lk_scale()) * u.size.zw;
     let a = lk_src(uv + d);
     let b = lk_src(uv - d);
     let px = lk_px1080(uv);
-    let da = lk_sat(1.0 - (a.y * 0.6 + a.z * 0.4) + (lk_vnoise(px / 1.5, 41u) - 0.5) * u.k0.w * 0.5);
-    let db = lk_sat(1.0 - (b.x * 0.7 + b.y * 0.3) + (lk_vnoise(px / 1.5, 43u) - 0.5) * u.k0.w * 0.5);
-    let o = vec3<f32>(0.97, 0.95, 0.9) * mix(vec3<f32>(1.0), lk_hsv(u.k0.x, 0.85, 1.0), da * 0.9) * mix(vec3<f32>(1.0), lk_hsv(u.k0.y, 0.8, 0.85), db * 0.9);
-    return mix(c, o, u.k1.x);
+    let da = lk_sat(1.0 - (a.y * 0.6 + a.z * 0.4) + (lk_vnoise(px / 1.5, 41u) - 0.5) * lk_k(3u) * 0.5);
+    let db = lk_sat(1.0 - (b.x * 0.7 + b.y * 0.3) + (lk_vnoise(px / 1.5, 43u) - 0.5) * lk_k(3u) * 0.5);
+    let o = vec3<f32>(0.97, 0.95, 0.9) * mix(vec3<f32>(1.0), lk_hsv(lk_k(0u), 0.85, 1.0), da * 0.9) * mix(vec3<f32>(1.0), lk_hsv(lk_k(1u), 0.8, 0.85), db * 0.9);
+    return mix(c, o, lk_k(4u));
 }
 ",
     cpu: risograph,
@@ -365,10 +318,10 @@ pub const XEROX: Pass = Pass {
     family: P,
     about: "a photocopy of a photocopy: hard black and white, toner speckle and streaks (punk flyers, zines, hardcore)",
     knobs: &[
-        knob("threshold", "where black turns white: more black (+) or more white (-)", (0.2, 0.8, 0.5), "share", (0.1, 0.6)),
-        knob("toner", "how much speckle and streaking", (0.0, 1.0, 0.5), "share", (0.5, 0.05)),
-        knob("contrast", "soft grey (0) to hard black and white (1)", (0.0, 1.0, 0.7), "share", (0.2, 0.05)),
-        knob("amount", "how much of the copy over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
+        knob("threshold", "where black turns white: more black (+) or more white (-)", (0.2, 0.8, 0.5), Unit::Share, (0.1, 0.6)),
+        knob("toner", "how much speckle and streaking", (0.0, 1.0, 0.5), Unit::Share, (0.5, 0.05)),
+        knob("contrast", "soft grey (0) to hard black and white (1)", (0.0, 1.0, 0.7), Unit::Share, (0.2, 0.05)),
+        knob("amount", "how much of the copy over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.3)),
     ],
     relief: 0.4,
     natural: &[natural("toner", Driver::Snare, 0.9), natural("threshold", Driver::Bass, 0.4)],
@@ -379,12 +332,12 @@ fn look_xerox(uv: vec2<f32>) -> vec3<f32> {
     let px = lk_px1080(uv);
     let l = lk_luma(c);
     let col = floor(px.x / 3.0);
-    let streak = max(lk_hash2(i32(col), 3, 61u) - 0.85, 0.0) * 1.2 * u.k0.y;
-    let v = l + (lk_vnoise(px / 1.3, 51u) - 0.5) * u.k0.y * 0.25 - streak;
-    let w = 0.2 * (1.0 - u.k0.z) + 0.015;
-    let b = smoothstep(u.k0.x - w, u.k0.x + w, v);
+    let streak = max(lk_hash2(i32(col), 3, 61u) - 0.85, 0.0) * 1.2 * lk_k(1u);
+    let v = l + (lk_vnoise(px / 1.3, 51u) - 0.5) * lk_k(1u) * 0.25 - streak;
+    let w = 0.2 * (1.0 - lk_k(2u)) + 0.015;
+    let b = smoothstep(lk_k(0u) - w, lk_k(0u) + w, v);
     let o = mix(vec3<f32>(0.06, 0.06, 0.07), vec3<f32>(0.94, 0.94, 0.91), b);
-    return mix(c, o, u.k0.w);
+    return mix(c, o, lk_k(3u));
 }
 ",
     cpu: xerox,
@@ -395,7 +348,7 @@ fn woodcut(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
     let spacing = k[0] * u.scale();
-    let q = turn(uv * v2(u.size[0], u.size[1]), k[1] * TAU) / spacing;
+    let q = turn(uv * u.size2(), k[1] * TAU) / spacing;
     let l = sat(luma(c) + 0.25 * k[2]);
     let y = q.y + 0.35 * l + 0.15 * (q.x * 0.35).sin();
     let t = (fract(y) - 0.5).abs() * 2.0;
@@ -414,11 +367,11 @@ pub const WOODCUT: Pass = Pass {
     family: P,
     about: "a woodcut or linocut: the picture carved in black lines that swell in the dark and follow the forms (folk, doom and black metal, protest posters)",
     knobs: &[
-        knob("lines", "the lines' spacing", (3.0, 20.0, 7.0), "px", (3.0, 0.02)),
-        knob("angle", "the lines' angle", (0.0, 1.0, 0.08), "turns", (0.05, 0.0)),
-        knob("threshold", "darker (-) or lighter (+) overall", (-1.0, 1.0, 0.0), "share", (0.4, 0.4)),
-        knob("ink", "black ink (0) to the cover's colour, darkened (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.13)),
-        knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
+        knob("lines", "the lines' spacing", (3.0, 20.0, 7.0), Unit::Px, (3.0, 0.02)),
+        knob("angle", "the lines' angle", (0.0, 1.0, 0.08), Unit::Turns, (0.05, 0.0)),
+        knob("threshold", "darker (-) or lighter (+) overall", (-1.0, 1.0, 0.0), Unit::Share, (0.4, 0.4)),
+        knob("ink", "black ink (0) to the cover's colour, darkened (1)", (0.0, 1.0, 0.0), Unit::Share, (0.0, 0.13)),
+        knob("amount", "how much of the print over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.3)),
     ],
     cost: 1.0,
     relief: 0.4,
@@ -427,18 +380,18 @@ pub const WOODCUT: Pass = Pass {
     wgsl: r"
 fn look_woodcut(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let spacing = u.k0.x * lk_scale();
-    let q = lk_turn(uv * u.size.xy, u.k0.y * LK_TAU) / spacing;
-    let l = lk_sat(lk_luma(c) + 0.25 * u.k0.z);
+    let spacing = lk_k(0u) * lk_scale();
+    let q = lk_turn(uv * u.size.xy, lk_k(1u) * LK_TAU) / spacing;
+    let l = lk_sat(lk_luma(c) + 0.25 * lk_k(2u));
     let y = q.y + 0.35 * l + 0.15 * sin(q.x * 0.35);
     let t = abs(fract(y) - 0.5) * 2.0;
     let aa = 1.2 / spacing;
     var cov = 1.0 - smoothstep(1.0 - l - aa, 1.0 - l + aa, t);
     cov = max(cov, 1.0 - smoothstep(0.08, 0.16, l));
     cov = cov * (1.0 - smoothstep(0.86, 0.94, l));
-    let ink = mix(vec3<f32>(0.05, 0.04, 0.04), u.pal0.xyz * 0.45, u.k0.w);
+    let ink = mix(vec3<f32>(0.05, 0.04, 0.04), u.pal0.xyz * 0.45, lk_k(3u));
     let o = mix(vec3<f32>(0.93, 0.89, 0.8), ink, cov);
-    return mix(c, o, u.k1.x);
+    return mix(c, o, lk_k(4u));
 }
 ",
     cpu: woodcut,
@@ -455,7 +408,7 @@ fn engraving(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     for i in 0..3u32 {
         let fi = i as f32;
         let on = step(fi + 0.5, k[2]);
-        let q = turn(uv * v2(u.size[0], u.size[1]), k[1] * TAU + fi * 1.05) / spacing;
+        let q = turn(uv * u.size2(), k[1] * TAU + fi * 1.05) / spacing;
         let t = (fract(q.y) - 0.5).abs() * 2.0;
         let th = (fi + 1.0) / (k[2] + 1.0);
         let w = sat((dark - th) * 2.5) * 0.6;
@@ -471,10 +424,10 @@ pub const ENGRAVING: Pass = Pass {
     family: P,
     about: "an engraving: the tones in fine hatching, crossed in the darks (banknotes, old books, classical, folk)",
     knobs: &[
-        knob("spacing", "the lines' spacing", (2.0, 10.0, 4.0), "px", (2.0, 0.02)),
-        knob("angle", "the first lines' angle", (0.0, 1.0, 0.125), "turns", (0.05, 0.0)),
-        knob("layers", "how many directions of hatching", (1.0, 3.0, 2.0), "steps", (0.0, 0.1)),
-        knob("amount", "how much of the engraving over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
+        knob("spacing", "the lines' spacing", (2.0, 10.0, 4.0), Unit::Px, (2.0, 0.02)),
+        knob("angle", "the first lines' angle", (0.0, 1.0, 0.125), Unit::Turns, (0.05, 0.0)),
+        knob("layers", "how many directions of hatching", (1.0, 3.0, 2.0), Unit::Steps, (0.0, 0.1)),
+        knob("amount", "how much of the engraving over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.3)),
     ],
     cost: 1.3,
     relief: 0.4,
@@ -483,21 +436,21 @@ pub const ENGRAVING: Pass = Pass {
     wgsl: r"
 fn look_engraving(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let spacing = u.k0.x * lk_scale();
+    let spacing = lk_k(0u) * lk_scale();
     let dark = 1.0 - lk_luma(c);
     let aa = 1.0 / spacing;
     var cov = 0.0;
     for (var i = 0u; i < 3u; i = i + 1u) {
         let fi = f32(i);
-        let on = step(fi + 0.5, u.k0.z);
-        let q = lk_turn(uv * u.size.xy, u.k0.y * LK_TAU + fi * 1.05) / spacing;
+        let on = step(fi + 0.5, lk_k(2u));
+        let q = lk_turn(uv * u.size.xy, lk_k(1u) * LK_TAU + fi * 1.05) / spacing;
         let t = abs(fract(q.y) - 0.5) * 2.0;
-        let th = (fi + 1.0) / (u.k0.z + 1.0);
+        let th = (fi + 1.0) / (lk_k(2u) + 1.0);
         let w = lk_sat((dark - th) * 2.5) * 0.6;
         cov = max(cov, on * (1.0 - smoothstep(w - aa, w + aa, t)) * step(0.001, w));
     }
     let o = mix(vec3<f32>(0.95, 0.92, 0.84), vec3<f32>(0.12, 0.08, 0.06), cov);
-    return mix(c, o, u.k0.w);
+    return mix(c, o, lk_k(3u));
 }
 ",
     cpu: engraving,
@@ -508,11 +461,11 @@ fn stipple(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
     let size = k[0] * u.scale() * 1.6;
-    let px = uv * v2(u.size[0], u.size[1]);
+    let px = uv * u.size2();
     let cv = (px / size).floor();
     let (x, y) = (cell(cv.x), cell(cv.y));
     let centre = (cv + v2(0.3 + 0.4 * hash2(x, y, 71), 0.3 + 0.4 * hash2(x, y, 72))) * size;
-    let col = s.src(centre / v2(u.size[0], u.size[1]));
+    let col = s.src(centre / u.size2());
     let d = sat((1.0 - luma(col) - 0.5) * (1.0 + 1.5 * k[1]) + 0.5);
     let on = step(hash2(x, y, 73), d);
     let r = size * 0.28;
@@ -527,31 +480,30 @@ pub const STIPPLE: Pass = Pass {
     family: P,
     about: "stippling: the picture in ink dots, denser where it is dark (pen-and-ink, old scientific plates)",
     knobs: &[
-        knob("dot", "the dots' size", (2.0, 10.0, 4.0), "px", (2.5, 0.08)),
-        knob("contrast", "how sharply dark and light part", (0.0, 1.0, 0.5), "share", (0.3, 0.1)),
-        knob("amount", "how much of the stippling over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
+        knob("dot", "the dots' size", (2.0, 10.0, 4.0), Unit::Px, (2.5, 0.08)),
+        knob("contrast", "how sharply dark and light part", (0.0, 1.0, 0.5), Unit::Share, (0.3, 0.1)),
+        knob("amount", "how much of the stippling over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.3)),
     ],
     cost: 1.3,
     relief: 0.4,
-    cells: true,
     natural: &[natural("dot", Driver::Drums, 0.7)],
     pairs: &["sepia", "canvas"],
     wgsl: r"
 fn look_stipple(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let size = u.k0.x * lk_scale() * 1.6;
+    let size = lk_k(0u) * lk_scale() * 1.6;
     let px = uv * u.size.xy;
     let cv = floor(px / size);
     let x = i32(cv.x);
     let y = i32(cv.y);
     let centre = (cv + vec2<f32>(0.3 + 0.4 * lk_hash2(x, y, 71u), 0.3 + 0.4 * lk_hash2(x, y, 72u))) * size;
     let col = lk_src(centre / u.size.xy);
-    let d = lk_sat((1.0 - lk_luma(col) - 0.5) * (1.0 + 1.5 * u.k0.y) + 0.5);
+    let d = lk_sat((1.0 - lk_luma(col) - 0.5) * (1.0 + 1.5 * lk_k(1u)) + 0.5);
     let on = step(lk_hash2(x, y, 73u), d);
     let r = size * 0.28;
     let cov = on * (1.0 - smoothstep(r - 0.7, r + 0.7, length(px - centre)));
     let o = mix(vec3<f32>(0.96, 0.95, 0.92), vec3<f32>(0.08, 0.08, 0.1), cov);
-    return mix(c, o, u.k0.z);
+    return mix(c, o, lk_k(2u));
 }
 ",
     cpu: stipple,

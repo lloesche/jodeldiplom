@@ -5,38 +5,16 @@
 
 use crate::drive::Driver;
 use crate::math::*;
-use crate::pass::{knob, natural, Ctx, Family, Pass, Src};
-use crate::passes::print::edges;
+use crate::pass::{knob, natural, Ctx, Family, Pass, Src, Unit};
+use crate::passes::common::{edges, hatch};
 
 const A: Family = Family::Paint;
-
-/// Hatching's cover at `p` (pixels at 1080 lines) for darkness `dark`:
-/// lines `spacing` apart at `angle` radians, wobbling, thicker the darker
-/// past `start`.
-fn hatch(p: V2, dark: f32, (spacing, angle, start): (f32, f32, f32)) -> f32 {
-    let q = turn(p, angle);
-    let t = (fract(q.y / spacing + 0.25 * vnoise(q * 0.04, 301)) - 0.5).abs() * 2.0;
-    let w = sat((dark - start) * 1.6) * 0.7;
-    let aa = 1.2 / spacing;
-    (1.0 - smoothstep(w - aa, w + aa, t)) * step(0.001, w)
-}
-
-/// The paint family's WGSL the passes share.
-pub const SHARED: &str = r"
-fn lk_hatch(p: vec2<f32>, dark: f32, spacing: f32, angle: f32, start: f32) -> f32 {
-    let q = lk_turn(p, angle);
-    let t = abs(fract(q.y / spacing + 0.25 * lk_vnoise(q * 0.04, 301u)) - 0.5) * 2.0;
-    let w = lk_sat((dark - start) * 1.6) * 0.7;
-    let aa = 1.2 / spacing;
-    return (1.0 - smoothstep(w - aa, w + aa, t)) * step(0.001, w);
-}
-";
 
 fn kuwahara(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
     let r = k[0] * u.scale();
-    let px = v2(u.size[2], u.size[3]);
+    let px = u.px();
     let mut acc = s3(0.0);
     let mut wsum = 0.0;
     for q in 0..4u32 {
@@ -66,8 +44,8 @@ pub const KUWAHARA: Pass = Pass {
     family: A,
     about: "a painterly smear that keeps the edges: flat patches of colour like brushwork (oil, gouache, anime backgrounds)",
     knobs: &[
-        knob("radius", "the brush's size", (2.0, 10.0, 4.0), "px", (3.0, 0.02)),
-        knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.02)),
+        knob("radius", "the brush's size", (2.0, 10.0, 4.0), Unit::Px, (3.0, 0.02)),
+        knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.02)),
     ],
     cost: 4.0,
     natural: &[natural("radius", Driver::Bass, 0.8)],
@@ -75,7 +53,7 @@ pub const KUWAHARA: Pass = Pass {
     wgsl: r"
 fn look_kuwahara(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let r = u.k0.x * lk_scale();
+    let r = lk_k(0u) * lk_scale();
     var acc = vec3<f32>(0.0);
     var wsum = 0.0;
     for (var q = 0u; q < 4u; q = q + 1u) {
@@ -96,7 +74,7 @@ fn look_kuwahara(uv: vec2<f32>) -> vec3<f32> {
         acc = acc + m * w;
         wsum = wsum + w;
     }
-    return mix(c, acc / wsum, u.k0.y);
+    return mix(c, acc / wsum, lk_k(1u));
 }
 ",
     cpu: kuwahara,
@@ -107,9 +85,9 @@ fn watercolor(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let p = u.px1080(uv);
     let wob = v2(vnoise(p / 30.0, 81) - 0.5, vnoise(p / 30.0 + 7.0, 82) - 0.5) * (6.0 * k[1]);
-    let at = uv + wob * u.scale() * v2(u.size[2], u.size[3]);
+    let at = uv + wob * u.scale() * u.px();
     let c = s.src(at);
-    let pxs = v2(u.size[2], u.size[3]) * (6.0 * u.scale());
+    let pxs = u.px() * (6.0 * u.scale());
     let mut b = c;
     for i in 0..8u32 {
         let a = i as f32 * (TAU / 8.0) + 0.4;
@@ -131,10 +109,10 @@ pub const WATERCOLOR: Pass = Pass {
     family: A,
     about: "watercolour: soft washes that bleed at wobbly edges, pigment pooling darker there, the paper showing through (folk, childhood, gentle songs)",
     knobs: &[
-        knob("wash", "how far the colours wash together", (0.0, 1.0, 0.6), "share", (0.4, 0.02)),
-        knob("bleed", "how wobbly the edges and how dark they pool", (0.0, 1.0, 0.5), "share", (0.4, 0.04)),
-        knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.15)),
-        knob("granulation", "the pigment's grain in the darks", (0.0, 1.0, 0.4), "share", (0.2, 0.02)),
+        knob("wash", "how far the colours wash together", (0.0, 1.0, 0.6), Unit::Share, (0.4, 0.02)),
+        knob("bleed", "how wobbly the edges and how dark they pool", (0.0, 1.0, 0.5), Unit::Share, (0.4, 0.04)),
+        knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.15)),
+        knob("granulation", "the pigment's grain in the darks", (0.0, 1.0, 0.4), Unit::Share, (0.2, 0.02)),
     ],
     cost: 2.5,
     relief: 0.2,
@@ -143,7 +121,7 @@ pub const WATERCOLOR: Pass = Pass {
     wgsl: r"
 fn look_watercolor(uv: vec2<f32>) -> vec3<f32> {
     let p = lk_px1080(uv);
-    let wob = vec2<f32>(lk_vnoise(p / 30.0, 81u) - 0.5, lk_vnoise(p / 30.0 + 7.0, 82u) - 0.5) * (6.0 * u.k0.y);
+    let wob = vec2<f32>(lk_vnoise(p / 30.0, 81u) - 0.5, lk_vnoise(p / 30.0 + 7.0, 82u) - 0.5) * (6.0 * lk_k(1u));
     let at = uv + wob * lk_scale() * u.size.zw;
     let c = lk_src(at);
     let pxs = u.size.zw * (6.0 * lk_scale());
@@ -153,13 +131,13 @@ fn look_watercolor(uv: vec2<f32>) -> vec3<f32> {
         b = b + lk_src(at + vec2<f32>(cos(a), sin(a)) * pxs);
     }
     b = b / 9.0;
-    let wash = mix(c, b, u.k0.x);
+    let wash = mix(c, b, lk_k(0u));
     let paper = vec3<f32>(0.97, 0.96, 0.93) * (0.94 + 0.06 * lk_fbm(p / 9.0, 83u));
     let pigment = mix(vec3<f32>(1.0), wash, 0.9);
     let edge = length(c - b);
-    let gran = 1.0 - u.k0.w * 0.25 * lk_vnoise(p / 2.0, 84u);
-    let o = paper * pigment * (1.0 - u.k0.y * edge * 1.2) * mix(1.0, gran, 1.0 - lk_luma(wash));
-    return mix(lk_src(uv), max(o, vec3<f32>(0.0)), u.k0.z);
+    let gran = 1.0 - lk_k(3u) * 0.25 * lk_vnoise(p / 2.0, 84u);
+    let o = paper * pigment * (1.0 - lk_k(1u) * edge * 1.2) * mix(1.0, gran, 1.0 - lk_luma(wash));
+    return mix(lk_src(uv), max(o, vec3<f32>(0.0)), lk_k(2u));
 }
 ",
     cpu: watercolor,
@@ -170,7 +148,7 @@ fn oil_paint(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let p = u.px1080(uv);
     let a = fbm(p / 90.0, 91) * TAU * 2.0;
-    let dir = v2(a.cos(), a.sin()) * (k[0] * u.scale()) * v2(u.size[2], u.size[3]);
+    let dir = v2(a.cos(), a.sin()) * (k[0] * u.scale()) * u.px();
     let mut m = s3(0.0);
     for i in 0..5u32 {
         let t = (i as f32 - 2.0) * 0.5 * k[2];
@@ -197,10 +175,10 @@ pub const OIL_PAINT: Pass = Pass {
     family: A,
     about: "oil paint: the colour smeared in strokes that follow a flow, their impasto ridges lit from one side (classic, ballads, folk portraits)",
     knobs: &[
-        knob("brush", "the strokes' size", (2.0, 12.0, 5.0), "px", (2.0, 0.02)),
-        knob("relief", "how much the ridges catch the light", (0.0, 1.0, 0.5), "share", (0.4, 0.03)),
-        knob("smear", "how long the strokes", (0.0, 1.0, 0.6), "share", (0.4, 0.02)),
-        knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.03)),
+        knob("brush", "the strokes' size", (2.0, 12.0, 5.0), Unit::Px, (2.0, 0.02)),
+        knob("relief", "how much the ridges catch the light", (0.0, 1.0, 0.5), Unit::Share, (0.4, 0.03)),
+        knob("smear", "how long the strokes", (0.0, 1.0, 0.6), Unit::Share, (0.4, 0.02)),
+        knob("amount", "how much of the painting over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.03)),
     ],
     cost: 3.0,
     relief: 0.2,
@@ -210,19 +188,19 @@ pub const OIL_PAINT: Pass = Pass {
 fn look_oil_paint(uv: vec2<f32>) -> vec3<f32> {
     let p = lk_px1080(uv);
     let a = lk_fbm(p / 90.0, 91u) * LK_TAU * 2.0;
-    let dir = vec2<f32>(cos(a), sin(a)) * (u.k0.x * lk_scale()) * u.size.zw;
+    let dir = vec2<f32>(cos(a), sin(a)) * (lk_k(0u) * lk_scale()) * u.size.zw;
     var m = vec3<f32>(0.0);
     for (var i = 0u; i < 5u; i = i + 1u) {
-        let t = (f32(i) - 2.0) * 0.5 * u.k0.z;
+        let t = (f32(i) - 2.0) * 0.5 * lk_k(2u);
         m = m + lk_src(uv + dir * t);
     }
     m = m / 5.0;
     let side = vec2<f32>(-dir.y, dir.x);
-    let stroke = lk_vnoise(vec2<f32>((p.x * cos(a) + p.y * sin(a)) / (u.k0.x * 4.0), (p.y * cos(a) - p.x * sin(a)) / u.k0.x), 92u);
+    let stroke = lk_vnoise(vec2<f32>((p.x * cos(a) + p.y * sin(a)) / (lk_k(0u) * 4.0), (p.y * cos(a) - p.x * sin(a)) / lk_k(0u)), 92u);
     let h1 = lk_luma(lk_src(uv + side)) + 0.15 * stroke;
     let h0 = lk_luma(lk_src(uv - side)) + 0.15 * lk_vnoise(vec2<f32>(stroke * 3.0, 1.0), 93u);
-    let lit = 1.0 + u.k0.y * (h1 - h0) * 2.5;
-    return mix(lk_src(uv), max(m * lit, vec3<f32>(0.0)), u.k0.w);
+    let lit = 1.0 + lk_k(1u) * (h1 - h0) * 2.5;
+    return mix(lk_src(uv), max(m * lit, vec3<f32>(0.0)), lk_k(3u));
 }
 ",
     cpu: oil_paint,
@@ -246,20 +224,20 @@ pub const CANVAS: Pass = Pass {
     family: A,
     about: "the ground showing through: canvas weave or paper fibre over the whole picture, the finish of every painted or drawn look",
     knobs: &[
-        knob("kind", "canvas weave (0) to paper fibre (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.02)),
-        knob("amount", "how strongly the ground shows", (0.0, 1.0, 0.4), "share", (0.4, 0.04)),
-        knob("scale", "the weave's or fibre's size", (0.5, 3.0, 1.0), "share", (0.3, 0.01)),
+        knob("kind", "canvas weave (0) to paper fibre (1)", (0.0, 1.0, 0.0), Unit::Share, (0.0, 0.02)),
+        knob("amount", "how strongly the ground shows", (0.0, 1.0, 0.4), Unit::Share, (0.4, 0.04)),
+        knob("scale", "the weave's or fibre's size", (0.5, 3.0, 1.0), Unit::Share, (0.3, 0.01)),
     ],
     natural: &[natural("amount", Driver::Drums, 0.6)],
     pairs: &["oil_paint", "watercolor", "charcoal", "woodcut"],
     wgsl: r"
 fn look_canvas(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let p = lk_px1080(uv) / u.k0.z;
+    let p = lk_px1080(uv) / lk_k(2u);
     let weave = 0.5 + 0.25 * (sin(p.x * 1.9) + sin(p.y * 1.9)) * (0.6 + 0.4 * lk_vnoise(p / 6.0, 95u));
     let fibre = lk_fbm(vec2<f32>(p.x / 3.0, p.y / 14.0), 96u) * 0.6 + 0.4 * lk_vnoise(p / 1.5, 97u);
-    let tex = mix(weave, fibre, u.k0.x);
-    return c * (1.0 - u.k0.y * 0.3 * (1.0 - tex)) + vec3<f32>(u.k0.y * 0.04 * (tex - 0.5));
+    let tex = mix(weave, fibre, lk_k(0u));
+    return c * (1.0 - lk_k(1u) * 0.3 * (1.0 - tex)) + vec3<f32>(lk_k(1u) * 0.04 * (tex - 0.5));
 }
 ",
     cpu: canvas,
@@ -269,7 +247,7 @@ fn look_canvas(uv: vec2<f32>) -> vec3<f32> {
 fn charcoal(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
-    let d = v2(u.size[2], u.size[3]) * (3.0 * u.scale());
+    let d = u.px() * (3.0 * u.scale());
     let blur = (luma(s.src(uv + d))
         + luma(s.src(uv - d))
         + luma(s.src(uv + v2(d.x, -d.y)))
@@ -292,10 +270,10 @@ pub const CHARCOAL: Pass = Pass {
     family: A,
     about: "charcoal or chalk on paper: smudged darks in strokes, the paper's tooth catching the dust (blues, folk, grief, sketches)",
     knobs: &[
-        knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.4)),
-        knob("smudge", "how smudged", (0.0, 1.0, 0.4), "share", (0.4, 0.02)),
-        knob("grain", "how much of the paper's tooth shows", (0.0, 1.0, 0.6), "share", (0.2, 0.03)),
-        knob("contrast", "how dark the darks", (0.0, 1.0, 0.5), "share", (0.3, 0.25)),
+        knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.4)),
+        knob("smudge", "how smudged", (0.0, 1.0, 0.4), Unit::Share, (0.4, 0.02)),
+        knob("grain", "how much of the paper's tooth shows", (0.0, 1.0, 0.6), Unit::Share, (0.2, 0.03)),
+        knob("contrast", "how dark the darks", (0.0, 1.0, 0.5), Unit::Share, (0.3, 0.25)),
     ],
     cost: 1.8,
     relief: 0.3,
@@ -306,15 +284,15 @@ fn look_charcoal(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let d = u.size.zw * (3.0 * lk_scale());
     let blur = (lk_luma(lk_src(uv + d)) + lk_luma(lk_src(uv - d)) + lk_luma(lk_src(uv + vec2<f32>(d.x, -d.y))) + lk_luma(lk_src(uv + vec2<f32>(-d.x, d.y)))) * 0.25;
-    let l = mix(lk_luma(c), blur, u.k0.y);
+    let l = mix(lk_luma(c), blur, lk_k(1u));
     let p = lk_px1080(uv);
     let q = lk_turn(p, 0.6);
     let stroke = lk_vnoise(vec2<f32>(q.x / 3.0, q.y / 18.0), 101u);
-    let tooth = lk_vnoise(p / 1.7, 102u) * u.k0.z + 0.5 * (1.0 - u.k0.z);
-    let dark = pow(1.0 - l, 1.0 + u.k0.w);
+    let tooth = lk_vnoise(p / 1.7, 102u) * lk_k(2u) + 0.5 * (1.0 - lk_k(2u));
+    let dark = pow(1.0 - l, 1.0 + lk_k(3u));
     let deposit = smoothstep(tooth - 0.3, tooth + 0.3, dark + 0.25 * (stroke - 0.5));
     let o = mix(vec3<f32>(0.92, 0.9, 0.86), vec3<f32>(0.1, 0.1, 0.11), deposit);
-    return mix(c, o, u.k0.x);
+    return mix(c, o, lk_k(0u));
 }
 ",
     cpu: charcoal,
@@ -346,10 +324,10 @@ pub const PASTEL: Pass = Pass {
     family: A,
     about: "wax crayon or soft pastel: colour laid in strokes, the paper's tooth showing white through it (children's songs, childhood, sunny pop)",
     knobs: &[
-        knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.25)),
-        knob("stroke", "the strokes' size", (2.0, 12.0, 6.0), "px", (3.0, 0.02)),
-        knob("tooth", "how much paper shows through", (0.0, 1.0, 0.5), "share", (0.3, 0.1)),
-        knob("vivid", "the colours' saturation", (0.5, 1.5, 1.1), "share", (0.2, 0.03)),
+        knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.25)),
+        knob("stroke", "the strokes' size", (2.0, 12.0, 6.0), Unit::Px, (3.0, 0.02)),
+        knob("tooth", "how much paper shows through", (0.0, 1.0, 0.5), Unit::Share, (0.3, 0.1)),
+        knob("vivid", "the colours' saturation", (0.5, 1.5, 1.1), Unit::Share, (0.2, 0.03)),
     ],
     cost: 1.2,
     relief: 0.3,
@@ -361,13 +339,13 @@ fn look_pastel(uv: vec2<f32>) -> vec3<f32> {
     let p = lk_px1080(uv);
     let a = 0.9 + 0.6 * (lk_vnoise(p / 120.0, 111u) - 0.5);
     let q = lk_turn(p, a);
-    let stroke = lk_vnoise(vec2<f32>(q.x / (u.k0.y * 0.6), q.y / (u.k0.y * 3.0)), 112u);
+    let stroke = lk_vnoise(vec2<f32>(q.x / (lk_k(1u) * 0.6), q.y / (lk_k(1u) * 3.0)), 112u);
     let tooth = lk_vnoise(p / 1.4, 113u);
-    let col = lk_saturate(c, u.k0.w);
-    let cover = smoothstep(0.15, 0.6, (1.0 - lk_luma(c)) * 0.6 + 0.35 + 0.3 * (stroke - 0.5) - u.k0.z * 0.35 * tooth);
+    let col = lk_saturate(c, lk_k(3u));
+    let cover = smoothstep(0.15, 0.6, (1.0 - lk_luma(c)) * 0.6 + 0.35 + 0.3 * (stroke - 0.5) - lk_k(2u) * 0.35 * tooth);
     let paper = vec3<f32>(0.95, 0.93, 0.88);
     let o = mix(paper, col * (0.9 + 0.2 * stroke), cover);
-    return mix(c, o, u.k0.x);
+    return mix(c, o, lk_k(0u));
 }
 ",
     cpu: pastel,
@@ -398,10 +376,10 @@ pub const MARKER: Pass = Pass {
     family: A,
     about: "felt-tip markers: flat bold colours in streaky strokes, darker where they overlap, a pen outline (pop, children's songs, humour)",
     knobs: &[
-        knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.1)),
-        knob("steps", "how many tones each colour has", (2.0, 6.0, 3.0), "steps", (0.0, 0.08)),
-        knob("stroke", "the strokes' width", (4.0, 20.0, 10.0), "px", (3.0, 0.02)),
-        knob("outline", "how dark the pen outline", (0.0, 1.0, 0.6), "share", (0.4, 0.05)),
+        knob("amount", "how much of the drawing over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.1)),
+        knob("steps", "how many tones each colour has", (2.0, 6.0, 3.0), Unit::Steps, (0.0, 0.08)),
+        knob("stroke", "the strokes' width", (4.0, 20.0, 10.0), Unit::Px, (3.0, 0.02)),
+        knob("outline", "how dark the pen outline", (0.0, 1.0, 0.6), Unit::Share, (0.4, 0.05)),
     ],
     cost: 1.5,
     relief: 0.3,
@@ -410,17 +388,17 @@ pub const MARKER: Pass = Pass {
     wgsl: r"
 fn look_marker(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let n = u.k0.y;
+    let n = lk_k(1u);
     let y = clamp(lk_saturate(c, 1.3), vec3<f32>(0.0), vec3<f32>(1.0)) * n;
     let flat = (floor(y) + smoothstep(vec3<f32>(0.4), vec3<f32>(0.6), fract(y))) / n;
     let p = lk_px1080(uv);
     let q = lk_turn(p, 0.785);
-    let band = fract(q.y / u.k0.z + 0.3 * lk_vnoise(vec2<f32>(q.x / 60.0, 0.5), 121u));
+    let band = fract(q.y / lk_k(2u) + 0.3 * lk_vnoise(vec2<f32>(q.x / 60.0, 0.5), 121u));
     let overlap = smoothstep(0.8, 0.95, band) + 1.0 - smoothstep(0.0, 0.08, band);
     let ink = flat * (1.0 - 0.22 * overlap * (1.0 - lk_luma(flat)));
     let e = smoothstep(0.08, 0.22, lk_edges(uv, 1.5 * lk_scale()));
-    let o = mix(ink, vec3<f32>(0.05, 0.05, 0.08), e * u.k0.w);
-    return mix(c, o, u.k0.x);
+    let o = mix(ink, vec3<f32>(0.05, 0.05, 0.08), e * lk_k(3u));
+    return mix(c, o, lk_k(0u));
 }
 ",
     cpu: marker,
@@ -451,10 +429,10 @@ pub const PENCIL: Pass = Pass {
     family: A,
     about: "a graphite pencil sketch: outlines, hatching in the shadows crossed in the darkest (singer-songwriters, folk, childhood, memories)",
     knobs: &[
-        knob("amount", "how much of the sketch over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.57)),
-        knob("hatch", "how much hatching in the shadows", (0.0, 1.0, 0.6), "share", (0.4, 0.34)),
-        knob("spacing", "the hatching's spacing", (2.0, 8.0, 3.5), "px", (1.0, 0.03)),
-        knob("pressure", "how dark the lines", (0.0, 1.0, 0.5), "share", (0.4, 0.13)),
+        knob("amount", "how much of the sketch over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.57)),
+        knob("hatch", "how much hatching in the shadows", (0.0, 1.0, 0.6), Unit::Share, (0.4, 0.34)),
+        knob("spacing", "the hatching's spacing", (2.0, 8.0, 3.5), Unit::Px, (1.0, 0.03)),
+        knob("pressure", "how dark the lines", (0.0, 1.0, 0.5), Unit::Share, (0.4, 0.13)),
     ],
     cost: 1.5,
     relief: 0.3,
@@ -466,12 +444,12 @@ fn look_pencil(uv: vec2<f32>) -> vec3<f32> {
     let dark = 1.0 - lk_luma(c);
     let p = lk_px1080(uv);
     let e = smoothstep(0.03, 0.15, lk_edges(uv, lk_scale()));
-    let one = lk_hatch(p, dark, u.k0.z, 0.7, 0.35) * u.k0.y;
-    let two = lk_hatch(p, dark, u.k0.z, 2.2, 0.62) * u.k0.y;
+    let one = lk_hatch(p, dark, lk_k(2u), 0.7, 0.35) * lk_k(1u);
+    let two = lk_hatch(p, dark, lk_k(2u), 2.2, 0.62) * lk_k(1u);
     let strokes = max(max(e * 0.9, one), two);
     let grain = 0.8 + 0.2 * lk_vnoise(p / 1.2, 302u);
-    let lead = mix(vec3<f32>(0.95, 0.94, 0.91), vec3<f32>(0.22, 0.22, 0.25), lk_sat(strokes * (0.5 + 0.5 * u.k0.w) * grain));
-    return mix(c, lead, u.k0.x);
+    let lead = mix(vec3<f32>(0.95, 0.94, 0.91), vec3<f32>(0.22, 0.22, 0.25), lk_sat(strokes * (0.5 + 0.5 * lk_k(3u)) * grain));
+    return mix(c, lead, lk_k(0u));
 }
 ",
     cpu: pencil,
@@ -500,9 +478,9 @@ pub const CHALKBOARD: Pass = Pass {
     family: A,
     about: "chalk on a dark board: the outlines and the lights in dusty chalk strokes (school days, children's songs, humour, nostalgia)",
     knobs: &[
-        knob("amount", "how much of the board over the picture", (0.0, 1.0, 1.0), "share", (0.3, 0.45)),
-        knob("board", "the board's hue (green by default, or slate)", (0.0, 1.0, 0.4), "turns", (0.0, 0.01)),
-        knob("chalk", "outlines only (0) to the lights filled in chalk (1)", (0.0, 1.0, 0.6), "share", (0.4, 0.25)),
+        knob("amount", "how much of the board over the picture", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.45)),
+        knob("board", "the board's hue (green by default, or slate)", (0.0, 1.0, 0.4), Unit::Turns, (0.0, 0.01)),
+        knob("chalk", "outlines only (0) to the lights filled in chalk (1)", (0.0, 1.0, 0.6), Unit::Share, (0.4, 0.25)),
     ],
     cost: 1.6,
     relief: 0.3,
@@ -514,14 +492,14 @@ fn look_chalkboard(uv: vec2<f32>) -> vec3<f32> {
     let l = lk_luma(c);
     let p = lk_px1080(uv);
     let e = smoothstep(0.04, 0.18, lk_edges(uv, 1.2 * lk_scale()));
-    let board = lk_hsv(u.k0.y, 0.35, 0.16) * (0.9 + 0.1 * lk_fbm(p / 40.0, 311u));
+    let board = lk_hsv(lk_k(1u), 0.35, 0.16) * (0.9 + 0.1 * lk_fbm(p / 40.0, 311u));
     let q = lk_turn(p, -0.5);
     let stroke = lk_vnoise(vec2<f32>(q.x / 3.0, q.y / 14.0), 312u);
-    let fill = smoothstep(0.35, 0.85, l + 0.25 * (stroke - 0.5)) * u.k0.z;
+    let fill = smoothstep(0.35, 0.85, l + 0.25 * (stroke - 0.5)) * lk_k(2u);
     let dust = 0.6 + 0.4 * lk_vnoise(p / 1.3, 313u);
     let cover = max(lk_sat(e * 1.2), fill) * dust;
     let chalk = mix(vec3<f32>(0.92), lk_saturate(c, 0.6) * 1.1, 0.35);
-    return mix(c, mix(board, chalk, lk_sat(cover)), u.k0.x);
+    return mix(c, mix(board, chalk, lk_sat(cover)), lk_k(0u));
 }
 ",
     cpu: chalkboard,

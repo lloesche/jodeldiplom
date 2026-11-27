@@ -124,11 +124,12 @@ impl StageView {
             shared.stage.entered();
             shared.shown = true;
         }
+        let signals = (backdrop.as_ref()).map_or(jodel_looks::Signals::QUIET, |b| b.signals);
         shared.backdrop = backdrop;
         if shared.gpu.unwrap_or(true) {
             let area = (0.0, 0.0, size.0 as f32, size.1 as f32);
             let song = (
-                &super::stage::Song::of(state, song),
+                &super::stage::Song::of(state, song, signals),
                 super::stage::wanted(state),
             );
             let frame = shared.stage.scene(song, picture, area, (heard, dt), tint);

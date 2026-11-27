@@ -27,13 +27,13 @@ pub(crate) fn fixture(w: usize, h: usize) -> Image {
 /// A frame of `c` over `img` at `t` of the made-up song.
 pub(crate) fn drawn(c: &Checked, img: &Image, t: f64, band: Option<(f32, f32)>) -> Image {
     let moment = Moment {
+        size: (img.w as u32, img.h as u32),
+        t,
+        seed: seed(&c.id, "a song"),
+        dt: 1.0 / 30.0,
+        forget: false,
         band,
-        ..Moment::measuring(
-            (img.w as u32, img.h as u32),
-            (t, 1.0 / 30.0),
-            false,
-            (seed(&c.id, "a song"), 1.0),
-        )
+        ..Moment::MEASURING
     };
     let signals = demo::signals_at(t);
     render::draw(&c.frame(&moment, &signals, None), img, None)
@@ -85,7 +85,7 @@ fn every_pass_is_whole() {
         }
         for n in p.natural {
             let (_, k) = p
-                .knob(n.knob)
+                .knob(&n.knob)
                 .unwrap_or_else(|| panic!("{}.{}", p.name, n.knob));
             assert!(
                 k.swing > 0.0 && n.amount.abs() <= 1.0,
@@ -122,16 +122,16 @@ fn every_number_is_held_to_its_range() {
     let c = look.check();
     assert_eq!(c.layers.len(), 3);
     let grain = &c.layers[0];
-    assert_eq!(grain.knobs[0], 1.0);
-    assert_eq!(grain.knobs[1], 0.6);
-    assert_eq!(grain.mix, 1.0);
+    assert_eq!(grain.values[0], 1.0);
+    assert_eq!(grain.values[1], 0.6);
+    assert_eq!(grain.values[crate::MIX], 1.0);
     let d = grain.drives[0];
     assert!(d.amount > 0.0 && d.amount <= passes::film::GRAIN.knobs[0].swing);
     assert!(
-        (c.layers[1].knobs[0] - 0.25).abs() < 1e-6,
+        (c.layers[1].values[0] - 0.25).abs() < 1e-6,
         "the hue goes round"
     );
-    assert_eq!(c.layers[2].knobs[0], 4.0);
+    assert_eq!(c.layers[2].values[0], 4.0);
     assert!(c.notes.iter().any(|n| n.contains("no_such_pass")));
     assert!(c.notes.iter().any(|n| n.contains("nonsense")));
     // Moved by the music, still within the range.
@@ -145,9 +145,7 @@ fn every_number_is_held_to_its_range() {
         seed: 1,
         dt: 0.1,
         forget: false,
-        band: None,
-        palette: [[0.5; 3]; 3],
-        strength: 1.0,
+        ..Moment::MEASURING
     };
     for (pass, ctx) in c.frame(&m, &s, None) {
         for (i, k) in pass.knobs.iter().enumerate() {

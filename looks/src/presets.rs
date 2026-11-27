@@ -62,14 +62,13 @@ const FILES: &[&str] = &[
     include_str!("../presets/visualizer.json"),
 ];
 
-/// Every family, as its file has it (a file that does not read is a
-/// fault the tests find: none of its looks).
+/// Every family, as its file has it (built in: a file that does not read
+/// is a fault in the program, never in the user's data).
 pub fn families() -> &'static [Family] {
     static ALL: OnceLock<Vec<Family>> = OnceLock::new();
     ALL.get_or_init(|| {
-        FILES
-            .iter()
-            .filter_map(|f| serde_json::from_str::<Family>(f).ok())
+        (FILES.iter())
+            .map(|f| serde_json::from_str::<Family>(f).expect("a built-in preset file reads"))
             .collect()
     })
 }
@@ -120,7 +119,7 @@ pub fn named(id: &str) -> Option<&'static Look> {
 
 /// The family of the look `id` (a preset's, or a pass's as a look of its
 /// own).
-pub fn family_of(id: &str) -> Option<&'static Family> {
+pub(crate) fn family_of(id: &str) -> Option<&'static Family> {
     (families().iter())
         .chain(pass_families())
         .find(|f| f.looks.iter().any(|l| l.id == id))

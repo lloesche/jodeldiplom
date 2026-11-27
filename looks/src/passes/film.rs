@@ -6,8 +6,8 @@
 
 use crate::drive::Driver;
 use crate::math::*;
-use crate::pass::{knob, natural, Ctx, Family, Pass, Src};
-use crate::passes::atmos::fall;
+use crate::pass::{knob, natural, Ctx, Family, Pass, Src, Unit};
+use crate::passes::common::{fall, ring_light};
 
 const F: Family = Family::Film;
 
@@ -21,7 +21,7 @@ fn grain(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let c = s.src(uv);
     let size = (k[1] * u.scale()).max(0.6);
     let f = film_frame(u.time[0]).wrapping_mul(7) + u.time[1] as u32;
-    let p = uv * v2(u.size[0], u.size[1]) / size;
+    let p = uv * u.size2() / size;
     let n = vnoise(p, f) - 0.5;
     let ch = v3(
         vnoise(p + v2(13.1, 7.7), f + 3) - 0.5,
@@ -40,56 +40,29 @@ pub const GRAIN: Pass = Pass {
     family: F,
     about: "film grain: fine to coarse, mono or coloured, strongest in the midtones, new every film frame",
     knobs: &[
-        knob("amount", "how much grain", (0.0, 1.0, 0.35), "share", (0.5, 0.02)),
-        knob("size", "the grains' size", (0.6, 3.0, 1.2), "px", (1.0, 0.0)),
-        knob("chroma", "mono (0) to coloured grain (1)", (0.0, 1.0, 0.15), "share", (0.2, 0.0)),
+        knob("amount", "how much grain", (0.0, 1.0, 0.35), Unit::Share, (0.5, 0.02)),
+        knob("size", "the grains' size", (0.6, 3.0, 1.2), Unit::Px, (1.0, 0.0)),
+        knob("chroma", "mono (0) to coloured grain (1)", (0.0, 1.0, 0.15), Unit::Share, (0.2, 0.0)),
     ],
     natural: &[natural("amount", Driver::Bass, 0.8), natural("size", Driver::Drums, 0.6)],
     pairs: &["halation", "vignette", "curve", "gate_weave"],
     wgsl: r"
 fn look_grain(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let size = max(u.k0.y * lk_scale(), 0.6);
+    let size = max(lk_k(1u) * lk_scale(), 0.6);
     let f = u32(floor(max(u.time.x * 24.0, 0.0))) * 7u + u32(u.time.y);
     let p = uv * u.size.xy / size;
     let n = lk_vnoise(p, f) - 0.5;
     let ch = vec3<f32>(lk_vnoise(p + vec2<f32>(13.1, 7.7), f + 3u) - 0.5, lk_vnoise(p + vec2<f32>(3.3, 19.9), f + 5u) - 0.5, lk_vnoise(p + vec2<f32>(29.3, 1.1), f + 9u) - 0.5);
-    let g = vec3<f32>(n) + ch * u.k0.z;
+    let g = vec3<f32>(n) + ch * lk_k(2u);
     let l = lk_luma(c);
-    let a = u.k0.x * u.k0.x * 0.5 * (1.0 - 0.6 * abs(2.0 * l - 1.0));
+    let a = lk_k(0u) * lk_k(0u) * 0.5 * (1.0 - 0.6 * abs(2.0 * l - 1.0));
     return max(c + g * a, vec3<f32>(0.0));
 }
 ",
     cpu: grain,
     ..Pass::BASE
 };
-
-/// The light round the bright parts, from twelve reads in two rings
-/// `radius` pixels out: what is over `threshold`, on average.
-pub(crate) fn ring_light(u: &Ctx, s: &dyn Src, uv: V2, radius: f32, threshold: f32) -> V3 {
-    let px = v2(u.size[2], u.size[3]);
-    let mut acc = s3(0.0);
-    for i in 0..12u32 {
-        let a = i as f32 * (TAU / 12.0) + 0.3;
-        let r = radius * (0.45 + 0.55 * (i % 2) as f32);
-        let tap = s.src(uv + v2(a.cos(), a.sin()) * px * r);
-        acc = acc + (tap - threshold).max(0.0);
-    }
-    acc / 12.0
-}
-
-const RING_LIGHT: &str = r"
-fn lk_ring_light(uv: vec2<f32>, radius: f32, threshold: f32) -> vec3<f32> {
-    var acc = vec3<f32>(0.0);
-    for (var i = 0u; i < 12u; i = i + 1u) {
-        let a = f32(i) * (LK_TAU / 12.0) + 0.3;
-        let r = radius * (0.45 + 0.55 * f32(i % 2u));
-        let tap = lk_src(uv + vec2<f32>(cos(a), sin(a)) * u.size.zw * r);
-        acc = acc + max(tap - vec3<f32>(threshold), vec3<f32>(0.0));
-    }
-    return acc / 12.0;
-}
-";
 
 fn halation(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
@@ -109,21 +82,21 @@ pub const HALATION: Pass = Pass {
             "amount",
             "how strong the glow",
             (0.0, 1.0, 0.5),
-            "share",
+            Unit::Share,
             (0.5, 0.06),
         ),
         knob(
             "radius",
             "how far it spreads",
             (2.0, 40.0, 12.0),
-            "px",
+            Unit::Px,
             (10.0, 0.02),
         ),
         knob(
             "warmth",
             "pinkish (0) to deep red-orange (1)",
             (0.0, 1.0, 0.6),
-            "share",
+            Unit::Share,
             (0.2, 0.0),
         ),
     ],
@@ -136,9 +109,9 @@ pub const HALATION: Pass = Pass {
     wgsl: r"
 fn look_halation(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let acc = lk_ring_light(uv, u.k0.y * lk_scale(), 0.55);
-    let tint = mix(vec3<f32>(1.0, 0.5, 0.35), vec3<f32>(1.0, 0.28, 0.12), u.k0.z);
-    return c + acc * tint * (u.k0.x * 2.2);
+    let acc = lk_ring_light(uv, lk_k(1u) * lk_scale(), 0.55);
+    let tint = mix(vec3<f32>(1.0, 0.5, 0.35), vec3<f32>(1.0, 0.28, 0.12), lk_k(2u));
+    return c + acc * tint * (lk_k(0u) * 2.2);
 }
 ",
     cpu: halation,
@@ -163,35 +136,35 @@ pub const GLOW: Pass = Pass {
             "amount",
             "how strong the glow",
             (0.0, 1.0, 0.4),
-            "share",
+            Unit::Share,
             (0.5, 0.1),
         ),
         knob(
             "threshold",
             "how bright a part must be to glow",
             (0.3, 0.95, 0.65),
-            "share",
+            Unit::Share,
             (0.1, 0.1),
         ),
         knob(
             "radius",
             "how far it spreads",
             (4.0, 60.0, 20.0),
-            "px",
+            Unit::Px,
             (16.0, 0.03),
         ),
         knob(
             "hue",
             "the glow's tint",
             (0.0, 1.0, 0.1),
-            "turns",
+            Unit::Turns,
             (0.1, 0.0),
         ),
         knob(
             "tint",
             "white (0) to the hue (1)",
             (0.0, 1.0, 0.2),
-            "share",
+            Unit::Share,
             (0.2, 0.0),
         ),
     ],
@@ -204,9 +177,9 @@ pub const GLOW: Pass = Pass {
     wgsl: r"
 fn look_glow(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let acc = lk_ring_light(uv, u.k0.z * lk_scale(), u.k0.y);
-    let tint = mix(vec3<f32>(1.0), lk_hsv(u.k0.w, 0.6, 1.0), u.k1.x);
-    return c + acc * tint * (u.k0.x * 2.5);
+    let acc = lk_ring_light(uv, lk_k(2u) * lk_scale(), lk_k(1u));
+    let tint = mix(vec3<f32>(1.0), lk_hsv(lk_k(3u), 0.6, 1.0), lk_k(4u));
+    return c + acc * tint * (lk_k(0u) * 2.5);
 }
 ",
     cpu: glow,
@@ -216,7 +189,7 @@ fn look_glow(uv: vec2<f32>) -> vec3<f32> {
 fn diffusion(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
-    let px = v2(u.size[2], u.size[3]) * (k[1] * u.scale());
+    let px = u.px() * (k[1] * u.scale());
     let mut b = c;
     for i in 0..8u32 {
         let a = i as f32 * (TAU / 8.0);
@@ -233,8 +206,8 @@ pub const DIFFUSION: Pass = Pass {
     family: F,
     about: "a diffusion filter: soft focus, lights blooming gently, blacks a little lifted (dreamy, romantic, 70s)",
     knobs: &[
-        knob("amount", "how soft", (0.0, 1.0, 0.4), "share", (0.4, 0.08)),
-        knob("radius", "how far the softness reaches", (2.0, 30.0, 8.0), "px", (8.0, 0.02)),
+        knob("amount", "how soft", (0.0, 1.0, 0.4), Unit::Share, (0.4, 0.08)),
+        knob("radius", "how far the softness reaches", (2.0, 30.0, 8.0), Unit::Px, (8.0, 0.02)),
     ],
     cost: 2.5,
     natural: &[natural("amount", Driver::Vocals, 0.7), natural("radius", Driver::Bass, 0.5)],
@@ -242,15 +215,15 @@ pub const DIFFUSION: Pass = Pass {
     wgsl: r"
 fn look_diffusion(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let px = u.size.zw * (u.k0.y * lk_scale());
+    let px = u.size.zw * (lk_k(1u) * lk_scale());
     var b = c;
     for (var i = 0u; i < 8u; i = i + 1u) {
         let a = f32(i) * (LK_TAU / 8.0);
         b = b + lk_src(uv + vec2<f32>(cos(a), sin(a)) * px);
     }
     b = b / 9.0;
-    let o = mix(c, max(c, b), u.k0.x * 0.8);
-    return o + u.k0.x * 0.035;
+    let o = mix(c, max(c, b), lk_k(0u) * 0.8);
+    return o + lk_k(0u) * 0.035;
 }
 ",
     cpu: diffusion,
@@ -265,7 +238,7 @@ fn gate_weave(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
         (vnoise(v2(t, 1.7), 11) - 0.5) * 2.0 * w,
         (vnoise(v2(t, 5.3), 13) - 0.5) * 1.2 * w,
     );
-    s.src(uv + off * v2(u.size[2], u.size[3]))
+    s.src(uv + off * u.px())
 }
 
 /// Gate weave: the frame drifting in the projector's gate.
@@ -278,14 +251,14 @@ pub const GATE_WEAVE: Pass = Pass {
             "amount",
             "how far it drifts (up to 2.5 pixels)",
             (0.0, 1.0, 0.4),
-            "share",
+            Unit::Share,
             (0.6, 0.0),
         ),
         knob(
             "speed",
             "how fast it drifts",
             (0.2, 3.0, 1.0),
-            "share",
+            Unit::Share,
             (0.5, 0.0),
         ),
     ],
@@ -293,8 +266,8 @@ pub const GATE_WEAVE: Pass = Pass {
     pairs: &["grain", "film_damage", "sepia"],
     wgsl: r"
 fn look_gate_weave(uv: vec2<f32>) -> vec3<f32> {
-    let t = u.time.x * u.k0.y;
-    let w = u.k0.x * 2.5 * lk_scale();
+    let t = u.time.x * lk_k(1u);
+    let w = lk_k(0u) * 2.5 * lk_scale();
     let off = vec2<f32>((lk_vnoise(vec2<f32>(t, 1.7), 11u) - 0.5) * 2.0 * w, (lk_vnoise(vec2<f32>(t, 5.3), 13u) - 0.5) * 1.2 * w);
     return lk_src(uv + off * u.size.zw);
 }
@@ -303,16 +276,10 @@ fn look_gate_weave(uv: vec2<f32>) -> vec3<f32> {
     ..Pass::BASE
 };
 
-/// A point's place on the screen in the shapes' units (the height 1, the
-/// middle 0).
-pub(crate) fn aspect(u: &Ctx, uv: V2) -> V2 {
-    (uv - 0.5) * v2(u.size[0] / u.size[1], 1.0)
-}
-
 fn light_leak(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
     let c = s.src(uv);
-    let p = aspect(u, uv);
+    let p = u.aspect(uv);
     let ar = u.size[0] / u.size[1];
     let a = (k[2] + 0.03 * (u.time[0] * 0.21).sin()) * TAU;
     let at = v2(a.cos() * 0.5 * ar, a.sin() * 0.5) * 1.15;
@@ -332,10 +299,10 @@ pub const LIGHT_LEAK: Pass = Pass {
     family: F,
     about: "a light leak: warm light spilling in from an edge of the frame, drifting (summer, nostalgia, instant cameras)",
     knobs: &[
-        knob("amount", "how bright the leak", (0.0, 1.0, 0.5), "share", (0.5, 0.15)),
-        knob("hue", "its colour (orange, red, magenta ...)", (0.0, 1.0, 0.06), "turns", (0.1, 0.03)),
-        knob("place", "where round the frame it comes in", (0.0, 1.0, 0.15), "turns", (0.3, 0.0)),
-        knob("size", "how far into the frame it reaches", (0.0, 1.0, 0.5), "share", (0.3, 0.1)),
+        knob("amount", "how bright the leak", (0.0, 1.0, 0.5), Unit::Share, (0.5, 0.15)),
+        knob("hue", "its colour (orange, red, magenta ...)", (0.0, 1.0, 0.06), Unit::Turns, (0.1, 0.03)),
+        knob("place", "where round the frame it comes in", (0.0, 1.0, 0.15), Unit::Turns, (0.3, 0.0)),
+        knob("size", "how far into the frame it reaches", (0.0, 1.0, 0.5), Unit::Share, (0.3, 0.1)),
     ],
     natural: &[natural("amount", Driver::Downbeat, 0.7), natural("place", Driver::Part, 0.6)],
     pairs: &["grain", "polaroid", "cross_process"],
@@ -344,12 +311,12 @@ fn look_light_leak(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let p = lk_aspect(uv);
     let ar = u.size.x / u.size.y;
-    let a = (u.k0.z + 0.03 * sin(u.time.x * 0.21)) * LK_TAU;
+    let a = (lk_k(2u) + 0.03 * sin(u.time.x * 0.21)) * LK_TAU;
     let at = vec2<f32>(cos(a) * 0.5 * ar, sin(a) * 0.5) * 1.15;
-    let d = length(p - at) / (0.15 + 0.6 * u.k0.w);
+    let d = length(p - at) / (0.15 + 0.6 * lk_k(3u));
     let g = exp(-d * d);
-    let col = lk_hsv(u.k0.y + 0.04 * (lk_vnoise(vec2<f32>(u.time.x * 0.2, 3.0), 21u) - 0.5), 0.75, 1.0);
-    return lk_screen(c, col * (g * u.k0.x * 0.9));
+    let col = lk_hsv(lk_k(1u) + 0.04 * (lk_vnoise(vec2<f32>(u.time.x * 0.2, 3.0), 21u) - 0.5), 0.75, 1.0);
+    return lk_screen(c, col * (g * lk_k(0u) * 0.9));
 }
 ",
     cpu: light_leak,
@@ -377,21 +344,21 @@ pub const VIGNETTE: Pass = Pass {
             "amount",
             "how dark the edges",
             (0.0, 1.0, 0.4),
-            "share",
+            Unit::Share,
             (0.4, 0.3),
         ),
         knob(
             "softness",
             "how far in the darkening starts",
             (0.0, 1.0, 0.5),
-            "share",
+            Unit::Share,
             (0.3, 0.2),
         ),
         knob(
             "shape",
             "round (0) to the frame's shape (1)",
             (0.0, 1.0, 0.0),
-            "share",
+            Unit::Share,
             (0.0, 0.1),
         ),
     ],
@@ -406,9 +373,9 @@ fn look_vignette(uv: vec2<f32>) -> vec3<f32> {
     let q = (uv - 0.5) * 2.0;
     let round = length(q * vec2<f32>(0.85, 1.0)) * 0.78;
     let frame = max(abs(q.x), abs(q.y));
-    let d = mix(round, frame, u.k0.z);
-    let v = smoothstep(0.95 - 0.55 * u.k0.y - 0.25, 1.05, d);
-    return c * (1.0 - u.k0.x * 0.85 * v);
+    let d = mix(round, frame, lk_k(2u));
+    let v = smoothstep(0.95 - 0.55 * lk_k(1u) - 0.25, 1.05, d);
+    return c * (1.0 - lk_k(0u) * 0.85 * v);
 }
 ",
     cpu: vignette,
@@ -436,8 +403,7 @@ fn polaroid(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let px = 1.5 * u.size[3];
     let ix = smoothstep(-px, px, inner.x) * (1.0 - smoothstep(1.0 - px, 1.0 + px, inner.x));
     let iy = smoothstep(-px, px, inner.y) * (1.0 - smoothstep(1.0 - px, 1.0 + px, inner.y));
-    let paper =
-        v3(0.93, 0.91, 0.86) * (0.97 + 0.03 * vnoise(uv * v2(u.size[0], u.size[1]) / 3.0, 31));
+    let paper = v3(0.93, 0.91, 0.86) * (0.97 + 0.03 * vnoise(uv * u.size2() / 3.0, 31));
     mix3(paper, warm, ix * iy)
 }
 
@@ -447,9 +413,9 @@ pub const POLAROID: Pass = Pass {
     family: F,
     about: "an instant photo: the picture in a white frame with a wide bottom, faded and warm (family, nostalgia, summer)",
     knobs: &[
-        knob("frame", "how wide the white frame (0: none)", (0.0, 1.0, 0.6), "share", (0.0, 0.25)),
-        knob("fade", "how faded, lifted and teal in the shadows", (0.0, 1.0, 0.5), "share", (0.3, 0.08)),
-        knob("warmth", "cooler (-) or warmer (+)", (-1.0, 1.0, 0.3), "share", (0.5, 0.01)),
+        knob("frame", "how wide the white frame (0: none)", (0.0, 1.0, 0.6), Unit::Share, (0.0, 0.25)),
+        knob("fade", "how faded, lifted and teal in the shadows", (0.0, 1.0, 0.5), Unit::Share, (0.3, 0.08)),
+        knob("warmth", "cooler (-) or warmer (+)", (-1.0, 1.0, 0.3), Unit::Share, (0.5, 0.01)),
     ],
     cost: 1.2,
     natural: &[natural("warmth", Driver::Part, 0.6), natural("fade", Driver::Quiet, 0.5)],
@@ -457,16 +423,16 @@ pub const POLAROID: Pass = Pass {
     wgsl: r"
 fn look_polaroid(uv: vec2<f32>) -> vec3<f32> {
     let ar = u.size.x / u.size.y;
-    let side = 0.035 * u.k0.x;
+    let side = 0.035 * lk_k(0u);
     let bx = side / ar;
     let top = side;
     let bottom = side * 3.2;
     let inner = vec2<f32>((uv.x - bx) / (1.0 - 2.0 * bx), (uv.y - top) / (1.0 - top - bottom));
     let c = lk_src(clamp(inner, vec2<f32>(0.0), vec2<f32>(1.0)));
     let l = lk_luma(c);
-    let faded = mix(c, c * 0.82 + vec3<f32>(0.1, 0.12, 0.13), u.k0.y);
-    var warm = faded * vec3<f32>(1.0 + 0.08 * u.k0.z, 1.0 + 0.02 * u.k0.z, 1.0 - 0.08 * u.k0.z);
-    warm = mix(warm, warm + vec3<f32>(0.04, 0.02, -0.02) * u.k0.y, smoothstep(0.5, 1.0, l));
+    let faded = mix(c, c * 0.82 + vec3<f32>(0.1, 0.12, 0.13), lk_k(1u));
+    var warm = faded * vec3<f32>(1.0 + 0.08 * lk_k(2u), 1.0 + 0.02 * lk_k(2u), 1.0 - 0.08 * lk_k(2u));
+    warm = mix(warm, warm + vec3<f32>(0.04, 0.02, -0.02) * lk_k(1u), smoothstep(0.5, 1.0, l));
     let px = 1.5 * u.size.w;
     let ix = smoothstep(-px, px, inner.x) * (1.0 - smoothstep(1.0 - px, 1.0 + px, inner.x));
     let iy = smoothstep(-px, px, inner.y) * (1.0 - smoothstep(1.0 - px, 1.0 + px, inner.y));
@@ -512,18 +478,17 @@ pub const FILM_DAMAGE: Pass = Pass {
             "amount",
             "how much dust",
             (0.0, 1.0, 0.4),
-            "share",
+            Unit::Share,
             (0.5, 0.01),
         ),
         knob(
             "age",
             "how worn: scratches and darker dirt",
             (0.0, 1.0, 0.5),
-            "share",
+            Unit::Share,
             (0.3, 0.01),
         ),
     ],
-    cells: true,
     natural: &[
         natural("amount", Driver::Snare, 0.9),
         natural("age", Driver::Bass, 0.5),
@@ -540,21 +505,18 @@ fn look_film_damage(uv: vec2<f32>) -> vec3<f32> {
     let h = lk_hash2(cx, cy, f);
     let at = (cv + vec2<f32>(lk_hash2(cx, cy, f + 1u), lk_hash2(cx, cy, f + 2u))) * 36.0;
     let r = 0.6 + 2.2 * lk_hash2(cx, cy, f + 3u);
-    let speck = (1.0 - smoothstep(r - 0.7, r + 0.7, length(px - at))) * step(h, u.k0.x * 0.06);
+    let speck = (1.0 - smoothstep(r - 0.7, r + 0.7, length(px - at))) * step(h, lk_k(0u) * 0.06);
     let dark = step(0.35, lk_hash2(cx, cy, f + 4u));
     let col = floor(px.x / 140.0);
     let sx = (col + lk_hash2(i32(col), 0, f / 3u + 7u)) * 140.0;
-    let line = (1.0 - smoothstep(0.4, 1.2, abs(px.x - sx))) * step(lk_hash2(i32(col), 1, f / 3u + 7u), u.k0.x * u.k0.y * 0.08);
+    let line = (1.0 - smoothstep(0.4, 1.2, abs(px.x - sx))) * step(lk_hash2(i32(col), 1, f / 3u + 7u), lk_k(0u) * lk_k(1u) * 0.08);
     let damage = speck * mix(0.9, -0.9, dark) + line * 0.35;
-    return clamp(c - vec3<f32>(damage * (0.5 + 0.5 * u.k0.y)), vec3<f32>(0.0), vec3<f32>(1.5));
+    return clamp(c - vec3<f32>(damage * (0.5 + 0.5 * lk_k(1u))), vec3<f32>(0.0), vec3<f32>(1.5));
 }
 ",
     cpu: film_damage,
     ..Pass::BASE
 };
-
-/// The film family's WGSL the other passes share.
-pub const SHARED: &str = RING_LIGHT;
 
 fn letterbox(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
@@ -574,19 +536,19 @@ pub const LETTERBOX: Pass = Pass {
     family: F,
     about: "a cinema's black bars, the picture as wide as a film (ballads, epics, soundtracks, road movies)",
     knobs: &[
-        knob("ratio", "the picture's width to its height (1.85 flat, 2.39 scope)", (1.85, 2.76, 2.39), "ratio", (0.0, 0.2)),
-        knob("amount", "how black the bars", (0.0, 1.0, 1.0), "share", (0.0, 0.3)),
+        knob("ratio", "the picture's width to its height (1.85 flat, 2.39 scope)", (1.85, 2.76, 2.39), Unit::Ratio, (0.0, 0.2)),
+        knob("amount", "how black the bars", (0.0, 1.0, 1.0), Unit::Share, (0.0, 0.3)),
     ],
     pairs: &["split_tone", "grain", "halation"],
     wgsl: r"
 fn look_letterbox(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let ar = u.size.x / u.size.y;
-    let shown = min(ar / u.k0.x, 1.0);
+    let shown = min(ar / lk_k(0u), 1.0);
     let top = (1.0 - shown) * 0.5;
     let px = u.size.w;
     let inside = smoothstep(top - px, top + px, uv.y) * (1.0 - smoothstep(1.0 - top - px, 1.0 - top + px, uv.y));
-    return c * mix(1.0 - u.k0.y, 1.0, inside);
+    return c * mix(1.0 - lk_k(1u), 1.0, inside);
 }
 ",
     cpu: letterbox,
@@ -615,14 +577,13 @@ pub const BOKEH: Pass = Pass {
     family: F,
     about: "bokeh: soft balls of out-of-focus light drifting in the dark parts (Christmas, love songs, city nights, soul and R&B)",
     knobs: &[
-        knob("amount", "how many lights", (0.0, 1.0, 0.5), "share", (0.4, 0.05)),
-        knob("size", "how big", (0.5, 3.0, 1.0), "share", (0.8, 0.05)),
-        knob("hue", "their colour", (0.0, 1.0, 0.1), "turns", (0.2, 0.0)),
-        knob("cover", "the hue (0) or the cover's colour (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.01)),
+        knob("amount", "how many lights", (0.0, 1.0, 0.5), Unit::Share, (0.4, 0.05)),
+        knob("size", "how big", (0.5, 3.0, 1.0), Unit::Share, (0.8, 0.05)),
+        knob("hue", "their colour", (0.0, 1.0, 0.1), Unit::Turns, (0.2, 0.0)),
+        knob("cover", "the hue (0) or the cover's colour (1)", (0.0, 1.0, 0.0), Unit::Share, (0.0, 0.01)),
     ],
     cost: 1.3,
     relief: 0.5,
-    cells: true,
     natural: &[natural("size", Driver::Vocals, 0.7), natural("amount", Driver::Chorus, 0.6)],
     pairs: &["glow", "diffusion", "white_balance"],
     wgsl: r"
@@ -630,12 +591,12 @@ fn look_bokeh(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     var acc = vec3<f32>(0.0);
     for (var l = 0u; l < 2u; l = l + 1u) {
-        let f = lk_fall(uv, 160.0, 0.03, 0.05, l, u.k0.x * 0.5);
+        let f = lk_fall(uv, 160.0, 0.03, 0.05, l, lk_k(0u) * 0.5);
         let near = 1.0 / (1.0 + 0.6 * f32(l));
-        let r = (14.0 + 18.0 * f.z) * u.k0.y * near;
+        let r = (14.0 + 18.0 * f.z) * lk_k(1u) * near;
         let d = length(f.xy);
         let disc = smoothstep(r, r * 0.85, d) * (0.6 + 0.4 * smoothstep(r * 0.6, r * 0.95, d));
-        let col = mix(lk_hsv(u.k0.z + 0.1 * f.z, 0.5, 1.0), u.pal0.xyz, u.k0.w);
+        let col = mix(lk_hsv(lk_k(2u) + 0.1 * f.z, 0.5, 1.0), u.pal0.xyz, lk_k(3u));
         acc = acc + col * (disc * f.w * 0.25);
     }
     let dark = 1.0 - smoothstep(0.25, 0.7, lk_luma(c));

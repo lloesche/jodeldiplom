@@ -30,7 +30,7 @@
 use super::{At, Layer, Live, Out, Playing, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
 use crate::gui::sparks::{rand, TAU, WHITE};
-use crate::gui::wgsl_math::mix3;
+use jodel_looks::math::mix3;
 use jodel_rhythm::grid::When;
 
 /// A fountain of coins out of the playhead.

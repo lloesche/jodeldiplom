@@ -3,28 +3,10 @@
 //! exactly as the catalogue has it, said. That is more than
 //! [`Look::check`] notes (it also mends some things silently: a drive's
 //! amount held, a knob moved twice, a turn folded round), so a look
-//! without faults is checked without a note. And a layer's drives as they
-//! move it ([`Layer::drives`]), which both read.
+//! without faults is checked without a note.
 
 use crate::catalogue::n;
-use crate::pass::Pass;
-use crate::{guard, passes, Drive, Layer, Look};
-
-impl Layer {
-    /// Its drives as they move it: those it gives, else its pass's own.
-    pub fn drives(&self, pass: &Pass) -> Vec<Drive> {
-        match &self.drive {
-            Some(d) => d.clone(),
-            None => (pass.natural.iter())
-                .map(|n| Drive {
-                    knob: n.knob.to_owned(),
-                    by: n.by,
-                    amount: n.amount,
-                })
-                .collect(),
-        }
-    }
-}
+use crate::{guard, passes, Look};
 
 impl Look {
     /// Every way it is not exactly as the catalogue has it, each said
@@ -119,7 +101,7 @@ mod tests {
     fn a_look_without_faults_is_checked_without_a_note() {
         let drive = |knob: &str, amount: f32| {
             Some(vec![Drive {
-                knob: knob.into(),
+                knob: knob.to_owned().into(),
                 by: Driver::Bass,
                 amount,
             }])

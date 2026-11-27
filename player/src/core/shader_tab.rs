@@ -8,12 +8,13 @@
 //! pass's knobs on sliders (their ranges and meanings from the pass), each
 //! knob's driver chosen and how far it moves it. What the guards measure
 //! on what is drawn shows beside it ([`Readout`]): the most flashes in a
-//! second, the lyrics' contrast, the stack's cost against the budget. The
+//! second, the lyrics' contrast, the frame's exposure and the strength the
+//! look draws at; the stack's cost against the budget beside them. The
 //! stack can be copied as JSON, and kept in the data folder as a preset of
 //! the user's own ([`crate::store::looks`]).
 
 use jodel_looks::presets;
-use jodel_looks::{Drive, Driver, Layer, Look, Pass, MIX};
+use jodel_looks::{Driver, Layer, Look, Pass};
 
 use super::keymap::Op;
 use super::{Effect, Side, State};
@@ -23,20 +24,16 @@ pub const YOURS: &str = "yours";
 
 /// What the guards measured on what the tab drew lately: the most
 /// flashes in any second of the last few, the lyric band's contrast
-/// (white words against its brightest tenth, 1 to 21), the stack's cost,
-/// the passes the budget dropped, the frame's exposure (the share of it
-/// clipped, its mean light) and the strength the look draws at to keep it
-/// (1: as made).
+/// (white words against its brightest tenth, 1 to 21), the frame's
+/// exposure (the share of it clipped, its mean light) and the strength the
+/// look draws at to keep it (1: as made). (What the stack costs and what
+/// the budget drops are the look's own: [`Look::check`].)
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Readout {
     /// The most flashes in a second.
     pub flashes: usize,
     /// The lyrics' contrast.
     pub contrast: f32,
-    /// What the stack costs.
-    pub cost: f32,
-    /// The passes dropped.
-    pub dropped: Vec<&'static str>,
     /// The share clipped.
     pub clipped: f32,
     /// The mean light.
@@ -52,17 +49,54 @@ pub struct ShaderTab {
     pub look: Option<Look>,
     /// The preset selected in the list ([`listed`]).
     pub preset: usize,
-    /// The search (none: none), and whether it is being typed.
-    pub search: Option<(String, bool)>,
+    /// The search (none: none).
+    pub search: Option<Search>,
     /// The pass of the stack selected.
     pub layer: usize,
-    /// The knob whose slider the pointer holds (a knob's place, or
-    /// [`MIX`]), and whether it is its driver's amount.
-    pub dragging: Option<(usize, bool)>,
+    /// The slider the pointer holds.
+    pub dragging: Option<KnobRef>,
     /// The presets kept on the tab, from the data folder.
     pub kept: Vec<Look>,
     /// What the guards measured.
     pub readout: Readout,
+}
+
+/// The search over the presets: being typed, or held (typed, then
+/// accepted).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Search {
+    /// Being typed.
+    Typing(String),
+    /// Held.
+    Held(String),
+}
+
+impl Search {
+    /// What it searches for.
+    pub fn text(&self) -> &str {
+        match self {
+            Search::Typing(t) | Search::Held(t) => t,
+        }
+    }
+}
+
+/// A slider of the selected pass: a slot's ([`Pass::slots`]: a knob's, or
+/// the mix's) value, or how far its driver moves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KnobRef {
+    /// The slot.
+    pub slot: usize,
+    /// Which of its sliders.
+    pub part: Part,
+}
+
+/// Which of a slot's sliders: its value, or its driver's amount.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// Its value.
+    Value,
+    /// Its driver's amount.
+    Amount,
 }
 
 /// The pointer and the window on the tab.
@@ -78,28 +112,20 @@ pub enum ShaderAction {
     Remove(usize),
     /// A pass moved so many places on (back, when negative).
     Move(usize, i32),
-    /// A knob of the selected pass (its place, or [`MIX`]) set to `share`
-    /// of its way.
-    Slide {
-        /// The knob.
-        knob: usize,
-        /// Where, 0 to 1.
-        share: f32,
-    },
-    /// A knob's driver's amount set to `share` of its way (-1 at 0, 1 at
-    /// 1).
-    Amount {
-        /// The knob.
-        knob: usize,
+    /// A slider of the selected pass set to `share` of its way (a value
+    /// from the least to the most; a driver's amount from -1 to 1).
+    Set {
+        /// The slider.
+        at: KnobRef,
         /// Where, 0 to 1.
         share: f32,
     },
     /// The slider let go of.
     SlideEnd,
-    /// A knob's driver a step round (none, then every driver).
+    /// A slot's driver a step round (none, then every driver).
     Driver {
-        /// The knob.
-        knob: usize,
+        /// The slot.
+        slot: usize,
         /// Which way.
         by: i32,
     },
@@ -123,7 +149,7 @@ pub fn shows(state: &State) -> bool {
 /// each with its group's name, as the search finds them (none: all).
 pub fn listed(state: &State) -> Vec<(&str, &Look)> {
     let words: Vec<String> = (state.shader.search.as_ref())
-        .map(|(s, _)| s.to_lowercase())
+        .map(|s| s.text().to_lowercase())
         .unwrap_or_default()
         .split_whitespace()
         .map(str::to_owned)
@@ -139,7 +165,8 @@ pub fn listed(state: &State) -> Vec<(&str, &Look)> {
     kept.chain(built).filter(|(f, l)| found(f, l)).collect()
 }
 
-/// The stack edited: the tab's, else the first preset's.
+/// The stack edited: the tab's, else the first preset's (the built-in
+/// presets are never none: a test holds them).
 pub fn look(state: &State) -> &Look {
     match &state.shader.look {
         Some(l) => l,
@@ -155,36 +182,18 @@ pub fn layer(state: &State) -> Option<(usize, &Layer, &'static Pass)> {
     Some((i, l, jodel_looks::passes::named(&l.pass)?))
 }
 
-/// A knob's value in `layer` of `pass` (its place, or [`MIX`]).
-pub fn value(layer: &Layer, pass: &Pass, knob: usize) -> f32 {
-    if knob == MIX {
-        return layer.mix;
-    }
-    pass.knobs.get(knob).map_or(0.0, |k| {
-        layer.knobs.get(k.name).map_or(k.default, |&v| k.clamp(v))
-    })
+/// The value of `layer`'s slot `slot` on its `pass` ([`Layer::values`]).
+pub fn value(layer: &Layer, pass: &Pass, slot: usize) -> f32 {
+    layer.values(pass).get(slot).copied().unwrap_or(0.0)
 }
 
-/// A knob's range (its place, or [`MIX`]: 0 to 1).
-pub fn range(pass: &Pass, knob: usize) -> (f32, f32) {
-    pass.knobs.get(knob).map_or((0.0, 1.0), |k| (k.lo, k.hi))
-}
-
-/// The knob's name (its place, or [`MIX`]: `mix`).
-pub fn knob_name(pass: &Pass, knob: usize) -> &'static str {
-    pass.knobs.get(knob).map_or("mix", |k| k.name)
-}
-
-/// The music moving `layer`'s knob (none: none): its own drives, or the
-/// pass's natural ones where it has none of its own.
-pub fn drive(layer: &Layer, pass: &Pass, knob: usize) -> Option<(Driver, f32)> {
-    let name = knob_name(pass, knob);
-    match &layer.drive {
-        Some(d) => d.iter().find(|d| d.knob == name).map(|d| (d.by, d.amount)),
-        None => (pass.natural.iter())
-            .find(|n| n.knob == name)
-            .map(|n| (n.by, n.amount)),
-    }
+/// The music moving `layer`'s slot `slot` on its `pass` (none: none):
+/// what moves it and how far ([`Layer::drives`]).
+pub fn drive(layer: &Layer, pass: &Pass, slot: usize) -> Option<(Driver, f32)> {
+    let name = pass.slot(slot)?.name;
+    (layer.drives(pass).iter())
+        .find(|d| d.knob == name)
+        .map(|d| (d.by, d.amount))
 }
 
 /// The stack changed by `change`, the selected pass kept in it; the tab's
@@ -205,18 +214,10 @@ fn edit_layer(state: &mut State, change: impl FnOnce(&mut Layer, &'static Pass))
     edit(state, |look, _| change(&mut look.layers[i], pass));
 }
 
-/// `layer`'s drives as its own (the pass's natural ones, where it had
-/// none of its own).
-fn own_drives<'a>(layer: &'a mut Layer, pass: &Pass) -> &'a mut Vec<Drive> {
-    layer.drive.get_or_insert_with(|| {
-        (pass.natural.iter())
-            .map(|n| Drive {
-                knob: n.knob.to_owned(),
-                by: n.by,
-                amount: n.amount,
-            })
-            .collect()
-    })
+/// `layer`'s drives on its `pass` as its own (as they move it:
+/// [`Layer::drives`]).
+fn own_drives<'a>(layer: &'a mut Layer, pass: &Pass) -> &'a mut Vec<jodel_looks::Drive> {
+    layer.drive.get_or_insert_with(|| pass.natural.to_vec())
 }
 
 /// The preset at `k` in the list selected, and the stack made it.
@@ -258,7 +259,7 @@ fn keep(state: &mut State, fx: &mut Vec<Effect>) {
             n += 1;
         }
         look.id = id;
-        if look.name.is_empty() || !look.name.starts_with("My ") {
+        if !look.name.starts_with("My ") {
             look.name = format!("My {}", look.name);
         }
     }
@@ -298,32 +299,29 @@ pub fn act(state: &mut State, what: ShaderAction, fx: &mut Vec<Effect>) {
                 *at = to;
             }
         }),
-        ShaderAction::Slide { knob, share } => {
-            state.shader.dragging = Some((knob, false));
+        ShaderAction::Set { at, share } => {
+            state.shader.dragging = Some(at);
+            let share = share.clamp(0.0, 1.0);
             edit_layer(state, |l, pass| {
-                let (lo, hi) = range(pass, knob);
-                let v = lo + (hi - lo) * share.clamp(0.0, 1.0);
-                match pass.knobs.get(knob) {
-                    Some(k) => {
-                        l.knobs.insert(k.name.to_owned(), k.clamp(v));
+                let Some(k) = pass.slot(at.slot) else {
+                    return;
+                };
+                match at.part {
+                    Part::Value => l.set(pass, at.slot, k.lo + (k.hi - k.lo) * share),
+                    Part::Amount => {
+                        if let Some(d) = own_drives(l, pass).iter_mut().find(|d| d.knob == k.name) {
+                            d.amount = share * 2.0 - 1.0;
+                        }
                     }
-                    None => l.mix = v,
-                }
-            });
-        }
-        ShaderAction::Amount { knob, share } => {
-            state.shader.dragging = Some((knob, true));
-            edit_layer(state, |l, pass| {
-                let name = knob_name(pass, knob);
-                if let Some(d) = own_drives(l, pass).iter_mut().find(|d| d.knob == name) {
-                    d.amount = share.clamp(0.0, 1.0) * 2.0 - 1.0;
                 }
             });
         }
         ShaderAction::SlideEnd => state.shader.dragging = None,
-        ShaderAction::Driver { knob, by } => edit_layer(state, |l, pass| {
-            let name = knob_name(pass, knob);
-            let now = drive(l, pass, knob).map(|(d, _)| d);
+        ShaderAction::Driver { slot, by } => edit_layer(state, |l, pass| {
+            let Some(name) = pass.slot(slot).map(|k| k.name) else {
+                return;
+            };
+            let now = drive(l, pass, slot).map(|(d, _)| d);
             let at = now.map_or(0, |d| 1 + d as i32);
             let n = Driver::COUNT as i32 + 1;
             let to = (at + by).rem_euclid(n);
@@ -331,15 +329,15 @@ pub fn act(state: &mut State, what: ShaderAction, fx: &mut Vec<Effect>) {
             let amount = (drives.iter().find(|d| d.knob == name)).map_or(0.5, |d| d.amount);
             drives.retain(|d| d.knob != name);
             if to > 0 {
-                drives.push(Drive {
-                    knob: name.to_owned(),
+                drives.push(jodel_looks::Drive {
+                    knob: name.into(),
                     by: Driver::ALL[(to - 1) as usize],
                     amount,
                 });
             }
         }),
         ShaderAction::Search(text) => {
-            state.shader.search = Some((text, true));
+            state.shader.search = Some(Search::Typing(text));
             state.shader.preset = 0;
         }
         ShaderAction::Copy => {
@@ -357,7 +355,7 @@ pub fn typed(state: &mut State, c: char) -> bool {
         return false;
     }
     match &mut state.shader.search {
-        Some((text, true)) => {
+        Some(Search::Typing(text)) => {
             text.push(c);
             state.shader.preset = 0;
             true
@@ -368,7 +366,7 @@ pub fn typed(state: &mut State, c: char) -> bool {
 
 /// Whether the search is being typed (its keys are the search's).
 pub fn searching(state: &State) -> bool {
-    shows(state) && state.shader.search.as_ref().is_some_and(|(_, t)| *t)
+    shows(state) && matches!(state.shader.search, Some(Search::Typing(_)))
 }
 
 /// What a key does on the tab; whether it was the tab's.
@@ -376,13 +374,13 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     if searching(state) {
         match op {
             Op::Erase => {
-                if let Some((text, _)) = &mut state.shader.search {
+                if let Some(Search::Typing(text)) = &mut state.shader.search {
                     text.pop();
                 }
             }
             Op::Accept => {
-                if let Some((_, typing)) = &mut state.shader.search {
-                    *typing = false;
+                if let Some(Search::Typing(text)) = state.shader.search.take() {
+                    state.shader.search = Some(Search::Held(text));
                 }
                 pick(state, 0);
             }
@@ -401,7 +399,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         Op::Top => pick(state, 0),
         Op::Bottom => pick(state, n.saturating_sub(1)),
         Op::Open => pick(state, at),
-        Op::Filter => state.shader.search = Some((String::new(), true)),
+        Op::Filter => state.shader.search = Some(Search::Typing(String::new())),
         Op::Back if state.shader.search.is_some() => state.shader.search = None,
         Op::ShaderLayer(by) => {
             let n = look(state).layers.len().max(1) as i32;
@@ -414,7 +412,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         ),
         Op::ShaderRemove => act(state, ShaderAction::Remove(state.shader.layer), fx),
         Op::ShaderCopy => act(state, ShaderAction::Copy, fx),
-        Op::ShaderKeep => keep(state, fx),
+        Op::ShaderKeep => act(state, ShaderAction::Keep, fx),
         _ => return false,
     }
     true

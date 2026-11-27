@@ -118,10 +118,10 @@ impl Shader {
             let Some(pass) = passes::named(&layer.pass) else {
                 continue;
             };
-            let mut drive = layer.drives(pass);
+            let mut drive = layer.drives(pass).to_vec();
             drive.retain(|d| !asked.iter().any(|a| a.knob == d.knob));
             drive.extend(asked.iter().map(|a| Drive {
-                knob: a.knob.clone(),
+                knob: a.knob.clone().into(),
                 by: a.by,
                 amount: a.amount,
             }));

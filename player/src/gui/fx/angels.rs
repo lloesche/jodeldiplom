@@ -17,7 +17,7 @@ use super::{At, Layer, Live, Out, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
 use crate::gui::shine::hue;
 use crate::gui::sparks::{rand, TAU};
-use crate::gui::wgsl_math::mix3;
+use jodel_looks::math::mix3;
 
 /// How long a flight of angels takes to come down, in seconds.
 pub const ANGELS_LIFE: f32 = 6.0;

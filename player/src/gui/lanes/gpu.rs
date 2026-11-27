@@ -14,8 +14,8 @@ use iced::Rectangle;
 
 use super::tiles::{LaneFrame, TILE};
 use super::Shared;
-use crate::gui::wgsl_math::srgb_to_linear;
 use crate::view::palette;
+use jodel_looks::math::srgb_to_linear;
 
 const SHADER: &str = r"
 struct Lane {

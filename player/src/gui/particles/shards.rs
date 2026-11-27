@@ -12,8 +12,8 @@
 use crate::gui::particles::{Look, Spray, Sprite, BUBBLE_SPARKS};
 use crate::gui::sparks::{rand, TAU, WHITE};
 use crate::gui::stage::shapes::liquid::GROW;
-use crate::gui::wgsl_math::mix3;
 use crate::view::bubbles::{BURST, SWELL};
+use jodel_looks::math::mix3;
 
 /// How long the wet sheen a bubble leaves where it was fades once it
 /// tears, in seconds.

@@ -1,7 +1,9 @@
 //! The library of passes, family by family, each a [`Pass`] with its WGSL
-//! and its maths on the processor side by side.
+//! and its maths on the processor side by side, and the helpers the
+//! families share ([`common`]).
 
 pub mod atmos;
+pub mod common;
 pub mod film;
 pub mod grade;
 pub mod medium;
@@ -103,15 +105,6 @@ pub static PASSES: &[&Pass] = &[
     &visual::BEAT_RINGS,
     &visual::SPARKS,
     &visual::LISSAJOUS,
-];
-
-/// The helpers the families share, in every pass's shader.
-pub const SHARED: &[&str] = &[
-    film::SHARED,
-    print::SHARED,
-    paint::SHARED,
-    retro::SHARED,
-    atmos::SHARED,
 ];
 
 /// The pass named `name`.

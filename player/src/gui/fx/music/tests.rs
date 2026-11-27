@@ -23,20 +23,23 @@ fn grid() -> Analysis {
             },
         ],
         beats,
+        duration: 20.0,
         ..Analysis::default()
     };
     a.derive();
     a
 }
 
-/// The music `song` is heard as at `now`, sung by `singing`.
+/// The music `song` is heard as at `now`, sung by `singing`: its drivers
+/// the song's curves read then.
 fn at(song: &Song, singing: &Singing, now: f64) -> Music {
+    let curves = jodel_looks::Curves::new(song.analysis(), song.waveform(), &song.sections, &[]);
     read(&Heard {
         song: Some(song),
         singing,
         now,
         clock: now,
-        length: Some(20.0),
+        signals: curves.at(now),
     })
 }
 
@@ -93,11 +96,16 @@ fn the_pulses_fall_away_and_fade_where_the_grid_is_unsure() {
     let off = at(&song, &singing, 3.2);
     assert!((on.beat - 1.0).abs() < 1e-6 && (on.downbeat - 1.0).abs() < 1e-6);
     assert!(off.beat < 0.2 && off.downbeat > off.beat, "{off:?}");
-    assert_eq!(on.get(Signal::Beat), on.beat, "sure");
+    assert_eq!(on.get(Driver::Beat), on.beat, "sure");
     let unsure = at(&song, &singing, 9.0);
-    let faded = unsure.get(Signal::Beat);
+    let faded = unsure.get(Driver::Beat);
     assert!(unsure.beat > 0.99 && faded == 0.0, "{unsure:?}");
-    assert_eq!(unsure.get(Signal::BeatPhase), 0.0);
+    let unsure_off = at(&song, &singing, 9.2);
+    assert_eq!(
+        unsure_off.get(Driver::BeatPhase),
+        unsure_off.beat_phase,
+        "the phase runs on"
+    );
     assert!((on.progress - 0.15).abs() < 1e-6);
     let beat = [on.beat_phase, on.bar_phase, on.beat, on.downbeat];
     assert_eq!(on.uniform()[0], beat);
@@ -106,7 +114,7 @@ fn the_pulses_fall_away_and_fade_where_the_grid_is_unsure() {
         singing: &singing,
         now: 3.0,
         clock: 3.0,
-        length: None,
+        signals: Signals::QUIET,
     });
     assert_eq!(none, Music::NEUTRAL);
 }
@@ -146,14 +154,14 @@ fn the_levels_the_melody_and_the_sections_come_from_the_waveform() {
     let singing = Singing::default();
     let at = |now: f64| at(&song, &singing, now);
     let (quiet, loud, later) = (at(5.0), at(12.5), at(16.0));
-    let drums = Signal::Stem(Stem::Drums);
+    let drums = Driver::Drums;
     assert!(loud.get(drums) > 0.9 && quiet.get(drums) < 0.1, "{loud:?}");
-    let bass = Signal::Stem(Stem::Bass);
+    let bass = Driver::Bass;
     assert_eq!(loud.get(bass), quiet.get(bass), "the bass stays");
     assert!(loud.level > 0.9 && quiet.level < 0.1);
     assert!((at(5.005).melody - 69.0).abs() < 1e-6, "A4 where sure");
     assert_eq!(at(5.015).melody, 0.0, "not where unsure");
-    assert!((at(5.005).get(Signal::Melody) - (69.0 - 36.0) / 48.0).abs() < 1e-6);
+    assert!((at(5.005).get(Driver::Melody) - (69.0 - 36.0) / 48.0).abs() < 1e-6);
     let swelling = loud.section > 0.6 && later.section < loud.section;
     assert!(swelling, "{loud:?} {later:?}");
     assert_eq!(quiet.section, 0.0);
@@ -231,7 +239,7 @@ fn a_hit_lands_by_the_grid_s_one_rule() {
             singing: &singing,
             now,
             clock: now - late,
-            length: Some(20.0),
+            signals: Signals::QUIET,
         })
     };
     // A tenth of a second before the beat at 3.5 s: on it.

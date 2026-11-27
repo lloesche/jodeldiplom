@@ -14,9 +14,9 @@
 //! reference ([`stage_wgsl`]), held to them on the GPU
 //! (`super::shader_check`).
 
-use super::wgsl_math::{fract, smoothstep};
 use crate::core::shine::Tier;
 use crate::tiers::TIERS;
+use jodel_looks::math::{fract, smoothstep};
 
 /// How long a level takes to come in, in seconds.
 pub const RISE: f32 = 0.25;

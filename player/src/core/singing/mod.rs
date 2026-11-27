@@ -532,6 +532,19 @@ impl Singing {
         })
     }
 
+    /// The tier it glows at (none with the game off, `game`): the one its
+    /// last phrase reached.
+    pub fn tier(&self, game: bool) -> Option<crate::tiers::Tier> {
+        self.last_phrase().and_then(|p| p.tier).filter(|_| game)
+    }
+
+    /// How strongly it glows (none with the game off, `game`): the glow of
+    /// the tier its last phrase reached ([`crate::tiers::TierSpec::glow`],
+    /// the top's 1), 0 for none.
+    pub fn glow(&self, game: bool) -> f32 {
+        self.tier(game).map_or(0.0, |t| t.spec().glow)
+    }
+
     /// The words with notes in the song.
     pub fn words(&self) -> usize {
         self.notes.words().len()

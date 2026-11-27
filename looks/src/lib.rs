@@ -9,10 +9,10 @@
 //! - A pass ([`pass::Pass`], the library in [`passes`]) declares its
 //!   knobs (name, meaning, range, default, unit, how far the music may
 //!   move it, how much light it moves), what it costs, what moves it by
-//!   itself ([`pass::Natural`]) and its maths twice: WGSL for the GPU and
+//!   itself (its natural [`Drive`]s) and its maths twice: WGSL for the GPU and
 //!   Rust for the processor ([`math`] has WGSL's builtins and the shared
-//!   helpers in both), held equal on the GPU by the player's
-//!   `shader_check`.
+//!   helpers in both), held equal on the GPU by this crate's
+//!   `tests/gpu.rs` (and checked as WGSL anywhere).
 //! - The music ([`drive`]) is read at the song's time as heard: curves
 //!   and moments worked out once a song before it plays ([`drive::Curves`]),
 //!   and what the singing knows live.
@@ -36,10 +36,11 @@ pub mod presets;
 pub mod render;
 pub mod wgsl;
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 pub use drive::{Curves, Driver, Feed, Signals};
-pub use pass::{Ctx, Family, Knob, Pass};
+pub use pass::{Ctx, Family, Knob, Pass, Values, BAND, KNOBS, MIX, MIX_KNOB, PALETTE};
 
 /// A look: its id (unique: a preset's name, or one a model made for a
 /// song), its name and what it is for (for people), its tags (genres,
@@ -96,10 +97,11 @@ fn is_one(v: &f32) -> bool {
 
 /// A knob moved by the music: `knob` (or `mix`) by `by`, `amount` of the
 /// knob's swing (-1 to 1: the swing is the most the music may move it).
+/// A look's own, or a pass's natural one ([`pass::natural`]).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Drive {
     /// The knob.
-    pub knob: String,
+    pub knob: Cow<'static, str>,
     /// What moves it.
     pub by: Driver,
     /// How far.
@@ -118,6 +120,41 @@ impl Layer {
             keep: false,
         }
     }
+
+    /// Its values on `pass` (its pass), a slot each ([`Pass::slots`]):
+    /// each knob as it is set, held to its range, else at its default; its
+    /// mix held to 0 to 1; the slots `pass` has not none.
+    pub fn values(&self, pass: &Pass) -> Values {
+        let mut v = [0.0; KNOBS + 1];
+        for (i, k) in pass.slots() {
+            let set = if i == MIX {
+                Some(self.mix)
+            } else {
+                self.knobs.get(k.name).copied()
+            };
+            v[i] = set.map_or(k.default, |x| k.clamp(x));
+        }
+        v
+    }
+
+    /// Its slot `slot` on `pass` (its pass) set to `v`, held to the slot's
+    /// range ([`Knob::clamp`]); a slot `pass` has not: nothing.
+    pub fn set(&mut self, pass: &Pass, slot: usize, v: f32) {
+        let Some(k) = pass.slot(slot) else {
+            return;
+        };
+        if slot == MIX {
+            self.mix = k.clamp(v);
+        } else {
+            self.knobs.insert(k.name.to_owned(), k.clamp(v));
+        }
+    }
+
+    /// Its drives as they move it on `pass` (its pass): those it gives,
+    /// else its pass's own.
+    pub fn drives<'a>(&'a self, pass: &'a Pass) -> &'a [Drive] {
+        self.drive.as_deref().unwrap_or(pass.natural)
+    }
 }
 
 impl Look {
@@ -135,6 +172,15 @@ impl Look {
                 return;
             };
             self.layers.remove(known[k].0);
+        }
+    }
+
+    /// Its name for people (none: its id).
+    pub fn title(&self) -> &str {
+        if self.name.is_empty() {
+            &self.id
+        } else {
+            &self.name
         }
     }
 
@@ -164,51 +210,40 @@ impl Look {
                 notes.push(format!("no pass {:?}: left out", layer.pass));
                 continue;
             };
-            let mut knobs = pass.defaults();
+            let values = layer.values(pass);
             for (name, &v) in &layer.knobs {
                 match pass.knob(name) {
                     Some((i, k)) => {
-                        knobs[i] = k.clamp(v);
-                        if knobs[i] != v && !k.wraps() {
-                            notes.push(format!("{}.{name}: {v} held to {}", pass.name, knobs[i]));
+                        if values[i] != v && !k.wraps() {
+                            notes.push(format!("{}.{name}: {v} held to {}", pass.name, values[i]));
                         }
                     }
                     None => notes.push(format!("{} has no knob {name:?}: left out", pass.name)),
                 }
             }
             let mut drives = Vec::new();
-            for Drive {
-                knob: name,
-                by,
-                amount,
-            } in layer.drives(pass)
-            {
-                let amount = if amount.is_finite() {
-                    amount.clamp(-1.0, 1.0)
+            for d in layer.drives(pass) {
+                let amount = if d.amount.is_finite() {
+                    d.amount.clamp(-1.0, 1.0)
                 } else {
                     0.0
                 };
-                match pass.drivable(&name) {
+                match pass.drivable(&d.knob) {
                     Some((slot, swing, light)) if swing > 0.0 && amount != 0.0 => {
                         drives.push(CheckedDrive {
                             slot,
-                            by,
+                            by: d.by,
                             amount: amount * swing,
                             light,
                         });
                     }
                     Some(_) => {}
-                    None => notes.push(format!("{} has no knob {name:?} to move", pass.name)),
+                    None => notes.push(format!("{} has no knob {:?} to move", pass.name, d.knob)),
                 }
             }
             layers.push(CheckedLayer {
                 pass,
-                knobs,
-                mix: if layer.mix.is_finite() {
-                    layer.mix.clamp(0.0, 1.0)
-                } else {
-                    1.0
-                },
+                values,
                 drives,
                 keep: layer.keep,
             });
@@ -228,9 +263,6 @@ impl Look {
         }
     }
 }
-
-/// The slot of a layer's mix among its knobs' (as a drive moves it).
-pub const MIX: usize = 8;
 
 /// What a stack of checked layers costs.
 fn cost(layers: &[CheckedLayer]) -> f32 {
@@ -272,25 +304,23 @@ pub struct Checked {
     pub notes: Vec<String>,
 }
 
-/// A pass as it draws in a checked look: the pass, its knobs (in its
-/// order), its mix, how the music moves them and whether the budget keeps
-/// it.
+/// A pass as it draws in a checked look: the pass, its values (its knobs
+/// in its order and its mix, [`Layer::values`]), how the music moves them
+/// and whether the budget keeps it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedLayer {
     /// The pass.
     pub pass: &'static Pass,
-    /// Its knobs.
-    pub knobs: [f32; 8],
-    /// Its mix.
-    pub mix: f32,
+    /// Its values.
+    pub values: Values,
     /// How the music moves it.
     pub drives: Vec<CheckedDrive>,
     /// Whether the budget keeps it.
     pub keep: bool,
 }
 
-/// A knob moved by the music, checked: its slot (a knob's place, or
-/// [`MIX`]), what moves it, how far (in the knob's units, the flash
+/// A knob moved by the music, checked: its slot ([`Pass::slots`]), what
+/// moves it, how far (in the knob's units, the flash
 /// guard's share taken off) and the light a unit of it moves.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CheckedDrive {
@@ -331,32 +361,21 @@ pub struct Moment {
     pub strength: f32,
 }
 
-/// A palette to measure a look with where no cover gives one: warm,
-/// cool and near black.
-pub const MEASURING_PALETTE: [[f32; 3]; 3] = [[0.9, 0.5, 0.2], [0.2, 0.4, 0.8], [0.1, 0.1, 0.12]];
-
 impl Moment {
-    /// A moment a look is measured at ([`guard::strength`],
-    /// [`guard::over_song`]): a picture of `size`, the song's time `t`,
-    /// `dt` after the frame before (forgotten: `forget`), the seed `seed`,
-    /// at `strength`; no lyric band, [`MEASURING_PALETTE`].
-    pub fn measuring(
-        size: (u32, u32),
-        (t, dt): (f64, f32),
-        forget: bool,
-        (seed, strength): (u32, f32),
-    ) -> Moment {
-        Moment {
-            size,
-            t,
-            seed,
-            dt,
-            forget,
-            band: None,
-            palette: MEASURING_PALETTE,
-            strength,
-        }
-    }
+    /// What a moment a look is measured at ([`guard::strength`],
+    /// [`guard::over_song`]) starts from, each caller giving its own size,
+    /// time, step and seed: the song's start, the frame before forgotten,
+    /// no lyric band, [`PALETTE`], at full strength.
+    pub const MEASURING: Moment = Moment {
+        size: (1, 1),
+        t: 0.0,
+        seed: 0,
+        dt: 0.0,
+        forget: true,
+        band: None,
+        palette: PALETTE,
+        strength: 1.0,
+    };
 }
 
 impl Checked {
@@ -389,19 +408,15 @@ impl Checked {
         self.layers
             .iter()
             .map(|l| {
-                let mut k = l.knobs;
-                let mut mix = l.mix;
+                let mut v = l.values;
                 for d in &l.drives {
-                    let by = d.amount * signals.get(d.by);
-                    if d.slot == MIX {
-                        mix += by;
-                    } else {
-                        k[d.slot] += by;
-                    }
+                    v[d.slot] += d.amount * signals.get(d.by);
                 }
-                for (i, knob) in l.pass.knobs.iter().enumerate() {
-                    k[i] = knob.clamp(k[i]);
+                for (i, knob) in l.pass.slots() {
+                    v[i] = knob.clamp(v[i]);
                 }
+                let mut k = [0.0; KNOBS];
+                k.copy_from_slice(&v[..KNOBS]);
                 let data = l.pass.data.map_or([[0.0; 4]; pass::DATA], |f| f(&feed));
                 let ctx = Ctx {
                     size: [w, h, 1.0 / w, 1.0 / h],
@@ -414,12 +429,7 @@ impl Checked {
                     k,
                     band: [top, bottom, l.pass.relief, guard::CEILING],
                     pal,
-                    mix: [
-                        mix.clamp(0.0, 1.0) * moment.strength.clamp(0.0, 1.0),
-                        0.0,
-                        0.0,
-                        0.0,
-                    ],
+                    mix: [v[MIX] * moment.strength.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
                     data,
                 };
                 (l.pass, ctx)

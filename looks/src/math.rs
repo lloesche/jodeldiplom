@@ -1,9 +1,12 @@
 //! WGSL's types and builtins on the processor, and the helpers every pass
 //! shares, written twice: here, and in WGSL ([`wgsl`], each `lk_` and the
 //! same name). A pass's reference reads like its shader line for line, so
-//! the two agree wherever they are held to each other
-//! (`shader_check`). The hash is integer arithmetic, the same bits on
-//! both; the noise is built on it.
+//! the two agree wherever they are held to each other (`tests/gpu.rs`,
+//! the player's `shader_check`). The hash is integer arithmetic, the same bits on
+//! both; the noise is built on it. The player's shaders' references are
+//! written in the same builtins, with the shapes and the encoding of light
+//! their own shaders share ([`round_box`], [`srgb_to_linear`],
+//! [`linear_to_srgb`]): one home for them all.
 
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
@@ -90,6 +93,18 @@ impl V3 {
     }
 }
 
+impl From<[f32; 3]> for V3 {
+    fn from([x, y, z]: [f32; 3]) -> V3 {
+        v3(x, y, z)
+    }
+}
+
+impl From<V3> for [f32; 3] {
+    fn from(c: V3) -> [f32; 3] {
+        [c.x, c.y, c.z]
+    }
+}
+
 /// WGSL's `fract`.
 pub fn fract(x: f32) -> f32 {
     x - x.floor()
@@ -105,9 +120,10 @@ pub fn mix(a: f32, b: f32, t: f32) -> f32 {
     a * (1.0 - t) + b * t
 }
 
-/// WGSL's `mix` of colours by a number.
-pub fn mix3(a: V3, b: V3, t: f32) -> V3 {
-    a * (1.0 - t) + b * t
+/// WGSL's `mix` of colours by a number, the colours a [`V3`] or three
+/// numbers alike.
+pub fn mix3<C: Into<V3> + From<V3>>(a: C, b: C, t: f32) -> C {
+    C::from(a.into() * (1.0 - t) + b.into() * t)
 }
 
 /// WGSL's `mix` of points by a number.
@@ -142,14 +158,34 @@ pub fn luma(c: V3) -> f32 {
 /// from, the lyric band's ceiling and the guards' measures alike.
 pub fn lum(c: V3) -> f32 {
     c.max(0.0)
-        .map(|v| {
-            if v <= 0.04045 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        })
+        .map(srgb_to_linear)
         .dot(v3(0.2126, 0.7152, 0.0722))
+}
+
+/// An sRGB-encoded value (0 to 1) as linear light (`lk_decode` in WGSL).
+pub fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Linear light (0 to 1) encoded as sRGB: [`srgb_to_linear`]'s inverse
+/// (`lk_encode` in WGSL).
+pub fn linear_to_srgb(v: f32) -> f32 {
+    if v <= 0.003_130_8 {
+        12.92 * v
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// How far `p` is outside a box `half` its size round the origin, its
+/// corners `r` round (negative inside): the player's shaders' `round_box`.
+pub fn round_box(p: V2, half: V2, r: f32) -> f32 {
+    let q = p.abs() - half + r;
+    (q.x.max(0.0).hypot(q.y.max(0.0))) + q.x.max(q.y).min(0.0) - r
 }
 
 /// `c` as grey by `1 - s` (0: grey, 1: as it is, more: more vivid).
@@ -279,11 +315,15 @@ const HELPERS: &str = r"
 const LK_TAU: f32 = 6.2831853;
 fn lk_sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
 fn lk_luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
-fn lk_lum(c: vec3<f32>) -> f32 {
-    let x = max(c, vec3<f32>(0.0));
-    let l = select(x / 12.92, pow((x + 0.055) / 1.055, vec3<f32>(2.4)), x > vec3<f32>(0.04045));
-    return dot(l, vec3<f32>(0.2126, 0.7152, 0.0722));
+fn lk_encode(v: vec3<f32>) -> vec3<f32> {
+    let x = max(v, vec3<f32>(0.0));
+    return select(12.92 * x, 1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055, x > vec3<f32>(0.0031308));
 }
+fn lk_decode(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3<f32>(0.0));
+    return select(x / 12.92, pow((x + 0.055) / 1.055, vec3<f32>(2.4)), x > vec3<f32>(0.04045));
+}
+fn lk_lum(c: vec3<f32>) -> f32 { return dot(lk_decode(c), vec3<f32>(0.2126, 0.7152, 0.0722)); }
 fn lk_saturate(c: vec3<f32>, s: f32) -> vec3<f32> { return mix(vec3<f32>(lk_luma(c)), c, s); }
 fn lk_mix32(x: u32) -> u32 {
     var h = x;
@@ -363,5 +403,17 @@ mod tests {
         assert!(n.iter().any(|&v| v < 0.3) && n.iter().any(|&v| v > 0.7));
         assert_eq!(hash2(3, -4, 9), hash2(3, -4, 9));
         assert_ne!(hash2(3, -4, 9), hash2(3, -4, 10));
+        assert_eq!(smoothstep(0.0, 1.0, 0.5), 0.5);
+        assert!(round_box(v2(0.0, 0.0), v2(10.0, 5.0), 1.0) < -4.9);
+        assert!((round_box(v2(13.0, 0.0), v2(10.0, 5.0), 1.0) - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn srgb_goes_there_and_back() {
+        for i in 0..=255u8 {
+            let c = f32::from(i) / 255.0;
+            let back = linear_to_srgb(srgb_to_linear(c));
+            assert!((back - c).abs() < 1e-5, "{i}: {back}");
+        }
     }
 }

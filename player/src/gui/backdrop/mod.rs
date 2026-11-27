@@ -46,10 +46,10 @@
 pub mod gpu;
 pub mod ground;
 pub mod look;
-pub mod looks;
 pub mod music;
 pub mod pulse;
 pub mod scenes;
+pub mod song_look;
 mod subject;
 
 use std::sync::Arc;
@@ -201,11 +201,13 @@ pub struct Cue {
     /// default: none), the covers graded by it this frame.
     pub grade: [f32; 4],
     /// The song's look and its music this frame (none: no look).
-    pub look: Option<looks::LookCue>,
+    pub look: Option<song_look::LookCue>,
     /// The song's story scenes, where it has them ready.
     pub story: Option<Arc<scenes::Showing>>,
     /// Where the song is heard, in seconds: which scene shows.
     pub at: f64,
+    /// Every driver this frame, playing or not ([`song_look::Looks::hear`]).
+    pub signals: jodel_looks::Signals,
 }
 
 /// A cover of a frame, for the shader: its layers, the picture they were
@@ -233,7 +235,11 @@ pub struct BackdropFrame {
     /// The story's scene showing (none: none).
     pub scene: Option<scenes::SceneFrame>,
     /// The look.
-    pub look: Option<looks::LookFrame>,
+    pub look: Option<song_look::LookFrame>,
+    /// Every driver this frame (the song's curves read then, the singing's
+    /// set live over them: [`song_look::Looks::hear`]), what the look and
+    /// the effects move by.
+    pub signals: jodel_looks::Signals,
 }
 
 impl BackdropFrame {
@@ -272,7 +278,7 @@ pub struct Visualiser {
     /// When the last phrase seen ended (none: none yet).
     phrase: Option<f64>,
     /// The look as it is drawn: what it was made safe from, its curves.
-    looks: looks::Looks,
+    looks: song_look::Looks,
     /// The song's story as shown, cut on its analysis.
     showing: Option<Arc<scenes::Showing>>,
 }
@@ -294,7 +300,7 @@ impl Visualiser {
     }
 
     /// The song's picture `art` made small, as the look's strength is
-    /// found over it ([`looks::Looks::picture`]).
+    /// found over it ([`song_look::Looks::picture`]).
     pub fn picture(&mut self, art: Option<&Art>) -> Arc<jodel_looks::render::Image> {
         self.looks.picture(art)
     }
@@ -302,7 +308,7 @@ impl Visualiser {
     /// The frame for `app` at `heard` seconds into the `song` heard (none:
     /// not analysed yet), `dt` seconds after the last, in a `window` of
     /// pixels. None (and nothing held but the look as it was made:
-    /// [`looks::Looks::left`]) outside Karaoke mode and the Shader tab, or
+    /// [`song_look::Looks::left`]) outside Karaoke mode and the Shader tab, or
     /// without the GPU (`gpu`).
     pub fn frame(
         &mut self,
@@ -313,8 +319,7 @@ impl Visualiser {
         dt: f32,
     ) -> Option<BackdropFrame> {
         let state = &app.state;
-        let shown = crate::core::karaoke::in_mode(state) || crate::core::shader_tab::shows(state);
-        if !gpu || !shown {
+        if !gpu || !crate::core::karaoke::stage_shown(state) {
             // All let go but the look as it was made (coming back finds
             // its strength again only where it was not found yet).
             let mut looks = std::mem::take(&mut self.looks);
@@ -326,10 +331,13 @@ impl Visualiser {
             return None;
         }
         let playing = state.playing.state == PlayState::Playing;
-        // The look reads the song where it is, playing or not.
+        // The look reads the song where it is, playing or not; the effects
+        // move by the same drivers.
+        let song_heard = self.looks.hear(state, song, heard);
+        let signals = song_heard.signals;
         let look = self
             .looks
-            .cue(state, (song, app.art()), (heard, dt), window);
+            .cue(state, (app.art(), &song_heard), (heard, dt), window);
         // The story too, cut on its bars again where it or the analysis is
         // new.
         self.showing = app.story().map(|story| match self.showing.take() {
@@ -360,7 +368,7 @@ impl Visualiser {
                 singing,
                 now: heard,
                 clock: state.karaoke.lag.sung_clock(heard),
-                length: None,
+                signals,
             })
         });
         let cue = Cue {
@@ -368,7 +376,7 @@ impl Visualiser {
             layers: Mode::of(&state.config).cover(app.cover_layers()),
             heard: Hearing {
                 levels,
-                glow: super::streak::level(singing, game),
+                glow: singing.glow(game),
                 section,
                 phrase,
                 music,
@@ -377,6 +385,7 @@ impl Visualiser {
             look,
             story: self.showing.clone(),
             at: heard,
+            signals,
         };
         Some(self.step(&cue, window, dt))
     }
@@ -409,7 +418,7 @@ impl Visualiser {
         let shares: Vec<f32> = self
             .slots
             .iter()
-            .map(|s| crate::gui::wgsl_math::smoothstep(0.0, 1.0, s.shown))
+            .map(|s| jodel_looks::math::smoothstep(0.0, 1.0, s.shown))
             .collect();
         let total: f32 = shares.iter().sum();
         let scale = if total > 1.0 { 1.0 / total } else { 1.0 };
@@ -432,8 +441,8 @@ impl Visualiser {
             })
             .collect();
         self.ground = Some(ground.clone());
-        let palette = (self.slots.last()).map_or(looks::PALETTE, |s| {
-            looks::palette_of(&s.layers.layers.palette)
+        let palette = (self.slots.last()).map_or(jodel_looks::PALETTE, |s| {
+            song_look::palette_of(&s.layers.layers.palette)
         });
         let look = (cue.look.as_ref()).map(|l| self.looks.frame(l, window, (dt, palette)));
         let scene = (cue.story.as_ref()).and_then(|s| s.frame(cue.at, &felt, window, cue.grade));
@@ -442,6 +451,7 @@ impl Visualiser {
             slots,
             scene,
             look,
+            signals: cue.signals,
         }
     }
 

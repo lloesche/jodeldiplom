@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 
 use super::{disc, rgba, Instance, Lane, Rgb, WHITE};
-use crate::gui::wgsl_math::mix3;
+use jodel_looks::math::mix3;
 
 /// How long a tail the comet has: the arrow's places this far back.
 const LONG: f64 = 0.4;

@@ -2,7 +2,7 @@
 //! alone, each here twice, for the processor and in WGSL ([`wgsl`]), held
 //! to each other in `super::super::shader_check`: the card's rounded edge
 //! ([`card_edge`], round its distance from the box:
-//! [`crate::gui::wgsl_math::round_box`]) and the light and shadow falling off
+//! [`jodel_looks::math::round_box`]) and the light and shadow falling off
 //! round it ([`falloff`]), the smooth cubic sampling's taps ([`bspline`]),
 //! how a layer moves with its depth ([`shift`]), the corners' shade
 //! ([`vignette`]), the light sweeping across the plate ([`sweep`]), the
@@ -15,7 +15,7 @@
 //! read blurred at ([`blurs`], [`defocus_level`]), which only the processor
 //! works out.
 
-use crate::gui::wgsl_math::smoothstep;
+use jodel_looks::math::smoothstep;
 
 /// The card's side at most, a share of the window's height (and, for a
 /// tall window, of its width).
@@ -345,7 +345,7 @@ fn defocus(near: f32, focus: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::wgsl_math::round_box;
+    use jodel_looks::math::{round_box, v2};
 
     #[test]
     fn the_card_is_the_whole_cover_as_large_as_it_looks_good() {
@@ -420,11 +420,12 @@ mod tests {
     #[test]
     fn the_card_s_edge_is_rounded_and_fades_into_the_blur() {
         // Inside, on the edge, outside.
-        assert!(round_box((0.0, 0.0), (10.0, 5.0), 1.0) < -4.9);
-        assert!(round_box((10.0, 0.0), (10.0, 5.0), 1.0).abs() < 1e-5);
-        assert!((round_box((13.0, 0.0), (10.0, 5.0), 1.0) - 3.0).abs() < 1e-5);
+        let half = v2(10.0, 5.0);
+        assert!(round_box(v2(0.0, 0.0), half, 1.0) < -4.9);
+        assert!(round_box(v2(10.0, 0.0), half, 1.0).abs() < 1e-5);
+        assert!((round_box(v2(13.0, 0.0), half, 1.0) - 3.0).abs() < 1e-5);
         // The corner rounded: its tip is outside.
-        assert!(round_box((10.0, 5.0), (10.0, 5.0), 1.0) > 0.4);
+        assert!(round_box(v2(10.0, 5.0), half, 1.0) > 0.4);
         assert_eq!(card_edge(-100.0, 1000.0), 1.0);
         assert_eq!(card_edge(0.0, 1000.0), 0.0);
         let half = card_edge(-EDGE * 500.0, 1000.0);

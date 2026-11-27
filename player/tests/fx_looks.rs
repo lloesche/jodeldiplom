@@ -6,8 +6,9 @@
 
 use std::path::Path;
 
+use jodel_looks::Driver;
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::fx::{Effects, Fx, Mod, Param, Signal, Use};
+use jodeldiplom::gui::fx::{Effects, Fx, Mod, Param, Use};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::gpu::{Shape, StageFrame};
 use jodeldiplom::gui::stage::{Song, Stage};
@@ -22,7 +23,7 @@ const STILL: [Use; 1] = [Use::of(Fx::LyricFire, 1.0)];
 const MOVED: [Use; 1] = [Use {
     mods: &[Mod {
         param: Param::Look(0),
-        by: Signal::Tempo,
+        by: Driver::Tempo,
         amount: 1.0,
     }],
     ..Use::of(Fx::LyricFire, 1.0)

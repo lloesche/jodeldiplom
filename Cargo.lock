@@ -1580,8 +1580,12 @@ dependencies = [
  "durable",
  "image",
  "jodel-rhythm",
+ "jodel-testkit",
+ "naga",
+ "pollster",
  "serde",
  "serde_json",
+ "wgpu",
 ]
 
 [[package]]
@@ -1659,6 +1663,12 @@ version = "0.1.0"
 [[package]]
 name = "jodel-testkit"
 version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "jodel-gpu",
+ "pollster",
+ "wgpu",
+]
 
 [[package]]
 name = "jodeldiplom"

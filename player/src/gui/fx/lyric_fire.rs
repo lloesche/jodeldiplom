@@ -9,7 +9,7 @@
 //! held to it on the GPU ([`REFERENCE`]). Its look ([`Spec::params`]):
 //! `x` 0 classic orange to 1 a ghostly green, `y` how fast it flickers.
 
-use super::helpers::{clamp01, heat, lattice, letter_up, mix3, smoothstep, speed, vnoise};
+use super::helpers::{heat, lattice, letter_up, mix3, sat, smoothstep, speed, vnoise};
 use super::{Live, Lyric, Reference, Spec, Text};
 
 /// The line sung on fire.
@@ -64,7 +64,7 @@ pub fn lyric_fire(
     // The flames' height here (from the letters' feet, a share of their
     // height) and how hot they are this far up them.
     let tip = s * (0.4 + 1.1 * n);
-    let k = clamp01(1.0 - z.max(0.0) / tip.max(1e-3));
+    let k = sat(1.0 - z.max(0.0) / tip.max(1e-3));
     // The letters heated from their feet: never darker than orange.
     let hot = heat(0.55 + 0.45 * k, p[0]);
     let tint = smoothstep(0.0, 0.35, k) * (0.6 + 0.35 * s);
@@ -173,7 +173,7 @@ pub(super) fn samples() -> Vec<[f32; 4]> {
     (0..3000)
         .flat_map(|k| {
             let f = k as f32;
-            let fr = |m: f32| crate::gui::wgsl_math::fract(f * m);
+            let fr = |m: f32| jodel_looks::math::fract(f * m);
             let x = bx[0] - 10.0 + fr(0.613) * (bx[2] - bx[0] + 20.0);
             let y = bx[1] + fr(0.377) * (bx[3] - bx[1]);
             let strength = [0.0, 0.3, 0.6, 1.0][k % 4];
@@ -231,8 +231,8 @@ mod tests {
         (0..2000).map(|k| {
             let f = k as f32;
             (
-                BOX[0] + crate::gui::wgsl_math::fract(f * 0.613) * (BOX[2] - BOX[0]),
-                BOX[1] + crate::gui::wgsl_math::fract(f * 0.377) * (BOX[3] - BOX[1]),
+                BOX[0] + jodel_looks::math::fract(f * 0.613) * (BOX[2] - BOX[0]),
+                BOX[1] + jodel_looks::math::fract(f * 0.377) * (BOX[3] - BOX[1]),
             )
         })
     }

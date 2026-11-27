@@ -238,6 +238,19 @@ impl Side {
         }
     }
 
+    /// Its name on its tab.
+    pub fn label(self) -> &'static str {
+        match self {
+            Side::Browser => "Browser",
+            Side::Queue => "Queue",
+            Side::Transition => "Transition",
+            Side::Karaoke => "Karaoke",
+            Side::Mixer => "Mixer",
+            Side::Synth => "Synth",
+            Side::Shader => "Shader",
+        }
+    }
+
     /// Whether it takes the whole width (no right column): no list.
     pub fn wide(self) -> bool {
         self.list().is_none()

@@ -18,23 +18,6 @@ use super::shine::Glow;
 use crate::core::shine::{Shone, Tier};
 use crate::core::singing::{Cue, Since, Singing};
 
-/// The tier `singing` glows at (none with the game off): the one its last
-/// phrase reached.
-pub fn tier(singing: &Singing, game: bool) -> Option<Tier> {
-    singing.last_phrase().and_then(|p| p.tier).filter(|_| game)
-}
-
-/// The level `singing` glows at (none with the game off): the glow of the
-/// tier its last phrase reached (the top's 1), 0 for none.
-pub fn level(singing: &Singing, game: bool) -> f32 {
-    glow_of(tier(singing, game))
-}
-
-/// `tier`'s glow, 0 for none.
-fn glow_of(tier: Option<Tier>) -> f32 {
-    tier.map_or(0.0, |t| t.spec().glow)
-}
-
 /// How many tiers up from `was` `now` is (none down or the same).
 fn tiers_up(was: Option<Tier>, now: Option<Tier>) -> u32 {
     let rank = |t: Option<Tier>| t.map_or(0, |t| t.index() as u32 + 1);
@@ -95,8 +78,8 @@ impl Streak {
     /// rung is the multiplier's (none with the game off), changed with
     /// the streak's moments (a rung reached or lost) or without (a seek).
     pub fn step(&mut self, singing: &Singing, game: bool, since: &Since, clock: f64) -> Step {
-        let tier = tier(singing, game);
-        let level = glow_of(tier);
+        let tier = singing.tier(game);
+        let level = singing.glow(game);
         let t = clock as f32;
         let was = self.tier;
         self.tier = tier;
@@ -192,7 +175,7 @@ mod tests {
             s.step(&singing, true, &since(&[], false), 1.0).glow.level,
             0.0
         );
-        assert_eq!(level(&singing, false), 0.0);
+        assert_eq!(singing.glow(false), 0.0);
         let snapped = s.step(&singing, true, &since(&[], true), 2.0).glow;
         assert_eq!((snapped.level, snapped.from), (0.0, 0.0));
         assert!(!snapped.shows(2.0));

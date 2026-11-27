@@ -14,7 +14,7 @@
 use super::{At, Layer, Live, Out, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
 use crate::gui::sparks::{rand, TAU};
-use crate::gui::wgsl_math::mix3;
+use jodel_looks::math::mix3;
 
 /// How long a jackpot lasts, in seconds.
 pub const JACKPOT_LIFE: f32 = 2.4;

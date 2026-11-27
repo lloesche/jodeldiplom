@@ -559,7 +559,7 @@ fn main() {
                 layers: Mode::of(&config).cover(layers),
                 heard: Hearing {
                     levels: (scene.music)(now),
-                    glow: jodeldiplom::gui::streak::level(&singing, config.karaoke_game),
+                    glow: singing.glow(config.karaoke_game),
                     section: scene.section.is_some_and(|s| (now - s).abs() < 0.5 / FPS),
                     phrase: landed.is_some() && config.karaoke_game,
                     music,

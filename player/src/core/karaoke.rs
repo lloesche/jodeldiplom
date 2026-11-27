@@ -195,6 +195,55 @@ pub fn in_mode(state: &State) -> bool {
     state.screen == Screen::Karaoke
 }
 
+/// Whether the mode's stage is drawn: in the mode, or as the Shader tab's
+/// picture.
+pub fn stage_shown(state: &State) -> bool {
+    in_mode(state) || super::shader_tab::shows(state)
+}
+
+/// How long after the singer's last pitch heard it is still the pitch
+/// sung, seconds.
+const SUNG_HOLD: f64 = 0.1;
+
+/// The pitch `singing` hears sung at `clock` (the singing's clock), a
+/// MIDI note (0: none heard in the last [`SUNG_HOLD`]).
+pub fn sung_pitch(singing: &super::singing::Singing, clock: f64) -> f32 {
+    (singing.heard.iter().rev())
+        .find(|h| h.t <= clock)
+        .filter(|h| clock - h.t <= SUNG_HOLD)
+        .map_or(0.0, |h| (h.cents / 100.0) as f32)
+}
+
+/// What only the singing knows ([`jodel_looks::drive::Origin::Live`]), set
+/// over `signals` at `heard` seconds into the song, on the singing's clock
+/// (the song's time less how late the voice comes: [`super::lag`]): the
+/// pitch sung ([`sung_pitch`], as a share of
+/// [`jodel_looks::drive::PITCHES`]), how many of the last two seconds'
+/// notes hit, the game's tier and its streak's rung. The one place the
+/// live drivers are fed, for the look and the effects alike.
+pub fn live(state: &State, heard: f64, signals: &mut jodel_looks::Signals) {
+    use jodel_looks::Driver;
+    let singing = &state.karaoke.singing;
+    let sung = state.karaoke.lag.sung_clock(heard);
+    let pitch = jodel_looks::drive::pitch(sung_pitch(singing, sung));
+    signals.set(Driver::Pitch, pitch);
+    let recent: Vec<bool> = (singing.heard.iter().rev())
+        .skip_while(|h| h.t > sung)
+        .take_while(|h| sung - h.t <= 2.0)
+        .filter(|h| h.off.is_some())
+        .map(|h| h.hit)
+        .collect();
+    let hits = recent.iter().filter(|&&h| h).count();
+    signals.set(Driver::Accuracy, hits as f32 / recent.len().max(1) as f32);
+    let game = state.config.karaoke_game;
+    signals.set(Driver::Tier, singing.glow(game));
+    let top = crate::tiers::Tier::TOP.spec().streak.max(1);
+    signals.set(
+        Driver::Streak,
+        (singing.tally.streak as f32 / top as f32).min(1.0),
+    );
+}
+
 /// Whether the Karaoke tab or the mode shows (a palette over the tab
 /// included): the voice then plays at its level.
 pub fn shown(state: &State) -> bool {

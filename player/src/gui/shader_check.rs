@@ -23,143 +23,7 @@ use super::shine::Glow;
 use super::sparks::TAU;
 use super::stage::shapes::{glory, liquid, paper, seal};
 use crate::gui::stage::gpu::{Blend, Group, StagePass};
-
-/// A device on the window's GPU, none without one.
-pub(in crate::gui) fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let _turn = jodel_gpu::setting_up();
-    let adapter = jodel_gpu::chosen().adapter.clone();
-    match adapter.and_then(|a| super::present::open(a, wgpu::Features::empty())) {
-        Ok((_, device, queue)) => Some((device, queue)),
-        Err(e) => {
-            eprintln!("no GPU ({e}): skipped");
-            None
-        }
-    }
-}
-
-/// `body` (WGSL over `i`, the sample, reading `ins` and writing `outs`)
-/// after `source`, run on the GPU for `n` samples, `per` vec4s out each.
-pub(in crate::gui) fn run(
-    gpu: &(wgpu::Device, wgpu::Queue),
-    source: &str,
-    body: &str,
-    ins: &[[f32; 4]],
-    (n, per): (usize, usize),
-) -> Vec<[f32; 4]> {
-    run_reading(gpu, (source, body), ins, (n, per), None)
-}
-
-/// As [`run`], `source` and `body` reading a texture (`group(0)`: it at
-/// binding 0, a linear sampler at 1) where one is given.
-fn run_reading(
-    (device, queue): &(wgpu::Device, wgpu::Queue),
-    (source, body): (&str, &str),
-    ins: &[[f32; 4]],
-    (n, per): (usize, usize),
-    texture: Option<&wgpu::TextureView>,
-) -> Vec<[f32; 4]> {
-    let code = format!(
-        "{source}
-@group(1) @binding(0) var<storage, read> ins: array<vec4<f32>>;
-@group(1) @binding(1) var<storage, read_write> outs: array<vec4<f32>>;
-@compute @workgroup_size(1)
-fn check(@builtin(global_invocation_id) id: vec3<u32>) {{
-    let i = id.x;
-{body}
-}}
-"
-    );
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("jodeldiplom shader check"),
-        source: wgpu::ShaderSource::Wgsl(code.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("jodeldiplom shader check"),
-        layout: None,
-        module: &module,
-        entry_point: Some("check"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let bytes: &[u8] = bytemuck::cast_slice(ins);
-    let size = (n * per * 16) as u64;
-    let buffer = |size: u64, usage| {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodeldiplom shader check"),
-            size,
-            usage,
-            mapped_at_creation: false,
-        })
-    };
-    use wgpu::BufferUsages as U;
-    let input = buffer(bytes.len() as u64, U::STORAGE | U::COPY_DST);
-    let output = buffer(size, U::STORAGE | U::COPY_SRC);
-    let back = buffer(size, U::MAP_READ | U::COPY_DST);
-    queue.write_buffer(&input, 0, bytes);
-    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("jodeldiplom shader check"),
-        layout: &pipeline.get_bind_group_layout(1),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: input.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: output.as_entire_binding(),
-            },
-        ],
-    });
-    let read = texture.map(|view| {
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("jodeldiplom shader check"),
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        })
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        if let Some(read) = &read {
-            pass.set_bind_group(0, read, &[]);
-        }
-        pass.set_bind_group(1, &bind, &[]);
-        pass.dispatch_workgroups(n as u32, 1, 1);
-    }
-    encoder.copy_buffer_to_buffer(&output, 0, &back, 0, size);
-    queue.submit([encoder.finish()]);
-    let slice = back.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("the GPU done");
-    rx.recv().unwrap().expect("mapped");
-    let mapped = slice.get_mapped_range().expect("read back");
-    bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec()
-}
-
-/// Whether `a` is `b` within `abs` (and a share `rel` of it).
-pub(in crate::gui) fn near(a: f32, b: f32, abs: f32, rel: f32) -> bool {
-    (a - b).abs() <= abs + rel * b.abs()
-}
+use jodel_testkit::gpu::{gpu, near, run, run_reading};
 
 /// Every pipeline made as the window makes them (the stage's, a group
 /// each, over the frame and added into the light; the bursts' likewise)
@@ -218,74 +82,6 @@ fn every_effect_s_shader_is_its_reference() {
         assert!(shown >= r.least, "{fx:?}: {shown} of {n} show");
     }
     assert!(held >= 7, "{held}");
-}
-
-/// Every look pass's shader as its processor's maths
-/// ([`jodel_looks::Pass::cpu`]), finished as its pipeline finishes it (its
-/// mix, the lyric band's guard), over the check's made-up picture, at
-/// samples with every knob anywhere in its range: within a few
-/// thousandths, a pass made of cells allowed two samples in its 48 that
-/// fall in another cell on the GPU (a sample right on a cell's edge).
-#[test]
-fn every_look_pass_is_its_reference() {
-    use jodel_looks::wgsl;
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    const EACH: usize = 48;
-    let samples = wgsl::check_samples(EACH);
-    let ins: Vec<[f32; 4]> = (samples.iter())
-        .flat_map(|(p, uv, c)| wgsl::sample_vec4s(*p, *uv, c))
-        .collect();
-    let outs = run(
-        &gpu,
-        &wgsl::check_shader(),
-        &wgsl::check_body(),
-        &ins,
-        (samples.len(), 1),
-    );
-    let mut off = vec![Vec::new(); jodel_looks::passes::PASSES.len()];
-    for ((p, uv, ctx), got) in samples.iter().zip(&outs) {
-        let want = wgsl::check_cpu(*p, *uv, ctx);
-        let close = [want.x, want.y, want.z]
-            .iter()
-            .zip(got)
-            .all(|(w, g)| near(*g, *w, 4e-3, 2e-3));
-        if !close {
-            off[*p].push(format!("at {uv:?} GPU {got:?}, processor {want:?}"));
-        }
-    }
-    for (p, off) in off.iter().enumerate() {
-        let pass = jodel_looks::passes::PASSES[p];
-        let allowed = if pass.cells { 2 } else { 0 };
-        assert!(off.len() <= allowed, "{}: {off:#?}", pass.name);
-    }
-}
-
-/// Every look pass's own pipeline's shader compiles, for a target of
-/// linear light and not.
-#[test]
-fn every_look_pass_s_pipeline_compiles() {
-    let Some((device, _queue)) = gpu() else {
-        return;
-    };
-    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    for pass in jodel_looks::passes::PASSES {
-        for linear in [false, true] {
-            let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(pass.name),
-                source: wgpu::ShaderSource::Wgsl(
-                    jodel_looks::wgsl::pass_shader(pass, linear).into(),
-                ),
-            });
-        }
-    }
-    let fault = pollster::block_on(scope.pop());
-    assert!(
-        fault.is_none(),
-        "{}",
-        fault.map(|f| f.to_string()).unwrap_or_default()
-    );
 }
 
 /// The music's uniform as the shaders read it, field by field by the
@@ -892,7 +688,7 @@ fn the_stage_shader_s_tube_is_its_reference() {
 }
 
 /// The backdrop's maths at points across the window and through time: the
-/// shader's `rounded_box` ([`super::wgsl_math::round_box`]),
+/// shader's `rounded_box` ([`jodel_looks::math::round_box`]),
 /// [`look::card_edge`], [`look::falloff`], [`look::bspline`],
 /// [`look::shift`], [`look::vignette`], [`look::sweep`], [`look::drift`],
 /// [`look::ray_fan`], [`look::defocus`] and [`look::kicked`] as the
@@ -933,9 +729,9 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
         let g = &outs[k * 5..k * 5 + 5];
         let what = format!("sample {k}: {s:?}");
         let sh = look::shift([s[0], s[1]], s[2], [0.01, -0.006], 0.008, [0.45, 0.4]);
-        let d = super::wgsl_math::round_box(
-            ((s[0] - 0.5) * 400.0, (s[1] - 0.5) * 300.0),
-            (120.0, 100.0),
+        let d = jodel_looks::math::round_box(
+            jodel_looks::math::v2((s[0] - 0.5) * 400.0, (s[1] - 0.5) * 300.0),
+            jodel_looks::math::v2(120.0, 100.0),
             9.0,
         );
         let edge = look::card_edge(d, 2000.0);

@@ -20,3 +20,11 @@ bytemuck = { version = "1.25.2", features = ["derive"] }
 durable = { path = "../durable" }
 # The contact sheets read the images and write PNGs.
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+# Every pass's shader held to its maths on the GPU (the testkit's compute
+# runner), its pipeline made there.
+jodel-testkit = { path = "../testkit", features = ["gpu"] }
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+pollster = "1.0.1"
+# Every shader parsed and validated on any machine, GPU or not (wgpu's own
+# naga).
+naga = { version = "30.0.2", features = ["wgsl-in"] }

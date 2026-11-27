@@ -229,7 +229,7 @@ fn the_stage_draws_the_same_frames() {
             "{name}: {counts:?}"
         );
     }
-    assert_eq!(digest, 18_157_932_858_766_989_851, "{counts:?}");
+    assert_eq!(digest, 17_134_679_701_158_884_256, "{counts:?}");
 }
 
 /// The same singing without the lane (the notes off): the lyrics set in

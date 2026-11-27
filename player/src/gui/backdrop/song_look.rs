@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use jodel_looks::{Ctx, Driver, Pass, Signals};
+use jodel_looks::{Ctx, Curves, Pass, Signals};
 
 /// A look's frame: the cue it is drawn from, and its passes, each with
 /// its numbers ([`jodel_looks::Checked::frame`]).
@@ -30,6 +30,10 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// A pass's numbers' place in the uniform buffer (its slots aligned for
 /// any GPU).
 const SLOT: u64 = 512;
+const _: () = assert!(
+    std::mem::size_of::<Ctx>() as u64 <= SLOT,
+    "a pass's numbers fit its slot"
+);
 
 /// A texture the window's size and its view.
 struct Target {
@@ -37,8 +41,18 @@ struct Target {
     view: wgpu::TextureView,
 }
 
-/// The passes' pipelines, the textures they draw into, their numbers, and
-/// which output is this frame's.
+/// What a look draws into while one draws: textures of the window's
+/// `size`, two between passes (in turn) and two outputs, `now` this
+/// frame's (the other the frame before).
+struct Targets {
+    size: (u32, u32),
+    chain: [Target; 2],
+    outs: [Target; 2],
+    now: usize,
+}
+
+/// The passes' pipelines, their numbers, and what they draw into (none:
+/// no look).
 pub struct LookPass {
     linear: bool,
     layout: wgpu::BindGroupLayout,
@@ -46,12 +60,7 @@ pub struct LookPass {
     sampler: wgpu::Sampler,
     pipelines: Vec<(&'static str, wgpu::RenderPipeline)>,
     uniforms: wgpu::Buffer,
-    /// Between passes (two, in turn), and the two outputs.
-    chain: Vec<Target>,
-    outs: Vec<Target>,
-    size: (u32, u32),
-    /// Which output is this frame's (none: no look).
-    now: Option<usize>,
+    targets: Option<Targets>,
     /// Changes whenever [`LookPass::out`] does.
     generation: u64,
 }
@@ -114,10 +123,7 @@ impl LookPass {
             sampler,
             pipelines: Vec::new(),
             uniforms,
-            chain: Vec::new(),
-            outs: Vec::new(),
-            size: (0, 0),
-            now: None,
+            targets: None,
             generation: 0,
         }
     }
@@ -125,7 +131,7 @@ impl LookPass {
     /// What the ground reads instead of the backdrop: this frame's
     /// output, while a look draws.
     pub fn out(&self) -> Option<&wgpu::TextureView> {
-        self.now.map(|i| &self.outs[i].view)
+        (self.targets.as_ref()).map(|t| &t.outs[t.now].view)
     }
 
     /// Changes whenever [`LookPass::out`] does.
@@ -207,21 +213,25 @@ impl LookPass {
         size: (u32, u32),
     ) {
         let Some(frame) = frame.filter(|f| !f.passes.is_empty()) else {
-            if self.now.take().is_some() {
-                self.chain.clear();
-                self.outs.clear();
-                self.size = (0, 0);
+            if self.targets.take().is_some() {
                 self.generation += 1;
             }
             return;
         };
         let size = (size.0.max(1), size.1.max(1));
-        if self.size != size {
-            self.chain = (0..2).map(|_| Self::target(device, size)).collect();
-            self.outs = (0..2).map(|_| Self::target(device, size)).collect();
-            self.size = size;
-        }
-        let now = self.now.map_or(0, |i| 1 - i);
+        let mut targets = match self.targets.take() {
+            Some(t) if t.size == size => Targets {
+                now: 1 - t.now,
+                ..t
+            },
+            _ => Targets {
+                size,
+                chain: [(); 2].map(|_| Self::target(device, size)),
+                outs: [(); 2].map(|_| Self::target(device, size)),
+                now: 0,
+            },
+        };
+        let now = targets.now;
         let pipelines: Vec<usize> = (frame.passes.iter())
             .map(|(p, _)| self.pipeline(device, p))
             .collect();
@@ -231,18 +241,19 @@ impl LookPass {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("jodeldiplom look"),
         });
-        let prev = &self.outs[1 - now].view;
+        let (chain, outs) = (&targets.chain, &targets.outs);
+        let prev = &outs[1 - now].view;
         let last = frame.passes.len() - 1;
         for (i, &k) in pipelines.iter().enumerate() {
             let input = if i == 0 {
                 under
             } else {
-                &self.chain[(i - 1) % 2].view
+                &chain[(i - 1) % 2].view
             };
             let into = if i == last {
-                &self.outs[now].view
+                &outs[now].view
             } else {
-                &self.chain[i % 2].view
+                &chain[i % 2].view
             };
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("jodeldiplom look"),
@@ -291,7 +302,8 @@ impl LookPass {
             pass.draw(0..3, 0..1);
         }
         queue.submit([encoder.finish()]);
-        self.now = Some(now);
+        targets.now = now;
+        self.targets = Some(targets);
         self.generation += 1;
     }
 }
@@ -300,90 +312,10 @@ impl LookPass {
 /// a look's strength is found over and the Shader tab's guards measure
 /// on (what washes out or blacks out does so at any size).
 const MEASURED: (usize, usize) = (48, 27);
-/// How long the flashes are counted over, seconds.
-const COUNTED: f64 = 3.0;
-
-/// What the guards measure on the Shader tab's picture, frame by frame:
-/// the look drawn on the processor over the cover made small
-/// ([`jodel_looks::render`]), with the frame's own numbers; the light of
-/// each frame of the last few seconds (the flashes counted in it), the
-/// lyric band's contrast, the stack's cost, the strength it draws at.
-#[derive(Default)]
-pub struct Readout {
-    lights: std::collections::VecDeque<(std::time::Instant, f32)>,
-    shown: Option<crate::core::shader_tab::Readout>,
-}
-
-impl Readout {
-    /// The measures after the frame `frame` of `app` drawn at `now` over
-    /// the song's picture made small (`small`: [`Looks::picture`]): new
-    /// ones where they changed.
-    pub fn step(
-        &mut self,
-        app: &crate::app::App,
-        (frame, small): (Option<&super::BackdropFrame>, &jodel_looks::render::Image),
-        now: std::time::Instant,
-    ) -> Option<crate::core::shader_tab::Readout> {
-        use jodel_looks::guard;
-        let checked = crate::core::shader_tab::look(&app.state).check();
-        let (w, h) = (small.w as f32, small.h as f32);
-        let mut contrast = guard::band_contrast(&small.px, small.w, (0.68, 0.86));
-        let mut exposure = guard::exposure(&small.px);
-        let mut strength = 1.0;
-        if let Some(look) = frame.and_then(|f| f.look.as_ref()) {
-            strength = look.cue.strength;
-            let passes: Vec<(&'static Pass, Ctx)> = (look.passes.iter())
-                .map(|&(p, c)| {
-                    let mut c = c;
-                    c.size = [w, h, 1.0 / w, 1.0 / h];
-                    (p, c)
-                })
-                .collect();
-            let out = jodel_looks::render::draw(&passes, small, None);
-            self.lights.push_back((now, guard::light(&out.px)));
-            exposure = guard::exposure(&out.px);
-            if let Some((_, c)) = passes.first() {
-                contrast =
-                    guard::band_contrast(&out.px, out.w, (c.band[0] + 0.01, c.band[1] - 0.01));
-            }
-        }
-        while (self.lights.front())
-            .is_some_and(|(t, _)| now.saturating_duration_since(*t).as_secs_f64() > COUNTED)
-        {
-            self.lights.pop_front();
-        }
-        let span = (self.lights.front()).map_or(0.0, |(t, _)| {
-            now.saturating_duration_since(*t).as_secs_f64()
-        });
-        let lights: Vec<f32> = self.lights.iter().map(|&(_, l)| l).collect();
-        let fps = if span > 0.1 {
-            (lights.len() as f64 / span) as f32
-        } else {
-            60.0
-        };
-        let r = crate::core::shader_tab::Readout {
-            flashes: guard::flashes(&lights, fps),
-            contrast: (contrast * 10.0).round() / 10.0,
-            cost: checked.cost(),
-            dropped: checked.dropped,
-            clipped: (exposure.clipped * 100.0).round() / 100.0,
-            mean: (exposure.mean * 100.0).round() / 100.0,
-            strength,
-        };
-        (self.shown.as_ref() != Some(&r)).then(|| {
-            self.shown = Some(r.clone());
-            r
-        })
-    }
-}
-
-/// The cover's colours a look takes where there is no cover: warm,
-/// cool, dark.
-pub const PALETTE: [[f32; 3]; 3] = [[1.0, 0.85, 0.65], [0.45, 0.55, 0.8], [0.12, 0.12, 0.14]];
 
 /// The cover's colours as a look takes them (encoded, 0 to 1): its most
-/// vivid, its next most vivid, and its largest; [`PALETTE`]'s for each it
-/// does not have.
+/// vivid, its next most vivid, and its largest; [`jodel_looks::PALETTE`]'s
+/// for each it does not have.
 pub fn palette_of(swatches: &[crate::work::picture::Swatch]) -> [[f32; 3]; 3] {
     let vivid = |s: &&crate::work::picture::Swatch| {
         let c = s.rgb.map(f32::from);
@@ -397,9 +329,9 @@ pub fn palette_of(swatches: &[crate::work::picture::Swatch]) -> [[f32; 3]; 3] {
         s.map_or(or, |s| s.rgb.map(|v| f32::from(v) / 255.0))
     };
     [
-        of(by.first().copied(), PALETTE[0]),
-        of(by.get(1).copied(), PALETTE[1]),
-        of(largest, PALETTE[2]),
+        of(by.first().copied(), jodel_looks::PALETTE[0]),
+        of(by.get(1).copied(), jodel_looks::PALETTE[1]),
+        of(largest, jodel_looks::PALETTE[2]),
     ]
 }
 
@@ -420,22 +352,24 @@ pub struct LookCue {
     /// The drivers.
     pub signals: Signals,
     /// The song's curves (none: no song analysed).
-    pub curves: Option<Arc<jodel_looks::Curves>>,
+    pub curves: Option<Arc<Curves>>,
     /// The seed.
     pub seed: u32,
     /// The lyric band.
     pub band: Option<(f32, f32)>,
 }
 
-/// What the look keeps between frames: what the look in force is made
-/// into for the song and its picture ([`Made`], for its [`Key`]), how
-/// many have been made (each one's stamp), the strength drawn (eased
-/// toward the made look's: [`RISE`], [`FALL`]), the finding under way,
-/// the song's picture made small (and its id), and the look and time of
-/// the last frame (a frame far from it, or another look, forgets the
-/// frame before).
+/// What the look keeps between frames: the song's curves (made once for
+/// the song heard and its sung lines: [`SongCurves`]), what the look in
+/// force is made into for them and the song's picture ([`Made`], for its
+/// [`Key`]), how many have been made (each one's stamp), the strength
+/// drawn (eased toward the made look's: [`RISE`], [`FALL`]), the finding
+/// under way, the song's picture made small (and its id), and the look
+/// and time of the last frame (a frame far from it, or another look,
+/// forgets the frame before).
 #[derive(Default)]
 pub struct Looks {
+    curves: Option<Arc<SongCurves>>,
     made: Option<Made>,
     makes: u64,
     drawn: f32,
@@ -463,31 +397,47 @@ fn eased(drawn: f32, target: f32, dt: f32) -> f32 {
     }
 }
 
-/// What a look made for a song is made from: the look, the song heard
-/// ([`super::music::Song::id`]; none: none analysed), its sung lines, and
-/// its picture's id (0: none). Values all: the same key, the same look,
-/// curves and strength.
+/// What a song's curves are made from: the song heard
+/// ([`super::music::Song::id`]) and its sung lines. A value: the same, the
+/// same curves.
+#[derive(Clone, Debug, PartialEq)]
+struct CurvesOf {
+    song: u64,
+    lines: Vec<(f64, f64)>,
+}
+
+/// A song's curves ([`jodel_looks::Curves`]) and what they are made from.
+#[derive(Debug)]
+struct SongCurves {
+    of: CurvesOf,
+    curves: Arc<Curves>,
+}
+
+/// The song as heard at a frame ([`Looks::hear`]): every driver then, and
+/// the song's curves they were read from (none: none analysed), what the
+/// look is cued for ([`Looks::cue`]).
+#[derive(Clone, Debug)]
+pub struct SongHeard {
+    /// Every driver.
+    pub signals: Signals,
+    curves: Option<Arc<SongCurves>>,
+}
+
+/// What a look made for a song is made from: the look, the song's curves
+/// (none: no song analysed), and its picture's id (0: none). Values all:
+/// the same key, the same look, curves and strength.
 #[derive(Debug, PartialEq)]
 struct Key {
     look: jodel_looks::Look,
-    song: Option<u64>,
-    lines: Vec<(f64, f64)>,
+    curves: Option<CurvesOf>,
     art: u64,
 }
 
 impl Key {
-    /// Whether it is the key of `look` over the song `song` (its id), its
-    /// sung `lines` and the picture `art` (its id), without making one.
-    fn is(
-        &self,
-        look: &jodel_looks::Look,
-        (song, art): (Option<u64>, u64),
-        lines: impl Iterator<Item = (f64, f64)>,
-    ) -> bool {
-        self.look == *look
-            && self.song == song
-            && self.art == art
-            && self.lines.iter().copied().eq(lines)
+    /// Whether it is the key of `look` over the curves of `curves` and the
+    /// picture `art` (its id), without making one.
+    fn is(&self, look: &jodel_looks::Look, curves: Option<&CurvesOf>, art: u64) -> bool {
+        self.look == *look && self.curves.as_ref() == curves && self.art == art
     }
 }
 
@@ -508,7 +458,7 @@ struct Made {
     key: Key,
     stamp: u64,
     look: Arc<jodel_looks::Checked>,
-    curves: Option<Arc<jodel_looks::Curves>>,
+    curves: Option<Arc<Curves>>,
     strength: Option<f32>,
     interim: Option<f32>,
 }
@@ -534,7 +484,7 @@ struct Finding {
 type Job = (
     Arc<jodel_looks::Checked>,
     Arc<jodel_looks::render::Image>,
-    Option<Arc<jodel_looks::Curves>>,
+    Option<Arc<Curves>>,
 );
 
 impl Finding {
@@ -579,51 +529,63 @@ fn small_picture(art: Option<&crate::work::art::Art>) -> jodel_looks::render::Im
 /// still be the next (further: a seek, a jump).
 const NEXT: f64 = 0.25;
 
-/// What only the singing knows, live, on its own clock (the song's time
-/// less how late the voice comes: [`crate::core::lag`]) at `heard`: the
-/// pitch sung (none for a tenth of a second: none), how many of the last
-/// two seconds' notes hit, the game's tier and its streak's rung.
-pub fn live(state: &crate::core::State, heard: f64, signals: &mut Signals) {
-    let singing = &state.karaoke.singing;
-    let sung = state.karaoke.lag.sung_clock(heard);
-    let pitch = (singing.heard.iter().rev())
-        .find(|h| h.t <= sung)
-        .filter(|h| sung - h.t <= 0.1)
-        .map_or(0.0, |h| {
-            ((h.cents / 100.0 - 36.0) / 48.0).clamp(0.0, 1.0) as f32
-        });
-    signals.set(Driver::Pitch, pitch);
-    let recent: Vec<bool> = (singing.heard.iter().rev())
-        .skip_while(|h| h.t > sung)
-        .take_while(|h| sung - h.t <= 2.0)
-        .filter(|h| h.off.is_some())
-        .map(|h| h.hit)
-        .collect();
-    let hits = recent.iter().filter(|&&h| h).count();
-    signals.set(Driver::Accuracy, hits as f32 / recent.len().max(1) as f32);
-    let game = state.config.karaoke_game;
-    signals.set(Driver::Tier, crate::gui::streak::level(singing, game));
-    let top = crate::tiers::Tier::TOP.spec().streak.max(1);
-    signals.set(
-        Driver::Streak,
-        (singing.tally.streak as f32 / top as f32).min(1.0),
-    );
-}
-
 impl Looks {
+    /// The song `song` heard (none: none analysed) at `heard` seconds in,
+    /// for `state`: every driver then, the song's curves read there (made
+    /// once for the song and its sung lines, kept), the singing's set live
+    /// over them ([`crate::core::karaoke::live`]); what the look and the
+    /// effects alike move by.
+    pub fn hear(
+        &mut self,
+        state: &crate::core::State,
+        song: Option<&super::music::Song>,
+        heard: f64,
+    ) -> SongHeard {
+        self.follow(state, song);
+        let mut signals = (self.curves.as_ref()).map_or(Signals::QUIET, |c| c.curves.at(heard));
+        crate::core::karaoke::live(state, heard, &mut signals);
+        SongHeard {
+            signals,
+            curves: self.curves.clone(),
+        }
+    }
+
+    /// The song's curves kept as those of `song` (none: none) with
+    /// `state`'s sung lines, made again only where either is new.
+    fn follow(&mut self, state: &crate::core::State, song: Option<&super::music::Song>) {
+        let Some(song) = song else {
+            self.curves = None;
+            return;
+        };
+        let same = |c: &Arc<SongCurves>| {
+            c.of.song == song.id() && c.of.lines.iter().copied().eq(sung_lines(state))
+        };
+        if !self.curves.as_ref().is_some_and(same) {
+            let of = CurvesOf {
+                song: song.id(),
+                lines: sung_lines(state).collect(),
+            };
+            let curves = Curves::new(song.analysis(), song.waveform(), &song.sections, &of.lines);
+            self.curves = Some(Arc::new(SongCurves {
+                of,
+                curves: Arc::new(curves),
+            }));
+        }
+    }
+
     /// The look in force for `state` ([`crate::core::State::look`]) at
-    /// `heard` seconds into the song `song` heard (none: none analysed),
-    /// over its picture `art`, for a window of `size`, `dt` seconds after
-    /// the last frame: its cue (none: no look). Its strength is found away
-    /// from here, once for the look, the song and the picture; until it
-    /// is, the look aims at none (the picture as it is) or, where the same
-    /// look (or an edit of it) is over the same picture, at the one found
-    /// for it there ([`Made::aim`]), and the strength drawn eases toward
-    /// it.
+    /// `heard` seconds into the song as `song` hears it ([`Looks::hear`]:
+    /// every driver then, and the curves they are of), over its picture
+    /// `art`, for a window of `size`, `dt` seconds after the last
+    /// frame: its cue (none: no look). Its strength is found away from
+    /// here, once for the look, the song and the picture; until it is, the
+    /// look aims at none (the picture as it is) or, where the same look (or
+    /// an edit of it) is over the same picture, at the one found for it
+    /// there ([`Made::aim`]), and the strength drawn eases toward it.
     pub fn cue(
         &mut self,
         state: &crate::core::State,
-        (song, art): (Option<&super::music::Song>, Option<&crate::work::art::Art>),
+        (art, song): (Option<&crate::work::art::Art>, &SongHeard),
         (heard, dt): (f64, f32),
         size: (u32, u32),
     ) -> Option<LookCue> {
@@ -634,35 +596,31 @@ impl Looks {
             self.drawn = 0.0;
             return None;
         };
-        let ids = (song.map(super::music::Song::id), art.map_or(0, |a| a.id));
+        let of = song.curves.as_ref().map(|c| &c.of);
+        let art_id = art.map_or(0, |a| a.id);
         let made = match self.made.take() {
-            Some(m) if m.key.is(look, ids, sung_lines(state)) => m,
+            Some(m) if m.key.is(look, of, art_id) => m,
             was => {
                 let key = Key {
                     look: look.clone(),
-                    song: ids.0,
-                    lines: sung_lines(state).collect(),
-                    art: ids.1,
+                    curves: of.cloned(),
+                    art: art_id,
                 };
-                self.make(was, key, song, art)
+                self.make(was, key, (song.curves.as_deref(), art))
             }
         };
         self.drawn = eased(self.drawn, made.aim(), dt);
         let made = self.made.insert(made);
-        let singing = &state.karaoke.singing;
-        let mut signals = (made.curves.as_ref()).map_or(Signals::QUIET, |c| c.at(heard));
-        live(state, heard, &mut signals);
         let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
         let band = crate::gui::stage::lines::band((0.0, 0.0, w, h));
-        let song_id = singing
-            .song()
+        let song_id = (state.karaoke.singing.song())
             .map_or(String::new(), |p| p.to_string_lossy().into_owned());
         Some(LookCue {
             seed: jodel_looks::seed(&made.look.id, &song_id),
             look: Arc::clone(&made.look),
             strength: self.drawn,
             t: heard,
-            signals,
+            signals: song.signals,
             curves: made.curves.clone(),
             band: Some((band.0 / h, band.1 / h)),
         })
@@ -703,33 +661,22 @@ impl Looks {
             .is_some_and(|m| m.strength != Some(self.drawn))
     }
 
-    /// The look of `key` made for `song` over `art` in place of `was`
-    /// (none: none): made safe and the song's curves made (each kept from
-    /// `was` where what it is made from is the same), its strength asked
-    /// for; `was`'s aimed at meanwhile where it is the same look (by its
-    /// id) over the same picture.
+    /// The look of `key` made over the song's `curves` (none: no song) and
+    /// its picture `art`, in place of `was` (none: none): made safe (kept
+    /// from `was` where it is the same look), its strength asked for;
+    /// `was`'s aimed at meanwhile where it is the same look (by its id)
+    /// over the same picture.
     fn make(
         &mut self,
         was: Option<Made>,
         key: Key,
-        song: Option<&super::music::Song>,
-        art: Option<&crate::work::art::Art>,
+        (curves, art): (Option<&SongCurves>, Option<&crate::work::art::Art>),
     ) -> Made {
         let look = match &was {
             Some(m) if m.key.look == key.look => Arc::clone(&m.look),
             _ => Arc::new(key.look.check()),
         };
-        let curves = match &was {
-            Some(m) if (&m.key.song, &m.key.lines) == (&key.song, &key.lines) => m.curves.clone(),
-            _ => song.map(|s| {
-                Arc::new(jodel_looks::Curves::new(
-                    s.analysis(),
-                    s.waveform(),
-                    &s.sections,
-                    &key.lines,
-                ))
-            }),
-        };
+        let curves = curves.map(|c| Arc::clone(&c.curves));
         let interim = (was.as_ref())
             .filter(|m| (&m.key.look.id, m.key.art) == (&key.look.id, key.art))
             .and_then(|m| m.strength.or(m.interim));
@@ -804,8 +751,7 @@ mod tests {
             look: Arc::new(look.check()),
             key: Key {
                 look,
-                song: None,
-                lines: Vec::new(),
+                curves: None,
                 art: 0,
             },
             stamp,
@@ -836,11 +782,14 @@ mod tests {
             ..made(1)
         };
         let key = |song: Option<u64>, art: u64| Key {
-            song,
+            curves: song.map(|song| CurvesOf {
+                song,
+                lines: Vec::new(),
+            }),
             art,
             ..made(0).key
         };
-        let remade = looks.make(Some(found), key(Some(7), 0), None, None);
+        let remade = looks.make(Some(found), key(Some(7), 0), (None, None));
         assert_eq!((remade.strength, remade.interim), (None, Some(0.6)));
         looks.made = Some(remade);
         for _ in 0..10 {
@@ -852,16 +801,19 @@ mod tests {
         let mut edited = key(Some(7), 0);
         edited.look.layers[0].mix = 0.5;
         let was = looks.made.take();
-        let edit = looks.make(was, edited, None, None);
+        let edit = looks.make(was, edited, (None, None));
         assert_eq!(edit.interim, Some(0.6), "an edit of the same look");
         let mut other_look = key(Some(7), 0);
         other_look.look.id = "another".into();
-        assert_eq!(looks.make(Some(edit), other_look, None, None).interim, None);
+        assert_eq!(
+            looks.make(Some(edit), other_look, (None, None)).interim,
+            None
+        );
         let found = Made {
             strength: Some(0.6),
             ..made(2)
         };
-        let other = looks.make(Some(found), key(Some(7), 3), None, None);
+        let other = looks.make(Some(found), key(Some(7), 3), (None, None));
         assert_eq!(other.interim, None, "another picture");
         looks.made = Some(other);
         ease(&mut looks, FALL);

@@ -15,7 +15,7 @@ use crate::core::desk::Channel;
 use crate::core::lanes::{self, Block};
 use crate::core::lyric_edit::screen;
 use crate::core::lyric_edit::{self, LyricsEdit, Part};
-use crate::core::shader_tab::ShaderAction;
+use crate::core::shader_tab::{KnobRef, ShaderAction};
 use crate::core::sliders::Slider;
 use crate::core::synth_tab::{self, SynthAction};
 use crate::core::timeview::{self, PanInput, PanOf};
@@ -92,10 +92,10 @@ pub enum Grab {
     /// parameters), its track: set to the share across it under the
     /// pointer, as pressed and as it moves.
     SynthKnob(usize, Rectangle),
-    /// A knob's slider on the Shader tab (its place in the selected
-    /// pass's knobs, or the mix's; its driver's amount, or the knob
-    /// itself), its track: set to the share across it under the pointer.
-    ShaderKnob(usize, bool, Rectangle),
+    /// A slider on the Shader tab (a slot of the selected pass: its value
+    /// or its driver's amount), its track: set to the share across it under
+    /// the pointer.
+    ShaderKnob(KnobRef, Rectangle),
     /// The Synth tab's keyboard (its bounds): the key under the pointer
     /// sounds while it is held, the pointer sliding from key to key.
     Piano(Rectangle),
@@ -191,14 +191,10 @@ impl Grab {
                 knob,
                 share: share_across(track, at) as f32,
             })),
-            Grab::ShaderKnob(knob, amount, track) => {
-                let share = share_across(track, at) as f32;
-                Some(Action::Shader(if amount {
-                    ShaderAction::Amount { knob, share }
-                } else {
-                    ShaderAction::Slide { knob, share }
-                }))
-            }
+            Grab::ShaderKnob(at_knob, track) => Some(Action::Shader(ShaderAction::Set {
+                at: at_knob,
+                share: share_across(track, at) as f32,
+            })),
             Grab::Piano(keys) => {
                 let key = piano::key_at(keys, synth_tab::KEYS / 12, at);
                 let note = key.map(|k| synth_tab::key_note(0, k));

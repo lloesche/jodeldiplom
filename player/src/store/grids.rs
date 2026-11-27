@@ -11,12 +11,10 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
-use std::thread;
 
 use crate::core::grid::Grid;
-use crate::core::Action;
 use crate::store::cache;
+use crate::store::writer::Writer;
 use crate::work::outbox::Outbox;
 use crate::work::rhythm::{beats_text, parse_beats};
 
@@ -111,31 +109,21 @@ enum Job {
 }
 
 /// Keeps and forgets grids in a folder, on a thread of its own: in the
-/// order asked, one at a time. A failure is said with
-/// [`Action::Failed`].
+/// order asked, one at a time ([`Writer`]). A failure is said with
+/// [`crate::core::Action::Failed`].
 pub struct GridStore {
-    jobs: Sender<Job>,
+    jobs: Writer<Job>,
 }
 
 impl GridStore {
     /// A store in `dir`, saying failures to `outbox`.
     pub fn new(dir: PathBuf, outbox: Outbox) -> GridStore {
-        let (jobs, rx) = mpsc::channel();
-        thread::spawn(move || {
-            for job in rx {
-                let failed = match job {
-                    Job::Save(path, grid) => save(&dir, &path, &grid)
-                        .err()
-                        .map(|e| format!("The grid was not saved: {e}")),
-                    Job::Remove(path) => remove(&dir, &path)
-                        .err()
-                        .map(|e| format!("The fixed grid was not removed: {e}")),
-                };
-                if let Some(text) = failed {
-                    if !outbox.send(Action::Failed(text)) {
-                        return;
-                    }
-                }
+        let jobs = Writer::new(outbox, move |job| match job {
+            Job::Save(path, grid) => {
+                save(&dir, &path, &grid).map_err(|e| format!("The grid was not saved: {e}"))
+            }
+            Job::Remove(path) => {
+                remove(&dir, &path).map_err(|e| format!("The fixed grid was not removed: {e}"))
             }
         });
         GridStore { jobs }
@@ -143,12 +131,12 @@ impl GridStore {
 
     /// Keeps `grid` for `path`.
     pub fn save(&self, path: PathBuf, grid: Grid) {
-        let _ = self.jobs.send(Job::Save(path, grid));
+        self.jobs.send(Job::Save(path, grid));
     }
 
     /// Forgets the grid of `path`.
     pub fn remove(&self, path: PathBuf) {
-        let _ = self.jobs.send(Job::Remove(path));
+        self.jobs.send(Job::Remove(path));
     }
 }
 
@@ -162,9 +150,7 @@ mod tests {
 
     #[test]
     fn a_grid_is_kept_by_path_and_size() {
-        let dir = std::env::temp_dir().join(format!("jodel-grids-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("grids");
         let track = dir.join("track.flac");
         fs::write(&track, b"0123456789").unwrap();
         let grid = Grid {
@@ -194,6 +180,5 @@ mod tests {
             from_text("k", "jodel-grid 1\nkey k\nbeats 1\ndownbeats 3\n"),
             None
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 }

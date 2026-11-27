@@ -19,7 +19,7 @@ use std::f32::consts::{PI, TAU};
 use super::glory::vnoise;
 use super::seal::line;
 use crate::core::karaoke::result::signature::{pen_point, PEN};
-use crate::gui::wgsl_math::{clamp01, round_box, smoothstep};
+use jodel_looks::math::{round_box, sat, smoothstep, v2};
 
 /// The roll's radius at its start, in `s`.
 const ROLL: f32 = 3.2;
@@ -66,7 +66,7 @@ fn border(x: f32, y: f32, half: (f32, f32), e: f32, s: f32) -> (f32, f32) {
         b += line((v - 0.5 - 0.42 * (ph - k * along).sin()) * bw, 0.1 * s);
     }
     let ink = rules * (1.0 - corner) + rosette * corner + a * band;
-    (clamp01(ink), clamp01(b * band))
+    (sat(ink), sat(b * band))
 }
 
 /// The sheet at `(x, y)` from its middle (down positive), `half` its half
@@ -77,8 +77,8 @@ fn border(x: f32, y: f32, half: (f32, f32), e: f32, s: f32) -> (f32, f32) {
 pub fn paper_at(x: f32, y: f32, half: (f32, f32), s: f32, front: f32) -> [f32; 4] {
     let s = s.max(0.5);
     let corner = 0.8 * s;
-    let sheet = round_box((x, y), half, corner);
-    let left = clamp01((half.1 - front) / (2.0 * half.1));
+    let sheet = round_box(v2(x, y), v2(half.0, half.1), corner);
+    let left = sat((half.1 - front) / (2.0 * half.1));
     let rho = ROLL * s * left.sqrt();
     let shown = sheet.max(y - front);
     let roll = if rho > 0.05 {
@@ -89,12 +89,13 @@ pub fn paper_at(x: f32, y: f32, half: (f32, f32), s: f32, front: f32) -> [f32; 4
     let d = shown.min(roll);
     if d > 0.0 {
         // Its shadow (and the roll's), a little down from it.
-        let ds = round_box((x, y - 1.2 * s), half, corner).max(y - 1.2 * s - front - 2.0 * rho);
+        let ds = round_box(v2(x, y - 1.2 * s), v2(half.0, half.1), corner)
+            .max(y - 1.2 * s - front - 2.0 * rho);
         return [d, 0.5 * (-ds.max(0.0) / (2.5 * s)).exp(), 0.0, 0.0];
     }
     if roll < shown {
         // The roll: a cylinder lying across, lit from above.
-        let v = clamp01((y - front) / (2.0 * rho).max(1e-3));
+        let v = sat((y - front) / (2.0 * rho).max(1e-3));
         let tone = 0.55 + 0.33 * (PI * v).sin() + 0.25 * line(v - 0.3, 0.12) - 0.2 * v * v;
         return [d, tone, 0.0, 0.0];
     }
@@ -117,16 +118,16 @@ pub fn paper_at(x: f32, y: f32, half: (f32, f32), s: f32, front: f32) -> [f32; 4
 /// over what is inside it).
 pub fn stamp_at(x: f32, y: f32, half: (f32, f32), s: f32) -> [f32; 2] {
     let s = s.max(0.5);
-    let d = round_box((x, y), half, 1.2 * s);
-    let outer = clamp01(0.5 - ((d + 0.3 * s).abs() - 0.3 * s));
-    let inner_half = (half.0 - 1.2 * s, half.1 - 1.2 * s);
-    let di = round_box((x, y), inner_half, 0.6 * s);
-    let inner = clamp01(0.5 - ((di + 0.12 * s).abs() - 0.12 * s));
+    let d = round_box(v2(x, y), v2(half.0, half.1), 1.2 * s);
+    let outer = sat(0.5 - ((d + 0.3 * s).abs() - 0.3 * s));
+    let inner_half = v2(half.0 - 1.2 * s, half.1 - 1.2 * s);
+    let di = round_box(v2(x, y), inner_half, 0.6 * s);
+    let inner = sat(0.5 - ((di + 0.12 * s).abs() - 0.12 * s));
     let grain = 0.65 * vnoise(x / (0.8 * s) + 3.0, y / (0.8 * s) - 5.0)
         + 0.35 * vnoise(x / (0.25 * s), y / (0.25 * s));
     let worn = smoothstep(0.22, 0.38, grain);
     let ink = outer.max(inner) * (0.35 + 0.65 * worn);
-    let speck = (1.0 - smoothstep(0.12, 0.2, grain)) * clamp01(0.5 - d);
+    let speck = (1.0 - smoothstep(0.12, 0.2, grain)) * sat(0.5 - d);
     [ink, speck]
 }
 
@@ -141,7 +142,7 @@ pub fn signature_at(x: f32, y: f32, drawn: f32) -> f32 {
     }
     let step = |d: f32, a: (f32, f32), b: (f32, f32)| {
         let (px, py, bx, by) = (x - a.0, y - a.1, b.0 - a.0, b.1 - a.1);
-        let h = clamp01((px * bx + py * by) / (bx * bx + by * by).max(1e-8));
+        let h = sat((px * bx + py * by) / (bx * bx + by * by).max(1e-8));
         let (qx, qy) = (px - bx * h, py - by * h);
         d.min((qx * qx + qy * qy).sqrt())
     };

@@ -13,9 +13,9 @@ use super::keys::{self, Back, ColumnKey, MARK_CUE, MARK_CURSOR, MARK_EDIT};
 use super::words::Words;
 use super::Pen;
 use crate::gui::pixels::{mix, pack, PixelRect, Pixels, Target};
-use crate::gui::wgsl_math::{linear_to_srgb, srgb_to_linear};
 use crate::view::lanes::{self, WavePlot};
 use crate::view::palette;
+use jodel_looks::math::{linear_to_srgb, srgb_to_linear};
 
 /// How a picture's pixel columns map to time: column `x` is `n0 + x` on a
 /// grid of `px` seconds from the start of the track. The grid is the same

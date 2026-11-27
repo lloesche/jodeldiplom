@@ -168,7 +168,7 @@ fn drawn(state: &State) -> (StageView, Option<StageFrame>) {
     let tint = Tint::STAGE;
     view.frame((state, None), &picture, size, (0.0, 0.0), &tint, None);
     let song = (
-        &Song::of(state, None),
+        &Song::of(state, None, jodel_looks::Signals::QUIET),
         jodeldiplom::gui::stage::wanted(state),
     );
     let area = (0.0, 0.0, 1600.0, 900.0);

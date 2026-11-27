@@ -1,8 +1,9 @@
 use super::*;
 use crate::core::shine::Shone;
-use crate::gui::fx::{Mod, Signal};
+use crate::gui::fx::Mod;
 use crate::theme::{CLASSIC, SPOOKY};
 use crate::tiers::Tier;
+use jodel_looks::Driver;
 
 fn step(tier: Option<Tier>, glow: Glow) -> Step {
     Step {
@@ -238,12 +239,12 @@ fn rung_effects_are_held_and_fired_by_rung() {
 static BEATING: [Mod; 2] = [
     Mod {
         param: Param::Strength,
-        by: Signal::Beat,
+        by: Driver::Beat,
         amount: 0.5,
     },
     Mod {
         param: Param::Look(1),
-        by: Signal::Stem(jodel_rhythm::stems::Stem::Bass),
+        by: Driver::Bass,
         amount: 2.0,
     },
 ];
@@ -268,12 +269,9 @@ fn the_music_moves_what_a_row_lists() {
     let still = board.frame_of(rows.into_iter(), &s, &Music::NEUTRAL, 1.0);
     assert_eq!(still.live(Fx::Bulbs).strength, 0.8);
     assert_eq!(still.looks(), Looks::SPECS);
-    let mut music = Music {
-        beat: 1.0,
-        sure: 1.0,
-        ..Music::NEUTRAL
-    };
-    music.stems[jodel_rhythm::stems::Stem::Bass as usize] = 0.25;
+    let mut music = Music::NEUTRAL;
+    music.signals.set(Driver::Beat, 1.0);
+    music.signals.set(Driver::Bass, 0.25);
     let moved = board.frame_of(rows.into_iter(), &s, &music, 1.0);
     let live = moved.live(Fx::Bulbs);
     assert!((live.strength - 1.2).abs() < 1e-6, "{live:?}");

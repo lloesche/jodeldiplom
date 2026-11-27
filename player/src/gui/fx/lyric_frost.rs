@@ -9,7 +9,7 @@
 //! held to it on the GPU ([`REFERENCE`]). Its look ([`Spec::params`]): `y`
 //! how fast its glints twinkle.
 
-use super::helpers::{clamp01, lattice, letter_up, mix3, smoothstep, speed, vnoise};
+use super::helpers::{lattice, letter_up, mix3, sat, smoothstep, speed, vnoise};
 use super::lyric_fire::{held, premultiplied, samples, QUAD};
 use super::{Lyric, Reference, Spec, Text};
 
@@ -82,7 +82,7 @@ pub fn lyric_frost(
     let letter = mix3(letter, VEIN, crystal * 0.55);
     // The glints: one in some cells of a grid, each twinkling in its own
     // time, a point and a cross of rays, fading at the quad's edges.
-    let v = clamp01((px.1 - bx[1]) / high);
+    let v = sat((px.1 - bx[1]) / high);
     let ends = smoothstep(bx[0], bx[0] + high * 0.3, px.0)
         * (1.0 - smoothstep(bx[2] - high * 0.3, bx[2], px.0))
         * smoothstep(0.0, 0.1, v)
@@ -99,9 +99,9 @@ pub fn lyric_frost(
         let twinkle = (w * w) * (w * w);
         let (big, thin, long) = (cell * 0.06, cell * 0.02, cell * 0.42);
         let core = (-(dx * dx + dy * dy) / (big * big)).exp();
-        let ray_x = (-(dy * dy) / (thin * thin)).exp() * clamp01(1.0 - dx.abs() / long);
-        let ray_y = (-(dx * dx) / (thin * thin)).exp() * clamp01(1.0 - dy.abs() / long);
-        glint = clamp01(core + ray_x.max(ray_y) * 0.8) * twinkle * frost * ends * s;
+        let ray_x = (-(dy * dy) / (thin * thin)).exp() * sat(1.0 - dx.abs() / long);
+        let ray_y = (-(dx * dx) / (thin * thin)).exp() * sat(1.0 - dy.abs() / long);
+        glint = sat(core + ray_x.max(ray_y) * 0.8) * twinkle * frost * ends * s;
     }
     let out_a = glint + a * (1.0 - glint);
     let rgb = [0, 1, 2].map(|i| {
@@ -220,8 +220,8 @@ mod tests {
         (0..2000).map(|k| {
             let f = k as f32;
             (
-                BOX[0] + crate::gui::wgsl_math::fract(f * 0.613) * (BOX[2] - BOX[0]),
-                BOX[1] + crate::gui::wgsl_math::fract(f * 0.377) * (BOX[3] - BOX[1]),
+                BOX[0] + jodel_looks::math::fract(f * 0.613) * (BOX[2] - BOX[0]),
+                BOX[1] + jodel_looks::math::fract(f * 0.377) * (BOX[3] - BOX[1]),
             )
         })
     }

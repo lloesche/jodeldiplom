@@ -34,10 +34,10 @@ use super::next::{self, Place};
 use super::{disc, pill, rgba, Face, Rgb, Stage, COVER_PAD};
 use crate::core::karaoke::result::{Beat, Shown};
 use crate::core::shine::Tier;
-use crate::gui::wgsl_math::clamp01;
 use crate::view::karaoke::{
     best_words, date_words, points_text, KaraokePicture, Next, ResultShown,
 };
+use jodel_looks::math::sat;
 
 mod entries;
 mod seal;
@@ -217,7 +217,7 @@ impl Room {
 
 /// Eased out, past its end a little and back (`x` 0 to 1).
 fn back(x: f32) -> f32 {
-    let x = clamp01(x) - 1.0;
+    let x = sat(x) - 1.0;
     1.0 + 2.7 * x * x * x + 1.7 * x * x
 }
 
@@ -225,7 +225,7 @@ fn back(x: f32) -> f32 {
 /// and back) and how much of it shows; nothing before it lands.
 fn land(age: Option<f64>) -> (f32, f32) {
     match age {
-        Some(a) => (back(a as f32 / 0.32), clamp01(a as f32 / 0.12)),
+        Some(a) => (back(a as f32 / 0.32), sat(a as f32 / 0.12)),
         None => (0.0, 0.0),
     }
 }
@@ -233,7 +233,7 @@ fn land(age: Option<f64>) -> (f32, f32) {
 /// How much shows of something fading in over `over` seconds from `age`
 /// seconds ago.
 fn fade(age: Option<f64>, over: f32) -> f32 {
-    age.map_or(0.0, |a| clamp01(a as f32 / over))
+    age.map_or(0.0, |a| sat(a as f32 / over))
 }
 
 /// A bump `age` seconds after something hit: 1 and more, settling fast.
@@ -365,7 +365,7 @@ impl Stage {
         let line = Line::of(picture, (x, y, w, h));
         let mut room = Room::new((x, y, w, h), (line, button), tint, look);
         room.shake = seal::shake(&look, verdict, room.s);
-        room.calm = clamp01((reveal.still() - t) as f32 / 2.0);
+        room.calm = sat((reveal.still() - t) as f32 / 2.0);
         let words = self.words_of(&shown.shown);
         let mut d = StageFrame {
             clock: t as f32,

@@ -60,7 +60,8 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSScreen", "NSView", "NSWindow"] }
 
 [dev-dependencies]
-jodel-testkit = { path = "../testkit" }
+# The shader checks run on the GPU by its compute runner.
+jodel-testkit = { path = "../testkit", features = ["gpu"] }
 # The window's widgets run without a window (the shots, the view's cost):
 # iced's headless runtime and renderers, from its repository at the same
 # revision as iced.

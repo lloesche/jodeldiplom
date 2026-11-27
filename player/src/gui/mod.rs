@@ -33,7 +33,6 @@ pub mod stage_view;
 pub mod streak;
 pub(crate) mod style;
 mod wake;
-pub mod wgsl_math;
 pub mod widgets;
 pub mod window;
 

@@ -18,8 +18,8 @@
 use crate::core::shine::Tier;
 use crate::gui::shine::{hue, shine_at, Glow, WHOLE};
 use crate::gui::sparks::noise;
-use crate::gui::wgsl_math::{clamp01, mix3, smoothstep};
 use crate::tiers::{wgsl_array, Paint, TIERS};
+use jodel_looks::math::{mix3, sat, smoothstep};
 
 /// Where along the meter each tier's mark is, Good first: evenly,
 /// whatever the shine each takes, the top's at its end and the stretch
@@ -67,7 +67,7 @@ pub fn position(of_top: f32) -> f32 {
     let mut from = (0.0, 0.0);
     for (b, m) in bars().into_iter().zip(MARKS) {
         if of_top <= b {
-            return from.1 + (m - from.1) * clamp01((of_top - from.0) / (b - from.0));
+            return from.1 + (m - from.1) * sat((of_top - from.0) / (b - from.0));
         }
         from = (b, m);
     }
@@ -92,7 +92,7 @@ pub fn fill_color(level: f32, u: f32, time: f32) -> [f32; 3] {
         let fill = if bow > 0.5 { rainbow } else { [r, g, b] };
         c = mix3(c, fill, smoothstep(m - EDGE, m, level));
     }
-    let deep = 0.7 + 0.3 * clamp01(u / level.max(0.05));
+    let deep = 0.7 + 0.3 * sat(u / level.max(0.05));
     c.map(|v| v * deep)
 }
 
@@ -101,14 +101,14 @@ pub fn fill_color(level: f32, u: f32, time: f32) -> [f32; 3] {
 /// (inside the capsule; the shader cuts its edge).
 pub fn meter_at(u: f32, v: f32, fill: f32, time: f32) -> [f32; 4] {
     // The glass: dark, lighter at its top.
-    let glass = 0.06 + 0.1 * clamp01(-v);
+    let glass = 0.06 + 0.1 * sat(-v);
     let mut rgb = [glass, glass, glass * 1.6];
     let mut a = 0.55_f32;
     let filled = 1.0 - smoothstep(fill - 0.004, fill + 0.004, u);
     if filled > 0.0 {
         let c = fill_color(fill, u, time);
         // Lit as glass: its top bright, a sheen running along it.
-        let shade = 1.15 - 0.35 * clamp01(v * 0.5 + 0.5) + 0.35 * clamp01(-v - 0.3);
+        let shade = 1.15 - 0.35 * sat(v * 0.5 + 0.5) + 0.35 * sat(-v - 0.3);
         let at = (time * 0.6).fract() * 1.6 - 0.3;
         let sheen = (-((u - at) * 9.0).powi(2)).exp() * 0.45;
         let lit = mix3(c.map(|x| x * shade), [1.0; 3], sheen);
@@ -116,7 +116,7 @@ pub fn meter_at(u: f32, v: f32, fill: f32, time: f32) -> [f32; 4] {
         a = a + (1.0 - a) * filled;
     }
     // The front: a bright edge where the fill ends.
-    let front = (-((u - fill) * 60.0).powi(2)).exp() * clamp01(fill * 8.0);
+    let front = (-((u - fill) * 60.0).powi(2)).exp() * sat(fill * 8.0);
     rgb = mix3(rgb, [1.0; 3], front * 0.8);
     // The tiers' marks: thin lines, bright once passed.
     for m in MARKS {
@@ -145,12 +145,12 @@ pub fn ring_at(
     let r = (dx * dx + dy * dy).sqrt();
     // Round from the top, clockwise, 0 to 1.
     let u = (dx.atan2(-dy) / std::f32::consts::TAU + 1.0).fract();
-    let band = clamp01(0.5 - ((r - radius).abs() - thick * 0.5));
+    let band = sat(0.5 - ((r - radius).abs() - thick * 0.5));
     let on = 1.0 - smoothstep(left - 0.003, left + 0.003, u);
     let (k, _) = shine_at(shine, time);
     let warm = mix3([1.0, 0.82, 0.3], [1.0, 0.42, 0.38], u);
     let bow = hue(u - time * 0.25);
-    let arc = mix3(warm, bow, clamp01(k / WHOLE));
+    let arc = mix3(warm, bow, sat(k / WHOLE));
     let track = [1.0, 1.0, 1.0];
     let rgb = mix3(track, arc, on);
     let a = band * (0.14 + 0.81 * on);
@@ -186,7 +186,7 @@ pub fn label_pop(age: f32, life: f32) -> (f32, f32) {
     }
     (
         1.0 + 0.6 * (-age * 9.0).exp() * (age * 18.0).cos(),
-        1.0 - clamp01((age - (life - LABEL_FADE)) / LABEL_FADE),
+        1.0 - sat((age - (life - LABEL_FADE)) / LABEL_FADE),
     )
 }
 

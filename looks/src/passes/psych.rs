@@ -4,8 +4,7 @@
 
 use crate::drive::Driver;
 use crate::math::*;
-use crate::pass::{knob, natural, Ctx, Family, Pass, Src};
-use crate::passes::film::aspect;
+use crate::pass::{knob, natural, Ctx, Family, Pass, Src, Unit};
 
 const Y: Family = Family::Psychedelic;
 
@@ -22,18 +21,18 @@ pub const HUE: Pass = Pass {
     family: Y,
     about: "the colours turned round the wheel: shifted, cycling slowly, or a rainbow across the screen, the light kept (psychedelia, a new hue for each section)",
     knobs: &[
-        knob("shift", "how far round the wheel", (0.0, 1.0, 0.0), "turns", (1.0, 0.03)),
-        knob("spread", "a rainbow across the screen", (0.0, 1.0, 0.0), "share", (0.4, 0.03)),
-        knob("speed", "cycling backwards (-) or forwards (+), a turn in ten seconds at the most", (-1.0, 1.0, 0.0), "share", (0.3, 0.03)),
-        knob("amount", "how much of the turned colour", (0.0, 1.0, 1.0), "share", (0.3, 0.03)),
+        knob("shift", "how far round the wheel", (0.0, 1.0, 0.0), Unit::Turns, (1.0, 0.03)),
+        knob("spread", "a rainbow across the screen", (0.0, 1.0, 0.0), Unit::Share, (0.4, 0.03)),
+        knob("speed", "cycling backwards (-) or forwards (+), a turn in ten seconds at the most", (-1.0, 1.0, 0.0), Unit::Share, (0.3, 0.03)),
+        knob("amount", "how much of the turned colour", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.03)),
     ],
     natural: &[natural("shift", Driver::Part, 1.0), natural("spread", Driver::Bass, 0.5)],
     pairs: &["kaleidoscope", "liquid", "saturation"],
     wgsl: r"
 fn look_hue(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let turns = u.k0.x + u.k0.z * u.time.x * 0.1 + u.k0.y * (uv.x * 0.7 + uv.y * 0.3);
-    return mix(c, max(lk_hue_turn(c, turns), vec3<f32>(0.0)), u.k0.w);
+    let turns = lk_k(0u) + lk_k(2u) * u.time.x * 0.1 + lk_k(1u) * (uv.x * 0.7 + uv.y * 0.3);
+    return mix(c, max(lk_hue_turn(c, turns), vec3<f32>(0.0)), lk_k(3u));
 }
 ",
     cpu: hue,
@@ -47,7 +46,7 @@ fn mirror_repeat(x: f32) -> f32 {
 
 fn kaleidoscope(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
-    let p = aspect(u, uv);
+    let p = u.aspect(uv);
     let r = p.length();
     let seg = TAU / k[0];
     let a = p.y.atan2(p.x) + k[1] * TAU;
@@ -63,9 +62,9 @@ pub const KALEIDOSCOPE: Pass = Pass {
     family: Y,
     about: "a kaleidoscope: the picture folded into mirrored segments round the middle, turning (psychedelia, trance, instrumental breaks)",
     knobs: &[
-        knob("segments", "how many mirrored segments", (2.0, 16.0, 6.0), "steps", (0.0, 0.17)),
-        knob("turn", "how far turned", (0.0, 1.0, 0.0), "turns", (1.0, 0.03)),
-        knob("zoom", "zoomed out (low) or in (high)", (0.5, 2.0, 1.0), "share", (0.4, 0.13)),
+        knob("segments", "how many mirrored segments", (2.0, 16.0, 6.0), Unit::Steps, (0.0, 0.17)),
+        knob("turn", "how far turned", (0.0, 1.0, 0.0), Unit::Turns, (1.0, 0.03)),
+        knob("zoom", "zoomed out (low) or in (high)", (0.5, 2.0, 1.0), Unit::Share, (0.4, 0.13)),
     ],
     relief: 0.5,
     natural: &[natural("turn", Driver::BarPhase, 0.25), natural("zoom", Driver::Bass, 0.6)],
@@ -75,10 +74,10 @@ fn lk_mirror_repeat(x: f32) -> f32 { return 1.0 - abs(fract(x * 0.5) * 2.0 - 1.0
 fn look_kaleidoscope(uv: vec2<f32>) -> vec3<f32> {
     let p = lk_aspect(uv);
     let r = length(p);
-    let seg = LK_TAU / u.k0.x;
-    var a = atan2(p.y, p.x) + u.k0.y * LK_TAU;
+    let seg = LK_TAU / lk_k(0u);
+    var a = atan2(p.y, p.x) + lk_k(1u) * LK_TAU;
     a = abs(fract(a / seg) * seg - seg * 0.5);
-    let q = vec2<f32>(cos(a), sin(a)) * (r / u.k0.z);
+    let q = vec2<f32>(cos(a), sin(a)) * (r / lk_k(2u));
     let at = q / vec2<f32>(u.size.x / u.size.y, 1.0) + 0.5;
     return lk_src(vec2<f32>(lk_mirror_repeat(at.x), lk_mirror_repeat(at.y)));
 }
@@ -110,16 +109,16 @@ pub const MIRROR: Pass = Pass {
     family: Y,
     about: "the picture mirrored left to right, top to bottom or four ways (symmetry, Rorschach, dance, the surreal)",
     knobs: &[
-        knob("mode", "left onto right (0), top onto bottom (1), four ways (2)", (0.0, 2.0, 0.0), "steps", (0.0, 0.09)),
-        knob("place", "where the mirror stands", (0.2, 0.8, 0.5), "share", (0.2, 0.05)),
+        knob("mode", "left onto right (0), top onto bottom (1), four ways (2)", (0.0, 2.0, 0.0), Unit::Steps, (0.0, 0.09)),
+        knob("place", "where the mirror stands", (0.2, 0.8, 0.5), Unit::Share, (0.2, 0.05)),
     ],
     relief: 0.5,
     natural: &[natural("place", Driver::Other, 0.6)],
     pairs: &["kaleidoscope", "hue", "feedback"],
     wgsl: r"
 fn look_mirror(uv: vec2<f32>) -> vec3<f32> {
-    let mode = u.k0.x;
-    let m = u.k0.y;
+    let mode = lk_k(0u);
+    let m = lk_k(1u);
     let x = select(uv.x, m - abs(uv.x - m), mode != 1.0);
     let y = select(uv.y, m - abs(uv.y - m), mode >= 1.0);
     return lk_src(clamp(vec2<f32>(x, y), vec2<f32>(0.0), vec2<f32>(1.0)));
@@ -131,7 +130,7 @@ fn look_mirror(uv: vec2<f32>) -> vec3<f32> {
 
 fn liquid(u: &Ctx, s: &dyn Src, uv: V2) -> V3 {
     let k = &u.k;
-    let p = aspect(u, uv) * (k[1] * 2.0) + s2(u.time[0] * k[2] * 0.2);
+    let p = u.aspect(uv) * (k[1] * 2.0) + s2(u.time[0] * k[2] * 0.2);
     let w = v2(fbm(p, 261) - 0.5, fbm(p + 5.2, 262) - 0.5) * (k[0] * 0.06);
     s.src(uv + w)
 }
@@ -142,9 +141,9 @@ pub const LIQUID: Pass = Pass {
     family: Y,
     about: "the picture flowing and warping like oil on water (psychedelia, drugs and dreams, the surreal, shoegaze)",
     knobs: &[
-        knob("amount", "how far it flows", (0.0, 1.0, 0.4), "share", (0.5, 0.01)),
-        knob("scale", "the swirls' size: big (low) to small (high)", (0.5, 4.0, 1.5), "share", (0.5, 0.0)),
-        knob("speed", "how fast it flows", (0.0, 2.0, 0.5), "share", (0.6, 0.0)),
+        knob("amount", "how far it flows", (0.0, 1.0, 0.4), Unit::Share, (0.5, 0.01)),
+        knob("scale", "the swirls' size: big (low) to small (high)", (0.5, 4.0, 1.5), Unit::Share, (0.5, 0.0)),
+        knob("speed", "how fast it flows", (0.0, 2.0, 0.5), Unit::Share, (0.6, 0.0)),
     ],
     cost: 1.2,
     relief: 0.5,
@@ -152,8 +151,8 @@ pub const LIQUID: Pass = Pass {
     pairs: &["hue", "chromatic", "feedback"],
     wgsl: r"
 fn look_liquid(uv: vec2<f32>) -> vec3<f32> {
-    let p = lk_aspect(uv) * (u.k0.y * 2.0) + vec2<f32>(u.time.x * u.k0.z * 0.2);
-    let w = vec2<f32>(lk_fbm(p, 261u) - 0.5, lk_fbm(p + 5.2, 262u) - 0.5) * (u.k0.x * 0.06);
+    let p = lk_aspect(uv) * (lk_k(1u) * 2.0) + vec2<f32>(u.time.x * lk_k(2u) * 0.2);
+    let w = vec2<f32>(lk_fbm(p, 261u) - 0.5, lk_fbm(p + 5.2, 262u) - 0.5) * (lk_k(0u) * 0.06);
     return lk_src(uv + w);
 }
 ",
@@ -177,9 +176,9 @@ pub const ZOOM_BLUR: Pass = Pass {
     family: Y,
     about: "a zoom's blur rushing out from a point, as if the camera lunged (drops, drum and bass, rock's big hits)",
     knobs: &[
-        knob("amount", "how far it rushes", (0.0, 1.0, 0.3), "share", (0.6, 0.02)),
-        knob("x", "the point's place across", (0.0, 1.0, 0.5), "share", (0.0, 0.0)),
-        knob("y", "the point's place down", (0.0, 1.0, 0.45), "share", (0.0, 0.0)),
+        knob("amount", "how far it rushes", (0.0, 1.0, 0.3), Unit::Share, (0.6, 0.02)),
+        knob("x", "the point's place across", (0.0, 1.0, 0.5), Unit::Share, (0.0, 0.0)),
+        knob("y", "the point's place down", (0.0, 1.0, 0.45), Unit::Share, (0.0, 0.0)),
     ],
     cost: 3.0,
     relief: 0.6,
@@ -187,10 +186,10 @@ pub const ZOOM_BLUR: Pass = Pass {
     pairs: &["chromatic", "glitch", "feedback"],
     wgsl: r"
 fn look_zoom_blur(uv: vec2<f32>) -> vec3<f32> {
-    let dir = uv - vec2<f32>(u.k0.y, u.k0.z);
+    let dir = uv - vec2<f32>(lk_k(1u), lk_k(2u));
     var acc = vec3<f32>(0.0);
     for (var i = 0u; i < 10u; i = i + 1u) {
-        acc = acc + lk_src(uv - dir * (u.k0.x * 0.15 * f32(i) / 10.0));
+        acc = acc + lk_src(uv - dir * (lk_k(0u) * 0.15 * f32(i) / 10.0));
     }
     return acc / 10.0;
 }

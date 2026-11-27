@@ -142,14 +142,23 @@ pub struct Song<'a> {
     pub demo: bool,
     /// The song as it is heard, once analysed (the effects' music).
     pub heard: Option<&'a super::backdrop::music::Song>,
+    /// Every driver this frame, as the backdrop read them for the look
+    /// ([`super::backdrop::BackdropFrame::signals`]): what the effects'
+    /// mods move by.
+    pub signals: jodel_looks::Signals,
     /// The game's theme ([`crate::theme`]).
     pub theme: &'static crate::theme::Theme,
 }
 
 impl<'a> Song<'a> {
     /// The song in Karaoke mode in `state`, `heard` as it is heard (once
-    /// analysed).
-    pub fn of(state: &'a State, heard: Option<&'a super::backdrop::music::Song>) -> Song<'a> {
+    /// analysed), moved by `signals` (every driver this frame, as the
+    /// backdrop read them).
+    pub fn of(
+        state: &'a State,
+        heard: Option<&'a super::backdrop::music::Song>,
+        signals: jodel_looks::Signals,
+    ) -> Song<'a> {
         let sung = crate::core::karaoke::song_index(state)
             .and_then(|i| crate::core::karaoke::lyrics_of(state, i))
             .and_then(|l| match l {
@@ -173,13 +182,15 @@ impl<'a> Song<'a> {
             late: state.karaoke.lag.late,
             demo: state.karaoke.demo.held(),
             heard,
+            signals,
             theme: state.theme(),
         }
     }
 
     /// The song of `singing` (its `sung` lines, `length` long) with the
-    /// game on, the voice taken as it comes (no delay) and the classic
-    /// theme: for a stage made outside the player.
+    /// game on, the voice taken as it comes (no delay), no music heard (its
+    /// drivers quiet) and the classic theme: for a stage made outside the
+    /// player.
     pub fn new(
         singing: &'a crate::core::singing::Singing,
         sung: Vec<&'a jodel_lyrics::Line>,
@@ -193,6 +204,7 @@ impl<'a> Song<'a> {
             late: 0.0,
             demo: false,
             heard: None,
+            signals: jodel_looks::Signals::QUIET,
             theme: &crate::theme::CLASSIC,
         }
     }
@@ -558,7 +570,7 @@ impl Stage {
             singing,
             now,
             clock,
-            length: song.length,
+            signals: song.signals,
         });
         let effects = self.board.frame(song.theme, &step, &music, clock);
         self.shake = [0.0; 2];

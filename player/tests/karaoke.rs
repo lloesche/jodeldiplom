@@ -970,7 +970,7 @@ fn a_theme_changed_mid_song_is_the_next_frame_s() {
     let mut stage = Stage::default();
     let mut frame = |state: &State, heard: f64| -> (&'static Theme, StageFrame) {
         let picture = jodeldiplom::view::karaoke::picture(state, 0.1, 0.0);
-        let song = Song::of(state, None);
+        let song = Song::of(state, None, jodel_looks::Signals::QUIET);
         let area = (0.0, 0.0, 1600.0, 900.0);
         let at = (heard, 1.0 / 60.0);
         let drawn = stage.scene((&song, true), &picture, area, at, &Tint::STAGE);

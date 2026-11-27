@@ -24,7 +24,7 @@
 
 use jodel_rhythm::stems::Stem;
 
-use super::helpers::{clamp01, lattice, smoothstep, speed, vnoise};
+use super::helpers::{lattice, sat, smoothstep, speed, vnoise};
 use super::{At, Clear, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
 use crate::gui::stage::gpu::Instance;
 
@@ -206,11 +206,11 @@ pub fn fog(
         let blink = ((t * BLINK + r * 13.0).fract() - 0.5).abs();
         let open = smoothstep(0.0, 0.04, blink).max(0.05);
         let fade = smoothstep(0.0, 0.15, phase) * (1.0 - smoothstep(0.8, 1.0, phase));
-        let shows = fade * clamp01(p[2]) * s;
+        let shows = fade * sat(p[2]) * s;
         let dx = (px.0 - ex).abs() - er * APART;
         let dy = px.1 - ey;
         let d = (dx / er).hypot(dy / (er * 1.3 * open)) - 1.0;
-        let lit = clamp01(0.5 - d * er) * shows;
+        let lit = sat(0.5 - d * er) * shows;
         // The glow: a bell round each eye, nothing from `HALO` out, the
         // two joined smoothly between them.
         let hx = (px.0 - ex).hypot(er * RIDGE) - er * APART.hypot(RIDGE);
@@ -218,7 +218,7 @@ pub fn fog(
         let halo = bell * bell * 0.35 * shows;
         // A slit of a pupil each, peering in towards the other eye.
         let dp = ((dx + er * 0.3) / (er * 0.3)).hypot(dy / (er * 0.85 * open)) - 1.0;
-        let pupil = clamp01(0.5 - dp * er * 0.3) * lit;
+        let pupil = sat(0.5 - dp * er * 0.3) * lit;
         rgb = [0, 1, 2].map(|i| {
             let eye = EYE_GLOW[i] + (PUPIL[i] - EYE_GLOW[i]) * pupil;
             eye * lit + EYE_GLOW[i] * halo + rgb[i] * (1.0 - lit)
@@ -343,7 +343,7 @@ pub const REFERENCE: Reference = Reference {
         (0..3000)
             .flat_map(|k| {
                 let f = k as f32;
-                let fr = |m: f32| crate::gui::wgsl_math::fract(f * m);
+                let fr = |m: f32| jodel_looks::math::fract(f * m);
                 // Most within a fifth of an edge, many near the bottom
                 // (where the eyes are).
                 let (x, y) = match k % 5 {

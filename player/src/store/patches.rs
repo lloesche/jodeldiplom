@@ -32,15 +32,13 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
-use std::thread;
 
 use jodel_synth::Patch;
 
 use crate::core::patch_book::PatchBook;
-use crate::core::Action;
 use crate::sfx::conductor::Atom;
 use crate::store::cache;
+use crate::store::writer::Writer;
 use crate::theme::{Theme, THEMES};
 use crate::work::outbox::Outbox;
 
@@ -110,33 +108,27 @@ pub fn save(dir: &Path, theme: &str, atom: Atom, patch: Option<&Patch>) -> io::R
 type Job = (&'static Theme, Atom, Option<Patch>);
 
 /// Keeps and forgets patches in a folder, on a thread of its own: in the
-/// order asked, one at a time. A failure is said with
-/// [`Action::Failed`].
+/// order asked, one at a time ([`Writer`]). A failure is said with
+/// [`crate::core::Action::Failed`].
 pub struct PatchStore {
-    jobs: Sender<Job>,
+    writer: Writer<Job>,
 }
 
 impl PatchStore {
     /// A store in `dir`, saying failures to `outbox`.
     pub fn new(dir: PathBuf, outbox: Outbox) -> PatchStore {
-        let (jobs, rx) = mpsc::channel::<Job>();
-        thread::spawn(move || {
-            for (theme, atom, patch) in rx {
-                if let Err(e) = save(&dir, theme.name, atom, patch.as_ref()) {
-                    let what = if patch.is_some() { "kept" } else { "forgotten" };
-                    let text = format!("The patch of {} was not {what}: {e}", atom.name());
-                    if !outbox.send(Action::Failed(text)) {
-                        return;
-                    }
-                }
-            }
+        let writer = Writer::new(outbox, move |(theme, atom, patch): Job| {
+            save(&dir, theme.name, atom, patch.as_ref()).map_err(|e| {
+                let what = if patch.is_some() { "kept" } else { "forgotten" };
+                format!("The patch of {} was not {what}: {e}", atom.name())
+            })
         });
-        PatchStore { jobs }
+        PatchStore { writer }
     }
 
     /// Keeps `patch` as `theme`'s `atom`'s (`None`: forgets it).
     pub fn keep(&self, theme: &'static Theme, atom: Atom, patch: Option<Patch>) {
-        let _ = self.jobs.send((theme, atom, patch));
+        self.writer.send((theme, atom, patch));
     }
 }
 

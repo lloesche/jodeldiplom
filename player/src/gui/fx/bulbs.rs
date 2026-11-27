@@ -34,7 +34,7 @@
 //! the row, round each bulb and up between them, and the bulbs, drawn over
 //! the light, stay crisp on top.
 
-use super::helpers::{clamp01, mix3, smoothstep};
+use super::helpers::{mix3, sat, smoothstep};
 use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
 use crate::gui::stage::gpu::Instance;
 
@@ -207,7 +207,7 @@ pub fn row(lane: [f32; 4], size: (f32, f32)) -> Option<Row> {
 
 /// How much the bulbs show at `strength` (wholly from a little in).
 pub fn shown(strength: f32) -> f32 {
-    clamp01(strength / 0.35)
+    sat(strength / 0.35)
 }
 
 /// The row's corners (left, top, right, bottom) round `lane` in a screen
@@ -270,15 +270,15 @@ pub fn lit_at(k: i32, time: f32, flash: f32, p: [f32; 4], m: &Music) -> f32 {
         flash,
         (time * FLASH_RATE).floor() as i32,
     );
-    let lock = clamp01(m.sure * p[2]);
+    let lock = sat(m.sure * p[2]);
     if lock <= 0.0 {
         return free;
     }
     let beat = m.beats.floor() as i32;
     let hard = p[3].max(0.0);
-    let dim = 1.0 - clamp01(DIP * hard * (1.0 - m.beat));
-    let on = lit(k, beat, dim, flash, beat).max(clamp01(m.downbeat * hard));
-    let on = on + (1.0 - on) * clamp01(BLINK * hard * m.beat);
+    let dim = 1.0 - sat(DIP * hard * (1.0 - m.beat));
+    let on = lit(k, beat, dim, flash, beat).max(sat(m.downbeat * hard));
+    let on = on + (1.0 - on) * sat(BLINK * hard * m.beat);
     let on = on + OVERDRIVE * hard * smoothstep(0.5, 1.0, m.downbeat);
     free + (on - free) * lock
 }
@@ -307,7 +307,9 @@ pub fn jack(q: (f32, f32), r: f32, lit: f32) -> [f32; 3] {
 /// How much of a jack-o'-lantern's stalk (radius `r`) covers `q` from its
 /// middle: a short stub leaning out of its top.
 fn stalk(q: (f32, f32), r: f32) -> f32 {
-    let d = crate::gui::wgsl_math::round_box((q.0 / r - 0.06, q.1 / r + 1.18), (0.1, 0.17), 0.05);
+    use jodel_looks::math::v2;
+    let (at, half) = (v2(q.0 / r - 0.06, q.1 / r + 1.18), v2(0.1, 0.17));
+    let d = jodel_looks::math::round_box(at, half, 0.05);
     (0.5 - d * r).clamp(0.0, 1.0)
 }
 

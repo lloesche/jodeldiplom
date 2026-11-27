@@ -270,23 +270,14 @@ pub struct QueueRow {
 impl Pane {
     /// The pane for `state`, `width` points wide.
     pub fn of(state: &State, width: f32) -> Pane {
-        let tabs = [
-            (Side::Browser, "Browser"),
-            (Side::Queue, "Queue"),
-            (Side::Transition, "Transition"),
-            (Side::Karaoke, "Karaoke"),
-            (Side::Mixer, "Mixer"),
-            (Side::Synth, "Synth"),
-            (Side::Shader, "Shader"),
-        ]
-        .into_iter()
-        .map(|(side, label)| Tab {
-            side,
-            label,
-            count: (side == Side::Queue).then_some(state.queue.paths.len()),
-            shown: state.side == side,
-        })
-        .collect();
+        let tabs = (Side::ALL.into_iter())
+            .map(|side| Tab {
+                side,
+                label: side.label(),
+                count: (side == Side::Queue).then_some(state.queue.paths.len()),
+                shown: state.side == side,
+            })
+            .collect();
         let body = match state.side.list() {
             Some(ListKind::Browser) => Body::Browser(Browser::of(state)),
             Some(ListKind::Queue) => Body::Queue(Queue::of(state, width)),

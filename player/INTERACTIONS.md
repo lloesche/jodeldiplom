@@ -1358,10 +1358,10 @@ really found, as its workers tell it: never a progress they did not tell.
   dark as the lyrics are, so it reads over any look.
   - `every_look_keeps_the_guards_over_a_whole_song` (looks)
   - `every_preset_keeps_the_guards_over_real_songs`
-  - `a_strength_is_kept_only_for_the_look_it_was_found_for` (`gui::backdrop::looks`)
-  - `the_strength_drawn_eases_to_the_one_found` (`gui::backdrop::looks`)
-  - `new_curves_for_the_same_look_and_picture_keep_its_strength_meanwhile` (`gui::backdrop::looks`)
-  - `a_look_measured_is_kept_across_leaving_and_coming_back` (`gui::backdrop::looks`)
+  - `a_strength_is_kept_only_for_the_look_it_was_found_for` (`gui::backdrop::song_look`)
+  - `the_strength_drawn_eases_to_the_one_found` (`gui::backdrop::song_look`)
+  - `new_curves_for_the_same_look_and_picture_keep_its_strength_meanwhile` (`gui::backdrop::song_look`)
+  - `a_look_measured_is_kept_across_leaving_and_coming_back` (`gui::backdrop::song_look`)
   - `the_lines_are_set_in_the_middle_crisp_and_filled` (`gui::stage::lyrics`)
   - `every_number_is_held_to_its_range` (looks)
   - `over_the_budget_the_dearest_optional_pass_goes` (looks)
@@ -1374,8 +1374,9 @@ really found, as its workers tell it: never a progress they did not tell.
   the processor (the shader check).
   - `a_look_draws_over_the_backdrop_and_none_leaves_it_as_it_was`
   - `a_look_goes_to_json_and_back_and_draws_the_same` (looks)
-  - `every_look_pass_is_its_reference` (`gui::shader_check`)
-  - `every_look_pass_s_pipeline_compiles` (`gui::shader_check`)
+  - `every_look_pass_is_its_reference` (looks)
+  - `every_look_pass_s_pipeline_compiles` (looks)
+  - `every_look_shader_is_valid_wgsl` (looks)
 - **L5.** The music is read at the song's time as heard, the same time
   the stage and the lyrics draw at: the song's curves worked out once
   before it plays, a moment's pulse peaking on it; the singing's live
@@ -1388,7 +1389,9 @@ really found, as its workers tell it: never a progress they did not tell.
   - `the_curves_find_what_the_song_has` (looks)
 - **L6.** `C` puts the stack on the clipboard as JSON; `K` keeps it in the
   data folder as a preset of the user's own (a preset's gets an id of
-  its own), whole or not at all, where the folder is while it moves; the
-  ones kept are listed first at the start.
+  its own), whole or not at all, where the folder is while it moves, a
+  file an id (no two ids share one, whatever their case); the ones kept
+  are listed first at the start.
   - `the_shader_tab_is_in_the_tab_cycle_and_its_keys_edit_the_stack`
   - `looks_are_kept_and_found_while_the_data_folder_moves` (`store::looks`)
+  - `distinct_looks_are_kept_in_distinct_files` (`store::looks`)

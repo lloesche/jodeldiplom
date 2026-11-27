@@ -84,7 +84,8 @@ while the tab shows (`State::look`).
   frame, no number that is none (a test draws every pass at its corners).
 - **Units a person can read.** `share` (0 to 1 of the effect), `px`
   (pixels at 1080 lines: a look looks the same on every screen), `turns`
-  (of the colour wheel or a circle: they go round), `steps` (a count).
+  (of the colour wheel or a circle, 0 to 1: they go round), `steps` (a
+  count, a whole number), `ratio` (one size over another).
 - **One line each for the model:** what it does, its range, default,
   unit and how far the music may move it, in the catalogue.
 
@@ -143,17 +144,23 @@ Held whatever a look asks (`Look::check`, `jodel_looks::guard`):
 
 Everything is read at the song's time as heard: the same time the stage,
 the lyrics and the bubbles are drawn at (`App::heard_for_frame`, the
-engine's position as heard, eased between its reports). The song's
-curves are worked out once before it plays (`jodel_looks::Curves`, from
-its analysis: the beats and bars, the waveform's lanes of the mix and
-each stem, the sections, the key, the sung lines) on the song's own
-frames, 100 a second, read between them; its moments (beats, kicks,
-snares, bass notes, lines) as lists, each pulse worked out from its
-time, rising just before the moment and peaking on it. So a look follows
-seeks, pauses and changes of speed exactly, at any frame rate. What only
-the singing knows is set live on the singing's clock (the voice's lag
-taken off): the pitch sung, how many notes hit lately, the game's tier
-and streak.
+engine's position as heard, eased between its reports). The music is
+read in one place, `jodel_looks::drive`, for the looks and the stage's
+effects alike: the beat from the song's grid (the one the sounds are
+played on; its pulses and phases fade where the grid is unsure), the
+lanes' levels against how loud they get, the melody, a section's swell.
+The song's curves are worked out once before it plays
+(`jodel_looks::Curves`, from its analysis: the grid, the waveform's lanes
+of the mix and each stem, the sections, the key, the melody, the sung
+lines), each driver from its own source (`drivers!` says which come from
+the song and which live, and a test holds every song driver set): curves
+on the song's own frames, 100 a second, read between them; its moments
+(kicks, snares, bass notes, lines) as lists, each pulse worked out from
+its time, rising just before the moment and peaking on it. So a look
+follows seeks, pauses and changes of speed exactly, at any frame rate.
+What only the singing knows is set live on the singing's clock (the
+voice's lag taken off, `core::karaoke::live`): the pitch sung, how many
+notes hit lately, the game's tier and streak.
 
 | driver | speed | what it is, what it is good for |
 |---|---|---|

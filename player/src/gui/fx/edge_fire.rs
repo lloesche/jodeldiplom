@@ -356,7 +356,7 @@ pub const REFERENCE: Reference = Reference {
         (0..3000)
             .flat_map(|k| {
                 let f = k as f32;
-                let fr = |m: f32| crate::gui::wgsl_math::fract(f * m);
+                let fr = |m: f32| jodel_looks::math::fract(f * m);
                 // Most within a fifth of an edge.
                 let (x, y) = match k % 5 {
                     0 => (fr(0.613) * size.0, size.1 - fr(0.377) * 450.0),

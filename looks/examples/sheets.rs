@@ -49,10 +49,8 @@ fn drawn(look: &Look, img: &Image, t: f64) -> Image {
         t,
         seed: jodel_looks::seed(&look.id, "sheets"),
         dt: 1.0 / 30.0,
-        forget: true,
-        band: Some((0.68, 0.86)),
-        palette: [[0.95, 0.6, 0.25], [0.25, 0.45, 0.8], [0.1, 0.1, 0.12]],
-        strength: 1.0,
+        band: Some(jodel_looks::BAND),
+        ..Moment::MEASURING
     };
     let signals = curves.at(t);
     let mut prev = None;

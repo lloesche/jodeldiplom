@@ -5,7 +5,7 @@
 
 use crate::drive::Driver;
 use crate::math::*;
-use crate::pass::{knob, natural, Ctx, Family, Pass, Src};
+use crate::pass::{knob, natural, Ctx, Family, Pass, Src, Unit};
 
 const G: Family = Family::Grade;
 
@@ -23,18 +23,18 @@ pub const LIFT_GAMMA_GAIN: Pass = Pass {
     family: G,
     about: "the classic three-way grade: the blacks raised or crushed, the middle brighter or darker, the whites brighter or dimmer",
     knobs: &[
-        knob("lift", "raises the blacks (+, a faded film) or crushes them (-, deep shadows)", (-1.0, 1.0, 0.0), "share", (0.3, 0.3)),
-        knob("gamma", "the midtones brighter (+) or darker (-), the ends kept", (-1.0, 1.0, 0.0), "share", (0.4, 0.45)),
-        knob("gain", "the whites brighter (+) or dimmer (-)", (-1.0, 1.0, 0.0), "share", (0.4, 0.45)),
+        knob("lift", "raises the blacks (+, a faded film) or crushes them (-, deep shadows)", (-1.0, 1.0, 0.0), Unit::Share, (0.3, 0.3)),
+        knob("gamma", "the midtones brighter (+) or darker (-), the ends kept", (-1.0, 1.0, 0.0), Unit::Share, (0.4, 0.45)),
+        knob("gain", "the whites brighter (+) or dimmer (-)", (-1.0, 1.0, 0.0), Unit::Share, (0.4, 0.45)),
     ],
     natural: &[natural("gain", Driver::Kick, 0.8), natural("gamma", Driver::Energy, 0.5)],
     pairs: &["curve", "grain", "vignette"],
     wgsl: r"
 fn look_lift_gamma_gain(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    var o = c * (1.0 + 0.3 * u.k0.z);
-    o = o + (vec3<f32>(1.0) - o) * (u.k0.x * mix(0.08, 0.15, step(0.0, u.k0.x)));
-    return pow(max(o, vec3<f32>(0.0)), vec3<f32>(exp2(-0.6 * u.k0.y)));
+    var o = c * (1.0 + 0.3 * lk_k(2u));
+    o = o + (vec3<f32>(1.0) - o) * (lk_k(0u) * mix(0.08, 0.15, step(0.0, lk_k(0u))));
+    return pow(max(o, vec3<f32>(0.0)), vec3<f32>(exp2(-0.6 * lk_k(1u))));
 }
 ",
     cpu: lift_gamma_gain,
@@ -60,14 +60,14 @@ pub const WHITE_BALANCE: Pass = Pass {
             "warmth",
             "warmer, orange (+), or cooler, blue (-)",
             (-1.0, 1.0, 0.0),
-            "share",
+            Unit::Share,
             (0.6, 0.02),
         ),
         knob(
             "tint",
             "magenta (+) or green (-)",
             (-1.0, 1.0, 0.0),
-            "share",
+            Unit::Share,
             (0.4, 0.02),
         ),
     ],
@@ -79,8 +79,8 @@ pub const WHITE_BALANCE: Pass = Pass {
     wgsl: r"
 fn look_white_balance(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    var o = c * vec3<f32>(1.0 + 0.16 * u.k0.x, 1.0 + 0.02 * u.k0.x, 1.0 - 0.16 * u.k0.x);
-    o = o * vec3<f32>(1.0 + 0.08 * u.k0.y, 1.0 - 0.1 * u.k0.y, 1.0 + 0.08 * u.k0.y);
+    var o = c * vec3<f32>(1.0 + 0.16 * lk_k(0u), 1.0 + 0.02 * lk_k(0u), 1.0 - 0.16 * lk_k(0u));
+    o = o * vec3<f32>(1.0 + 0.08 * lk_k(1u), 1.0 - 0.1 * lk_k(1u), 1.0 + 0.08 * lk_k(1u));
     return o * (lk_luma(c) / max(lk_luma(o), 1e-4));
 }
 ",
@@ -102,8 +102,8 @@ pub const SATURATION: Pass = Pass {
     family: G,
     about: "how vivid the colours are: saturation for all of them, vibrance for the dull ones only (skin and sky kept)",
     knobs: &[
-        knob("saturation", "0 grey, 1 as it is, 2 twice as vivid", (0.0, 2.0, 1.0), "share", (0.6, 0.05)),
-        knob("vibrance", "the dull colours more vivid (+) or duller (-), the vivid ones kept", (-1.0, 1.0, 0.0), "share", (0.6, 0.05)),
+        knob("saturation", "0 grey, 1 as it is, 2 twice as vivid", (0.0, 2.0, 1.0), Unit::Share, (0.6, 0.05)),
+        knob("vibrance", "the dull colours more vivid (+) or duller (-), the vivid ones kept", (-1.0, 1.0, 0.0), Unit::Share, (0.6, 0.05)),
     ],
     natural: &[natural("saturation", Driver::Chorus, 0.6), natural("vibrance", Driver::Vocals, 0.7)],
     pairs: &["curve", "duotone"],
@@ -111,8 +111,8 @@ pub const SATURATION: Pass = Pass {
 fn look_saturation(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let chroma = max(max(c.x, c.y), c.z) - min(min(c.x, c.y), c.z);
-    let v = 1.0 + u.k0.y * (1.0 - chroma);
-    return max(lk_saturate(c, u.k0.x * v), vec3<f32>(0.0));
+    let v = 1.0 + lk_k(1u) * (1.0 - chroma);
+    return max(lk_saturate(c, lk_k(0u) * v), vec3<f32>(0.0));
 }
 ",
     cpu: saturation,
@@ -134,21 +134,21 @@ pub const DUOTONE: Pass = Pass {
     family: G,
     about: "the picture in two colours, dark to light (the cover's own, or two hues): posters, pop, moods",
     knobs: &[
-        knob("dark", "the shadows' hue", (0.0, 1.0, 0.7), "turns", (0.1, 0.07)),
-        knob("light", "the lights' hue", (0.0, 1.0, 0.1), "turns", (0.15, 0.08)),
-        knob("amount", "how much of the two colours", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
-        knob("cover", "from the two hues (0) to the cover's own colours (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.3)),
-        knob("contrast", "flatter (-) or harder (+) from dark to light", (-1.0, 1.0, 0.0), "share", (0.5, 0.1)),
+        knob("dark", "the shadows' hue", (0.0, 1.0, 0.7), Unit::Turns, (0.1, 0.07)),
+        knob("light", "the lights' hue", (0.0, 1.0, 0.1), Unit::Turns, (0.15, 0.08)),
+        knob("amount", "how much of the two colours", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.3)),
+        knob("cover", "from the two hues (0) to the cover's own colours (1)", (0.0, 1.0, 0.0), Unit::Share, (0.0, 0.3)),
+        knob("contrast", "flatter (-) or harder (+) from dark to light", (-1.0, 1.0, 0.0), Unit::Share, (0.5, 0.1)),
     ],
     natural: &[natural("light", Driver::Part, 0.7), natural("contrast", Driver::Kick, 0.7)],
     pairs: &["grain", "halftone", "curve"],
     wgsl: r"
 fn look_duotone(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let l = lk_sat((lk_luma(c) - 0.5) * (1.0 + 0.8 * u.k1.x) + 0.5);
-    let dark = mix(lk_hsv(u.k0.x, 0.8, 0.22), u.pal2.xyz * 0.6, u.k0.w);
-    let light = mix(lk_hsv(u.k0.y, 0.45, 1.0), u.pal0.xyz, u.k0.w);
-    return mix(c, mix(dark, light, l), u.k0.z);
+    let l = lk_sat((lk_luma(c) - 0.5) * (1.0 + 0.8 * lk_k(4u)) + 0.5);
+    let dark = mix(lk_hsv(lk_k(0u), 0.8, 0.22), u.pal2.xyz * 0.6, lk_k(3u));
+    let light = mix(lk_hsv(lk_k(1u), 0.45, 1.0), u.pal0.xyz, lk_k(3u));
+    return mix(c, mix(dark, light, l), lk_k(2u));
 }
 ",
     cpu: duotone,
@@ -176,10 +176,10 @@ pub const TRITONE: Pass = Pass {
     family: G,
     about: "the picture in three colours, shadows, midtones and lights: screen prints, neon nights, sunsets",
     knobs: &[
-        knob("dark", "the shadows' hue", (0.0, 1.0, 0.75), "turns", (0.1, 0.08)),
-        knob("middle", "the midtones' hue", (0.0, 1.0, 0.95), "turns", (0.15, 0.14)),
-        knob("light", "the lights' hue", (0.0, 1.0, 0.12), "turns", (0.1, 0.08)),
-        knob("amount", "how much of the three colours", (0.0, 1.0, 1.0), "share", (0.3, 0.3)),
+        knob("dark", "the shadows' hue", (0.0, 1.0, 0.75), Unit::Turns, (0.1, 0.08)),
+        knob("middle", "the midtones' hue", (0.0, 1.0, 0.95), Unit::Turns, (0.15, 0.14)),
+        knob("light", "the lights' hue", (0.0, 1.0, 0.12), Unit::Turns, (0.1, 0.08)),
+        knob("amount", "how much of the three colours", (0.0, 1.0, 1.0), Unit::Share, (0.3, 0.3)),
     ],
     natural: &[natural("middle", Driver::Part, 0.8), natural("light", Driver::Vocals, 0.5)],
     pairs: &["grain", "halftone", "glow"],
@@ -187,11 +187,11 @@ pub const TRITONE: Pass = Pass {
 fn look_tritone(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let l = lk_luma(c);
-    let a = lk_hsv(u.k0.x, 0.75, 0.18);
-    let b = lk_hsv(u.k0.y, 0.7, 0.62);
-    let w = lk_hsv(u.k0.z, 0.25, 1.0);
+    let a = lk_hsv(lk_k(0u), 0.75, 0.18);
+    let b = lk_hsv(lk_k(1u), 0.7, 0.62);
+    let w = lk_hsv(lk_k(2u), 0.25, 1.0);
     let t = mix(mix(a, b, smoothstep(0.0, 0.5, l)), w, smoothstep(0.5, 1.0, l));
-    return mix(c, t, u.k0.w);
+    return mix(c, t, lk_k(3u));
 }
 ",
     cpu: tritone,
@@ -218,28 +218,28 @@ pub const SPLIT_TONE: Pass = Pass {
             "shadows",
             "the shadows' hue",
             (0.0, 1.0, 0.52),
-            "turns",
+            Unit::Turns,
             (0.1, 0.03),
         ),
         knob(
             "lights",
             "the lights' hue",
             (0.0, 1.0, 0.08),
-            "turns",
+            Unit::Turns,
             (0.1, 0.03),
         ),
         knob(
             "amount",
             "how strongly tinted",
             (0.0, 1.0, 0.5),
-            "share",
+            Unit::Share,
             (0.4, 0.05),
         ),
         knob(
             "balance",
             "where shadows end and lights begin: lower (-) or higher (+)",
             (-1.0, 1.0, 0.0),
-            "share",
+            Unit::Share,
             (0.5, 0.02),
         ),
     ],
@@ -252,10 +252,10 @@ pub const SPLIT_TONE: Pass = Pass {
 fn look_split_tone(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let l = lk_luma(c);
-    let b = 0.5 + 0.3 * u.k0.w;
-    let sh = (lk_hsv(u.k0.x, 1.0, 1.0) - 0.5) * (1.0 - smoothstep(0.0, b + 0.25, l));
-    let hi = (lk_hsv(u.k0.y, 1.0, 1.0) - 0.5) * smoothstep(b - 0.25, 1.0, l);
-    return max(c + (sh + hi) * (u.k0.z * 0.2), vec3<f32>(0.0));
+    let b = 0.5 + 0.3 * lk_k(3u);
+    let sh = (lk_hsv(lk_k(0u), 1.0, 1.0) - 0.5) * (1.0 - smoothstep(0.0, b + 0.25, l));
+    let hi = (lk_hsv(lk_k(1u), 1.0, 1.0) - 0.5) * smoothstep(b - 0.25, 1.0, l);
+    return max(c + (sh + hi) * (lk_k(2u) * 0.2), vec3<f32>(0.0));
 }
 ",
     cpu: split_tone,
@@ -290,21 +290,21 @@ pub const CURVE: Pass = Pass {
             "contrast",
             "flatter (-) or punchier (+)",
             (-1.0, 1.0, 0.0),
-            "share",
+            Unit::Share,
             (0.4, 0.2),
         ),
         knob(
             "pivot",
             "the tone the contrast turns about",
             (0.2, 0.8, 0.5),
-            "share",
+            Unit::Share,
             (0.1, 0.3),
         ),
         knob(
             "fade",
             "the blacks lifted and the whites lowered, matte",
             (0.0, 1.0, 0.0),
-            "share",
+            Unit::Share,
             (0.4, 0.08),
         ),
     ],
@@ -320,9 +320,9 @@ fn lk_curve_channel(x0: f32, p: f32, e: f32) -> f32 {
 }
 fn look_curve(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
-    let e = exp2(1.6 * u.k0.x);
-    let o = vec3<f32>(lk_curve_channel(c.x, u.k0.y, e), lk_curve_channel(c.y, u.k0.y, e), lk_curve_channel(c.z, u.k0.y, e));
-    return mix(o, o * 0.84 + 0.08, u.k0.z);
+    let e = exp2(1.6 * lk_k(0u));
+    let o = vec3<f32>(lk_curve_channel(c.x, lk_k(1u), e), lk_curve_channel(c.y, lk_k(1u), e), lk_curve_channel(c.z, lk_k(1u), e));
+    return mix(o, o * 0.84 + 0.08, lk_k(2u));
 }
 ",
     cpu: curve,
@@ -347,7 +347,7 @@ pub const GRADIENT_MAP: Pass = Pass {
     name: "gradient_map",
     family: G,
     about: "the tones mapped onto the cover's three colours, dark to light: a picture made the cover's palette",
-    knobs: &[knob("amount", "how much of the cover's palette", (0.0, 1.0, 0.7), "share", (0.4, 0.3))],
+    knobs: &[knob("amount", "how much of the cover's palette", (0.0, 1.0, 0.7), Unit::Share, (0.4, 0.3))],
     natural: &[natural("amount", Driver::Energy, 0.6)],
     pairs: &["grain", "halftone"],
     wgsl: r"
@@ -358,7 +358,7 @@ fn look_gradient_map(uv: vec2<f32>) -> vec3<f32> {
     let b = u.pal1.xyz;
     let w = u.pal0.xyz;
     let m = mix(mix(a, b, smoothstep(0.0, 0.5, l)), mix(w, vec3<f32>(1.0), 0.3), smoothstep(0.5, 1.0, l));
-    return mix(c, m, u.k0.x);
+    return mix(c, m, lk_k(0u));
 }
 ",
     cpu: gradient_map,
@@ -388,14 +388,14 @@ pub const TECHNICOLOR: Pass = Pass {
             "amount",
             "how much of the look",
             (0.0, 1.0, 0.8),
-            "share",
+            Unit::Share,
             (0.3, 0.05),
         ),
         knob(
             "punch",
             "how far the dyes separate",
             (0.0, 1.0, 0.5),
-            "share",
+            Unit::Share,
             (0.5, 0.05),
         ),
     ],
@@ -408,9 +408,9 @@ pub const TECHNICOLOR: Pass = Pass {
 fn look_technicolor(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let sep = vec3<f32>(c.x - (c.y + c.z) * 0.5, c.y - (c.x + c.z) * 0.5, c.z - (c.x + c.y) * 0.5);
-    var t = c + sep * (0.5 + 0.7 * u.k0.y);
+    var t = c + sep * (0.5 + 0.7 * lk_k(1u));
     t = t * min(lk_luma(c) / max(lk_luma(t), 1e-3), 1.5);
-    return mix(c, max(t, vec3<f32>(0.0)), u.k0.x);
+    return mix(c, max(t, vec3<f32>(0.0)), lk_k(0u));
 }
 ",
     cpu: technicolor,
@@ -442,14 +442,14 @@ pub const BLEACH_BYPASS: Pass = Pass {
             "amount",
             "how much of the look",
             (0.0, 1.0, 0.7),
-            "share",
+            Unit::Share,
             (0.3, 0.1),
         ),
         knob(
             "contrast",
             "how harsh",
             (0.0, 1.0, 0.5),
-            "share",
+            Unit::Share,
             (0.5, 0.1),
         ),
     ],
@@ -462,8 +462,8 @@ fn look_bleach_bypass(uv: vec2<f32>) -> vec3<f32> {
     let hi = vec3<f32>(1.0) - 2.0 * (vec3<f32>(1.0) - c) * (1.0 - l);
     let lo = 2.0 * c * l;
     let over = select(lo, hi, l > 0.5);
-    let o = mix(c, over, 0.5 + 0.5 * u.k0.y);
-    return mix(c, lk_saturate(o, 0.55), u.k0.x);
+    let o = mix(c, over, 0.5 + 0.5 * lk_k(1u));
+    return mix(c, lk_saturate(o, 0.55), lk_k(0u));
 }
 ",
     cpu: bleach_bypass,
@@ -486,14 +486,14 @@ pub const CROSS_PROCESS: Pass = Pass {
     name: "cross_process",
     family: G,
     about: "slide film in the wrong chemistry: yellow-green lights, blue shadows, hard reds (90s indie, lo-fi)",
-    knobs: &[knob("amount", "how much of the look", (0.0, 1.0, 0.7), "share", (0.4, 0.1))],
+    knobs: &[knob("amount", "how much of the look", (0.0, 1.0, 0.7), Unit::Share, (0.4, 0.1))],
     natural: &[natural("amount", Driver::Energy, 0.6)],
     pairs: &["grain", "vignette", "light_leak"],
     wgsl: r"
 fn look_cross_process(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let x = vec3<f32>(smoothstep(0.05, 0.95, c.x), c.y * 0.88 + 0.07, c.z * 0.55 + 0.22);
-    return mix(c, x, u.k0.x);
+    return mix(c, x, lk_k(0u));
 }
 ",
     cpu: cross_process,
@@ -518,8 +518,8 @@ pub const INFRARED: Pass = Pass {
     family: G,
     about: "infrared film: greens turn pink and red, skies deep (or in black and white, foliage glowing white)",
     knobs: &[
-        knob("amount", "how much of the look", (0.0, 1.0, 0.8), "share", (0.4, 0.1)),
-        knob("mono", "colour infrared (0) or black-and-white infrared (1)", (0.0, 1.0, 0.0), "share", (0.0, 0.1)),
+        knob("amount", "how much of the look", (0.0, 1.0, 0.8), Unit::Share, (0.4, 0.1)),
+        knob("mono", "colour infrared (0) or black-and-white infrared (1)", (0.0, 1.0, 0.0), Unit::Share, (0.0, 0.1)),
     ],
     natural: &[natural("amount", Driver::Vocals, 0.6)],
     pairs: &["glow", "grain"],
@@ -528,7 +528,7 @@ fn look_infrared(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let ir = vec3<f32>(c.y * 0.9 + c.x * 0.25, c.x * 0.65 + c.z * 0.2, c.z * 0.85 + c.y * 0.1);
     let mono = vec3<f32>(clamp(c.y * 1.4 + c.x * 0.3 - c.z * 0.3, 0.0, 1.0));
-    return mix(c, mix(ir, mono, u.k0.y), u.k0.x);
+    return mix(c, mix(ir, mono, lk_k(1u)), lk_k(0u));
 }
 ",
     cpu: infrared,
@@ -556,21 +556,21 @@ pub const SEPIA: Pass = Pass {
             "amount",
             "how much of the look",
             (0.0, 1.0, 0.9),
-            "share",
+            Unit::Share,
             (0.3, 0.1),
         ),
         knob(
             "tone",
             "a daguerreotype's silver (-1) to warm sepia (+1)",
             (-1.0, 1.0, 1.0),
-            "share",
+            Unit::Share,
             (0.4, 0.02),
         ),
         knob(
             "fade",
             "how faded with age",
             (0.0, 1.0, 0.3),
-            "share",
+            Unit::Share,
             (0.4, 0.08),
         ),
     ],
@@ -583,11 +583,11 @@ pub const SEPIA: Pass = Pass {
 fn look_sepia(uv: vec2<f32>) -> vec3<f32> {
     let c = lk_src(uv);
     let l = smoothstep(0.02, 0.98, lk_luma(c));
-    let dark = mix(vec3<f32>(0.16, 0.09, 0.04), vec3<f32>(0.08, 0.09, 0.1), lk_sat(-u.k0.y));
-    let light = mix(vec3<f32>(0.98, 0.9, 0.74), vec3<f32>(0.9, 0.92, 0.94), lk_sat(-u.k0.y));
+    let dark = mix(vec3<f32>(0.16, 0.09, 0.04), vec3<f32>(0.08, 0.09, 0.1), lk_sat(-lk_k(1u)));
+    let light = mix(vec3<f32>(0.98, 0.9, 0.74), vec3<f32>(0.9, 0.92, 0.94), lk_sat(-lk_k(1u)));
     var t = mix(dark, light, l);
-    t = mix(t, t * 0.8 + 0.12, u.k0.z);
-    return mix(c, t, u.k0.x);
+    t = mix(t, t * 0.8 + 0.12, lk_k(2u));
+    return mix(c, t, lk_k(0u));
 }
 ",
     cpu: sepia,

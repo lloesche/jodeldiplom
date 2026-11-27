@@ -13,6 +13,8 @@
 //!   patches ([`patches`]).
 //! - What could be made again: the stems kept ([`stems`]). The workers
 //!   keep the rest of it ([`crate::work`]).
+//! - The thread a store writes its files on, in the order asked
+//!   ([`writer`]).
 
 pub mod cache;
 pub mod delays;
@@ -25,3 +27,4 @@ pub mod patches;
 pub mod scores;
 pub mod session;
 pub mod stems;
+pub mod writer;
