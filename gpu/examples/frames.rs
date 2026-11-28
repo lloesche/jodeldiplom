@@ -5,10 +5,10 @@
 //! player's story makes it: [`jodel_gpu::pace::background`]) paints a
 //! picture with klein, then writes with Gemma, each model's weights put up
 //! first (some 13 GB in all), then puts up the scenes' depth and cut-out
-//! networks. For each part (each model's load on its own) it prints the
-//! frames' latencies (median, 95th and 99th percentile, the longest), and
-//! the work's own speed (the picture's seconds, Gemma's
-//! prompt of some 3,000 tokens and its tokens a second).
+//! networks. It prints each model's load's time, and for each part (each
+//! model's load on its own) the frames' latencies (median, 95th and 99th
+//! percentile, the longest), and the work's own speed (the picture's
+//! seconds, Gemma's prompt of some 3,000 tokens and its tokens a second).
 //!
 //! ```text
 //! cargo run --release -p jodel-gpu --example frames -- MODELS [--told] [--tokens N]
@@ -37,6 +37,7 @@ use std::time::{Duration, Instant};
 
 use jodel_gpu::image::{Drawer, TextEncoder};
 use jodel_gpu::{Gemma, GpuDepth, GpuMatte, Precision};
+use jodel_tensors::SafeTensors;
 
 /// A frame's interval.
 const FRAME: Duration = Duration::from_micros(16_667);
@@ -219,6 +220,17 @@ fn summary(kept: Vec<(Duration, bool)>) -> String {
     )
 }
 
+/// `load` run, its time told in `lines` as `what`'s load.
+fn timed<T>(lines: &mut Vec<String>, what: &str, load: impl FnOnce() -> T) -> T {
+    let started = Instant::now();
+    let made = load();
+    lines.push(format!(
+        "{what}: loaded in {:.2} s",
+        started.elapsed().as_secs_f64()
+    ));
+    made
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let root = Path::new(&args[0]);
@@ -236,19 +248,23 @@ fn main() {
     let mut lines = Vec::new();
     {
         part.store(4, Ordering::Release);
-        let mut encoder = TextEncoder::load(&models.join("qwen3-4b-fp8"), Precision::Fast).unwrap();
+        let mut encoder = timed(&mut lines, "text encoder", || {
+            TextEncoder::load(&models.join("qwen3-4b-fp8"), Precision::Fast).unwrap()
+        });
         part.store(0, Ordering::Release);
         let embeds = encoder
             .encode("A lighthouse on a cliff at dusk, its lamp lit, waves below")
             .unwrap();
         drop(encoder);
         part.store(5, Ordering::Release);
-        let mut drawer = Drawer::load(
-            &models.join("flux2-klein-4b-fp8"),
-            &models.join("flux2-klein-4b"),
-            Precision::Fast,
-        )
-        .unwrap();
+        let mut drawer = timed(&mut lines, "drawer", || {
+            Drawer::load(
+                &models.join("flux2-klein-4b-fp8"),
+                &models.join("flux2-klein-4b"),
+                Precision::Fast,
+            )
+            .unwrap()
+        });
         // A first picture sets the plans up.
         part.store(9, Ordering::Release);
         drawer.paint(&embeds, 1, (1344, 768), &[]).unwrap();
@@ -263,8 +279,9 @@ fn main() {
     }
     {
         part.store(6, Ordering::Release);
-        let gemma =
-            Gemma::open(&models.join("gemma-4-E4B-it-Q4_K_M.gguf"), Precision::Fast).unwrap();
+        let gemma = timed(&mut lines, "gemma", || {
+            Gemma::open(&models.join("gemma-4-E4B-it-Q4_K_M.gguf"), Precision::Fast).unwrap()
+        });
         // A long prompt, as the story's are (its attention the longest
         // dispatches): some 3,000 tokens.
         let verse = "The keeper climbs the winding stair at dusk, the lamp is lit, the \
@@ -297,12 +314,15 @@ fn main() {
         ));
     }
     // The scenes' depth and cut-out: their weights up, then let go.
-    let read = |name: &str| std::fs::read(root.join(name)).unwrap();
-    let (depth, matte) = (read("da3-small.safetensors"), read("ben2-base.safetensors"));
+    let open = |name: &str| SafeTensors::open(&root.join(name)).unwrap();
     part.store(7, Ordering::Release);
-    drop(GpuDepth::new(depth).unwrap());
+    drop(timed(&mut lines, "depth", || {
+        GpuDepth::new(&open("da3-small.safetensors")).unwrap()
+    }));
     part.store(8, Ordering::Release);
-    drop(GpuMatte::new(matte).unwrap());
+    drop(timed(&mut lines, "cut-out", || {
+        GpuMatte::new(&open("ben2-base.safetensors")).unwrap()
+    }));
     part.store(0, Ordering::Release);
     std::thread::sleep(Duration::from_secs(1));
     stop.store(true, Ordering::Release);

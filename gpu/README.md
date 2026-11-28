@@ -388,13 +388,18 @@ and copied from there to their buffers when the batch is sent: `wgpu`'s
 own writes stage each in a new buffer, fresh memory every time (some
 13 GB of it for the story's models). A matrix made of several tensors'
 rows (klein's and the text encoder's stacked and paired ones) goes up a
-run of rows at a time from the checkpoint as read, not copied into one
-first. The fresh memory a load still takes on the processor is the
-checkpoint's own: `SafeTensors::open` reads a whole `.safetensors` file
-into memory (klein's transformer, autoencoder and text encoder, some
-9.4 GB), and `Gguf::read` each of Gemma's tensors into a buffer of its
-own (some 5 GB in all, one at a time), each page zeroed by the system
-first (`docs/todo.md`: map them instead).
+run of rows at a time from the checkpoint, not copied into one first.
+The checkpoints are not read into memory either: `SafeTensors::open`,
+`Gguf::open` and the recogniser's `PackedModel::open` map the file
+(`jodel_tensors::Bytes`), so a tensor's bytes are the file's pages (from
+the system's file cache, nothing zeroed, and dropped again under
+pressure), copied from there straight into the staging buffer (the
+recogniser's into its own tensors); the file is mapped only while the
+model loads. Only what is laid out anew on the processor takes fresh
+memory: Gemma's gates and ups in pairs and its tables cut in slices (a
+tensor at a time), klein's convolutions padded, the vision networks'
+weights packed as f32s. The price: a disk read error under a load's
+mapping ends the process (`jodel_tensors::Bytes`' docs).
 Every model's weights go so: Gemma's, klein's transformer, text encoder
 and autoencoder, the recogniser's, the depth and cut-out networks', the
 separator's, the beat network's and the speech model's (no tensor is

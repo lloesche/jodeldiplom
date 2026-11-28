@@ -240,11 +240,11 @@ fn main() {
     }
     if wanted("vision") {
         let image = cover();
-        let read = |name: &str| std::fs::read(models.join(name)).unwrap();
-        let depth = GpuDepth::new(read("da3-small.safetensors")).unwrap();
+        let open = |name: &str| jodel_tensors::SafeTensors::open(&models.join(name)).unwrap();
+        let depth = GpuDepth::new(&open("da3-small.safetensors")).unwrap();
         measure("depth", || (), none, || depth.depth(&image).unwrap());
         depth.release();
-        let matte = GpuMatte::new(read("ben2-base.safetensors")).unwrap();
+        let matte = GpuMatte::new(&open("ben2-base.safetensors")).unwrap();
         measure("matte", || (), none, || matte.matte(&image).unwrap());
     }
 }

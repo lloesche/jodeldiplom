@@ -18,6 +18,16 @@
 //! rests [`REST`] before it is tried again (its files not hashed again:
 //! this run's stamps hold), one whose source sends another file is given
 //! up until the next start ([`super::Failure::lasting`]).
+//!
+//! A model's file is read mapped while it loads (`jodel_tensors::Bytes`),
+//! and repaired by a rename over it (`durable`), never written in place:
+//! a mapping goes on reading the file it mapped. A file that is short is
+//! caught before any load maps it (setup's check of every file's length
+//! at the start, then the reader's of its header's places). A disk read
+//! error under a load's mapping, though (a bad sector, a drive unplugged
+//! or a network folder gone), or on Linux and macOS a file truncated in
+//! place by another program, ends the process (`EXCEPTION_IN_PAGE_ERROR`,
+//! `SIGBUS`): it is not repairable while the player runs.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

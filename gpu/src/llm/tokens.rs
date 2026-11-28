@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use jodel_tensors::bpe::{Merges, Part, Pieces, Specials};
-use jodel_tensors::gguf::{Array, Gguf};
+use jodel_tensors::gguf::{Array, Header};
 
 /// The pieces that end the model's answer, with the file's end-of-sequence
 /// token (the generation config's: the end of a turn, `<eos>`, a tool's
@@ -90,7 +90,7 @@ impl Tokenizer {
     /// pieces, their types, the merges in rank order as `"a b"`, the
     /// beginning and end tokens), its chat template checked to write the
     /// turns as [`Tokenizer::chat`] does.
-    pub fn from_gguf<R>(file: &Gguf<R>) -> Result<Tokenizer, String> {
+    pub fn from_gguf(file: &Header) -> Result<Tokenizer, String> {
         let model = file.get("tokenizer.ggml.model")?.as_str();
         if model != Some("gemma4") {
             return Err(format!("a tokeniser of {model:?}, not gemma4"));
@@ -685,7 +685,7 @@ mod tests {
 
     fn read(bytes: Vec<u8>) -> Result<Tokenizer, String> {
         let len = bytes.len() as u64;
-        Tokenizer::from_gguf(&Gguf::from_reader(std::io::Cursor::new(bytes), len)?)
+        Tokenizer::from_gguf(&Header::from_reader(&bytes[..], len)?)
     }
 
     #[test]

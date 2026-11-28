@@ -76,16 +76,6 @@ picture; 18 to 27 s at about 1 MP), so nothing is open there.
   learned (its estimates of the arithmetic over their time, one at most),
   with slack in the room (`ContextPlan::peak_bytes`) for the dispatches
   that adds.
-- **Checkpoints mapped into memory, not read** (2026-11-28): a story
-  load's fresh memory on the processor is the checkpoints' own
-  (`SafeTensors::open` reads a whole `.safetensors` file, some 9.4 GB for
-  klein's parts; `Gguf::read` gives each of Gemma's tensors a buffer of
-  its own, some 5 GB in all), every page zeroed by the system first, while
-  the same bytes sit in the file cache too. Mapped, the pages are the
-  file's: nothing zeroed, and the system can drop them under pressure.
-  `jodel-tensors` depends on nothing, so the mapping is its own
-  (`mmap`/`MapViewOfFile`), and `Tensors::raw`'s borrowed bytes come from
-  it.
 
 ## From the whole-codebase review
 

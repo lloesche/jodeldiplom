@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use jodel_gpu::memory::budget;
 use jodel_gpu::{Footprint, GpuAsr, GpuDepth, GpuMatte, GpuNetwork, GpuSeparator, GpuSpeech};
+use jodel_tensors::SafeTensors;
 
 const MB: u64 = 1 << 20;
 
@@ -102,17 +103,17 @@ fn each_network_takes_about_what_its_shapes_say() {
         models.join("da3-small.safetensors"),
         models.join("ben2-base.safetensors"),
     );
-    if let (Ok(d), Ok(m)) = (std::fs::read(&depth), std::fs::read(&matte)) {
+    if let (Ok(d), Ok(m)) = (SafeTensors::open(&depth), SafeTensors::open(&matte)) {
         let (fd, fm) = (
-            GpuDepth::footprint(d.clone()).unwrap(),
-            GpuMatte::footprint(m.clone()).unwrap(),
+            GpuDepth::footprint(&d).unwrap(),
+            GpuMatte::footprint(&m).unwrap(),
         );
         let both = Footprint {
             resident: fd.resident + fm.resident,
             working: fd.working.max(fm.working),
         };
         holds("the cover's two", both, || {
-            Ok((GpuDepth::new(d)?, GpuMatte::new(m)?))
+            Ok((GpuDepth::new(&d)?, GpuMatte::new(&m)?))
         });
     }
 }

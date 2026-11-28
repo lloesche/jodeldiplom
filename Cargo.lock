@@ -1661,6 +1661,10 @@ dependencies = [
 [[package]]
 name = "jodel-tensors"
 version = "0.1.0"
+dependencies = [
+ "durable",
+ "jodel-testkit",
+]
 
 [[package]]
 name = "jodel-testkit"

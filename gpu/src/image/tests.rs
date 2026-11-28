@@ -231,17 +231,28 @@ fn fp8_bytes(seed: u64, n: usize) -> Vec<u8> {
 
 /// A safetensors file of bf16 tensors (name, shape, values).
 fn bf16_file(tensors: &[(&str, Vec<usize>, Vec<f32>)]) -> SafeTensors {
-    let mut data = Vec::new();
+    let tensors: Vec<(&str, &str, &[usize], Vec<u8>)> = (tensors.iter())
+        .map(|(name, shape, v)| {
+            let bytes = (v.iter())
+                .flat_map(|x| ((x.to_bits() >> 16) as u16).to_le_bytes())
+                .collect();
+            (*name, "BF16", &shape[..], bytes)
+        })
+        .collect();
+    SafeTensors::parse(safetensors(&tensors)).unwrap()
+}
+
+/// A safetensors file's bytes: `tensors` (name, type, shape, bytes) one
+/// after another.
+pub(super) fn safetensors(tensors: &[(&str, &str, &[usize], Vec<u8>)]) -> Vec<u8> {
+    let mut data: Vec<u8> = Vec::new();
     let mut entries = Vec::new();
-    for (name, shape, v) in tensors {
+    for (name, dtype, shape, bytes) in tensors {
         let shape: Vec<String> = shape.iter().map(ToString::to_string).collect();
         let start = data.len();
-        data.extend(
-            v.iter()
-                .flat_map(|x| ((x.to_bits() >> 16) as u16).to_le_bytes()),
-        );
+        data.extend(bytes);
         entries.push(format!(
-            r#""{name}":{{"dtype":"BF16","shape":[{}],"data_offsets":[{start},{}]}}"#,
+            r#""{name}":{{"dtype":"{dtype}","shape":[{}],"data_offsets":[{start},{}]}}"#,
             shape.join(","),
             data.len()
         ));
@@ -250,7 +261,7 @@ fn bf16_file(tensors: &[(&str, Vec<usize>, Vec<f32>)]) -> SafeTensors {
     let mut out = (header.len() as u64).to_le_bytes().to_vec();
     out.extend(header.as_bytes());
     out.extend(data);
-    SafeTensors::parse(out).unwrap()
+    out
 }
 
 /// bf16's value of `x` (truncated, as `bf16_file` stores it).

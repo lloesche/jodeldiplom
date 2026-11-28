@@ -5,12 +5,13 @@
 //! ([`Stage::Scenes`]): set up on the first picture of a turn, let go as
 //! the stages plan.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use jodel_gpu::vision::prep::Rgb;
 use jodel_gpu::vision::{Depth, Matte};
 use jodel_gpu::{Footprint, GpuDepth, GpuMatte, Kept, OnDevice, Resident};
+use jodel_tensors::SafeTensors;
 
 use image::RgbImage;
 
@@ -60,11 +61,6 @@ impl OnDevice for Vision {
     }
 }
 
-/// The checkpoint at `path`'s bytes.
-fn read(path: &Path) -> Result<Vec<u8>, String> {
-    std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
-}
-
 /// What the two models take on the GPU, from their checkpoints' shapes
 /// (read for this, once a process, as the GPU's stages first ask): both
 /// weights while set up, and the larger of their working buffers while a
@@ -74,8 +70,8 @@ fn footprint(files: &SceneModels) -> Option<Footprint> {
     if !files.depth.is_file() || !files.matte.is_file() {
         return None;
     }
-    let depth = GpuDepth::footprint(read(&files.depth).ok()?).ok()?;
-    let matte = GpuMatte::footprint(read(&files.matte).ok()?).ok()?;
+    let depth = GpuDepth::footprint(&SafeTensors::open(&files.depth).ok()?).ok()?;
+    let matte = GpuMatte::footprint(&SafeTensors::open(&files.matte).ok()?).ok()?;
     Some(Footprint {
         resident: depth.resident + matte.resident,
         working: depth.working.max(matte.working),
@@ -98,8 +94,11 @@ impl GpuNets {
         let vision = Arc::new(Kept::new(
             move || footprint(&plan),
             Box::new(move || {
-                let depth = told.report(DEPTH_FILE, read(&load.depth).and_then(GpuDepth::new))?;
-                let matte = told.report(MATTE_FILE, read(&load.matte).and_then(GpuMatte::new))?;
+                // Each checkpoint mapped only while its model is made.
+                let depth = SafeTensors::open(&load.depth).and_then(|t| GpuDepth::new(&t));
+                let depth = told.report(DEPTH_FILE, depth)?;
+                let matte = SafeTensors::open(&load.matte).and_then(|t| GpuMatte::new(&t));
+                let matte = told.report(MATTE_FILE, matte)?;
                 let name = depth.name();
                 Ok((Vision { depth, matte }, name))
             }),

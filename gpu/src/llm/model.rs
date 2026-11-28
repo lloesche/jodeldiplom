@@ -22,9 +22,7 @@
 //! Placing a tensor records where it goes and how it is filled
 //! ([`Piece`]); loading is those pieces, in order.
 
-use std::io::{Read, Seek};
-
-use jodel_tensors::gguf::{Gguf, Kind, Tensor};
+use jodel_tensors::gguf::{Gguf, Header, Kind, Tensor};
 
 use super::kernels::{PLAIN_KINDS, Q8_KINDS};
 use super::{
@@ -184,8 +182,8 @@ const SHAPE: [(&str, usize); 9] = [
 
 /// The places being given out: the file's tensors checked, the pieces,
 /// the small values.
-struct Places<'a, R> {
-    file: &'a Gguf<R>,
+struct Places<'a> {
+    file: &'a Header,
     pieces: Vec<Piece>,
     small: usize,
 }
@@ -198,7 +196,7 @@ struct Placer {
     at: usize,
 }
 
-impl<R> Places<'_, R> {
+impl Places<'_> {
     /// Tensor `name`, of `rows × cols`, in one of `kinds`.
     fn tensor(
         &self,
@@ -274,7 +272,7 @@ impl Layout {
     /// Where the tensors of `file` (Gemma 4 E4B's text decoder) go; an
     /// error where it is another model, or a tensor's shape or kind is not
     /// what is taken here.
-    pub(super) fn of<R>(file: &Gguf<R>) -> Result<Layout, String> {
+    pub(super) fn of(file: &Header) -> Result<Layout, String> {
         let arch = file.get("general.architecture")?.as_str();
         if arch != Some("gemma4") {
             return Err(format!("a model of {arch:?}, not gemma4"));
@@ -452,37 +450,36 @@ pub(super) fn slice_of(rows: &[u8], (row, slice, i): (usize, usize, usize), out:
 }
 
 /// The weights of `file` (as `pieces`, a layout's, place them) given to
-/// `put` (a buffer, a word in it, the bytes from there) a piece at a time;
-/// a tensor cut in slices [`SLICE_ROWS`] rows at a time, each slice's part
-/// at its place.
-pub(super) fn load<R: Read + Seek>(
-    file: &mut Gguf<R>,
+/// `put` (a buffer, a word in it, the bytes from there) a piece at a time:
+/// a tensor whole as the file holds it (borrowed, nothing copied), a gate's
+/// and up's rows in turn, a tensor cut in slices [`SLICE_ROWS`] rows at a
+/// time, each slice's part at its place.
+pub(super) fn load(
+    file: &Gguf,
     pieces: &[Piece],
     mut put: impl FnMut(Buf, usize, &[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
-    fn read<R: Read + Seek>(file: &mut Gguf<R>, name: &str) -> Result<Vec<u8>, String> {
-        let bytes = file.tensor(name)?.bytes();
-        file.read(name, 0..bytes)
+    fn whole<'a>(file: &'a Gguf, name: &str) -> Result<&'a [u8], String> {
+        file.bytes(name, 0..file.header().tensor(name)?.bytes())
     }
     for piece in pieces {
         let name = piece.tensor.as_str();
         match &piece.fill {
-            &Fill::Whole((buf, at)) => put(buf, at, &read(file, name)?)?,
+            &Fill::Whole((buf, at)) => put(buf, at, whole(file, name)?)?,
             Fill::Pairs((buf, at), up) => {
-                let row = file.tensor(name)?.row_bytes();
-                let gate = read(file, name)?;
-                put(*buf, *at, &pairs(&gate, &read(file, up)?, row))?;
+                let row = file.header().tensor(name)?.row_bytes();
+                put(*buf, *at, &pairs(whole(file, name)?, whole(file, up)?, row))?;
             }
             Fill::Slices(to) => {
-                let t = file.tensor(name)?;
+                let t = file.header().tensor(name)?;
                 let (row, rows) = (t.row_bytes(), t.rows());
                 let slice = row / to.len();
                 let mut part = Vec::with_capacity(SLICE_ROWS * slice);
                 for first in (0..rows).step_by(SLICE_ROWS) {
                     let last = (first + SLICE_ROWS).min(rows);
-                    let bytes = file.read(name, first * row..last * row)?;
+                    let bytes = file.bytes(name, first * row..last * row)?;
                     for (i, &(buf, at)) in to.iter().enumerate() {
-                        slice_of(&bytes, (row, slice, i), &mut part);
+                        slice_of(bytes, (row, slice, i), &mut part);
                         // Whole words: SLICE_ROWS slices of a whole block each.
                         put(buf, at + first * slice / 4, &part)?;
                     }
@@ -498,7 +495,6 @@ pub(super) fn load<R: Read + Seek>(
 #[cfg(test)]
 pub(super) mod tests {
     use std::collections::HashMap;
-    use std::io::Cursor;
 
     use super::*;
 
@@ -510,15 +506,23 @@ pub(super) mod tests {
         out.extend(s.as_bytes());
     }
 
+    /// The header alone of a GGUF of architecture `arch` with the u32s
+    /// `meta`, and `tensors` one after another (as [`gguf`] writes it).
+    fn header(arch: &str, meta: &[(String, usize)], tensors: &[Listed]) -> Header {
+        let (out, data) = listing(arch, meta, tensors);
+        Header::from_reader(&out[..], (out.len() + data) as u64).unwrap()
+    }
+
     /// A GGUF of architecture `arch` with the u32s `meta`, and `tensors`
-    /// one after another; its data the bytes of their offsets (mod 251)
-    /// where `data`, else left out (the file as long as it would be).
-    fn gguf(
-        arch: &str,
-        meta: &[(String, usize)],
-        tensors: &[Listed],
-        data: bool,
-    ) -> Gguf<Cursor<Vec<u8>>> {
+    /// one after another; its data the bytes of their offsets (mod 251).
+    fn gguf(arch: &str, meta: &[(String, usize)], tensors: &[Listed]) -> Vec<u8> {
+        let (mut out, data) = listing(arch, meta, tensors);
+        out.extend((0..data).map(|o| (o % 251) as u8));
+        out
+    }
+
+    /// The header of [`gguf`]'s file, and the bytes of its data.
+    fn listing(arch: &str, meta: &[(String, usize)], tensors: &[Listed]) -> (Vec<u8>, usize) {
         let mut out = b"GGUF".to_vec();
         out.extend(3u32.to_le_bytes());
         out.extend((tensors.len() as u64).to_le_bytes());
@@ -544,11 +548,7 @@ pub(super) mod tests {
             end += bytes.div_ceil(32) * 32;
         }
         out.resize(out.len().div_ceil(32) * 32, 0);
-        let len = (out.len() + end) as u64;
-        if data {
-            out.extend((0..end).map(|o| (o % 251) as u8));
-        }
-        Gguf::from_reader(Cursor::new(out), len).unwrap()
+        (out, end)
     }
 
     /// The architecture's numbers as the file has them.
@@ -609,7 +609,7 @@ pub(super) mod tests {
 
     /// Gemma's layout, from its header alone.
     pub(in crate::llm) fn gemma() -> Layout {
-        Layout::of(&gguf("gemma4", &meta(), &tensors(), false)).unwrap()
+        Layout::of(&header("gemma4", &meta(), &tensors())).unwrap()
     }
 
     /// Every tensor of the file is in one piece (an up with its gate); the
@@ -689,7 +689,7 @@ pub(super) mod tests {
     #[test]
     fn a_file_not_as_taken_is_refused() {
         let refused = |arch: &str, meta: &[(String, usize)], tensors: &[Listed], says: &str| {
-            let e = Layout::of(&gguf(arch, meta, tensors, false)).err().unwrap();
+            let e = Layout::of(&header(arch, meta, tensors)).err().unwrap();
             assert!(e.contains(says), "{e}, not {says}");
         };
         let (meta, tensors) = (meta(), tensors());
@@ -777,7 +777,6 @@ pub(super) mod tests {
             ("u".into(), vec![8, 3], Kind::F32),
             ("e".into(), vec![512, rows], Kind::Q5K),
         ];
-        let mut file = gguf("test", &[], &listed, true);
         let pieces = [
             Piece {
                 tensor: "w".into(),
@@ -792,8 +791,9 @@ pub(super) mod tests {
                 fill: Fill::Slices(vec![(Buf::Layers(1), 0), (Buf::Layers(2), 100)]),
             },
         ];
+        let file = Gguf::parse(gguf("test", &[], &listed)).unwrap();
         let mut bufs: HashMap<Buf, Vec<u8>> = HashMap::new();
-        load(&mut file, &pieces, |buf, at, data| {
+        load(&file, &pieces, |buf, at, data| {
             let b = bufs.entry(buf).or_default();
             let end = 4 * at + data.len();
             b.resize(b.len().max(end), 0);
@@ -801,16 +801,16 @@ pub(super) mod tests {
             Ok(())
         })
         .unwrap();
-        let mut bytes = |name: &str| {
-            let n = file.tensor(name).unwrap().bytes();
-            file.read(name, 0..n).unwrap()
+        let bytes = |name: &str| {
+            let n = file.header().tensor(name).unwrap().bytes();
+            file.bytes(name, 0..n).unwrap()
         };
         let (w, g, u, e) = (bytes("w"), bytes("g"), bytes("u"), bytes("e"));
-        assert_eq!(bufs[&Buf::Small][12..], w);
-        assert_eq!(bufs[&Buf::Layers(0)][40..], pairs(&g, &u, 32));
+        assert_eq!(bufs[&Buf::Small][12..], *w);
+        assert_eq!(bufs[&Buf::Layers(0)][40..], pairs(g, u, 32));
         for (buf, from, i) in [(Buf::Layers(1), 0, 0), (Buf::Layers(2), 400, 1)] {
             let mut want = Vec::new();
-            slice_of(&e, (352, 176, i), &mut want);
+            slice_of(e, (352, 176, i), &mut want);
             assert_eq!(bufs[&buf][from..], want, "slice {i}");
         }
     }

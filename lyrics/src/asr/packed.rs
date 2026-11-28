@@ -212,9 +212,11 @@ impl PackedModel {
             && head[6] == VERSION
     }
 
-    /// Reads the file at `path`.
+    /// Reads the file at `path`, mapped while its tensors are copied out
+    /// ([`jodel_tensors::Bytes::model`]: the file is replaced only whole).
     pub fn open(path: &Path) -> Result<PackedModel, String> {
-        let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let data =
+            jodel_tensors::Bytes::model(path).map_err(|e| format!("{}: {e}", path.display()))?;
         PackedModel::from_bytes(&data)
     }
 

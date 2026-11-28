@@ -73,7 +73,7 @@ pub use self::tokens::{Stream, Take, Thinking, Tokenizer};
 use crate::engine::{bytes, using, InFlight, Program, Read, Recorded};
 use crate::pace::{Paces, Phase};
 use crate::{Footprint, Precision, Resident, Turned};
-use jodel_tensors::gguf::Gguf;
+use jodel_tensors::gguf::{Gguf, Header};
 
 /// The width of the residual stream.
 const DIM: usize = 2560;
@@ -207,7 +207,7 @@ impl Gemma {
     /// and the context's room at its most (a prompt of all of it under
     /// way).
     pub fn planned(path: &Path, context: usize) -> Result<Footprint, String> {
-        let layout = Layout::of(&Gguf::open(path)?)?;
+        let layout = Layout::of(&Header::open(path)?)?;
         let room = ContextPlan::new(&layout, context)?;
         Ok(Footprint {
             resident: layout.bytes(),
@@ -223,7 +223,7 @@ impl Gemma {
     /// no room is told) to [`MOST_CONTEXT`] (only the file's header read);
     /// an error without a GPU.
     pub fn fitting(path: &Path, room: Option<u64>, need: usize) -> Result<usize, String> {
-        let layout = Layout::of(&Gguf::open(path)?)?;
+        let layout = Layout::of(&Header::open(path)?)?;
         let binding = crate::device::binding()?;
         let sizes = (room, binding);
         Ok(ContextPlan::fitting(&layout, layout.bytes(), sizes, need))
@@ -231,13 +231,14 @@ impl Gemma {
 
     /// The model in the GGUF at `path` (Unsloth's
     /// `gemma-4-E4B-it-Q4_K_M.gguf`) on the best GPU, reckoning as
-    /// `precision` says: its weights read a tensor at a time and kept
-    /// there, its tokeniser read from the file. Its context is not
-    /// reserved yet ([`Gemma::reserve`]).
+    /// `precision` says: its weights put up a tensor at a time from the
+    /// file mapped (let go once they are up) and kept there, its tokeniser
+    /// read from the file. Its context is not reserved yet
+    /// ([`Gemma::reserve`]).
     pub fn open(path: &Path, precision: Precision) -> Result<Gemma, String> {
-        let mut file = Gguf::open(path)?;
-        let tokens = Tokenizer::from_gguf(&file)?;
-        let layout = Layout::of(&file)?;
+        let file = Gguf::open(path)?;
+        let tokens = Tokenizer::from_gguf(file.header())?;
+        let layout = Layout::of(file.header())?;
         let (inner, name) = crate::device::open_with(
             "jodel-gpu gemma",
             |adapter| {
@@ -247,9 +248,7 @@ impl Gemma {
                     (),
                 )
             },
-            |device, queue, limits, ()| {
-                Inner::new(device, queue, limits, &mut file, layout, precision)
-            },
+            |device, queue, limits, ()| Inner::new(device, queue, limits, &file, layout, precision),
         )?;
         Ok(Gemma {
             name,
@@ -551,7 +550,7 @@ impl Inner {
         device: wgpu::Device,
         queue: wgpu::Queue,
         limits: &wgpu::Limits,
-        file: &mut Gguf,
+        file: &Gguf,
         layout: Layout,
         precision: Precision,
     ) -> Result<Inner, String> {

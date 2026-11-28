@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use jodel_gpu::vision::check::{pooled, scene, stats};
 use jodel_gpu::vision::prep;
 use jodel_gpu::{GpuDepth, GpuMatte};
+use jodel_tensors::SafeTensors;
 
 fn fixture(name: &str) -> Vec<f32> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -24,8 +25,9 @@ fn fixture(name: &str) -> Vec<f32> {
         .collect()
 }
 
-/// The checkpoint named by `var`, else the data folder's `file`.
-fn checkpoint(var: &str, file: &str) -> Option<Vec<u8>> {
+/// The checkpoint named by `var`, else the data folder's `file` (mapped,
+/// as the player opens it).
+fn checkpoint(var: &str, file: &str) -> Option<SafeTensors> {
     let path = std::env::var_os(var).map(PathBuf::from).or_else(|| {
         let data = if cfg!(windows) {
             std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
@@ -38,19 +40,19 @@ fn checkpoint(var: &str, file: &str) -> Option<Vec<u8>> {
         }?;
         Some(data.join("Jodeldiplom Data/models").join(file))
     })?;
-    let bytes = std::fs::read(&path).ok();
-    if bytes.is_none() {
+    let tensors = SafeTensors::open(&path).ok();
+    if tensors.is_none() {
         eprintln!("no {file} here ({var}): skipped");
     }
-    bytes
+    tensors
 }
 
 #[test]
 fn the_depth_is_the_official_models() {
-    let Some(bytes) = checkpoint("JODEL_DEPTH_MODEL", "da3-small.safetensors") else {
+    let Some(tensors) = checkpoint("JODEL_DEPTH_MODEL", "da3-small.safetensors") else {
         return;
     };
-    let depth = match GpuDepth::new(bytes) {
+    let depth = match GpuDepth::new(&tensors) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("no usable GPU ({e}): skipped");
@@ -79,10 +81,10 @@ fn the_depth_is_the_official_models() {
 
 #[test]
 fn the_matte_is_the_official_models() {
-    let Some(bytes) = checkpoint("JODEL_MATTE_MODEL", "ben2-base.safetensors") else {
+    let Some(tensors) = checkpoint("JODEL_MATTE_MODEL", "ben2-base.safetensors") else {
         return;
     };
-    let matte = match GpuMatte::new(bytes) {
+    let matte = match GpuMatte::new(&tensors) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("no usable GPU ({e}): skipped");

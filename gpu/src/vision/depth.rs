@@ -560,12 +560,12 @@ const MOST: usize = 504;
 
 impl GpuDepth {
     /// What the model takes on the GPU, from the shapes in its checkpoint
-    /// (`model.safetensors`'s bytes): its weights and their constants
-    /// while it is set up; while it runs, its largest plan's buffers and
-    /// read-back (a square at the longest side) and, on the run that sets
-    /// it up, its weights once more while they go up.
-    pub fn footprint(checkpoint: Vec<u8>) -> Result<Footprint, String> {
-        let weights = Weights::read(&SafeTensors::parse(checkpoint)?)?;
+    /// (`model.safetensors`): its weights and their constants while it is
+    /// set up; while it runs, its largest plan's buffers and read-back (a
+    /// square at the longest side) and, on the run that sets it up, its
+    /// weights once more while they go up.
+    pub fn footprint(checkpoint: &SafeTensors) -> Result<Footprint, String> {
+        let weights = Weights::read(checkpoint)?;
         let base = weights.packer.data.len();
         let mut tail = Packer::at(base);
         let (plan, _, _) = plan(&weights, &mut tail, MOST, MOST);
@@ -576,10 +576,10 @@ impl GpuDepth {
         })
     }
 
-    /// The model from its checkpoint (`model.safetensors`'s bytes), its
-    /// weights on the GPU (planned when it first runs).
-    pub fn new(checkpoint: Vec<u8>) -> Result<GpuDepth, String> {
-        let weights = Weights::read(&SafeTensors::parse(checkpoint)?)?;
+    /// The model from its checkpoint (`model.safetensors`), its weights on
+    /// the GPU (planned when it first runs).
+    pub fn new(checkpoint: &SafeTensors) -> Result<GpuDepth, String> {
+        let weights = Weights::read(checkpoint)?;
         let base = weights.packer.data.len();
         let mut tail = Packer::at(base);
         plan(&weights, &mut tail, MOST, MOST);

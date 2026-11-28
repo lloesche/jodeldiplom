@@ -394,3 +394,64 @@ impl<'a> Packing<'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use jodel_tensors::SafeTensors;
+
+    use super::super::tests::safetensors;
+    use super::*;
+
+    /// The checkpoint's tensors as stored go up as pieces borrowed from it,
+    /// each at its place: a matrix as it is, rows of two stacked one under
+    /// the other, two in pairs of 64 rows, a bf16 linear layer; their
+    /// scales and the bias, as f32s, beside them.
+    #[test]
+    fn a_parts_tensors_go_up_each_at_its_place() {
+        let fp8 = |m: usize| (0..128 * 32).map(|i| (i % m) as u8).collect::<Vec<u8>>();
+        let (g, u, l) = (fp8(113), fp8(97), (0..128).map(|i| i as u8).collect());
+        let t = SafeTensors::parse(safetensors(&[
+            ("g.weight", "F8_E4M3", &[128, 32], g.clone()),
+            ("g.weight_scale", "F32", &[], 0.5f32.to_le_bytes().to_vec()),
+            ("u.weight", "F8_E4M3", &[128, 32], u.clone()),
+            ("u.weight_scale", "F32", &[], 0.25f32.to_le_bytes().to_vec()),
+            ("l.weight", "BF16", &[2, 32], l),
+            ("l.bias", "BF16", &[2], vec![0x80, 0x3f, 0x00, 0xc0]),
+        ]))
+        .unwrap();
+        let src = Source::Checkpoint(&t);
+        let mut p = Packing::new();
+        let (gw, uw) = (
+            Fp8::per_tensor(src, "g", (128, 32)).unwrap(),
+            Fp8::per_tensor(src, "u", (128, 32)).unwrap(),
+        );
+        p.fp8(&gw);
+        p.fp8_stack(&[gw.rows(64, 64), uw.rows(0, 64)]);
+        p.fp8_pairs(&gw, &uw);
+        p.linear(src, "l", (32, 2)).unwrap();
+        let rows = |m: &[u8], from: usize| m[from * 32..(from + 64) * 32].to_vec();
+        let want: Vec<(u64, Vec<u8>)> = vec![
+            (0, g.clone()),
+            (4096, rows(&g, 64)),
+            (6144, rows(&u, 0)),
+            (8192, rows(&g, 0)),
+            (10240, rows(&u, 0)),
+            (12288, rows(&g, 64)),
+            (14336, rows(&u, 64)),
+            (16384, t.raw("l.weight").unwrap().2.to_vec()),
+        ];
+        let [(len, pieces)] = &p.buffers[..] else {
+            panic!("one buffer");
+        };
+        let got: Vec<(u64, Vec<u8>)> = (pieces.iter())
+            .map(|(at, b)| (*at, b.as_deref().unwrap().to_vec()))
+            .collect();
+        assert_eq!((*len, got), (16384 + 128, want));
+        assert!(pieces
+            .iter()
+            .all(|(_, b)| matches!(b, Some(Cow::Borrowed(_)))));
+        let scales = [0.5, 0.5, 0.0, 0.0, 0.5, 0.25, 0.0, 0.0];
+        let pairs = [0.5, 0.25, 0.5, 0.25];
+        assert_eq!(p.small, [&scales[..], &pairs, &[1.0, -2.0]].concat());
+    }
+}

@@ -4,7 +4,8 @@
 //! models and the picture model (`jodel-gpu`) are read from, as published
 //! (a checkpoint in several files through its index: [`Shards`]; either
 //! read by name: [`Tensors`]); a GGUF file's metadata and tensors as it
-//! holds them ([`gguf`], the story's language model's); byte-pair encoding
+//! holds them ([`gguf`], the story's language model's); either file's
+//! bytes, mapped from it while it is read ([`Bytes`]); byte-pair encoding
 //! over a vocabulary's ids ([`bpe`], the story's tokenisers'); half floats
 //! ([`half`]); a small JSON reader ([`json`]); and what the CPU kernels
 //! share ([`kernels`], [`fast!`]).
@@ -13,6 +14,7 @@
 //! tensor's type, shape and place, and the data.
 
 pub mod bpe;
+mod bytes;
 pub mod gguf;
 pub mod half;
 pub mod json;
@@ -21,6 +23,7 @@ pub mod kernels;
 use std::collections::HashMap;
 use std::path::Path;
 
+pub use bytes::Bytes;
 use half::{bf16_to_f32, f16_to_f32};
 use json::Json;
 
@@ -144,22 +147,25 @@ struct Entry {
     bytes: std::ops::Range<usize>,
 }
 
-/// A `.safetensors` file's tensors.
+/// A `.safetensors` file's tensors, borrowed from its bytes.
 pub struct SafeTensors {
-    bytes: Vec<u8>,
+    bytes: Bytes,
     entries: HashMap<String, Entry>,
 }
 
 impl SafeTensors {
-    /// Reads `path`.
+    /// The file at `path`, mapped while this lives ([`Bytes`]): its
+    /// tensors' bytes are the file's pages, nothing copied. The file must
+    /// be replaced only whole (by a rename) while it is open.
     pub fn open(path: &Path) -> Result<SafeTensors, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bytes = Bytes::model(path).map_err(|e| format!("{}: {e}", path.display()))?;
         SafeTensors::parse(bytes)
     }
 
     /// The tensors in `bytes`. A header that does not parse, or places a
-    /// tensor outside the file, is an error.
-    pub fn parse(bytes: Vec<u8>) -> Result<SafeTensors, String> {
+    /// tensor outside the file (a file cut short), is an error.
+    pub fn parse(bytes: impl Into<Bytes>) -> Result<SafeTensors, String> {
+        let bytes = bytes.into();
         let len = bytes
             .get(..8)
             .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
@@ -391,5 +397,43 @@ mod tests {
         let ints = file(&[("i", "I64", &[1], vec![0; 8])]);
         let t = SafeTensors::parse(ints).unwrap();
         assert!(t.get("i", &[1]).unwrap_err().contains("I64"));
+    }
+
+    /// A file opened (mapped) gives every tensor the bytes and values the
+    /// file read whole gives; a file cut short is refused as it is opened,
+    /// its header's places checked against the length mapped.
+    #[test]
+    fn a_mapped_file_reads_as_the_file_read_whole() {
+        let dir = jodel_testkit::TempDir::new("tensors-mapped");
+        let path = dir.join("t.safetensors");
+        let bytes = file(&[
+            (
+                "a",
+                "F32",
+                &[1, 2],
+                [1.5f32, -2.0].map(f32::to_le_bytes).concat(),
+            ),
+            ("w", "F8_E4M3", &[2, 2], vec![0x38, 0xb8, 0x40, 0x00]),
+            ("b", "BF16", &[3], vec![0x80, 0x3f, 0x00, 0xc0, 0x40, 0x40]),
+        ]);
+        durable::write_atomic(&path, &bytes).unwrap();
+        let mapped = SafeTensors::open(&path).unwrap();
+        let read = SafeTensors::parse(std::fs::read(&path).unwrap()).unwrap();
+        for name in ["a", "w", "b"] {
+            assert_eq!(mapped.raw(name).unwrap(), read.raw(name).unwrap(), "{name}");
+        }
+        assert_eq!(mapped.get("a", &[1, 2]), read.get("a", &[1, 2]));
+        assert_eq!(mapped.get("b", &[3]), read.get("b", &[3]));
+        drop(mapped);
+        for (cut, why) in [
+            (bytes.len() - 1, "b: data offsets 12..18 outside the file's"),
+            (20, "a safetensors header of"),
+            (4, "not a safetensors file"),
+            (0, "not a safetensors file"),
+        ] {
+            durable::write_atomic(&path, &bytes[..cut]).unwrap();
+            let err = SafeTensors::open(&path).err().unwrap();
+            assert!(err.contains(why), "{cut}: {err}");
+        }
     }
 }

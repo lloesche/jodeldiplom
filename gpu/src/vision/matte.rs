@@ -531,11 +531,11 @@ pub struct GpuMatte {
 
 impl GpuMatte {
     /// What the model takes on the GPU, from the shapes in its checkpoint
-    /// (`model.safetensors`'s bytes): its weights while it is set up;
-    /// while it runs, its plan's buffers and read-back and, on the run that
-    /// sets it up, its weights once more while they go up.
-    pub fn footprint(checkpoint: Vec<u8>) -> Result<Footprint, String> {
-        let w = read(&SafeTensors::parse(checkpoint)?)?;
+    /// (`model.safetensors`): its weights while it is set up; while it
+    /// runs, its plan's buffers and read-back and, on the run that sets it
+    /// up, its weights once more while they go up.
+    pub fn footprint(checkpoint: &SafeTensors) -> Result<Footprint, String> {
+        let w = read(checkpoint)?;
         let (plan, _, _) = plan(&w);
         let base = w.packer.data.len();
         let planned: usize = plan.sizes.iter().sum::<usize>() + SIDE * SIDE;
@@ -545,10 +545,10 @@ impl GpuMatte {
         })
     }
 
-    /// The model from its checkpoint (`model.safetensors`'s bytes), its
-    /// weights on the GPU (planned when it first runs).
-    pub fn new(checkpoint: Vec<u8>) -> Result<GpuMatte, String> {
-        let w = read(&SafeTensors::parse(checkpoint)?)?;
+    /// The model from its checkpoint (`model.safetensors`), its weights on
+    /// the GPU (planned when it first runs).
+    pub fn new(checkpoint: &SafeTensors) -> Result<GpuMatte, String> {
+        let w = read(checkpoint)?;
         let (plan, input, out) = plan(&w);
         let net = Net::new("jodel-gpu matte", &w.packer.data, 0)?;
         Ok(GpuMatte {

@@ -7,3 +7,9 @@ license = "MIT"
 description = "The networks' numeric base: a .safetensors file's tensors as f32 or as stored (the checkpoints the speech, depth, matte and picture models are read from), a GGUF file's metadata and tensors (the language model's), half floats, a small JSON reader, what the CPU kernels share"
 
 [dependencies]
+
+[dev-dependencies]
+# The mapped files' tests: files written whole, in a temporary folder that
+# goes.
+durable = { path = "../durable" }
+jodel-testkit = { path = "../testkit" }

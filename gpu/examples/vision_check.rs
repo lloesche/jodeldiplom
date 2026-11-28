@@ -18,6 +18,7 @@ use std::time::Instant;
 use jodel_gpu::vision::check::{scene, stats};
 use jodel_gpu::{profile, GpuDepth, GpuMatte};
 use jodel_tensors::json::Json;
+use jodel_tensors::SafeTensors;
 
 fn f32s(path: &Path) -> Vec<f32> {
     std::fs::read(path)
@@ -59,14 +60,13 @@ fn main() {
 
 fn reference(root: &Path, only: &[String]) {
     let started = Instant::now();
-    let depth =
-        GpuDepth::new(std::fs::read(model("JODEL_DEPTH_MODEL", "da3-small.safetensors")).unwrap())
-            .unwrap_or_else(|e| panic!("depth: {e}"));
+    let open = |var: &str, file: &str| SafeTensors::open(&model(var, file)).unwrap();
+    let depth = GpuDepth::new(&open("JODEL_DEPTH_MODEL", "da3-small.safetensors"))
+        .unwrap_or_else(|e| panic!("depth: {e}"));
     let depth_setup = started.elapsed();
     let started = Instant::now();
-    let matte =
-        GpuMatte::new(std::fs::read(model("JODEL_MATTE_MODEL", "ben2-base.safetensors")).unwrap())
-            .unwrap_or_else(|e| panic!("matte: {e}"));
+    let matte = GpuMatte::new(&open("JODEL_MATTE_MODEL", "ben2-base.safetensors"))
+        .unwrap_or_else(|e| panic!("matte: {e}"));
     println!(
         "on {}: set up in {:.2} s and {:.2} s",
         depth.name(),

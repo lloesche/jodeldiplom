@@ -1,7 +1,9 @@
 //! A GGUF file (llama.cpp's format, as quantised models are published):
 //! its metadata ([`Value`]s by key) and its tensors' places
-//! ([`Tensor`]), read from its header ([`Gguf::open`]); a tensor's bytes
-//! are read when asked ([`Gguf::read`]), as the file holds them.
+//! ([`Tensor`]), its [`Header`]; and with its bytes ([`Gguf`]: the file
+//! mapped while it is open), a tensor's bytes borrowed as the file holds
+//! them ([`Gguf::bytes`]). The header read alone ([`Header::open`]) says
+//! what a model takes before it is loaded, its data never touched.
 //!
 //! The file: `GGUF`, its version (2 or 3), the number of tensors and of
 //! metadata entries (u64s), each entry (its key, a u32 type, its value),
@@ -18,8 +20,10 @@
 //! are refused), and a key or a tensor's name given twice is refused.
 
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::Path;
+
+use crate::Bytes;
 
 /// How a tensor's values are held: as floats, or in llama.cpp's blocks of
 /// quantised values along its rows ([`Kind::block`]). The types this
@@ -221,13 +225,13 @@ impl Array {
 
 /// A tensor's place: its name, its dimensions (the first along its rows),
 /// its kind, and where its bytes are in the file (as its header checked
-/// them: only a [`Gguf`] makes one).
+/// them: only a [`Header`] makes one).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tensor {
     name: String,
     dims: Vec<usize>,
     kind: Kind,
-    offset: u64,
+    offset: usize,
     bytes: usize,
 }
 
@@ -269,63 +273,75 @@ impl Tensor {
     }
 }
 
-/// A GGUF file: its metadata, its tensors, and the file to read their
-/// bytes from.
-pub struct Gguf<R = std::fs::File> {
-    metadata: HashMap<String, Value>,
-    tensors: Vec<Tensor>,
-    by_name: HashMap<String, usize>,
-    file: R,
+/// A GGUF file with its bytes: its header, and the file mapped while this
+/// lives.
+pub struct Gguf {
+    header: Header,
+    bytes: Bytes,
 }
 
 impl Gguf {
-    /// The file at `path`, its header read.
+    /// The file at `path`, mapped while this lives ([`Bytes`]), its header
+    /// read. The file must be replaced only whole (by a rename) while it
+    /// is open.
     pub fn open(path: &Path) -> Result<Gguf, String> {
-        let at = |e: std::io::Error| format!("{}: {e}", path.display());
-        let file = std::fs::File::open(path).map_err(at)?;
-        let len = file.metadata().map_err(at)?.len();
-        Gguf::from_reader(file, len).map_err(|e| format!("{}: {e}", path.display()))
+        let at = |e: String| format!("{}: {e}", path.display());
+        let bytes = Bytes::model(path).map_err(|e| at(e.to_string()))?;
+        Gguf::parse(bytes).map_err(at)
+    }
+
+    /// The file `bytes`, its header read (refused as
+    /// [`Header::from_reader`] refuses one).
+    pub fn parse(bytes: impl Into<Bytes>) -> Result<Gguf, String> {
+        let bytes = bytes.into();
+        let header = Header::from_reader(&bytes[..], bytes.len() as u64)?;
+        Ok(Gguf { header, bytes })
+    }
+
+    /// Its header.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// The bytes `range` (within its bytes) of tensor `name`, as the file
+    /// holds them.
+    pub fn bytes(&self, name: &str, range: std::ops::Range<usize>) -> Result<&[u8], String> {
+        let tensor = self.header.tensor(name)?;
+        if range.start > range.end || range.end > tensor.bytes {
+            return Err(format!("bytes {range:?} of {name}"));
+        }
+        // Within the file: its header's places were checked against its
+        // length.
+        let start = tensor.offset;
+        self.bytes
+            .get(start + range.start..start + range.end)
+            .ok_or_else(|| format!("bytes {range:?} of {name} outside the file"))
     }
 }
 
-impl<R> Gguf<R> {
-    /// Tensor `name`.
-    pub fn tensor(&self, name: &str) -> Result<&Tensor, String> {
-        self.by_name
-            .get(name)
-            .map(|&i| &self.tensors[i])
-            .ok_or_else(|| format!("no tensor {name}"))
-    }
-
-    /// Every tensor, in the file's order.
-    pub fn tensors(&self) -> &[Tensor] {
-        &self.tensors
-    }
-
-    /// Metadata `key`.
-    pub fn get(&self, key: &str) -> Result<&Value, String> {
-        self.metadata
-            .get(key)
-            .ok_or_else(|| format!("no metadata {key}"))
-    }
-
-    /// Every metadata entry.
-    pub fn metadata(&self) -> &HashMap<String, Value> {
-        &self.metadata
-    }
+/// A GGUF file's header: its metadata and its tensors' places.
+#[derive(Debug)]
+pub struct Header {
+    metadata: HashMap<String, Value>,
+    tensors: Vec<Tensor>,
+    by_name: HashMap<String, usize>,
 }
 
-impl<R: Read + Seek> Gguf<R> {
-    /// The file `file` (`len` bytes), its header read. A header that does
-    /// not parse, a type this reader does not know, a key or name given
-    /// twice, or a tensor outside the file or not of whole blocks is an
-    /// error.
-    pub fn from_reader(mut file: R, len: u64) -> Result<Gguf<R>, String> {
-        let mut r = Header {
-            file: std::io::BufReader::with_capacity(1 << 20, &mut file),
-            at: 0,
-            len,
-        };
+impl Header {
+    /// The header of the file at `path` alone, its data not read.
+    pub fn open(path: &Path) -> Result<Header, String> {
+        let at = |e: String| format!("{}: {e}", path.display());
+        let file = std::fs::File::open(path).map_err(|e| at(e.to_string()))?;
+        let len = file.metadata().map_err(|e| at(e.to_string()))?.len();
+        Header::from_reader(std::io::BufReader::with_capacity(1 << 20, file), len).map_err(at)
+    }
+
+    /// The header read from `file` (of a file of `len` bytes), its data
+    /// left where it is. A header that does not parse, a type this reader
+    /// does not know, a key or name given twice, or a tensor outside the
+    /// file or not of whole blocks is an error.
+    pub fn from_reader(file: impl Read, len: u64) -> Result<Header, String> {
+        let mut r = Reader { file, at: 0, len };
         if r.take(4)? != b"GGUF" {
             return Err("not a GGUF file".into());
         }
@@ -388,31 +404,40 @@ impl<R: Read + Seek> Gguf<R> {
                 name,
                 dims,
                 kind,
-                offset: start,
+                offset: size(start)?,
                 bytes,
             });
         }
-        Ok(Gguf {
+        Ok(Header {
             metadata,
             tensors: out,
             by_name,
-            file,
         })
     }
 
-    /// The bytes `range` (within its bytes) of tensor `name` (its place as
-    /// this file's header gives it).
-    pub fn read(&mut self, name: &str, range: std::ops::Range<usize>) -> Result<Vec<u8>, String> {
-        let tensor = self.tensor(name)?;
-        if range.start > range.end || range.end > tensor.bytes {
-            return Err(format!("bytes {range:?} of {name}"));
-        }
-        let at = tensor.offset + range.start as u64;
-        let io = |e: std::io::Error| format!("{name}: {e}");
-        self.file.seek(SeekFrom::Start(at)).map_err(io)?;
-        let mut out = vec![0u8; range.len()];
-        self.file.read_exact(&mut out).map_err(io)?;
-        Ok(out)
+    /// Tensor `name`.
+    pub fn tensor(&self, name: &str) -> Result<&Tensor, String> {
+        self.by_name
+            .get(name)
+            .map(|&i| &self.tensors[i])
+            .ok_or_else(|| format!("no tensor {name}"))
+    }
+
+    /// Every tensor, in the file's order.
+    pub fn tensors(&self) -> &[Tensor] {
+        &self.tensors
+    }
+
+    /// Metadata `key`.
+    pub fn get(&self, key: &str) -> Result<&Value, String> {
+        self.metadata
+            .get(key)
+            .ok_or_else(|| format!("no metadata {key}"))
+    }
+
+    /// Every metadata entry.
+    pub fn metadata(&self) -> &HashMap<String, Value> {
+        &self.metadata
     }
 }
 
@@ -421,14 +446,14 @@ fn size(n: u64) -> Result<usize, String> {
     usize::try_from(n).map_err(|_| format!("a size of {n}"))
 }
 
-/// The header being read: where in the file, and its length.
-struct Header<R> {
+/// A header being read: where in the file, and the file's length.
+struct Reader<R> {
     file: R,
     at: u64,
     len: u64,
 }
 
-impl<R: Read> Header<R> {
+impl<R: Read> Reader<R> {
     fn take(&mut self, n: u64) -> Result<Vec<u8>, String> {
         if n > self.len.saturating_sub(self.at) {
             return Err("a header past the file's end".into());
@@ -518,7 +543,6 @@ impl<R: Read> Header<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     fn string(out: &mut Vec<u8>, s: &str) {
         out.extend((s.len() as u64).to_le_bytes());
@@ -593,44 +617,69 @@ mod tests {
         out
     }
 
-    fn open(bytes: Vec<u8>) -> Result<Gguf<Cursor<Vec<u8>>>, String> {
-        let len = bytes.len() as u64;
-        Gguf::from_reader(Cursor::new(bytes), len)
-    }
-
     #[test]
     fn a_small_file_reads_back() {
-        let mut g = open(file(SMALL)).unwrap();
-        assert_eq!(g.get("a.name").unwrap().as_str(), Some("tiny"));
+        let g = Gguf::parse(file(SMALL)).unwrap();
+        let h = g.header();
+        assert_eq!(h.get("a.name").unwrap().as_str(), Some("tiny"));
         assert_eq!(
-            g.get("a.ints").unwrap(),
+            h.get("a.ints").unwrap(),
             &Value::Array(Array::I32(vec![-3, 7]))
         );
-        let words = g.get("a.words").unwrap().as_array().unwrap();
+        let words = h.get("a.words").unwrap().as_array().unwrap();
         assert_eq!(words.strings().unwrap()[1], "▁z");
-        assert_eq!(g.get("a.eps").unwrap(), &Value::Float(0.5));
-        let v = g.tensor("v").unwrap();
+        assert_eq!(h.get("a.eps").unwrap(), &Value::Float(0.5));
+        let v = h.tensor("v").unwrap();
         assert_eq!(
             (v.kind(), v.cols(), v.rows(), v.bytes()),
             (Kind::F32, 4, 1, 16)
         );
-        assert_eq!(g.read("v", 4..8).unwrap(), 2.0f32.to_le_bytes());
-        let m = g.tensor("m").unwrap();
+        assert_eq!(g.bytes("v", 4..8).unwrap(), 2.0f32.to_le_bytes());
+        let m = h.tensor("m").unwrap();
         assert_eq!(
             (m.kind(), m.cols(), m.rows(), m.row_bytes()),
             (Kind::Q4K, 256, 2, 144)
         );
-        let bytes = g.read("m", 0..288).unwrap();
+        let bytes = g.bytes("m", 0..288).unwrap();
         assert_eq!(bytes, (0..288).map(|i| i as u8).collect::<Vec<_>>());
-        assert!(g.read("m", 0..289).is_err());
-        assert!(g.read("w", 0..1).is_err());
-        assert!(g.tensor("w").is_err());
-        assert_eq!(g.tensors().len(), 2);
+        assert!(g.bytes("m", 0..289).is_err());
+        assert!(g.bytes("w", 0..1).is_err());
+        assert!(h.tensor("w").is_err());
+        assert_eq!(h.tensors().len(), 2);
+    }
+
+    /// A file opened (mapped) gives every tensor the bytes the file read
+    /// whole gives, and its header alone the same tensors; a file cut short
+    /// is refused as it is opened.
+    #[test]
+    fn a_mapped_file_reads_as_the_file_read_whole() {
+        let dir = jodel_testkit::TempDir::new("gguf-mapped");
+        let path = dir.join("small.gguf");
+        let bytes = file(SMALL);
+        durable::write_atomic(&path, &bytes).unwrap();
+        let mapped = Gguf::open(&path).unwrap();
+        let read = Gguf::parse(std::fs::read(&path).unwrap()).unwrap();
+        let (header, alone) = (read.header(), Header::open(&path).unwrap());
+        assert_eq!(mapped.header().metadata(), header.metadata());
+        assert_eq!(mapped.header().tensors(), header.tensors());
+        assert_eq!(alone.tensors(), header.tensors());
+        for t in header.tensors() {
+            let all = 0..t.bytes();
+            assert_eq!(
+                mapped.bytes(t.name(), all.clone()),
+                read.bytes(t.name(), all)
+            );
+        }
+        drop(mapped);
+        durable::write_atomic(&path, &bytes[..bytes.len() - 1]).unwrap();
+        let err = Gguf::open(&path).err().unwrap();
+        assert!(err.contains("m: its data outside"), "{err}");
+        assert!(Header::open(&path).is_err());
     }
 
     /// The error `bytes` gives, which must hold `why`.
     fn refused(bytes: Vec<u8>, why: &str) {
-        let err = open(bytes).err().expect("refused");
+        let err = Gguf::parse(bytes).err().expect("refused");
         assert!(err.contains(why), "{err} (want {why})");
     }
 
@@ -638,7 +687,7 @@ mod tests {
     fn a_broken_file_is_an_error() {
         let good = file(SMALL);
         refused(good[..good.len() - 1].to_vec(), "m: its data outside");
-        assert!(open(good[..40].to_vec()).is_err());
+        assert!(Gguf::parse(good[..40].to_vec()).is_err());
         let mut bad = good.clone();
         bad[0] = b'X';
         refused(bad, "not a GGUF file");
