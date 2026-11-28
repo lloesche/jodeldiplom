@@ -13,7 +13,7 @@
 //! The preparation view's card is the cover of the song it shows
 //! ([`Covers::show_card`], [`Covers::card`]), and while that song's story
 //! is made, the story built on it ([`Covers::building`]): the cover
-//! darkened, each scene drawn so far over its tile.
+//! darkened, each portrait and scene drawn so far over its tile.
 
 use std::f32::consts::PI;
 use std::sync::{Arc, OnceLock};

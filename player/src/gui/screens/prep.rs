@@ -11,13 +11,13 @@
 
 use iced::widget::text::Wrapping;
 use iced::widget::{column, container, rich_text, row, span, stack, text, Column, Space};
-use iced::{Alignment, Background, Border, Element, Fill, Rectangle, Size, Widget as _};
+use iced::{Alignment, Background, Border, Element, Fill, Padding, Rectangle, Size, Widget as _};
 
 use crate::core::State;
 use crate::gui::look::{self, radius, size, space};
 use crate::gui::metrics;
 use crate::gui::style::mix;
-use crate::gui::widgets::cover::Covers;
+use crate::gui::widgets::cover::{shade, Covers};
 use crate::gui::widgets::{self, Icon};
 use crate::gui::window::Message;
 use crate::view::prep::{Hero, Kind, PrepView, Stage, Stand, StoryView};
@@ -289,8 +289,8 @@ fn stage<'a>(state: &State, s: &Stage) -> Element<'a, Message> {
 /// The story built on the cover, `side` points across at most: the cover
 /// darkened, its scenes over their tiles as they are drawn
 /// ([`Covers::building`]; the card's raised ground without a cover), and
-/// over it the last of its words as written so far (a caret after them
-/// while they are), until its first scene is drawn.
+/// over it the last of its words as written so far, on a shade so they
+/// read on any cover, until its first scene is drawn.
 fn story_slot<'a>(story: &StoryView, covers: &'a Covers, side: f32) -> Element<'a, Message> {
     let built = covers
         .building(story)
@@ -298,18 +298,19 @@ fn story_slot<'a>(story: &StoryView, covers: &'a Covers, side: f32) -> Element<'
     if !story.scenes.is_empty() {
         return container(built).center(Fill).boxed();
     }
-    let caret = if story.caret { "▏" } else { "" };
-    let words = text(format!("{}{caret}", tail(&story.text, STORY_TAIL)))
+    let words = text(tail(&story.text, STORY_TAIL).to_owned())
         .size(size::BODY)
         .font(look::font::body())
         .color(look::TEXT)
         .width(Fill);
-    let over = container(words)
-        .padding(space::L)
-        .width(Fill)
-        .height(Fill)
-        .align_y(Alignment::End)
-        .clip(true);
+    let over = container(
+        shade(words.boxed())
+            .width(Fill)
+            .padding(Padding::from(space::L).top(space::XXL)),
+    )
+    .height(Fill)
+    .align_y(Alignment::End)
+    .clip(true);
     container(stack![built, over]).center(Fill).boxed()
 }
 

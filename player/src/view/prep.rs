@@ -166,12 +166,12 @@ pub enum Hero {
 pub struct StoryView {
     /// The words so far.
     pub text: String,
-    /// Whether the caret shows after them (while they are written).
-    pub caret: bool,
-    /// Each scene drawn: which (from 0), its picture and how far it has
-    /// faded in, 0 to 1.
+    /// Each picture drawn, a tile of the cover: which (from 0: the
+    /// characters' portraits first, then the scenes), its picture and how
+    /// far it has faded in, 0 to 1.
     pub scenes: Vec<(usize, Arc<image::RgbaImage>, f32)>,
-    /// How many scenes the story has (0: none drawn yet).
+    /// How many tiles the story has, its characters and its scenes (0:
+    /// none told yet).
     pub of: usize,
 }
 
@@ -182,7 +182,6 @@ impl PartialEq for StoryView {
             i == k && Arc::ptr_eq(a, b) && x == y
         };
         self.text == other.text
-            && self.caret == other.caret
             && self.of == other.of
             && self.scenes.len() == other.scenes.len()
             && self
@@ -500,7 +499,7 @@ fn hero(
                 ))
             }
             Found::Scene { n, of } => Some((
-                Hero::Story(story_view(song, now, moves)),
+                Hero::Story(story_view(song, now)),
                 headline(format!("Scene {n} of {of} drawn")),
             )),
         }
@@ -514,28 +513,29 @@ fn hero(
     // Built on the cover while it is made (being made now, or to come
     // with some of it told); else the cover.
     match story {
-        StoryStand::Making(_) => (Hero::Story(story_view(song, now, moves)), None),
+        StoryStand::Making(_) => (Hero::Story(story_view(song, now)), None),
         StoryStand::Waiting { .. } if song.story.told() => {
-            (Hero::Story(story_view(song, now, moves)), None)
+            (Hero::Story(story_view(song, now)), None)
         }
         _ => (Hero::Cover, None),
     }
 }
 
-/// The story of `song` as written and drawn so far, by `now` (its caret
-/// blinking while the view `moves`, each scene fading in as it came).
-fn story_view(song: &SongPrep, now: u64, moves: bool) -> StoryView {
+/// The story of `song` as written and drawn so far, by `now` (each picture
+/// fading in as it came: the portraits first, then the scenes).
+fn story_view(song: &SongPrep, now: u64) -> StoryView {
     let story = &song.story;
     StoryView {
         text: story.text.clone(),
-        caret: moves && (now / 500).is_multiple_of(2),
-        scenes: (story.scenes.iter())
-            .map(|s| {
+        scenes: (story.portraits.iter())
+            .map(|s| (s.index, s))
+            .chain(story.scenes.iter().map(|s| (story.characters + s.index, s)))
+            .map(|(tile, s)| {
                 let shown = reveal(now, Some(s.at), REVEAL_MS);
-                (s.index, Arc::clone(&s.picture), shown)
+                (tile, Arc::clone(&s.picture), shown)
             })
             .collect(),
-        of: story.of,
+        of: story.characters + story.of,
     }
 }
 
@@ -625,7 +625,12 @@ impl fmt::Display for PrepView {
                     .collect::<Vec<_>>()
                     .join(" ")
             ),
-            Hero::Story(s) => format!("story: {} ({} of {} scenes)", s.text, s.scenes.len(), s.of),
+            Hero::Story(s) => format!(
+                "story: {} ({} of {} pictures)",
+                s.text,
+                s.scenes.len(),
+                s.of
+            ),
         };
         writeln!(f, "[hero] {hero}")?;
         for s in &self.stages {

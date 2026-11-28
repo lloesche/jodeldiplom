@@ -346,7 +346,9 @@ fn told(rx: &Receiver<Action>) -> Vec<(PathBuf, String)> {
                 part: Heard::Story(story),
             } => {
                 let said = match story {
-                    Story::Words(_) | Story::Drawing(Begun::Portrait(..)) => return None,
+                    Story::Words(_)
+                    | Story::Portrait { .. }
+                    | Story::Drawing(Begun::Portrait(..)) => return None,
                     Story::Scene { index, of, .. } => format!("{index}/{of}"),
                     Story::Drawing(Begun::Scene(n, of)) => format!("drawing scene {n} of {of}"),
                     Story::Planning => "planning".into(),

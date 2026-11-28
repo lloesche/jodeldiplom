@@ -15,7 +15,7 @@
 //!   4B, as a [`Painter`]) for every picture still to draw, the portraits
 //!   first, each kept as it lands and its prompt let go, each picture begun
 //!   ([`Story::Drawing`]) and each scene told to the preparation view
-//!   ([`Story::Scene`], [`SCENE_WIDTH`] across), given up as soon as the
+//!   ([`Story::Scene`], and each portrait: [`Story::Portrait`]; [`SCENE_WIDTH`] across), given up as soon as the
 //!   song is no longer wanted; then [`Drawing::keep`] describes them.
 //!
 //! The same plan always draws the same pictures: each picture's seed is
@@ -370,7 +370,14 @@ impl Drawing {
                 painting.as_secs_f64()
             ));
             match kind {
-                Kind::Portrait => heads[index] = Some(head_of(&image)),
+                Kind::Portrait => {
+                    heads[index] = Some(head_of(&image));
+                    tell(Story::Portrait {
+                        index,
+                        of: self.portraits.len(),
+                        picture: Arc::new(told(&image)),
+                    });
+                }
                 Kind::Scene => tell(Story::Scene {
                     index,
                     of: self.scenes.len(),
@@ -399,7 +406,7 @@ impl Drawing {
     }
 }
 
-/// A scene's `picture` as it is told: the whole of it, made
+/// A scene's or portrait's `picture` as it is told: the whole of it, made
 /// [`SCENE_WIDTH`] across, its shape kept (the preparation view fits each
 /// tile to it).
 fn told(picture: &RgbImage) -> image::RgbaImage {

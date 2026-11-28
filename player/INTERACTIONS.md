@@ -250,13 +250,15 @@ really found, as its workers tell it: never a progress they did not tell.
   head passes, the key's chord on a keyboard, the stems' lanes filling,
   the words lit in time. While its story is made (K29), the story is built
   on the song's cover: its words typed out over the cover darkened as the
-  language model writes them, then its scenes taking the cover's place
-  tile by tile as they are drawn, fading in, "Scene N of M drawn" its
+  language model writes them (on a shade, so they read on any cover), then
+  its characters' portraits and scenes taking the cover's place tile by
+  tile as they are drawn (the grid holds both), fading in, "Scene N of M drawn" its
   headline as each lands. Otherwise (its story made, none for good, or
   not made now), the card is the song's own cover.
   - `partial_results_fill_the_songs_preparation_and_its_view`
   - `an_idle_preparation_view_rests`
   - `the_story_is_built_on_the_cover_and_the_cover_comes_back`
+  - `the_cover_s_tiles_are_the_characters_and_the_scenes`
 - **P4.** The preparation view moves only while it shows and something
   changes: a worker at its song, a result coming in or held, its song
   just ready. Waiting for the rest of its work with nothing new, it rests

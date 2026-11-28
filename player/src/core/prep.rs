@@ -56,9 +56,10 @@ pub const SHOWN_MS: u64 = 12_000;
 pub const PREVIEW_LINES: usize = 2;
 /// The most of a story kept, in bytes (its oldest words go first).
 pub const STORY_CHARS: usize = 4_000;
-/// The width of a scene's picture as it is told ([`Story::Scene`]: the
-/// whole picture made smaller, its shape kept), in pixels: what the
-/// preparation view shows it at, a tile of the cover.
+/// The width of a scene's or portrait's picture as it is told
+/// ([`Story::Scene`], [`Story::Portrait`]: the whole picture made smaller,
+/// its shape kept), in pixels: what the preparation view shows it at, a
+/// tile of the cover.
 pub const SCENE_WIDTH: u32 = 256;
 
 /// The stems separated so far ([`Heard::Separating`]).
@@ -291,6 +292,16 @@ pub enum Story {
         /// Its picture.
         picture: Arc<image::RgbaImage>,
     },
+    /// A character's portrait drawn: which, of how many, and its picture
+    /// ([`SCENE_WIDTH`] across, its shape kept).
+    Portrait {
+        /// Which character, from 0.
+        index: usize,
+        /// How many characters the story has.
+        of: usize,
+        /// Its picture.
+        picture: Arc<image::RgbaImage>,
+    },
     /// Its scenes being taken apart for the backdrop.
     Cutting,
 }
@@ -304,6 +315,7 @@ impl fmt::Debug for Story {
             Story::Reading => write!(f, "Reading"),
             Story::Drawing(picture) => write!(f, "Drawing({picture:?})"),
             Story::Scene { index, of, .. } => write!(f, "Scene({index} of {of})"),
+            Story::Portrait { index, of, .. } => write!(f, "Portrait({index} of {of})"),
             Story::Cutting => write!(f, "Cutting"),
         }
     }
@@ -323,6 +335,18 @@ impl PartialEq for Story {
                     of: n,
                     picture: q,
                 },
+            )
+            | (
+                Story::Portrait {
+                    index: a,
+                    of: m,
+                    picture: p,
+                },
+                Story::Portrait {
+                    index: b,
+                    of: n,
+                    picture: q,
+                },
             ) => a == b && m == n && Arc::ptr_eq(p, q),
             (Story::Words(a), Story::Words(b)) => a == b,
             (Story::Drawing(a), Story::Drawing(b)) => a == b,
@@ -335,7 +359,7 @@ impl PartialEq for Story {
     }
 }
 
-/// A scene of the story as drawn.
+/// A scene or a character's portrait of the story as drawn.
 #[derive(Clone, Debug)]
 pub struct Scene {
     /// Which, from 0.
@@ -361,12 +385,16 @@ pub struct StoryPrep {
     pub scenes: Vec<Scene>,
     /// How many scenes it has.
     pub of: usize,
+    /// The characters' portraits drawn so far.
+    pub portraits: Vec<Scene>,
+    /// How many characters it has.
+    pub characters: usize,
 }
 
 impl StoryPrep {
-    /// Whether anything of it is told: words or a scene.
+    /// Whether anything of it is told: words, a portrait or a scene.
     pub fn told(&self) -> bool {
-        !self.text.is_empty() || !self.scenes.is_empty()
+        !self.text.is_empty() || !self.scenes.is_empty() || !self.portraits.is_empty()
     }
 
     /// `story` told of at `now`; a scene drawn found (which, of how many).
@@ -394,6 +422,16 @@ impl StoryPrep {
                         .unwrap_or(self.text.len());
                     self.text.drain(..at);
                 }
+            }
+            Story::Portrait { index, of, picture } => {
+                self.portraits.retain(|s| s.index != *index);
+                self.portraits.push(Scene {
+                    index: *index,
+                    picture: Arc::clone(picture),
+                    at: now,
+                });
+                self.portraits.sort_by_key(|s| s.index);
+                self.characters = *of;
             }
             Story::Scene { index, of, picture } => {
                 self.scenes.retain(|s| s.index != *index);

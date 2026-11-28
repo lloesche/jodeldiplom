@@ -319,9 +319,45 @@ fn a_rows_caption_follows_the_step_running() {
     assert_eq!(caption(&state), running("timing the words…"));
 }
 
+/// The story's tiles on the cover are its characters' portraits (first) and
+/// its scenes: the grid holds the characters plus the scenes, each scene
+/// after the portraits.
+#[test]
+fn the_cover_s_tiles_are_the_characters_and_the_scenes() {
+    let (mut state, path) = on_the_queue(1_000);
+    working(&mut state, &path, Job::Story, true);
+    let picture = Arc::new(image::RgbaImage::new(2, 2));
+    for index in 0..2 {
+        let picture = Arc::clone(&picture);
+        heard(
+            &mut state,
+            &path,
+            Heard::Story(Story::Portrait {
+                index,
+                of: 2,
+                picture,
+            }),
+        );
+    }
+    heard(
+        &mut state,
+        &path,
+        Heard::Story(Story::Scene {
+            index: 0,
+            of: 3,
+            picture,
+        }),
+    );
+    let Hero::Story(story) = PrepView::of(&state).unwrap().hero else {
+        panic!("the story");
+    };
+    assert_eq!(story.of, 5, "two characters and three scenes");
+    let tiles: Vec<usize> = story.scenes.iter().map(|t| t.0).collect();
+    assert_eq!(tiles, [0, 1, 2], "the portraits, then the scene after them");
+}
+
 /// While its story is made, the preparation view's card is the story built
-/// on the song's cover: its words typed out as they are written (a caret
-/// blinking after them), then its scenes over their tiles as each is
+/// on the song's cover: its words typed out as they are written, then its scenes over their tiles as each is
 /// drawn, fading in, the step its headline ("Drawing scene 2 of 3…") and
 /// the story's line; once the story is made, the card is the song's cover
 /// again, as it is for a song whose story was made before (nothing of it
@@ -359,7 +395,6 @@ fn the_story_is_built_on_the_cover_and_the_cover_comes_back() {
         panic!("the story");
     };
     assert_eq!(story.text, "A harbour at dusk");
-    assert!(story.caret, "written");
     // Its scenes, as they are drawn: on their tiles, fading in.
     heard(&mut state, &path, Heard::Story(Story::Reading));
     heard(
@@ -395,7 +430,7 @@ fn the_story_is_built_on_the_cover_and_the_cover_comes_back() {
     assert_eq!(story.scenes[1].2, 0.0, "just in");
     assert_eq!(
         view.to_string().lines().nth(2),
-        Some("[hero] story: A harbour at dusk (1 of 3 scenes)")
+        Some("[hero] story: A harbour at dusk (1 of 3 pictures)")
     );
     // Not made now (the model failed): the cover again, why said; then
     // made after all, tried again.
