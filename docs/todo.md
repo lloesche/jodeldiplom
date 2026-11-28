@@ -97,9 +97,10 @@ Measured on the owner's M4 Max (Metal, the f32 path), 2026-11-28:
   tok/s others get on the same chip. Shape them as MLX and llama.cpp's
   Metal kernels do (gpu/README.md, "Rules for kernels").
 - **Gemma's prompt** on Apple's 8x8 matrices, as klein's multiply and
-  attention already are.
-- **klein's attention** with its keys and values double-buffered (about
-  24 s a picture now; others report 18 to 27 s at about 1 MP).
+  attention already are (339 tokens a second at 12K today).
+
+klein is within what others measure on the same chip (about 24 s a
+picture; 18 to 27 s at about 1 MP), so nothing is open there.
 
 ## Checks on the Mac (the owner)
 
