@@ -186,10 +186,11 @@ pub const PATCH: Schema = Schema {
 /// plan as JSON, or why the song has none, or the context that was short
 /// of room for it and why. Version 1 hashed the context with what was
 /// asked, and had no line for a context short of room; version 2 had no
-/// scene shown again (a scene's `same_as`).
+/// scene shown again (a scene's `same_as`); version 3 no camera angle (a
+/// scene's `angle`).
 pub const STORY_PLAN: Schema = Schema {
     name: "story-plan",
-    version: 3,
+    version: 4,
     user_data: false,
 };
 

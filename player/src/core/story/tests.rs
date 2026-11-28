@@ -58,11 +58,11 @@ pub(crate) const GOOD: &str = r##"```json
                 {"name": "you", "looks": "Man, late 20s, tall, curly red hair, open navy coat"},
                 {"name": "father", "looks": "Man, 60s, broad, grey beard, wool sweater"}],
  "scenes": [
-  {"first_line": 0, "section": "verse 1", "shot": "wide", "characters": ["narrator"], "shows": "The narrator walks to a rainy harbour.", "prompt": "A small harbour in steady rain at dusk, narrator walking along the quay, moored fishing boats in the foreground, grey hills behind"},
-  {"first_line": 2, "section": "verse 1", "shot": "medium", "characters": ["narrator", "you"], "shows": "The two laugh under a grey sky.", "prompt": "Rain-soaked quay in the afternoon, you running toward narrator with his coat open, both laughing, puddles in front, low clouds over the sea"},
-  {"first_line": 4, "section": "chorus", "shot": "wide", "characters": [], "shows": "The sea at nightfall.", "prompt": "Wide dark sea at nightfall, a small rowing boat crossing toward distant lights, waves in the foreground, a fading sky above"},
-  {"first_line": 6, "section": "verse 2", "shot": "close-up", "characters": ["father"], "shows": "The father mends nets.", "prompt": "Close view of father's rough hands mending a fishing net by lamplight in winter, coils of rope in front, a frosted window behind"},
-  {"first_line": 8, "section": "verse 2", "shot": "wide", "characters": [], "shows": "An empty lighthouse turns.", "prompt": "Lonely lighthouse on a rocky point at night, its beam sweeping over empty water, rocks in the foreground, clouds drifting behind"},
+  {"first_line": 0, "section": "verse 1", "shot": "wide", "angle": "high", "characters": ["narrator"], "shows": "The narrator walks to a rainy harbour.", "prompt": "A small harbour in steady rain at dusk, narrator walking along the quay, moored fishing boats in the foreground, grey hills behind"},
+  {"first_line": 2, "section": "verse 1", "shot": "medium", "angle": "eye level", "characters": ["narrator", "you"], "shows": "The two laugh under a grey sky.", "prompt": "Rain-soaked quay in the afternoon, you running toward narrator with his coat open, both laughing, puddles in front, low clouds over the sea"},
+  {"first_line": 4, "section": "chorus", "shot": "wide", "angle": "bird's-eye", "characters": [], "shows": "The sea at nightfall.", "prompt": "Wide dark sea at nightfall, a small rowing boat crossing toward distant lights, waves in the foreground, a fading sky above"},
+  {"first_line": 6, "section": "verse 2", "shot": "close-up", "angle": "eye level", "characters": ["father"], "shows": "The father mends nets.", "prompt": "Close view of father's rough hands mending a fishing net by lamplight in winter, coils of rope in front, a frosted window behind"},
+  {"first_line": 8, "section": "verse 2", "shot": "wide", "angle": "low", "characters": [], "shows": "An empty lighthouse turns.", "prompt": "Lonely lighthouse on a rocky point at night, its beam sweeping over empty water, rocks in the foreground, clouds drifting behind"},
   {"first_line": 10, "section": "chorus", "same_as": 4}
  ],
  "art": {"knowledge": "I do not know this band.", "confidence": "low", "genre": "folk rock", "era": "90s",
@@ -359,6 +359,93 @@ fn the_scenes_lines_come_from_their_first_lines_alone() {
     assert_eq!(plan.scenes[2].first_line, 4);
 }
 
+/// First lines written by the clock (two or more past the song's last
+/// line, within its length) are read as seconds: each the line starting
+/// nearest that time, the scene shown again too; said.
+#[test]
+fn first_lines_written_by_the_clock_are_read_as_seconds() {
+    let clocked = bad("\"first_line\": 2,", "\"first_line\": 26,")
+        .replacen("\"first_line\": 4,", "\"first_line\": 44,", 1)
+        .replacen("\"first_line\": 6,", "\"first_line\": 62,", 1)
+        .replacen("\"first_line\": 8,", "\"first_line\": 81,", 1)
+        .replacen(
+            "\"first_line\": 10, \"section\": \"chorus\", \"same_as\": 4",
+            "\"first_line\": 98, \"section\": \"chorus\", \"same_as\": 44",
+            1,
+        );
+    assert!(asked(&clocked).is_empty());
+    let (plan, notes) = mended(&clocked);
+    let lines: Vec<(usize, usize)> = plan
+        .scenes
+        .iter()
+        .map(|s| (s.first_line, s.last_line))
+        .collect();
+    assert_eq!(lines, [(0, 1), (2, 3), (4, 5), (6, 7), (8, 9), (10, 11)]);
+    assert_eq!(plan.scenes[5].same_as, Some(2));
+    assert!(
+        says(
+            &notes,
+            "the scenes' first lines read as seconds (26 is no line"
+        ),
+        "{notes:?}"
+    );
+}
+
+/// First lines written as minutes:seconds, as the prompt tells the times
+/// (never read as the line of their first figures), are the lines sung
+/// then, the scene shown again too; said.
+#[test]
+fn first_lines_written_as_minutes_and_seconds_are_read_as_times() {
+    let timed = bad("\"first_line\": 2,", "\"first_line\": \"0:26\",")
+        .replacen("\"first_line\": 4,", "\"first_line\": \"0:44\",", 1)
+        .replacen("\"first_line\": 6,", "\"first_line\": \"1:02\",", 1)
+        .replacen("\"first_line\": 8,", "\"first_line\": \"1:21\",", 1)
+        .replacen(
+            "\"first_line\": 10, \"section\": \"chorus\", \"same_as\": 4",
+            "\"first_line\": \"1:38\", \"section\": \"chorus\", \"same_as\": \"0:44\"",
+            1,
+        );
+    assert!(asked(&timed).is_empty());
+    let (plan, notes) = mended(&timed);
+    let lines: Vec<(usize, usize)> = plan
+        .scenes
+        .iter()
+        .map(|s| (s.first_line, s.last_line))
+        .collect();
+    assert_eq!(lines, [(0, 1), (2, 3), (4, 5), (6, 7), (8, 9), (10, 11)]);
+    assert_eq!(plan.scenes[5].same_as, Some(2));
+    assert!(
+        says(
+            &notes,
+            "first lines written as minutes:seconds read as the lines sung then: 26 s line 2"
+        ),
+        "{notes:?}"
+    );
+}
+
+/// Two first lines past the song's last line in a plan by lines (its last
+/// scenes overshoot) are asked where they start, not read as seconds: the
+/// plan stands as lines.
+#[test]
+fn two_stray_first_lines_past_the_end_are_asked_not_read_as_seconds() {
+    let miscounted = bad("\"first_line\": 8,", "\"first_line\": 14,").replacen(
+        "\"first_line\": 10,",
+        "\"first_line\": 16,",
+        1,
+    );
+    let starts = asked(&miscounted);
+    assert!(
+        starts
+            .iter()
+            .any(|w| matches!(w, What::Start { scene: 4, .. })),
+        "{starts:?}"
+    );
+    let (plan, notes) = mended(&miscounted);
+    assert!(!says(&notes, "read as seconds"), "{notes:?}");
+    let firsts: Vec<usize> = plan.scenes.iter().map(|s| s.first_line).collect();
+    assert_eq!(firsts[..4], [0, 2, 4, 6]);
+}
+
 /// The model decides how many scenes: one is enough (it shows the whole
 /// song), and those past the most are merged into the last kept, which
 /// shows on to the song's end.
@@ -495,7 +582,7 @@ fn a_slip_is_read_as_it_was_meant_or_left_out() {
 fn a_chorus_drawn_twice_is_asked_whether_it_shows_the_first_again() {
     let twice = bad(
         "{\"first_line\": 10, \"section\": \"chorus\", \"same_as\": 4}",
-        "{\"first_line\": 10, \"section\": \"chorus\", \"shot\": \"wide\", \"shows\": \"The sea again.\", \"prompt\": \"A dark sea at night under a thin moon, a boat far out, waves in front\"}",
+        "{\"first_line\": 10, \"section\": \"chorus\", \"shot\": \"wide\", \"shows\": \"The sea again.\", \"prompt\": \"A dark sea at night under a thin moon, a ship far out, waves in front\"}",
     );
     assert_eq!(
         asked(&twice),
@@ -570,7 +657,7 @@ fn what_needs_judgement_is_asked_and_the_patch_merged() {
     assert!(words.contains("One of \"folk\""), "{words}");
     let patch = "{\"1\": \"Lonely lighthouse on a rocky point at night, its beam over the water\", \"2\": \"ink wash\", \"3\": \"rock\", \"4\": \"glow\"}";
     let mut notes = Vec::new();
-    let answers = super::follow::answers(patch, questions.len(), &mut notes);
+    let answers = super::follow::answers(patch, &questions, &mut notes);
     let values: Vec<Value> = answers.into_iter().map(Option::unwrap).collect();
     let (plan, notes) = settled(read, &values);
     assert_eq!(

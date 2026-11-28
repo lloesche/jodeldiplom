@@ -74,7 +74,8 @@ use crate::core::story::follow;
 use crate::core::story::follow::Question;
 use crate::core::story::prose::Prose;
 use crate::core::story::rules::{
-    FOLLOW_UP_THOUGHT, MOST_ANSWER, MOST_ASK, MOST_PATCH, MOST_PROMPT, MOST_SCENES, MOST_THOUGHT,
+    BOARD, FOLLOW_UP_THOUGHT, MOST_ANSWER, MOST_ASK, MOST_PATCH, MOST_PROMPT, MOST_SCENES,
+    MOST_THOUGHT,
 };
 use crate::core::story::{check, prompt, Plan, Song};
 use crate::store::cache::{self, STORY_PLAN};
@@ -86,10 +87,11 @@ use crate::work::stages::plan::{room, MARGIN};
 /// planned again; a new prompt does so by itself (its hash is kept).
 /// Version 1 refused shaders over the budget; version 2 wrote without
 /// thinking; version 3 asked for scenes by the clock and refused an answer
-/// for any rule broken. The follow-up's words, its choices and the most
-/// scenes are in the plan's hash ([`StoryJob`]); how they are read is
-/// this version's.
-pub const VERSION: u32 = 4;
+/// for any rule broken; version 4 had no camera angle and let a portrait
+/// session stand. The follow-up's words, its choices, the storyboard's
+/// question and the most scenes are in the plan's hash ([`StoryJob`]); how
+/// they are read is this version's.
+pub const VERSION: u32 = 5;
 
 /// What the process holds on the card beside the stages' models at the
 /// least (the window, the track playing's stems), where nothing better is
@@ -507,7 +509,7 @@ fn follow_up(
                 );
                 none
             } else {
-                follow::answers(&written.text, questions.len(), notes)
+                follow::answers(&written.text, questions, notes)
             };
             let turn = Try {
                 written,
@@ -693,14 +695,16 @@ impl StoryJob {
 
     /// What the song is asked, as the file names it: the hash of the
     /// prompt, the rooms of the answer, the thought and the follow-up, the
-    /// follow-up's words and choices and the most scenes (the context is
-    /// kept apart, for a song short of room only: [`Kept::Short`], and a
-    /// plan settled short of room).
+    /// follow-up's words and choices, the storyboard's policy and all of
+    /// its question's words, and the most scenes (the context is kept
+    /// apart, for a song short of room only: [`Kept::Short`], and a plan
+    /// settled short of room).
     fn hash(&self) -> String {
         cache::name(&format!(
-            "{MOST_ANSWER} {MOST_THOUGHT} {FOLLOW_UP_THOUGHT} {MOST_PATCH} {MOST_SCENES} {} {}\n{}",
+            "{MOST_ANSWER} {MOST_THOUGHT} {FOLLOW_UP_THOUGHT} {MOST_PATCH} {MOST_SCENES} {} {BOARD:?}\n{}\n{}\n{}",
             follow::CHOICES,
             follow::PREAMBLE,
+            follow::board_words(),
             self.asked
         ))
     }

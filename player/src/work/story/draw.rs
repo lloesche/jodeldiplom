@@ -462,4 +462,60 @@ mod tests {
         let side = crate::core::story::pictures::PORTRAIT.0 as u32;
         assert_eq!(super::head(side), (192, 64, 640));
     }
+
+    /// The longest scene prompt there can be (the wordiest style and
+    /// keywords, three characters seen with long looks, a prompt of the
+    /// most words) fits the text encoder's tokens, its wishes at the end
+    /// (one picture, no text) not cut off: counted as English takes them
+    /// at the most (four tokens for three words, a token for every mark,
+    /// some 20 for the chat template around it).
+    #[test]
+    fn the_longest_scene_prompt_fits_the_text_encoder() {
+        use crate::core::story::rules::{KEYWORDS, PROMPT_WORDS};
+        use crate::core::story::{pictures, Character, Scene, Shot, Style};
+        let mut plan = crate::core::story::tests::planned(crate::core::story::tests::GOOD);
+        plan.art.style = *(Style::ALL.iter())
+            .max_by_key(|s| s.words().len())
+            .expect("styles");
+        plan.art.style_keywords = vec!["muted earthy film grain texture"; KEYWORDS.most].join(", ");
+        let looks = "woman in her late twenties, slender build, long dark wavy hair, pale skin, \
+                     grey eyes, worn dark leather jacket over a striped shirt, faded blue jeans, \
+                     scuffed brown boots, a silver ring, a red scarf";
+        plan.characters = ["ada", "bo", "cy"]
+            .iter()
+            .map(|n| Character {
+                name: (*n).to_owned(),
+                looks: looks.to_owned(),
+            })
+            .collect();
+        let words = "carrying a heavy suitcase across the wet square at dusk, passers-by \
+                     hurrying past under umbrellas, a tram turning in the background";
+        let words: Vec<&str> = words
+            .split(' ')
+            .cycle()
+            .take(PROMPT_WORDS.most - 3)
+            .collect();
+        let prompt = words.join(" ");
+        plan.scenes.push(Scene {
+            same_as: None,
+            shot: Shot::Wide,
+            angle: crate::core::story::Angle::OverTheShoulder,
+            characters: vec!["ada".into(), "bo".into(), "cy".into()],
+            prompt: format!("ada bo cy {prompt}"),
+            ..plan.scenes[0].clone()
+        });
+        let asks = pictures::pictures(&plan);
+        let longest = asks.scenes.last().expect("the scene");
+        assert_eq!(longest.refs.len(), 3);
+        assert!(longest.prompt.ends_with(pictures::NO_TEXT));
+        let text = &longest.prompt;
+        let words = text.split_whitespace().count();
+        let marks = text.chars().filter(|c| c.is_ascii_punctuation()).count();
+        let tokens = words * 4 / 3 + marks + 20;
+        assert!(
+            tokens <= jodel_gpu::image::TOKENS,
+            "{tokens} tokens: {}",
+            longest.prompt
+        );
+    }
 }

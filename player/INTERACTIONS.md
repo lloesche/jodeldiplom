@@ -1193,14 +1193,20 @@ really found, as its workers tell it: never a progress they did not tell.
   a number held to its range, a character no one described dropped from
   its scene, a group no character, a character's looks its appearance
   alone, a scene's cast who its prompt names), its scenes' lines from their first
-  lines alone, as many scenes as the lyrics need (at most 20, never said
+  lines alone (written by the clock, as minutes:seconds or as seconds,
+  read as the lines sung then), as many scenes as the lyrics need (at most 20, never said
   to the model: those past it merged into the last), a section that comes
   back showing its earlier scene again (nothing new drawn); what needs
   the model's judgement (a scene that fits nowhere, a prompt asking for
   writing, a style, preset or pass no one knows, a section of the same
-  words drawn twice) is asked once more in the same conversation, a
-  patch for answer, and what it leaves wrong taken as the nearest valid
-  choice; a plan whose follow-up had no room in the context is planned
+  words drawn twice, a storyboard that reads as a portrait session: more
+  than half its scenes drawn, three at least, showing one character near
+  enough for a portrait, or close-ups, or of one shot and angle) is
+  asked once more in the same
+  conversation, a patch for answer (every scene rewritten whole merged,
+  wherever the patch has it, the rest as it was: never a refusal), and
+  what it leaves wrong taken as
+  the nearest valid choice; a plan whose follow-up had no room in the context is planned
   again in a larger one. A song with no lyrics or no timed
   sung lines, or whose answer had nothing to draw, has no story for good:
   the game refuses it (K1b). A model
@@ -1227,11 +1233,15 @@ really found, as its workers tell it: never a progress they did not tell.
     `a_round_is_due_once_the_queue_has_settled`,
     `a_round_starts_once_the_queue_has_settled`,
     `what_needs_judgement_is_asked_in_the_same_conversation`,
+    `a_portrait_session_is_asked_to_be_redrawn_in_the_same_conversation`,
     `a_patch_wrong_too_takes_the_nearest_valid_choice`,
     `only_an_answer_with_nothing_to_draw_is_refused`
     (`work::story`)
   - `every_slip_is_mended_and_said`,
     `the_scenes_lines_come_from_their_first_lines_alone`,
+    `first_lines_written_by_the_clock_are_read_as_seconds`,
+    `first_lines_written_as_minutes_and_seconds_are_read_as_times`,
+    `two_stray_first_lines_past_the_end_are_asked_not_read_as_seconds`,
     `a_plan_has_one_scene_or_more_and_at_most_its_ceiling`,
     `a_scene_shown_again_draws_nothing_new`,
     `a_group_or_a_character_never_seen_is_no_portrait`,
@@ -1239,6 +1249,12 @@ really found, as its workers tell it: never a progress they did not tell.
     `a_chorus_drawn_twice_is_asked_whether_it_shows_the_first_again`,
     `a_slip_is_read_as_it_was_meant_or_left_out`,
     `an_answer_cut_off_keeps_every_whole_scene` (`core::story`)
+  - `a_portrait_session_is_asked_to_be_redrawn_and_every_rewrite_merged`,
+    `close_ups_and_one_camera_are_asked_and_never_refused`,
+    `a_storyboard_half_or_short_is_asked_nothing`,
+    `an_angle_is_read_as_it_was_meant` (`core::story::check::board`)
+  - `every_rewritten_scene_answers_the_storyboard_s_question`
+    (`core::story::follow`)
   - `looks_are_appearance_and_the_cast_follows_the_prompt` (`core::story::cast`)
   - `containers_nested_too_deep_are_left_out`, `slips_are_mended_and_said`
     (`core::story::repair`)

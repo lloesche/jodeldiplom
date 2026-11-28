@@ -249,6 +249,73 @@ fn what_needs_judgement_is_asked_in_the_same_conversation() {
     assert!(!told.contains("ink wash"), "the patch is not prose");
 }
 
+/// A storyboard that reads as a portrait session (one character in more
+/// than half the scenes drawn) is asked once in the same conversation,
+/// some scenes to be rewritten; the scenes the patch rewrites are merged,
+/// the rest as it was. A patch that rewrites none leaves the plan as it
+/// was: never a refusal.
+#[test]
+fn a_portrait_session_is_asked_to_be_redrawn_in_the_same_conversation() {
+    // The narrator near (medium, at eye level or from low) in three of
+    // five scenes drawn.
+    let posed = GOOD
+        .replacen(
+            "\"shot\": \"wide\", \"angle\": \"bird's-eye\"",
+            "\"shot\": \"medium\", \"angle\": \"eye level\"",
+            1,
+        )
+        .replacen(
+            "a small rowing boat crossing",
+            "narrator rowing a small boat",
+            1,
+        )
+        .replacen(
+            "\"shot\": \"wide\", \"angle\": \"low\"",
+            "\"shot\": \"medium\", \"angle\": \"low\"",
+            1,
+        )
+        .replacen(
+            "Lonely lighthouse on",
+            "narrator walking to a lonely lighthouse on",
+            1,
+        );
+    // A key each, as a model wrote them: both merged.
+    let patch = "```json\n{\"1\": {\"scene\": 5, \"shot\": \"wide\", \"angle\": \"low\", \"characters\": [], \"shows\": \"The lighthouse goes dark.\", \"prompt\": \"A lighthouse on a rocky point at night, its lamp going out, waves on the rocks\"}, \"2\": {\"scene\": 3, \"shot\": \"wide\", \"angle\": \"high\", \"shows\": \"The boat is gone.\", \"prompt\": \"An empty mooring on the dark sea at nightfall\"}}\n```";
+    let fake = Fake::new(vec![says(&posed), says(patch)]);
+    let (planned, told) = planned_by(&fake);
+    let plan = planned.plan.expect("a plan");
+    let asked = fake.asked.borrow();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[1].talk, asked[0].talk, "the same conversation");
+    assert!(
+        asked[1]
+            .words
+            .contains("show \"narrator\" near and facing us"),
+        "{}",
+        asked[1].words
+    );
+    assert!(
+        told.contains("(Settling one thing with the model.)"),
+        "{told}"
+    );
+    let five = &plan.scenes[4];
+    assert_eq!(five.shows, "The lighthouse goes dark.");
+    assert!(five.characters.is_empty());
+    let three = &plan.scenes[2];
+    assert_eq!(three.shows, "The boat is gone.");
+    assert!(three.characters.is_empty());
+    assert_eq!(
+        plan.scenes[1].characters,
+        ["narrator", "you"],
+        "the rest as it was"
+    );
+    // Not answered: the plan as the first answer had it.
+    let fake = Fake::new(vec![says(&posed), says("I would keep them.")]);
+    let plan = planned_by(&fake).0.plan.expect("a plan");
+    assert_eq!(plan.scenes.len(), 6);
+    assert_eq!(plan.scenes[4].characters, ["narrator"]);
+}
+
 /// A patch that is wrong too, a follow-up that fails to end its thought,
 /// one with no room in the context, or a model that fails in it: the
 /// nearest valid choices taken, the plan kept (the first answer is not
@@ -355,7 +422,7 @@ fn a_plan_is_kept_with_what_made_it() {
             settled_short_at: None,
         },
     );
-    assert!(text.starts_with("jodeldiplom-cache story-plan 3 by "));
+    assert!(text.starts_with("jodeldiplom-cache story-plan 4 by "));
     assert_eq!(
         from_text(&text, asked),
         Some(Kept::Plan {

@@ -12,7 +12,11 @@
 //!   past its most keeps its first ([`super::rules`]); a number out of its
 //!   range is held to it ([`fields`]).
 //! - The scenes' lines come from their first lines alone (each runs to the
-//!   next one's start), so no line is in no scene or in two. The first
+//!   next one's start), so no line is in no scene or in two; first lines
+//!   written by the clock are read as the lines sung then
+//!   ([`place::by_the_clock`]): those written as minutes:seconds always,
+//!   numbers where two or more are past the last line (within the song's
+//!   length) and more scenes go up in order read so. The first
 //!   scene starts at line 0; the scenes whose first lines go up in order
 //!   (the most of them) stand, and each other one is placed between those
 //!   around it, asked of the model where it fits (else left out: its lines
@@ -36,11 +40,17 @@
 //!   preset or a pass no one knows is asked again, then taken as the
 //!   nearest there is ([`super::follow`]); a scene of the very words of an
 //!   earlier one drawn anew is asked whether it shows that one again.
+//! - A scene's angle is read by its name or what it says, else eye level.
+//!   Scenes that read as a portrait session (more than half of those
+//!   drawn showing one character near, or close-ups, or of one shot and
+//!   angle: [`super::rules::BOARD`]) are asked to be rewritten, some of
+//!   them, as a storyboard's shots ([`board`]); never refused for it.
 //!
 //! What needs the model's judgement is [`Read::questions`]; their answers
 //! (or none: the nearest valid choice) are taken with [`Read::settle`]
 //! ([`settle`]), and the plan made with [`Read::plan`].
 
+mod board;
 mod fields;
 mod place;
 mod settle;
@@ -53,7 +63,7 @@ use super::cast;
 use super::repair::{self, list, text};
 use super::rules::{MOST_SCENES, PROMPT_WORDS};
 use super::shader::Shader;
-use super::{Art, Character, Confidence, Plan, Rgb, Scene, Shot, Song, Style};
+use super::{Angle, Art, Character, Confidence, Plan, Rgb, Scene, Shot, Song, Style};
 
 /// Why an answer with nothing to draw is refused.
 pub const NOTHING: &str = "nothing to draw";
@@ -100,6 +110,10 @@ struct Drafted {
     at: usize,
     /// Its first line as written (none: none, or no number).
     written: Option<f64>,
+    /// Its first line and the scene it shows again where either was
+    /// written as a time (minutes:seconds), that time in seconds: for the
+    /// lines sung then ([`place::by_the_clock`]).
+    times: (Option<f64>, Option<f64>),
     /// Its first line: as written where it stands among the others, else
     /// where it is placed for now.
     first: usize,
@@ -112,6 +126,7 @@ struct Drafted {
     same_as: Option<Again>,
     section: String,
     shot: Shot,
+    angle: Angle,
     characters: Vec<String>,
     shows: String,
     prompt: String,
@@ -176,6 +191,9 @@ pub fn read(answer: &str, song: &Song) -> Result<Read, Refused> {
         let why = format!("{NOTHING}: the answer has no scene");
         return Err(Refused { why, notes });
     }
+    let starts: Vec<f64> = song.lines.iter().map(|l| l.start).collect();
+    let end = (song.lines.iter().map(|l| l.end)).fold(song.duration, f64::max);
+    place::by_the_clock(&mut scenes, &starts, end, &mut notes);
     place::place(&mut scenes, n, &mut notes);
     if scenes.len() > MOST_SCENES {
         notes.push(format!(
@@ -193,8 +211,8 @@ pub fn read(answer: &str, song: &Song) -> Result<Read, Refused> {
         art,
         shader,
         lines: song.lines.iter().map(|l| l.text.clone()).collect(),
-        end: (song.lines.iter().map(|l| l.end)).fold(song.duration, f64::max),
-        starts: song.lines.iter().map(|l| l.start).collect(),
+        end,
+        starts,
         notes,
     })
 }
@@ -347,6 +365,7 @@ impl Read {
                 same_as: again[k],
                 section: s.section,
                 shot: s.shot,
+                angle: s.angle,
                 characters: s.characters,
                 shows: s.shows,
                 prompt: s.prompt,

@@ -1207,13 +1207,25 @@ as the catalogue says), then Qwen3-4B encodes their pictures' prompts,
 then FLUX.2 [klein] draws them (`work::story::draw`), then Depth
 Anything 3 Small and BEN2 take the scenes apart; a song no longer wanted
 (out of the queue) is given up before its turns and between its
-pictures. FLUX.2 [klein] draws a 1024² portrait of each
-character from its looks in the plan's style, then a 1344 × 768 picture
-of each scene from its prompt (the characters named by their looks, its
-shot, the style, and sentences asking for one single picture, not a
-collage of panels, and no text at all), the heads of
-the portraits of those in it (512², at most three) as its reference
-pictures. Each picture's seed is the song's and the picture's, and its
+pictures. The plan is a storyboard, not a portrait session: a plot of
+events (a beginning, a turn, an end) with a lead to follow where the
+song tells of people, each scene something happening in a place, its
+characters doing something and seldom near, many scenes with none, no
+subject in more than two, its shot and camera angle varied; where more
+than half the scenes drawn show one character near enough for a
+portrait (a close-up, or a medium shot at eye level or from low), are
+close-ups, or share one shot and angle, the follow-up asks for some of
+them to be rewritten. FLUX.2
+[klein] draws a 1024² neutral reference portrait of each character from
+its looks in the plan's style (a neutral expression, a plain
+background, no props: klein copies a reference's pose and framing),
+then a 1344 × 768 picture of each scene (the style, its shot and angle,
+its prompt with the characters named by their looks, and sentences
+asking for one single picture, not a collage of panels, and no text at
+all), the heads of the portraits of those in it (512², at most three)
+as its reference pictures, for who they are ("the person from image 1:
+the same face, hair and clothes, in the pose and action described
+here"). Each picture's seed is the song's and the picture's, and its
 file is named by what made it (the drawing's version, the seed, the
 size, its references and its prompt), and its `scenes.txt` by what it
 holds (`made HASH`): an unchanged plan draws nothing again, a new one

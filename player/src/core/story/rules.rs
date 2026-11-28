@@ -167,7 +167,7 @@ pub const CHARACTERS: Count = Count {
 /// The words of a picture's prompt.
 pub const PROMPT_WORDS: Count = Count {
     what: "words",
-    asked: (15, 35),
+    asked: (20, 45),
     most: 70,
 };
 /// The style's keywords for the image model.
@@ -198,6 +198,50 @@ pub const MOOD: Count = Count {
 /// Every count the prompt says.
 pub const COUNTS: [Count; 6] = [CHARACTERS, PROMPT_WORDS, KEYWORDS, PALETTE, MOTIFS, MOOD];
 
+/// When the storyboard's look at the scenes drawn asks for some of them to
+/// be rewritten (`super::check::Read::board`), and how many: where more
+/// than `share` of them, and `fewest` at least, share something (a
+/// character who could read as a portrait, the close-ups, one shot and
+/// angle), as many are asked for as leave `leave_cast` of them (a
+/// character) or `leave_shots` (close-ups, one camera). Kept in the plan's
+/// hash, as it changes what is asked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Board {
+    /// The fewest scenes that share something for it to be asked: a song
+    /// of a few pictures with one character in two of them is no portrait
+    /// session.
+    pub fewest: usize,
+    /// The share of the scenes drawn past which it is asked, (a, b): a/b.
+    pub share: (usize, usize),
+    /// The share of a character's scenes left by the rewrites.
+    pub leave_cast: (usize, usize),
+    /// The share of the close-ups, or of one camera's scenes, left.
+    pub leave_shots: (usize, usize),
+}
+
+/// The storyboard's policy.
+pub const BOARD: Board = Board {
+    fewest: 3,
+    share: (1, 2),
+    leave_cast: (1, 2),
+    leave_shots: (1, 3),
+};
+
+impl Board {
+    /// Whether `n` of the `drawn` scenes drawn sharing something is asked:
+    /// more than [`Board::share`] of them, and [`Board::fewest`] at least.
+    pub fn asks(&self, n: usize, drawn: usize) -> bool {
+        let (a, b) = self.share;
+        n >= self.fewest && n * b > drawn * a
+    }
+
+    /// How many of `n` scenes (of the `drawn`) to rewrite so that
+    /// `leave` of the scenes drawn are left (one at least).
+    pub fn rewrite(&self, n: usize, drawn: usize, (a, b): (usize, usize)) -> usize {
+        n.saturating_sub(drawn * a / b).max(1)
+    }
+}
+
 /// The most scenes a plan has: those past it are merged into the last
 /// kept (it shows on to the song's end), so every line keeps a picture.
 /// Never said in the prompt: the model decides how many scenes the song
@@ -222,7 +266,9 @@ pub const MOST_ASK: usize = 2_048;
 /// The most tokens the model's thought over the follow-up may take, where
 /// the context leaves it more.
 pub const FOLLOW_UP_THOUGHT: usize = 4_096;
-/// The most tokens the follow-up's answer (a small patch) may take.
-pub const MOST_PATCH: usize = 1_024;
+/// The most tokens the follow-up's answer (a small patch) may take: room
+/// for a few scenes rewritten whole (about 120 tokens each) beside the
+/// short answers.
+pub const MOST_PATCH: usize = 2_048;
 /// How long a line with no end is taken to last, seconds.
 pub const UNTIMED_LINE_SECONDS: f64 = 5.0;

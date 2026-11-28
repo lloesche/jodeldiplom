@@ -16,40 +16,6 @@ Work agreed on but not started, roughly in the order it was raised.
 - **The look over the lyrics** (the owner, 2026-11-28): the story's look
   shaders were a bit much and the pills with the words hard to read;
   tune the strength over the lyric band.
-- **A storyboard, not a portrait session** (the owner, 2026-11-28, on the
-  Echt and "Suddenly I See" pictures: "portrait photography in 9 out of
-  10", "same woman, same pose, different background", "all from the same
-  angle, same subject at the same size, no plot or action visible"; next,
-  once the forgiving reading lands):
-  - **The reference carries identity only.** klein copies the reference
-    picture's pose, framing and expression. The portrait is a neutral
-    reference (neutral expression, plain background, no props, no
-    action), the scene takes its head crop (512², as now), and the scene
-    prompt asks for this person's face and clothes in a new pose and
-    action (find how FLUX.2's guide phrases a reference's role: "subject
-    from image 1"), each character's pose, action and framing always
-    stated in the scene's prompt.
-  - **A plot across the scenes:** a beginning, a turn and an end, so a
-    viewer follows what happens from picture to picture; each scene's
-    `shows` names an event, something that changes, not a mood.
-  - **Storyboard shots:** each scene shows something happening (an event,
-    an action, a meeting, in a place, often with others around: passers-by
-    and crowds in the prompt); characters doing something, often small in
-    the frame or from behind, never posed or looking at the viewer; wide
-    shots of the place, action at medium, a detail or an object in
-    close-up, a face only now and then (at most one scene in five); many
-    scenes with no character at all (the place, an object, a symbol, the
-    weather). The prompt's example does this.
-  - **Camera variety:** angles (eye level, high, low, bird's-eye, from
-    behind, over the shoulder, through a window) as a scene's field or in
-    its prompt, the subject's size and place varied (tiny in a wide
-    landscape, off-centre, partly in frame, a detail filling it); two
-    scenes in a row never share both angle and distance.
-  - **Checks on read, never a refusal:** where more than about half the
-    scenes put the same character in the prompt, close-ups dominate, or
-    one angle and distance does, the follow-up asks once to redraw some
-    of them ("these N scenes all show elara posed; rewrite K of them to
-    show the place, an object or an action"), and the patch is merged.
 - **The song's objects in the game, not in the story:** a few objects
   per song (from the look's motifs) replacing the game's generic
   graphics where it already puts things: the coin out of a word hit,

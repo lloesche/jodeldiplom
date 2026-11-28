@@ -8,13 +8,16 @@
 //! (`super::check::Read::settle`). A scene of the very same words as an
 //! earlier one drawn anew is asked about too, by itself if nothing else
 //! is (whether it shows that one's picture again: a follow-up costs a few
-//! seconds, a picture far more).
+//! seconds, a picture far more), and so is a storyboard that reads as a
+//! portrait session: some of its scenes rewritten whole, in one question
+//! of all that was found ([`redraw`] of [`posed`], [`close`],
+//! [`camera`]), answered by every rewritten scene in the patch.
 
 use serde_json::Value;
 
 use super::repair;
 use super::rules::{nearest, PROMPT_WORDS};
-use super::Style;
+use super::{Angle, Shot, Style};
 
 /// The most choices a question lists where there are many (the nearest
 /// to what was written); the catalogue in the prompt has the rest.
@@ -69,6 +72,12 @@ pub enum What {
         /// The earlier scene.
         earlier: usize,
     },
+    /// Some of the scenes `scenes` (their places) rewritten as a
+    /// storyboard's shots, the model choosing which.
+    Redraw {
+        /// The scenes it may rewrite.
+        scenes: Vec<usize>,
+    },
 }
 
 /// What the follow-up's words begin with (kept in the plan's hash, as it
@@ -87,15 +96,63 @@ pub fn ask(questions: &[Question]) -> String {
     words
 }
 
-/// The answers the follow-up's `answer` gives to `n` questions, in their
+/// The answers the follow-up's `answer` gives to `questions`, in their
 /// order, read forgivingly: the JSON object it holds, each answer by its
 /// number (a key whose first figures are it: `"1"`, `"1."`, `"Q1"`,
 /// `"question 1"`), or a list of them in order; one object or list
 /// wrapping it all taken as it; a value that is an object of one field
 /// taken as that field's value; none where it gives none (or holds no
-/// JSON). What was mended is said in `notes`.
-pub fn answers(answer: &str, n: usize, notes: &mut Vec<String>) -> Vec<Option<Value>> {
-    let mut patch = repair::any(answer, notes);
+/// JSON). The storyboard's question ([`What::Redraw`]) is answered by
+/// every rewritten scene in the patch wherever it sits ([`scene_shaped`]:
+/// a model numbers them as it likes, one key a scene, or a bare list),
+/// as a list; the other questions never by a rewritten scene. What was
+/// mended is said in `notes`.
+pub fn answers(
+    answer: &str,
+    questions: &[Question],
+    notes: &mut Vec<String>,
+) -> Vec<Option<Value>> {
+    let patch = repair::any(answer, notes);
+    let mut scenes = Vec::new();
+    if let Some(patch) = &patch {
+        rewritten(patch, 3, &mut scenes);
+    }
+    let mut held = Vec::new();
+    let numbered = numbered(patch, questions.len());
+    (questions.iter().zip(numbered))
+        .map(|(q, by_number)| match q.what {
+            What::Redraw { .. } => (!scenes.is_empty()).then(|| Value::Array(scenes.clone())),
+            _ => by_number.filter(|v| {
+                held.clear();
+                rewritten(v, 1, &mut held);
+                held.is_empty()
+            }),
+        })
+        .collect()
+}
+
+/// The rewritten scenes in `value` ([`scene_shaped`]), `depth` levels of
+/// lists and objects down at most, in order, into `scenes`.
+fn rewritten(value: &Value, depth: usize, scenes: &mut Vec<Value>) {
+    if scene_shaped(value) {
+        scenes.push(value.clone());
+        return;
+    }
+    let inner: Vec<&Value> = match value {
+        Value::Array(items) => items.iter().collect(),
+        Value::Object(fields) => fields.values().collect(),
+        _ => Vec::new(),
+    };
+    if depth > 0 {
+        for v in inner {
+            rewritten(v, depth - 1, scenes);
+        }
+    }
+}
+
+/// The answers of a `patch` to `n` questions by their numbers (see
+/// [`answers`]).
+fn numbered(mut patch: Option<Value>, n: usize) -> Vec<Option<Value>> {
     if let Some(Value::Object(one)) = &patch {
         // One field not named by a number, holding the answers.
         let wrapped = (one.iter().next())
@@ -293,6 +350,139 @@ pub fn reuse(
     }
 }
 
+/// What a storyboard's question asks for after what it found: the scenes
+/// rewritten whole, and how they are answered.
+const REDRAW: &str = "Rewrite them whole as a storyboard's shots: something happening in a \
+    place, often with other people around; a character doing something, small in the frame or \
+    seen from behind, never posed or looking at the viewer, or no character at all (the place, \
+    an object, the weather); each from another angle and distance than the scenes before and \
+    after it. Answer a list of the scenes rewritten, each {\"scene\": its number, \"shot\": \
+    \"...\", \"angle\": \"...\", \"characters\": [], \"shows\": \"...\", \"prompt\": \"...\"}.";
+
+/// The fields a rewritten scene is told by: an answer's object holding one
+/// of them is a scene ([`scene_shaped`]); no other question's answer is.
+const SCENE_SHAPED: [&str; 4] = ["prompt", "shows", "shot", "angle"];
+
+/// The fields a rewritten scene names itself by.
+const SCENE_NUMBER: [&str; 4] = ["scene", "number", "place", "index"];
+
+/// Whether `value` is a rewritten scene: an object with one of
+/// [`SCENE_SHAPED`]'s fields and its number ([`SCENE_NUMBER`]), or two of
+/// them at least (one alone, `{"prompt": "…"}`, is another question's
+/// answer: a prompt asked for).
+fn scene_shaped(value: &Value) -> bool {
+    value.as_object().is_some_and(|o| {
+        let shaped = SCENE_SHAPED.iter().filter(|f| o.contains_key(**f)).count();
+        let numbered = SCENE_NUMBER.iter().any(|f| o.contains_key(*f));
+        shaped >= 2 || (shaped == 1 && numbered)
+    })
+}
+
+/// The scenes as a question names them, by the model's own numbers (`at`,
+/// their places in its answer from 0, said from 1): `Scenes 1, 2 and 4`.
+fn scenes_named(at: &[usize]) -> String {
+    let all: Vec<String> = at.iter().map(|k| (k + 1).to_string()).collect();
+    match all.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("Scenes {} and {last}", rest.join(", ")),
+        _ => format!("Scene {}", all.join("")),
+    }
+}
+
+/// What a storyboard's look at its scenes found: the scenes that share
+/// something (their places among the scenes read, and the model's own
+/// numbers for them), in words what they share and what some of them
+/// could show instead, and how many of them to rewrite.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Finding {
+    /// The scenes (their places among the scenes read).
+    pub scenes: Vec<usize>,
+    /// What they share and what to show instead, in words.
+    pub says: String,
+    /// How many of them to rewrite.
+    pub k: usize,
+}
+
+impl Finding {
+    /// The `scenes` (each its place and the model's number for it) that
+    /// share what `share` says, `k` of them to show what `instead` says.
+    fn new(scenes: &[(usize, usize)], share: &str, k: usize, instead: &str) -> Finding {
+        let at: Vec<usize> = scenes.iter().map(|&(_, at)| at).collect();
+        Finding {
+            scenes: scenes.iter().map(|&(k, _)| k).collect(),
+            says: format!(
+                "{} {share} ({k} of them could {instead})",
+                scenes_named(&at)
+            ),
+            k,
+        }
+    }
+}
+
+/// The `scenes` (each its place and the model's number) where the
+/// character `name` could read as a portrait: `k` of them to show
+/// something else.
+pub fn posed(name: &str, scenes: &[(usize, usize)], k: usize) -> Finding {
+    let share = format!("show \"{name}\" near and facing us");
+    let instead = format!(
+        "show the place, an object or an action, \"{name}\" small in the frame, seen from \
+         behind, or not there"
+    );
+    Finding::new(scenes, &share, k, &instead)
+}
+
+/// The `scenes` that are all close-ups: `k` of them to show from further
+/// away.
+pub fn close(scenes: &[(usize, usize)], k: usize) -> Finding {
+    let instead = "be a wide shot of the place or a medium shot of an action";
+    Finding::new(scenes, "are all close-ups", k, instead)
+}
+
+/// The `scenes` that all share the shot `shot` and the angle `angle`: `k`
+/// of them to show from another.
+pub fn camera(shot: Shot, angle: Angle, scenes: &[(usize, usize)], k: usize) -> Finding {
+    let share = format!(
+        "are all {} shots at the angle \"{}\"",
+        shot.name(),
+        angle.name()
+    );
+    let angles = quoted(Angle::ALL.iter().map(|a| a.name()));
+    let instead = format!("be seen from another distance and angle (one of {angles})");
+    Finding::new(scenes, &share, k, &instead)
+}
+
+/// The storyboard's one question of what was `found` (one finding at
+/// least) among the `drawn` scenes drawn: as many of the scenes found as
+/// the most any finding asks, rewritten (asked once, so that the
+/// rewrites never pull against each other).
+pub fn redraw(found: &[Finding], drawn: usize) -> Question {
+    let mut scenes: Vec<usize> = found.iter().flat_map(|f| f.scenes.clone()).collect();
+    scenes.sort_unstable();
+    scenes.dedup();
+    let k = (found.iter().map(|f| f.k).max().unwrap_or(1)).min(scenes.len());
+    let says: Vec<&str> = found.iter().map(|f| f.says.as_str()).collect();
+    Question {
+        asks: format!(
+            "Of the {drawn} scenes drawn, the storyboard reads as a portrait session: {}. \
+             Choose {k} of these scenes and rewrite them. {REDRAW}",
+            says.join("; ")
+        ),
+        what: What::Redraw { scenes },
+    }
+}
+
+/// Every word the storyboard's question can be asked with, as one text
+/// (kept in the plan's hash, as it changes what is answered): the
+/// question of one of each finding.
+pub fn board_words() -> String {
+    let one = [(0, 0)];
+    let found = [
+        posed("name", &one, 1),
+        close(&one, 1),
+        camera(Shot::Medium, Angle::EyeLevel, &one, 1),
+    ];
+    redraw(&found, 1).asks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,20 +497,65 @@ mod tests {
         assert!(words.contains("\n1. The art style \"fresco\" is not one of the styles"));
         assert!(words.contains("\n2. The pass \"lazer\" to add is not in the catalogue: which is it? One of \"laser\", \"grain\""));
         let mut notes = Vec::new();
+        let three = [
+            style("fresco"),
+            pass(0, "lazer", &["laser"]),
+            preset("x", "", &[]),
+        ];
         let got = answers(
             "```json\n{\"1\": \"watercolor\", \"2\": {\"pass\": \"laser\"},}\n```",
-            3,
+            &three,
             &mut notes,
         );
         assert_eq!(got, [Some("watercolor".into()), Some("laser".into()), None]);
         assert!(notes.iter().any(|n| n.contains("a comma too many")));
-        assert_eq!(answers("I cannot say.", 2, &mut notes), [None, None]);
+        assert_eq!(
+            answers("I cannot say.", &questions, &mut notes),
+            [None, None]
+        );
         // Keys with their numbers in them, a wrapping object, a list.
         let keyed = "{\"answers\": {\"1.\": 7, \"Q2\": \"ink wash\", \"question 3\": true}}";
         let want = [Some(7.into()), Some("ink wash".into()), Some(true.into())];
-        assert_eq!(answers(keyed, 3, &mut notes), want);
-        assert_eq!(answers("[7, \"ink wash\", true]", 3, &mut notes), want);
+        assert_eq!(answers(keyed, &three, &mut notes), want);
+        assert_eq!(answers("[7, \"ink wash\", true]", &three, &mut notes), want);
         assert_eq!(figures("scene 12"), Some(12));
+    }
+
+    /// The storyboard's question is answered by every rewritten scene in
+    /// the patch, wherever it sits: one key a scene (the numbers the
+    /// model's own), a bare list, a list under the question's number; the
+    /// other questions never by a scene, and still by their numbers.
+    #[test]
+    fn every_rewritten_scene_answers_the_storyboard_s_question() {
+        let questions = [
+            style("fresco"),
+            redraw(&[close(&[(0, 0), (1, 1), (2, 2)], 2)], 3),
+        ];
+        let scene = |n: usize| serde_json::json!({"scene": n, "prompt": format!("p{n}")});
+        let all = Some(Value::Array(vec![scene(1), scene(2), scene(5)]));
+        let mut notes = Vec::new();
+        for patch in [
+            r#"{"1": {"scene": 1, "prompt": "p1"}, "2": {"scene": 2, "prompt": "p2"}, "3": {"scene": 5, "prompt": "p5"}}"#,
+            r#"[{"scene": 1, "prompt": "p1"}, {"scene": 2, "prompt": "p2"}, {"scene": 5, "prompt": "p5"}]"#,
+            r#"{"1": "ink wash", "2": [{"scene": 1, "prompt": "p1"}, {"scene": 2, "prompt": "p2"}, {"scene": 5, "prompt": "p5"}]}"#,
+        ] {
+            let got = answers(patch, &questions, &mut notes);
+            assert_eq!(got[1], all, "{patch}");
+            let style = got[0].clone();
+            assert!(
+                style.is_none() || style == Some("ink wash".into()),
+                "{patch}"
+            );
+        }
+        assert_eq!(
+            answers("{\"1\": \"gouache painting\"}", &questions, &mut notes)[1],
+            None
+        );
+        // A prompt asked for, in an object of its one field: that
+        // question's answer, never a rewritten scene.
+        let both = [prompt(0, "", "", None), questions[1].clone()];
+        let got = answers("{\"1\": {\"prompt\": \"A quay\"}}", &both, &mut notes);
+        assert_eq!(got, [Some("A quay".into()), None]);
     }
 
     /// The few choices listed are the nearest to what was written.

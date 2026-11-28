@@ -1,9 +1,11 @@
 //! What the image model (FLUX.2 [klein] 4B) is asked for a plan's
-//! pictures ([`pictures`]): a portrait of each character, from its looks
-//! in the plan's art style, then a picture of each scene drawn (a scene
-//! shown again takes the picture of the one it shows), from its prompt
-//! with the characters named by their looks, its shot and the style, the
-//! portraits of the characters seen as its reference pictures. Every
+//! pictures ([`pictures`]): a neutral reference portrait of each
+//! character, from its looks in the plan's art style, then a picture of
+//! each scene drawn (a scene shown again takes the picture of the one it
+//! shows), from the style, its shot and angle and its prompt with the
+//! characters named by their looks, the portraits of the characters seen
+//! as its reference pictures for who they are, never for how they stand
+//! (klein copies a reference's pose, framing and expression). Every
 //! prompt ends asking for one single picture ([`ONE_PICTURE`]) and no text
 //! at all ([`NO_TEXT`]): the model is distilled and takes no negative
 //! prompt, so the wishes go in the prompt itself. The no-text wording is
@@ -21,6 +23,23 @@ pub const ONE_PICTURE: &str =
 /// What every prompt ends with: nothing written in the picture.
 pub const NO_TEXT: &str = "Pure picture with no text anywhere: no writing, no letters, no words, \
                            no numbers, no captions, no logos, no watermark.";
+
+/// What a character's portrait is: a reference for who it is, nothing
+/// more. klein copies a reference picture's pose, framing and expression
+/// into the scenes, so the portrait has none of its own ([`REFERENCE_POSE`]).
+pub const REFERENCE_PORTRAIT: &str = "neutral reference portrait";
+
+/// How a portrait shows its character: facing the viewer, a neutral
+/// expression, a plain background, no props, no action.
+pub const REFERENCE_POSE: &str = "head and shoulders, facing the viewer, neutral expression, \
+    mouth closed, arms down, nothing in the hands, plain light grey background";
+
+/// What a scene takes of a reference picture: who the person is (as
+/// FLUX.2's guide has it, "the person from image 1"), not the pose,
+/// framing or expression of the picture.
+pub const IDENTITY: &str = "the same face, hair and clothes, in the pose and action described \
+    here, caught in the middle of it like a candid film still, not posing, not looking at the \
+    camera";
 
 /// A portrait's size: square, the size klein draws best at (the
 /// bake-off's), its head then taken as a scene's reference picture.
@@ -44,6 +63,11 @@ const STYLE_KEYWORDS: usize = 2;
 /// The parts of a character's looks that name it in a prompt (the first:
 /// who it is and its age).
 const SHORT_LOOKS: usize = 2;
+
+/// The words of a character's looks a scene's prompt repeats, at most
+/// (its reference picture shows the rest): with three characters seen,
+/// the prompt still fits the text encoder's tokens.
+pub const SCENE_LOOKS: usize = 16;
 
 /// What the image model is asked for one picture: its prompt, its size,
 /// and the portraits it takes as its reference pictures, in order (a
@@ -77,8 +101,7 @@ pub fn pictures(plan: &Plan) -> Pictures {
     let portraits = (plan.characters.iter())
         .map(|c| Ask {
             prompt: format!(
-                "{style}, portrait of {}, head and shoulders, facing the viewer, plain soft background. \
-                 {ONE_PICTURE} {NO_TEXT}",
+                "{style}, {REFERENCE_PORTRAIT} of {}, {REFERENCE_POSE}. {ONE_PICTURE} {NO_TEXT}",
                 clause(&c.looks)
             ),
             size: PORTRAIT,
@@ -103,29 +126,45 @@ pub fn pictures(plan: &Plan) -> Pictures {
     }
 }
 
-/// The picture of `scene`, in `style`: its prompt with the characters
-/// named by their looks, its shot, the style, the looks of those seen,
-/// then which reference picture each of the first of them is.
+/// The picture of `scene`, in `style`: the style, its shot and angle, its
+/// prompt with the characters named by their looks, the looks of those
+/// seen, then which reference picture each of the first of them is, in
+/// one sentence (who they are, not how they stand: [`IDENTITY`], said
+/// once: the text encoder reads 512 tokens at most, and what is past them,
+/// the wishes at the end, would be lost).
 fn scene(plan: &Plan, style: &str, scene: &Scene) -> Ask {
     let seen: Vec<(usize, &Character)> = (scene.characters.iter())
         .filter_map(|name| (plan.characters.iter().enumerate()).find(|(_, c)| c.name == *name))
         .collect();
     let named = named(&scene.prompt, plan);
-    let shot = format!("{} shot", scene.shot.name());
-    let mut parts = vec![style, named.as_str(), shot.as_str()];
-    parts.extend(seen.iter().map(|(_, c)| c.looks.as_str()));
+    let mut parts = vec![
+        style,
+        scene.shot.words(),
+        scene.angle.words(),
+        named.as_str(),
+    ];
+    let looks: Vec<String> = (seen.iter())
+        .map(|(_, c)| {
+            let words: Vec<&str> = clause(&c.looks).split_whitespace().collect();
+            words[..words.len().min(SCENE_LOOKS)].join(" ")
+        })
+        .collect();
+    parts.extend(looks.iter().map(String::as_str));
     let described: Vec<&str> = (parts.into_iter().map(clause))
         .filter(|p| !p.is_empty())
         .collect();
     let refs: Vec<(usize, &Character)> = seen.into_iter().take(MOST_REFERENCES).collect();
     let mut sentences = vec![format!("{}.", described.join(", "))];
-    sentences.extend(refs.iter().enumerate().map(|(k, (_, c))| {
-        format!(
-            "The {} looks exactly like the person in image {}.",
-            short(&c.looks),
-            k + 1
-        )
-    }));
+    if !refs.is_empty() {
+        let who: Vec<String> = (refs.iter().enumerate())
+            .map(|(k, (_, c))| match k {
+                0 => format!("The {} is the person from image 1", short(&c.looks)),
+                _ => format!("the {} the person from image {}", short(&c.looks), k + 1),
+            })
+            .collect();
+        let each = if refs.len() > 1 { "each with " } else { "" };
+        sentences.push(format!("{}: {each}{IDENTITY}.", who.join(", ")));
+    }
     sentences.push(ONE_PICTURE.to_owned());
     sentences.push(NO_TEXT.to_owned());
     Ask {
@@ -258,9 +297,10 @@ mod tests {
             portraits[0].prompt,
             format!(
                 "watercolor painting, soft washes, paper texture, loose brush strokes, watercolor, \
-                 soft washes, portrait of Woman, late 20s, slender, long dark hair, yellow raincoat, \
-                 head and shoulders, facing the viewer, plain soft background. {ONE_PICTURE} \
-                 {NO_TEXT}"
+                 soft washes, neutral reference portrait of Woman, late 20s, slender, long dark \
+                 hair, yellow raincoat, head and shoulders, facing the viewer, neutral expression, \
+                 mouth closed, arms down, nothing in the hands, plain light grey background. \
+                 {ONE_PICTURE} {NO_TEXT}"
             )
         );
         let two = &scenes[1];
@@ -269,14 +309,19 @@ mod tests {
             two.prompt,
             format!(
                 "watercolor painting, soft washes, paper texture, loose brush strokes, watercolor, \
-                 soft washes, Rain-soaked quay in the afternoon, the man, late 20s running toward \
-                 the woman, late 20s with his coat open, both laughing, puddles in front, low \
-                 clouds over the sea, medium shot, Woman, late 20s, slender, long dark hair, \
-                 yellow raincoat, Man, late 20s, tall, curly red hair, open navy coat. The woman, \
-                 late 20s looks exactly like the person in image 1. The man, late 20s looks \
-                 exactly like the person in image 2. {ONE_PICTURE} {NO_TEXT}"
+                 soft washes, medium shot, camera at eye level, Rain-soaked quay in the afternoon, \
+                 the man, late 20s running toward the woman, late 20s with his coat open, both \
+                 laughing, puddles in front, low clouds over the sea, Woman, late 20s, slender, \
+                 long dark hair, yellow raincoat, Man, late 20s, tall, curly red hair, open navy \
+                 coat. The woman, late 20s is the person from image 1, the man, late 20s the \
+                 person from image 2: each with {IDENTITY}. {ONE_PICTURE} {NO_TEXT}"
             )
         );
+        // The camera's distance and angle lead, after the style.
+        assert!(scenes[2].prompt.contains(
+            "wide shot of the whole place, any people small in it, bird's-eye view from straight \
+             above, Wide dark sea"
+        ));
         // A scene with no one in it takes no portrait.
         assert!(scenes[2].refs.is_empty());
         let every = portraits.iter().chain(&scenes);

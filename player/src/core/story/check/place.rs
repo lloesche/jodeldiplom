@@ -1,8 +1,100 @@
 //! The scenes placed on the song's lines by their first lines alone
 //! ([`place`]: for now, what is asked kept; [`for_good`]: once the
-//! follow-up settled it), so that every line is in one scene.
+//! follow-up settled it), so that every line is in one scene; first lines
+//! written as times read as the lines sung then ([`by_the_clock`]).
 
-use super::Drafted;
+use super::{Again, Drafted};
+
+/// The line a first line `written` names, of a song of `n` lines: a whole
+/// number among them.
+fn line(written: f64, n: usize) -> Option<usize> {
+    (written.fract() == 0.0 && written >= 0.0 && written < n as f64).then_some(written as usize)
+}
+
+/// Where `scenes` start, read by `read` from each scene and its first line
+/// written: the first at line 0, each other where `read` puts it past
+/// line 0 (none where it is nowhere).
+fn firsts(scenes: &[Drafted], read: impl Fn(&Drafted, f64) -> Option<usize>) -> Vec<Option<usize>> {
+    (scenes.iter().enumerate())
+        .map(|(k, s)| match k {
+            0 => Some(0),
+            _ => s.written.and_then(|w| read(s, w)).filter(|&l| l > 0),
+        })
+        .collect()
+}
+
+/// `scenes`' first lines (and the scenes they show again) read as times
+/// where the model went by the clock, each as the line of `starts` (the
+/// song's lines' starts) starting nearest that time, said in `notes`:
+/// for certain where it wrote them as minutes:seconds (`"1:32"`, as the
+/// prompt tells the times); for the numbers, where two of them or more
+/// are no line of the song (past its last) but within its length (`end`,
+/// seconds), and read as seconds more of the scenes go up in order
+/// ([`rising`]) than read as lines. A plan by lines whose last scenes
+/// overshoot stands almost whole as lines (they are asked where they
+/// start), while seconds collapse it onto a few lines.
+pub(super) fn by_the_clock(
+    scenes: &mut [Drafted],
+    starts: &[f64],
+    end: f64,
+    notes: &mut Vec<String>,
+) {
+    let n = starts.len();
+    let nearest = |w: f64| {
+        (0..n)
+            .min_by(|&a, &b| (starts[a] - w).abs().total_cmp(&(starts[b] - w).abs()))
+            .unwrap_or(0)
+    };
+    let mut timed = Vec::new();
+    for s in scenes.iter_mut() {
+        if let Some(t) = s.times.0 {
+            let line = nearest(t);
+            timed.push(format!("{t} s line {line}"));
+            s.written = Some(line as f64);
+        }
+        if let Some(t) = s.times.1 {
+            s.same_as = Some(Again::Written(nearest(t) as i64));
+        }
+    }
+    if !timed.is_empty() {
+        notes.push(format!(
+            "first lines written as minutes:seconds read as the lines sung then: {}",
+            timed.join(", ")
+        ));
+    }
+    let past: Vec<f64> = (scenes.iter())
+        .filter(|s| s.times.0.is_none())
+        .filter_map(|s| s.written.filter(|&w| w >= n as f64 && w <= end))
+        .collect();
+    let [seconds, _, ..] = past[..] else {
+        return;
+    };
+    let as_lines = rising(&firsts(scenes, |_, w| line(w, n))).len();
+    let as_times = firsts(scenes, |s, w| match s.times.0 {
+        Some(_) => line(w, n),
+        None => (w >= 0.0 && w <= end).then(|| nearest(w)),
+    });
+    if rising(&as_times).len() <= as_lines {
+        return;
+    }
+    let mut read = Vec::new();
+    for s in scenes.iter_mut() {
+        if let Some(w) = s.written.filter(|_| s.times.0.is_none()) {
+            let line = nearest(w);
+            read.push(format!("{w} s line {line}"));
+            s.written = Some(line as f64);
+        }
+        // The scene it shows again is named by its first line too.
+        if let (Some(Again::Written(w)), None) = (s.same_as, s.times.1) {
+            s.same_as = Some(Again::Written(nearest(w as f64) as i64));
+        }
+    }
+    notes.push(format!(
+        "the scenes' first lines read as seconds ({seconds} is no line, within the song's \
+         {end:.0} s): {}",
+        read.join(", ")
+    ));
+}
 
 /// `scenes` placed on the song's `n` lines: the first at line 0; the most
 /// of the others whose first lines go up in order (each a line of the
@@ -13,22 +105,13 @@ use super::Drafted;
 /// there left out, their lines shown by the scene before (said in
 /// `notes`).
 pub(super) fn place(scenes: &mut Vec<Drafted>, n: usize, notes: &mut Vec<String>) {
-    let line = |w: Option<f64>| {
-        w.filter(|w| w.fract() == 0.0 && *w >= 0.0 && *w < n as f64)
-            .map(|w| w as usize)
-    };
     if scenes[0].written != Some(0.0) {
         notes.push(format!(
             "the first scene starts at line 0 (written: {:?})",
             scenes[0].written
         ));
     }
-    let starts: Vec<Option<usize>> = (scenes.iter().enumerate())
-        .map(|(k, s)| match k {
-            0 => Some(0),
-            _ => line(s.written).filter(|&l| l > 0),
-        })
-        .collect();
+    let starts = firsts(scenes, |_, w| line(w, n));
     let standing = rising(&starts);
     let m = scenes.len();
     let mut out = vec![false; m];

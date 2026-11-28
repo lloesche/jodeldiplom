@@ -63,7 +63,7 @@ use gpu::Tiles;
 pub use drawer::{Drawer, Part, Picture, Reference, PIPELINE_FILES, STEPS, TRANSFORMER_FILES};
 pub use encoder::{Embeds, TextEncoder, ENCODER_FILES};
 pub use sampling::{noise, schedule};
-pub use text::Tokenizer;
+pub use text::{Tokenizer, TOKENS};
 
 /// The kernels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

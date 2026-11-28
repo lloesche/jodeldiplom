@@ -8,7 +8,7 @@ use super::super::cast;
 use super::super::follow::figures;
 use super::super::repair::{list, number, text};
 use super::super::rules::{self, CHARACTERS, KEYWORDS, MOTIFS, PALETTE};
-use super::super::{Character, Confidence, Rgb, Shot, Style};
+use super::super::{Angle, Character, Confidence, Rgb, Shot, Style};
 use super::{ArtRead, Drafted};
 
 /// Words that ask for text in a picture (whole words, case ignored): the
@@ -43,7 +43,7 @@ pub(super) const FIELDS: [&str; 5] = ["story", "characters", "scenes", "art", "s
 /// A scene's fields (with those its first line is looked for in, and
 /// `last_line`, which older answers wrote and the scenes' first lines
 /// make needless: passed over).
-const SCENE_FIELDS: [&str; 11] = [
+const SCENE_FIELDS: [&str; 12] = [
     "first_line",
     "start_line",
     "line",
@@ -51,6 +51,7 @@ const SCENE_FIELDS: [&str; 11] = [
     "same_as",
     "section",
     "shot",
+    "angle",
     "characters",
     "shows",
     "prompt",
@@ -133,10 +134,23 @@ pub(super) fn characters(value: Option<&Value>, notes: &mut Vec<String>) -> Vec<
     kept
 }
 
+/// A time written as the prompt tells them, minutes:seconds (`"1:32"`):
+/// its seconds.
+fn clock(written: &str) -> Option<f64> {
+    let (m, s) = written.trim().split_once(':')?;
+    let digits = |t: &str| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit());
+    (digits(m) && s.len() == 2 && digits(s)).then(|| {
+        let (m, s): (f64, f64) = (m.parse().unwrap_or(0.0), s.parse().unwrap_or(0.0));
+        m * 60.0 + s
+    })
+}
+
 /// A scene's `fields` read (the `at`th the model wrote): its first line (as a number, the first
-/// figures of a string, or the first of a list), its characters among
-/// `characters` (a name no one described dropped, a name twice once),
-/// each mending said in `notes`.
+/// figures of a string, or the first of a list; a time written as
+/// minutes:seconds kept as that time, for the line sung then: see
+/// [`super::place::by_the_clock`]), the scene it shows again (the same),
+/// its characters among `characters` (a name no one described dropped, a
+/// name twice once), each mending said in `notes`.
 pub(super) fn scene(
     fields: &Map<String, Value>,
     at: usize,
@@ -144,13 +158,45 @@ pub(super) fn scene(
     notes: &mut Vec<String>,
 ) -> Drafted {
     unknown(fields, &SCENE_FIELDS, "a scene", notes);
-    let written = FIRST_LINE.iter().find_map(|key| match fields.get(*key) {
-        Some(Value::Array(items)) => number(items.first()),
-        Some(Value::String(s)) => figures(s).map(|n| n as f64),
-        other => number(other),
+    // Each first line as written, and whether it was a time.
+    let first = FIRST_LINE.iter().find_map(|key| match fields.get(*key) {
+        Some(Value::Array(items)) => number(items.first()).map(|n| (n, false)),
+        Some(Value::String(s)) => {
+            (clock(s).map(|t| (t, true))).or_else(|| figures(s).map(|n| (n as f64, false)))
+        }
+        other => number(other).map(|n| (n, false)),
     });
+    let written = first.map(|(n, _)| n);
+    let first_time = first.filter(|(_, time)| *time).map(|(t, _)| t);
+    let again = fields.get("same_as");
+    let again_time = again.and_then(Value::as_str).and_then(clock);
+    let same_as = (again_time.or(number(again))).map(|l| super::Again::Written(l.round() as i64));
+    Drafted {
+        at,
+        written,
+        times: (first_time, again_time),
+        first: 0,
+        standing: false,
+        bounds: None,
+        same_as,
+        section: text(fields.get("section")).unwrap_or_default(),
+        shot: shot(text(fields.get("shot")).as_deref(), notes),
+        angle: angle(text(fields.get("angle")).as_deref(), notes),
+        characters: seen(fields.get("characters"), characters, notes),
+        shows: text(fields.get("shows")).unwrap_or_default(),
+        prompt: text(fields.get("prompt")).unwrap_or_default(),
+    }
+}
+
+/// The characters a scene's `value` lists, among `characters`: a name no
+/// one described dropped, a name twice once (each said in `notes`).
+pub(super) fn seen(
+    value: Option<&Value>,
+    characters: &[Character],
+    notes: &mut Vec<String>,
+) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
-    for v in list(fields.get("characters")) {
+    for v in list(value) {
         let Some(written) = text(Some(&v)) else {
             continue;
         };
@@ -163,26 +209,13 @@ pub(super) fn scene(
             seen.push(name);
         }
     }
-    let same_as = number(fields.get("same_as")).map(|l| super::Again::Written(l.round() as i64));
-    Drafted {
-        at,
-        written,
-        first: 0,
-        standing: false,
-        bounds: None,
-        same_as,
-        section: text(fields.get("section")).unwrap_or_default(),
-        shot: shot(text(fields.get("shot")).as_deref(), notes),
-        characters: seen,
-        shows: text(fields.get("shows")).unwrap_or_default(),
-        prompt: text(fields.get("prompt")).unwrap_or_default(),
-    }
+    seen
 }
 
 /// The shot `written`: by its name, a close one or a far one by what it
 /// says, else medium (said in `notes`, but where it is its name or none
 /// is written).
-fn shot(written: Option<&str>, notes: &mut Vec<String>) -> Shot {
+pub(super) fn shot(written: Option<&str>, notes: &mut Vec<String>) -> Shot {
     let Some(written) = written.filter(|w| !w.is_empty()) else {
         return Shot::Medium;
     };
@@ -205,6 +238,39 @@ fn shot(written: Option<&str>, notes: &mut Vec<String>) -> Shot {
     };
     notes.push(format!("the shot {w:?} taken as {:?}", shot.name()));
     shot
+}
+
+/// The angle `written`: by its name, else by the whole words it says
+/// ("aerial" is bird's-eye, "worm's-eye" low, "back view" from behind,
+/// ...; never "low" in "yellow" or "back" in "background"), else eye
+/// level (said in `notes`, but where it is its name or none is written).
+pub(super) fn angle(written: Option<&str>, notes: &mut Vec<String>) -> Angle {
+    let Some(written) = written.filter(|w| !w.is_empty()) else {
+        return Angle::EyeLevel;
+    };
+    let w = written.to_lowercase();
+    if let Some(named) = Angle::ALL.into_iter().find(|a| a.name() == w) {
+        return named;
+    }
+    let all: Vec<&str> = w.split(|c: char| !c.is_alphanumeric()).collect();
+    let says = |words: &[&str]| words.iter().any(|word| all.contains(word));
+    let angle = if says(&["bird", "birds", "aerial", "overhead", "top", "above"]) {
+        Angle::BirdsEye
+    } else if says(&["shoulder"]) {
+        Angle::OverTheShoulder
+    } else if says(&["window", "doorway", "through"]) {
+        Angle::ThroughAWindow
+    } else if says(&["behind", "back"]) {
+        Angle::FromBehind
+    } else if says(&["low", "worm", "below"]) {
+        Angle::Low
+    } else if says(&["high"]) {
+        Angle::High
+    } else {
+        Angle::EyeLevel
+    };
+    notes.push(format!("the angle {w:?} taken as {:?}", angle.name()));
+    angle
 }
 
 /// The art in `value`, a field missing its default, the style as written

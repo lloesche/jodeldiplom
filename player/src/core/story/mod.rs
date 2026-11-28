@@ -310,8 +310,9 @@ pub struct Character {
 /// (from its first line's start, the first scene's from the song's start,
 /// to the next scene's start, the last one's to the song's end), the
 /// earlier scene whose picture it shows again (a section that comes back:
-/// nothing new drawn for it), the song's section it is in, its shot, the
-/// characters seen (those its prompt names), what it shows and its
+/// nothing new drawn for it), the song's section it is in, its shot and
+/// its camera's angle, the characters seen (those its prompt names), what
+/// it shows (an event: something that happens or changes) and its
 /// picture's prompt.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Scene {
@@ -330,6 +331,8 @@ pub struct Scene {
     pub section: String,
     /// Its shot.
     pub shot: Shot,
+    /// Where its camera looks from.
+    pub angle: Angle,
     /// The characters seen, by name.
     pub characters: Vec<String>,
     /// What it shows, a sentence.
@@ -351,12 +354,86 @@ pub enum Shot {
 }
 
 impl Shot {
-    /// Its name, as the model writes it and the image model is told it.
+    /// Its name, as the model writes it.
     pub fn name(self) -> &'static str {
         match self {
             Shot::Wide => "wide",
             Shot::Medium => "medium",
             Shot::CloseUp => "close-up",
+        }
+    }
+
+    /// The words that tell the image model how near the camera is.
+    pub fn words(self) -> &'static str {
+        match self {
+            Shot::Wide => "wide shot of the whole place, any people small in it",
+            Shot::Medium => "medium shot",
+            Shot::CloseUp => "close-up",
+        }
+    }
+}
+
+/// Where a scene's camera looks from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Angle {
+    /// At the height of the eyes.
+    #[serde(rename = "eye level")]
+    EyeLevel,
+    /// From above.
+    #[serde(rename = "high")]
+    High,
+    /// From below.
+    #[serde(rename = "low")]
+    Low,
+    /// Straight down from high above.
+    #[serde(rename = "bird's-eye")]
+    BirdsEye,
+    /// From behind the people in it.
+    #[serde(rename = "from behind")]
+    FromBehind,
+    /// Over someone's shoulder.
+    #[serde(rename = "over the shoulder")]
+    OverTheShoulder,
+    /// From outside, through a window.
+    #[serde(rename = "through a window")]
+    ThroughAWindow,
+}
+
+impl Angle {
+    /// Every angle.
+    pub const ALL: [Angle; 7] = [
+        Angle::EyeLevel,
+        Angle::High,
+        Angle::Low,
+        Angle::BirdsEye,
+        Angle::FromBehind,
+        Angle::OverTheShoulder,
+        Angle::ThroughAWindow,
+    ];
+
+    /// Its name, as the model writes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Angle::EyeLevel => "eye level",
+            Angle::High => "high",
+            Angle::Low => "low",
+            Angle::BirdsEye => "bird's-eye",
+            Angle::FromBehind => "from behind",
+            Angle::OverTheShoulder => "over the shoulder",
+            Angle::ThroughAWindow => "through a window",
+        }
+    }
+
+    /// The words that tell the image model where the camera is.
+    pub fn words(self) -> &'static str {
+        match self {
+            Angle::EyeLevel => "camera at eye level",
+            Angle::High => "high-angle view looking down",
+            Angle::Low => "low-angle view looking up",
+            Angle::BirdsEye => "bird's-eye view from straight above",
+            Angle::FromBehind => "seen from behind, backs to the camera",
+            Angle::OverTheShoulder => "over-the-shoulder view",
+            Angle::ThroughAWindow => "seen from outside through a window",
         }
     }
 }

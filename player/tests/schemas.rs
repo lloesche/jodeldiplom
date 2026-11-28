@@ -465,7 +465,9 @@ fn loudness_files_are_pinned() {
 /// same.
 #[test]
 fn story_plan_files_are_pinned() {
-    use jodeldiplom::core::story::{Art, Character, Confidence, Plan, Rgb, Scene, Shot, Style};
+    use jodeldiplom::core::story::{
+        Angle, Art, Character, Confidence, Plan, Rgb, Scene, Shot, Style,
+    };
     use jodeldiplom::work::story::{from_text, to_text, Kept, VERSION};
     let mut grain = jodel_looks::Layer::of("grain");
     grain.knobs.insert("amount".into(), 0.45);
@@ -488,6 +490,7 @@ fn story_plan_files_are_pinned() {
             same_as: None,
             section: "verse 1".into(),
             shot: Shot::CloseUp,
+            angle: Angle::OverTheShoulder,
             characters: vec!["narrator".into()],
             shows: "The narrator at the harbour.".into(),
             prompt: "Narrator on a rainy quay at dusk, boats in front, hills behind".into(),

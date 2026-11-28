@@ -17,7 +17,8 @@ impl Read {
     /// ([`follow`]): a scene's first line that fits nowhere, a scene shown
     /// again that names no scene before it, a picture's prompt missing or
     /// asking for writing, the style, the preset or a pass no one knows,
-    /// and each scene of the same words as an earlier one drawn anew.
+    /// each scene of the same words as an earlier one drawn anew, and a
+    /// storyboard that reads as a portrait session ([`Read::board`]).
     pub fn questions(&self) -> Vec<Question> {
         let mut asked = Vec::new();
         let spans = self.spans();
@@ -60,6 +61,7 @@ impl Read {
             }
         }
         asked.extend(self.repeats(&spans));
+        asked.extend(self.board());
         asked
     }
 
@@ -70,9 +72,7 @@ impl Read {
             let words: Vec<String> = self.lines[a..=b].iter().map(|l| plain(l)).collect();
             words.join(" / ")
         };
-        let drawn: Vec<usize> = (0..self.scenes.len())
-            .filter(|&k| self.scenes[k].same_as.is_none())
-            .collect();
+        let drawn = self.drawn();
         let mut asked = Vec::new();
         for (i, &k) in drawn.iter().enumerate() {
             let words = said(spans[k]);
@@ -194,6 +194,7 @@ impl Read {
                     format!("scene {scene} drawn anew (answered {said})")
                 }
             }
+            What::Redraw { ref scenes } => self.redraw(scenes, answered),
         }
     }
 
