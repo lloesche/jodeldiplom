@@ -1,6 +1,6 @@
 //! A song's scenes taken apart ([`take_apart`]): each picture's parts
-//! derived on the GPU ([`SceneNets`]: the two models,
-//! [`super::GpuNets`]'s) and kept, as the last step of the song's story
+//! derived ([`SceneNets`]: the two models on the GPU and the face
+//! detector, [`super::GpuNets`]'s) and kept, as the last step of the song's story
 //! in its preparation (`crate::work::story::worker`); then, as the song
 //! plays, made ready for the backdrop from what is kept ([`prepare`],
 //! each scene's texels, on the processor alone).
@@ -14,15 +14,17 @@ use jodel_gpu::vision::prep::Rgb;
 use jodel_gpu::vision::{Depth, Matte};
 
 use super::split::{derive, Derived};
-use super::{picture_hash, Ready, Scene, SceneStore, Scenes, Story};
+use super::{picture_hash, Face, Ready, Scene, SceneStore, Scenes, Story};
 
-/// What derives a scene's parts on the GPU: the depth and matte models
-/// (or a stand-in), each as the caller holds it.
+/// What derives a scene's parts: the depth and matte models on the GPU
+/// (or a stand-in), each as the caller holds it, and the face detector.
 pub trait SceneNets {
     /// The depth of `picture`.
     fn depth(&self, picture: &Rgb) -> Result<Depth, String>;
     /// The matte of `picture`'s subject.
     fn matte(&self, picture: &Rgb) -> Result<Matte, String>;
+    /// The faces on `picture`, the surest first.
+    fn faces(&self, picture: &RgbImage) -> Vec<Face>;
 }
 
 /// How long deriving a scene's parts took, step by step.
@@ -175,6 +177,11 @@ pub(crate) mod tests {
                     .map(|c| if c[0] > 128 { 1.0 } else { 0.0 })
                     .collect(),
             })
+        }
+
+        /// The built-in detector's, as the scenes on the GPU have them.
+        fn faces(&self, picture: &RgbImage) -> Vec<Face> {
+            super::super::FaceNet::built_in().find(picture)
         }
     }
 

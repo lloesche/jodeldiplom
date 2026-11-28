@@ -12,7 +12,9 @@ use jodel_gpu::vision::prep::Rgb;
 use jodel_gpu::vision::{Depth, Matte};
 use jodel_gpu::{Footprint, GpuDepth, GpuMatte, Kept, OnDevice, Resident};
 
-use super::SceneNets;
+use image::RgbImage;
+
+use super::{Face, FaceNet, SceneNets};
 use crate::setup::Unreadable;
 use crate::work::stages::{self, Stage};
 
@@ -139,5 +141,10 @@ impl SceneNets for GpuNets {
             v.matte.release();
             cut
         })
+    }
+
+    /// The built-in detector's, on the processor.
+    fn faces(&self, picture: &RgbImage) -> Vec<Face> {
+        FaceNet::built_in().find(picture)
     }
 }

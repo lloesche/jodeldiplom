@@ -13,7 +13,7 @@ use std::time::Instant;
 use image::{GrayAlphaImage, LumaA, RgbImage};
 use jodel_gpu::vision::prep::Rgb;
 
-use super::faces::{Face, FaceNet, NEAR_AS_FACE};
+use super::faces::{Face, NEAR_AS_FACE};
 use super::{SceneNets, Took};
 use crate::work::picture::mask::{
     blur, face_rect, fill_rect, grow, joined, median_in, shrink, Size,
@@ -463,7 +463,7 @@ pub fn derive(
     let near = nearness(&nets.depth(&rgb)?);
     took.depth = started.elapsed();
     let started = Instant::now();
-    let heads = heads(&near, &FaceNet::built_in().find(picture));
+    let heads = heads(&near, &nets.faces(picture));
     let flat = flatten(&near, &heads);
     let cuts = layering(&flat, &heads);
     let size = Size::of(near.width, near.height);

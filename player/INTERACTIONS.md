@@ -1173,7 +1173,10 @@ really found, as its workers tell it: never a progress they did not tell.
   did not hold, has no story for good: the game refuses it (K1b). A model
   that fails, or a file not read now, leaves the song without its story
   now: told so (its step says why, "not made now"), and the round after
-  a minute tries it again.
+  a minute tries it again, twice as long each time again for the same
+  lyrics up to a quarter of an hour (other lyrics, or the song made,
+  start afresh); a song resting holds no other off, and a new ask
+  meanwhile is taken up at once.
   - `every_queued_song_is_wanted_for_its_story_once_its_lyrics_are_settled`
   - `a_round_plans_every_song_then_encodes_then_draws_then_takes_apart`,
     `a_round_plans_no_more_songs_than_it_can_draw`,
@@ -1183,7 +1186,10 @@ really found, as its workers tell it: never a progress they did not tell.
     `a_song_is_still_wanted_with_its_very_lyrics`,
     `the_worker_takes_up_the_songs_wanted_in_order_and_their_new_lyrics`,
     `the_worker_gives_up_a_song_no_longer_wanted`,
-    `a_plan_written_again_tells_only_its_words_past_those_told`
+    `a_plan_written_again_tells_only_its_words_past_those_told`,
+    `a_song_not_made_now_rests_and_holds_no_other_off`,
+    `a_song_not_made_now_waits_longer_each_time_again`,
+    `the_worker_takes_up_a_new_ask_while_a_song_rests`
     (`work::story`)
   - `a_song_s_scenes_are_taken_apart_once_and_made_ready_from_what_is_kept`
     (`work::scenes`)

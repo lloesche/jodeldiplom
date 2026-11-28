@@ -47,3 +47,20 @@ opt-level = 3
 # could not keep up.
 [profile.dev.package.jodel-playback]
 opt-level = 3
+
+# Pictures are resized, written as PNGs and read back in the story's and
+# the scenes' tests (each portrait's head a Lanczos resize, every scene a
+# file): unoptimized, the image crate and its PNG codec took most of their
+# time.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3

@@ -15,6 +15,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use jodel_gpu::image::{Embeds, Picture, Reference};
+use jodel_gpu::vision::prep::Rgb;
+use jodel_gpu::vision::{Depth, Matte};
 use jodel_lyrics::{Line as Sung, Source, Word};
 use jodel_testkit::TempDir;
 
@@ -152,11 +154,39 @@ impl Painter for Paints<'_> {
                 go.recv().expect("let go");
             }
         }
+        // A sixteenth of the size asked: the drawing keeps the picture it
+        // is given, and a small one keeps its file, its reading back, its
+        // head's resize and its taking apart cheap (a debug build's PNG of
+        // 1344 × 768 took most of these tests' time).
+        let (width, height) = (width.div_ceil(SMALL), height.div_ceil(SMALL));
         Ok(Picture {
             width,
             height,
             rgb: vec![seed as u8; width * height * 3],
         })
+    }
+}
+
+/// How much smaller the stand-in painter paints than asked.
+const SMALL: usize = 16;
+
+/// The scenes' stand-in nets ([`ByRed`]'s depth and matte) finding no
+/// faces: the built-in face detector is the scenes' own to test, and on
+/// every scene of a round it was most of these tests' time (a debug
+/// build's network on the processor, slower still on a loaded machine).
+struct Faceless(ByRed);
+
+impl scenes::SceneNets for Faceless {
+    fn depth(&self, picture: &Rgb) -> Result<Depth, String> {
+        self.0.depth(picture)
+    }
+
+    fn matte(&self, picture: &Rgb) -> Result<Matte, String> {
+        self.0.matte(picture)
+    }
+
+    fn faces(&self, _: &image::RgbImage) -> Vec<scenes::Face> {
+        Vec::new()
     }
 }
 
@@ -206,7 +236,7 @@ impl Models for Fakes {
     ) -> Result<TakenApart, String> {
         self.up()?;
         self.did("cut".into());
-        scenes::take_apart(scenes, store, &ByRed::default(), still)
+        scenes::take_apart(scenes, store, &Faceless(ByRed::default()), still)
     }
 }
 
@@ -394,8 +424,8 @@ fn round_of(songs: &[StorySong], models: &Fakes, places: &Places, out: &Outbox) 
 /// with the portraits of those in it), then takes their scenes apart: each
 /// song told working in each of its turns with the step begun, each scene
 /// begun and told as it lands, and told ready once its scenes are taken
-/// apart. Its folder then holds a picture a scene, with the plan's times
-/// and look, and its scenes' parts are kept.
+/// apart. Its folder then holds a picture a scene (as painted), with the
+/// plan's times and look, and its scenes' parts are kept.
 #[test]
 fn a_round_plans_every_song_then_encodes_then_draws_then_takes_apart() {
     let (_dir, places, paths, _) = setting("order", 2);
@@ -436,7 +466,8 @@ fn a_round_plans_every_song_then_encodes_then_draws_then_takes_apart() {
         assert_eq!(spans, planned);
         assert_eq!(kept.look, plan.look);
         let first = image::open(&kept.scenes[0].picture).unwrap();
-        assert_eq!((first.width() as usize, first.height() as usize), SCENE);
+        let painted = (SCENE.0.div_ceil(SMALL), SCENE.1.div_ceil(SMALL));
+        assert_eq!((first.width() as usize, first.height() as usize), painted);
         assert_eq!(scenes::taken_apart(&kept, &places.scenes), Ok(true));
     }
 }
@@ -650,6 +681,8 @@ fn a_song_not_made_now_rests_and_holds_no_other_off() {
     let always = |_: &StorySong| true;
     let with = (&fakes, &places, &out);
     let count = |log: &[String], what: &str| log.iter().filter(|e| *e == what).count();
+    // Every failure from here on rests from no sooner than now.
+    let before = Instant::now();
     let (_, next) = next_round(&wanted_all, with, &always, &mut tried);
     assert_eq!(next, Next::Round, "songs left for the next");
     let log = fakes.took();
@@ -657,12 +690,17 @@ fn a_song_not_made_now_rests_and_holds_no_other_off() {
     assert_eq!(count(&log, "no encoder"), songs - 1);
     // The songs that failed rest: the last is planned, and fails too.
     let (_, next) = next_round(&wanted_all, with, &always, &mut tried);
+    let after = Instant::now();
     let log = fakes.took();
     assert_eq!((count(&log, "plan"), count(&log, "no encoder")), (1, 1));
     let Next::At(at) = next else {
         panic!("tried again later, not at once: {next:?}");
     };
-    assert!(at > Instant::now() + RETRY / 2);
+    // The first to fail rested from between the two, one whole rest.
+    assert!(
+        before + RETRY <= at && at <= after + RETRY,
+        "one whole rest"
+    );
     // All resting: no model asked.
     let (_, again) = next_round(&wanted_all, with, &always, &mut tried);
     assert_eq!(fakes.took(), Vec::<String>::new());
@@ -872,7 +910,9 @@ fn the_worker_gives_up_a_song_no_longer_wanted() {
 
 /// A song left without its story now rests, and the thread waits to try
 /// it again; a new ask meanwhile is taken up at once: the other song
-/// wanted is made well within the wait.
+/// wanted is made while the first still rests (had the thread waited out
+/// the rest, the round that made it would have looked at the first again,
+/// told not now, before it).
 #[test]
 fn the_worker_takes_up_a_new_ask_while_a_song_rests() {
     let (_dir, places, paths, _) = setting("thread-resting", 2);
@@ -904,10 +944,19 @@ fn the_worker_takes_up_a_new_ask_while_a_song_rests() {
             break;
         }
     }
-    let asked = Instant::now();
     worker.want(vec![a, b]);
-    assert_eq!(drawn.recv_timeout(RETRY / 2), Ok(paths[1].clone()));
-    assert!(asked.elapsed() < RETRY / 2, "taken up at once");
+    assert_eq!(drawn.recv_timeout(WAIT), Ok(paths[1].clone()));
+    let looked_again = told.try_iter().any(|action| {
+        matches!(action, Action::Ready {
+            path,
+            facts: Some(Facts::Story { fact: StoryFact::NotNow(_), .. }),
+            ..
+        } if path == paths[0])
+    });
+    assert!(
+        !looked_again,
+        "taken up at once, the resting song left alone"
+    );
     drop(worker);
 }
 
