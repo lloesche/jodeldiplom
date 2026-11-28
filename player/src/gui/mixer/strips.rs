@@ -7,7 +7,7 @@
 //! the stems.
 
 use iced::widget::text::Ellipsis;
-use iced::widget::{column, container, row, space, text, Column, Row};
+use iced::widget::{column, container, mouse_area, row, space, text, Column, Row};
 use iced::{Alignment, Background, Border, Color, Element, Fill, Length, Widget as _};
 
 use super::fader::{self, Fader, MeterLook, Scale};
@@ -146,6 +146,12 @@ fn line_view(line: Line) -> Element<'static, Message> {
 /// many whole lines as it has room for, up to [`LINES`].
 pub(super) fn info_height(h: f32) -> f32 {
     ((h - OTHER_PARTS) / LINE).floor().clamp(0.0, LINES as f32) * LINE
+}
+
+/// Where a strip's first line under its name ends, in points from the
+/// strip's top: the microphones' list opens under it.
+pub(super) fn under_first_line() -> f32 {
+    PAD_Y + PILL + PARTS_GAP + LINE
 }
 
 /// The lines under a name that fit `h` points, `h` high whatever their
@@ -316,7 +322,18 @@ fn mic_strip(state: &State, said: Said, (w, lines): (f32, f32)) -> Column<Elemen
         peak_db: m.peak_db,
         clipped: m.clipped(state.now_ms),
     });
-    let mut top = column![name(&said), info(said.lines, lines)].spacing(PARTS_GAP);
+    // Its lines open the microphones' list while it can choose one.
+    let head = name(&said);
+    let lines = info(said.lines, lines);
+    let lines = if crate::core::mics::choosable(state) {
+        mouse_area(lines)
+            .on_press(Message::Act(Action::MicList))
+            .interaction(iced::mouse::Interaction::Pointer)
+            .boxed()
+    } else {
+        lines
+    };
+    let mut top = column![head, lines].spacing(PARTS_GAP);
     for p in said.pushes.iter().copied() {
         top = top.push(container(Element::from(push(p))).center_x(Fill).boxed());
     }

@@ -96,6 +96,8 @@ pub fn rhythm_of(state: &State) -> Option<&super::Rhythmed> {
 /// The microphone, as the app opened it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MicShown {
+    /// Its id, while it is open.
+    pub id: Option<String>,
     /// Its name, while it is open.
     pub name: Option<String>,
     /// Why it could not be opened.
@@ -119,6 +121,8 @@ pub struct KaraokeState {
     pub model: ModelState,
     /// The microphone.
     pub mic: MicShown,
+    /// The microphones' list, while it is open ([`super::mics`]).
+    pub mic_list: Option<super::mics::MicList>,
     /// The lyrics known, by file.
     pub lyrics: HashMap<PathBuf, SongLyrics>,
     /// The files whose lyrics were last wanted, in order.
@@ -299,7 +303,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     match op {
         Op::KaraokeEnter | Op::Open | Op::Accept => enter(state, fx, false),
         Op::KaraokeEnterHere => enter(state, fx, true),
-        Op::MicNext => fx.push(Effect::NextMic),
+        Op::MicNext => fx.push(Effect::ChooseMic(super::mics::MicPick::Next)),
         Op::KaraokeRecordEcho => fx.push(Effect::RecordEcho),
         Op::KaraokeSync => super::sync::begin(state, fx),
         Op::KaraokeGame | Op::KaraokeNotes | Op::KaraokeKeep => game_setting(state, op, fx),
@@ -400,7 +404,7 @@ pub(crate) fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> boo
         Op::SliderDown | Op::SliderUp | Op::SliderFineDown | Op::SliderFineUp => {
             slide_key(state, op, fx)
         }
-        Op::MicNext => fx.push(Effect::NextMic),
+        Op::MicNext => fx.push(Effect::ChooseMic(super::mics::MicPick::Next)),
         Op::KaraokeRecordEcho => fx.push(Effect::RecordEcho),
         Op::KaraokeDemo => state.karaoke.demo.hold(),
         Op::Quit | Op::VolumeUp | Op::VolumeDown => return false,

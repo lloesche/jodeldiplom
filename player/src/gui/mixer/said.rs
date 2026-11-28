@@ -375,8 +375,9 @@ fn head_line(input: Option<&InputView>, key: i8) -> Line {
     line
 }
 
-/// What the microphone's strip says: closed, opening, its name, its port,
-/// the echo canceller, the clock bridge.
+/// What the microphone's strip says: closed, opening, its name (`▾`: a
+/// click opens the microphones' list), its port, the echo canceller, the
+/// clock bridge.
 fn mic_lines(state: &State) -> Vec<Line> {
     let shown = &state.karaoke.mic;
     if !desk::listens(state) {
@@ -389,7 +390,7 @@ fn mic_lines(state: &State) -> Vec<Line> {
     let Some(name) = &shown.name else {
         return match &shown.error {
             Some(why) => vec![
-                vec![t("no microphone", Tone::Text)],
+                vec![t("▾", Tone::Dim), t("no microphone", Tone::Text)],
                 vec![t(why.clone(), Tone::Fail)],
             ],
             None => vec![vec![t(
@@ -399,7 +400,7 @@ fn mic_lines(state: &State) -> Vec<Line> {
         };
     };
     let reading = state.mic;
-    let mut lines = vec![vec![t(name.clone(), Tone::Text)]];
+    let mut lines = vec![vec![t("▾", Tone::Dim), t(name.clone(), Tone::Text)]];
     let rate = reading.map_or(String::new(), |m| format!("{}k", khz_short(m.rate)));
     let mut port = vec![t(rate, Tone::Dim)];
     port.extend(match &state.desk.mic_port.port {

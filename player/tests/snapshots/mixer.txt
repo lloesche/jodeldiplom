@@ -38,7 +38,7 @@ desk 944 × 560
   [button off] M [button off] S
 [strip] at 555, 144 wide
 [name selected] MIC
-  [text] Yeti Stereo Microphone
+  [dim] ▾ [text] Yeti Stereo Microphone
   [dim] 48k [good] ● [text] hearing
   [good] ● [text] −31 dB 42ms
   [dim] drift [text] +18ppm

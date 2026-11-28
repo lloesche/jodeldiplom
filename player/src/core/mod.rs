@@ -30,6 +30,7 @@ pub mod lag;
 pub mod lanes;
 pub mod lyric_edit;
 pub mod mic;
+pub mod mics;
 pub mod patch_book;
 pub mod prep;
 pub mod preview;

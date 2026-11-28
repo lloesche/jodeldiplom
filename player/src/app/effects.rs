@@ -47,7 +47,18 @@ impl App {
                 self.lyrics.prepare(paths.clone());
                 self.rhythm.prepare(paths, recipe);
             }
-            Effect::NextMic => self.next_mic(),
+            Effect::ChooseMic(pick) => self.choose_mic(&pick),
+            Effect::ListMics => {
+                let list = self.mic.lister();
+                self.outbox.spawn(move || {
+                    let mics = list().map(|all| {
+                        all.into_iter()
+                            .map(|(id, name)| core::mics::MicChoice { id, name })
+                            .collect()
+                    });
+                    Action::Mics(mics)
+                });
+            }
             Effect::RecordEcho => {
                 let said = self.mic.record_echo(&self.state);
                 self.dispatch(said);
@@ -223,10 +234,11 @@ impl App {
         )));
     }
 
-    /// `i`: the next microphone, kept in the settings.
-    fn next_mic(&mut self) {
+    /// The microphone `pick` names (the next one for `i`, or one chosen
+    /// from the list), kept in the settings and opened.
+    fn choose_mic(&mut self, pick: &core::mics::MicPick) {
         let mixer = self.engine.as_ref().map(|e| &e.mixer);
-        match self.mic.next(&mut self.state, mixer) {
+        match self.mic.choose(pick, &mut self.state, mixer) {
             Ok(name) => {
                 self.run(Effect::SaveConfig);
                 self.mic_turn();

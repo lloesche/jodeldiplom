@@ -489,6 +489,26 @@ really found, as its workers tell it: never a progress they did not tell.
   - `what_the_echo_canceller_learnt_carries_over_to_the_next_output` (output)
   - `the_microphone_is_open_while_karaoke_shows`
   - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
+- **K6b.** The microphone's name (`another` where it is silent or did not
+  open) opens the microphones' list: under it on the Karaoke tab, over
+  the desk under the MIC strip's name while that strip listens, in the
+  settings' device list's look. It is listed afresh in the background each
+  time it opens (never while it is shut, nor when one is chosen), the one the settings name (else
+  the one open) marked and selected. A microphone chosen there is taken
+  as `i` takes one, on the same way: kept in the settings and saved,
+  opened at once, said; one that does not open says why as one `i` takes
+  does, and the list still opens to choose another; one gone since the
+  list was listed is not listed again, but fails to open and says why. A
+  second press on the name closes the list; leaving the tab (or the
+  strip), or the microphone opening again, closes it too. It opens only
+  while the microphone is open or did not open (not while it opens); a
+  listing that comes after it closed, or a choice of an entry not there,
+  changes nothing.
+  - `a_microphone_chosen_from_the_list_is_kept_as_i_keeps_one`
+  - `a_microphone_chosen_from_the_list_that_does_not_open_says_why`
+  - `a_microphone_gone_since_it_was_listed_says_why_when_chosen`
+  - `the_microphones_list_takes_only_what_belongs_to_it`
+  - `the_microphones_name_opens_its_list_and_a_click_there_chooses_one`
 - **K16.** The microphone never changes what plays: with it open, tapped,
   singing, its echo canceller on or off, the device gets exactly the bytes
   the engine wrote, in every format.

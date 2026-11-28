@@ -2,7 +2,8 @@
 //! the key it is in), the button into the mode (disabled with why beside
 //! it until the song can be sung), the sliders with the sync's row under the delay, the
 //! game's switches, what is known of the lyrics of the song and the next
-//! two, the microphone (its meter, or why it is not open), the echo
+//! two, the microphone (its meter, or why it is not open; the value that
+//! opens the microphones' list, and the list while open), the echo
 //! canceller and the word timing, a few notes on the mode, what the
 //! voice's lane says while it has nothing to show, and the keys for the
 //! pane's foot; while a sync shows, its panel ([`crate::view::sync`]).
@@ -17,6 +18,7 @@ use crate::core::lanes::{rhythmed, Block};
 use crate::core::sliders::Slider;
 use crate::core::text;
 use crate::core::{Gpu, State};
+use crate::view::choices::{self, List};
 use crate::view::sync::{self, Panel};
 
 /// The label of the button into Karaoke mode.
@@ -207,6 +209,12 @@ pub struct Tab {
     pub lyrics: Vec<LyricsRow>,
     /// The microphone.
     pub mic: Mic,
+    /// What the value that opens the microphones' list says, while it can
+    /// open ([`crate::core::mics::choosable`]): the microphone's name while
+    /// it hears, else "another".
+    pub mic_opener: Option<String>,
+    /// The microphones' list, while it is open.
+    pub mics: Option<List>,
     /// What the echo canceller does, while the microphone hears.
     pub echo: Option<String>,
     /// How the words are timed.
@@ -258,7 +266,14 @@ impl Tab {
             controls: controls(state),
             switches: switches(state),
             lyrics: lyrics(state),
+            mic_opener: crate::core::mics::choosable(state).then(|| {
+                match &state.karaoke.mic.name {
+                    Some(name) if !state.karaoke.mic.silent => name.clone(),
+                    _ => "another".to_owned(),
+                }
+            }),
             mic: mic(state),
+            mics: choices::mics(state),
             echo: (state.karaoke.mic.name.is_some() && !state.karaoke.mic.silent)
                 .then(|| echo_text(state)),
             words: match &state.karaoke.model {
@@ -513,6 +528,12 @@ impl fmt::Display for Tab {
                 writeln!(f, "[mic fail] {name}: only silence comes in  [dim] {hint}")?
             }
             Mic::Failed(why) => writeln!(f, "[mic fail] not open: {why}")?,
+        }
+        if let Some(value) = &self.mic_opener {
+            writeln!(f, "[open] {value} ▾")?;
+        }
+        if let Some(list) = &self.mics {
+            write!(f, "{list}")?;
         }
         if let Some(key) = self.mic.key() {
             writeln!(f, "[key] {key}")?;

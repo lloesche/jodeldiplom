@@ -322,6 +322,11 @@ pub enum Action {
     SettingsClick(usize, i32),
     /// Choose a device from the open list.
     ChooseDevice(usize),
+    /// The microphones' list opened on the tab showing (listed afresh),
+    /// or closed there ([`crate::core::mics`]).
+    MicList,
+    /// Microphone `index` of the microphones' list chosen.
+    ChooseMic(usize),
     /// A row of the data folder's list clicked ([`crate::core::FolderPick::rows`]).
     FolderRow(usize),
     /// A folder's subfolders listed for the data folder's list (`None`:
@@ -460,6 +465,8 @@ pub enum Action {
     },
     /// The output devices were listed.
     Devices(Result<Vec<DeviceChoice>, String>),
+    /// The microphones listed (for [`Effect::ListMics`]).
+    Mics(Result<Vec<crate::core::mics::MicChoice>, String>),
     /// The playback engine reported something.
     Engine(Event),
     /// A file's beats were analysed by a recipe (or could not be).
@@ -608,9 +615,11 @@ pub enum Effect {
     /// their analysis by the recipe (`None`: none) and their lyrics, into
     /// the caches; what was asked for before and not started is dropped.
     Prepare(Vec<PathBuf>, Option<super::RhythmRecipe>),
-    /// Karaoke: use the next microphone (input device), and keep it in the
-    /// settings.
-    NextMic,
+    /// Karaoke: use this microphone (input device): the next one (`i`) or
+    /// one chosen from the list; kept in the settings.
+    ChooseMic(crate::core::mics::MicPick),
+    /// List the microphones (answered with [`Action::Mics`]).
+    ListMics,
     /// Karaoke: record what the echo canceller works with, for tuning it.
     RecordEcho,
     /// Karaoke: play the sync's clicks and listen, or a press, or stop

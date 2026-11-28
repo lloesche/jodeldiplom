@@ -688,6 +688,330 @@ fn the_microphone_is_open_while_karaoke_shows() {
     app.shutdown();
 }
 
+/// The ids each microphone was opened with, in turn.
+type OpenedIds = std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>;
+
+/// A player on the null output whose microphones are listed as `mics` and
+/// open as `open` says; the ids asked for kept in the log it gives, and
+/// how often they were listed; its settings saved to
+/// `settings/config.toml` under `tree`'s root.
+fn mic_player(
+    tree: &common::Tree,
+    mics: Vec<(&'static str, &'static str)>,
+    open: fn(Option<&str>) -> Result<(), String>,
+) -> (
+    jodeldiplom::app::App,
+    OpenedIds,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use jodel_output::input::Input;
+    use jodel_output::SimClock;
+    use jodeldiplom::app::{AppOptions, Output};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    let config_file = tree.root.join("settings").join("config.toml");
+    durable::write_atomic(&config_file, b"").unwrap();
+    let mut options = AppOptions::new(tree.album.clone());
+    options.output = Output::Null(SimClock::Realtime);
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.config_file = Some(config_file);
+    let opened: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
+    let log = opened.clone();
+    options.mic = Arc::new(move |id| {
+        log.lock().unwrap().push(id.map(str::to_owned));
+        open(id).map(|()| Input::feed(48_000, 240).0)
+    });
+    let listed = Arc::new(AtomicUsize::new(0));
+    let count = listed.clone();
+    options.mics = Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+        Ok(mics
+            .iter()
+            .map(|&(id, name)| (id.to_owned(), name.to_owned()))
+            .collect())
+    });
+    (common::fitted_app(options, 120, 40), opened, listed)
+}
+
+/// Waits until the microphones' list open has its microphones.
+fn mics_listed(app: &mut jodeldiplom::app::App) -> bool {
+    common::wait_for(app, std::time::Duration::from_secs(30), |a| {
+        a.state
+            .karaoke
+            .mic_list
+            .as_ref()
+            .is_some_and(|l| l.mics.is_some())
+    })
+}
+
+/// K6b: the microphones' list opens from the microphone's name, listed
+/// afresh each time; one chosen there is taken as `i` takes one: kept in
+/// the settings (and saved), opened at once, said; marked as chosen the
+/// next time the list opens. `i` goes on from it; the list closes as the
+/// tab is left.
+#[test]
+fn a_microphone_chosen_from_the_list_is_kept_as_i_keeps_one() {
+    use jodeldiplom::config::Config;
+    use jodeldiplom::view::choices::{self, Mark};
+    use std::sync::atomic::Ordering;
+    let _guard = jodel_testkit::real_time();
+    let tree = common::music_tree("karaoke-mic-list");
+    let mics = vec![("a", "Mic A"), ("b", "Mic B"), ("c", "Mic C")];
+    let (mut app, opened, listed) = mic_player(&tree, mics, |_| Ok(()));
+    let wait = std::time::Duration::from_secs(30);
+    let open = |app: &mut jodeldiplom::app::App| {
+        common::wait_for(app, wait, |a| a.state.karaoke.mic.name.is_some())
+    };
+    app.dispatch(Action::ShowSide(Side::Karaoke));
+    assert!(open(&mut app));
+    // Nothing listed until the list opens; then in the background.
+    assert_eq!(listed.load(Ordering::SeqCst), 0);
+    app.dispatch(Action::MicList);
+    assert!(choices::mics(&app.state).unwrap().note.is_some(), "listing");
+    assert!(mics_listed(&mut app));
+    assert_eq!(listed.load(Ordering::SeqCst), 1);
+    let list = choices::mics(&app.state).unwrap();
+    let names: Vec<&str> = list.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["Mic A", "Mic B", "Mic C"]);
+    // The system's default is open, none of them named in the settings.
+    assert!(list.entries.iter().all(|e| e.mark == Mark::Device));
+    // Mic C chosen: the list closes, the settings keep it, it opens.
+    app.dispatch(Action::ChooseMic(2));
+    assert!(app.state.karaoke.mic_list.is_none());
+    assert_eq!(app.state.config.karaoke_mic_device.as_deref(), Some("c"));
+    let config_file = tree.root.join("settings").join("config.toml");
+    let (saved, _) = Config::load(&config_file).unwrap();
+    assert_eq!(saved.karaoke_mic_device.as_deref(), Some("c"));
+    assert_eq!(
+        app.state.message.as_ref().map(|m| m.text.as_str()),
+        Some("Microphone: Mic C")
+    );
+    assert!(open(&mut app));
+    assert_eq!(opened.lock().unwrap().last().unwrap().as_deref(), Some("c"));
+    // Opened again, listed again (the choice itself listed nothing): Mic C
+    // the one chosen.
+    app.dispatch(Action::MicList);
+    assert!(mics_listed(&mut app));
+    assert_eq!(listed.load(Ordering::SeqCst), 2);
+    let marks: Vec<(Mark, bool)> = choices::mics(&app.state)
+        .unwrap()
+        .entries
+        .iter()
+        .map(|e| (e.mark, e.selected))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            (Mark::Device, false),
+            (Mark::Device, false),
+            (Mark::Chosen, true)
+        ]
+    );
+    // A second press closes it.
+    app.dispatch(Action::MicList);
+    assert!(app.state.karaoke.mic_list.is_none());
+    // `i` goes on from the one chosen, round to the first.
+    app.dispatch(Action::Op(Op::MicNext));
+    assert_eq!(app.state.config.karaoke_mic_device.as_deref(), Some("a"));
+    // Not while it opens; once open, leaving the tab closes the list.
+    app.dispatch(Action::MicList);
+    assert!(app.state.karaoke.mic_list.is_none());
+    assert!(open(&mut app));
+    app.dispatch(Action::MicList);
+    assert!(app.state.karaoke.mic_list.is_some());
+    app.dispatch(Action::ShowSide(Side::Browser));
+    assert!(app.state.karaoke.mic_list.is_none());
+    app.shutdown();
+}
+
+/// K6b: a microphone chosen from the list that does not open is said as
+/// one `i` takes is: kept in the settings, the tab says why, its list
+/// still opens (the one chosen marked), and another chosen there opens.
+#[test]
+fn a_microphone_chosen_from_the_list_that_does_not_open_says_why() {
+    use jodeldiplom::view::choices::{self, Mark};
+    use jodeldiplom::view::karaoke::Mic;
+    let _guard = jodel_testkit::real_time();
+    let tree = common::music_tree("karaoke-mic-failed");
+    let mics = vec![("a", "Mic A"), ("busy", "Mic Busy")];
+    let (mut app, opened, _) = mic_player(&tree, mics, |id| match id {
+        Some("busy") => Err("the device is in use".into()),
+        _ => Ok(()),
+    });
+    let wait = std::time::Duration::from_secs(30);
+    app.dispatch(Action::ShowSide(Side::Karaoke));
+    assert!(common::wait_for(&mut app, wait, |a| a
+        .state
+        .karaoke
+        .mic
+        .name
+        .is_some()));
+    app.dispatch(Action::MicList);
+    assert!(mics_listed(&mut app));
+    app.dispatch(Action::ChooseMic(1));
+    assert_eq!(app.state.config.karaoke_mic_device.as_deref(), Some("busy"));
+    assert!(common::wait_for(&mut app, wait, |a| a
+        .state
+        .karaoke
+        .mic
+        .error
+        .is_some()));
+    assert_eq!(
+        opened.lock().unwrap().last().unwrap().as_deref(),
+        Some("busy")
+    );
+    let shown = Tab::of(&app.state);
+    assert_eq!(shown.mic, Mic::Failed("the device is in use".into()));
+    assert_eq!(shown.mic_opener.as_deref(), Some("another"));
+    // Its list opens still, the one that failed the one chosen.
+    app.dispatch(Action::MicList);
+    assert!(mics_listed(&mut app));
+    let marks: Vec<Mark> = choices::mics(&app.state)
+        .unwrap()
+        .entries
+        .iter()
+        .map(|e| e.mark)
+        .collect();
+    assert_eq!(marks, [Mark::Device, Mark::Chosen]);
+    // Another chosen opens.
+    app.dispatch(Action::ChooseMic(0));
+    assert!(common::wait_for(&mut app, wait, |a| a
+        .state
+        .karaoke
+        .mic
+        .name
+        .is_some()));
+    assert_eq!(app.state.karaoke.mic.error, None);
+    assert_eq!(app.state.config.karaoke_mic_device.as_deref(), Some("a"));
+    app.shutdown();
+}
+
+/// K6b: a microphone gone after the list was listed (unplugged) is chosen
+/// as listed, without listing again; opening it fails in the background,
+/// which says why, as for any microphone that does not open.
+#[test]
+fn a_microphone_gone_since_it_was_listed_says_why_when_chosen() {
+    use std::sync::atomic::Ordering;
+    let _guard = jodel_testkit::real_time();
+    let tree = common::music_tree("karaoke-mic-gone");
+    let mics = vec![("a", "Mic A"), ("gone", "Mic Unplugged")];
+    let (mut app, opened, listed) = mic_player(&tree, mics, |id| match id {
+        Some("gone") => Err("no such device".into()),
+        _ => Ok(()),
+    });
+    let wait = std::time::Duration::from_secs(30);
+    app.dispatch(Action::ShowSide(Side::Karaoke));
+    assert!(common::wait_for(&mut app, wait, |a| a
+        .state
+        .karaoke
+        .mic
+        .name
+        .is_some()));
+    app.dispatch(Action::MicList);
+    assert!(mics_listed(&mut app));
+    app.dispatch(Action::ChooseMic(1));
+    assert_eq!(listed.load(Ordering::SeqCst), 1, "not listed again");
+    assert_eq!(
+        app.state.message.as_ref().map(|m| m.text.as_str()),
+        Some("Microphone: Mic Unplugged")
+    );
+    assert!(common::wait_for(&mut app, wait, |a| a
+        .state
+        .karaoke
+        .mic
+        .error
+        .is_some()));
+    assert_eq!(
+        opened.lock().unwrap().last().unwrap().as_deref(),
+        Some("gone")
+    );
+    assert_eq!(
+        Tab::of(&app.state).mic,
+        jodeldiplom::view::karaoke::Mic::Failed("no such device".into())
+    );
+    app.shutdown();
+}
+
+/// The microphones' list as the core keeps it, from `state`'s side: the
+/// microphone open as "Mic A".
+fn mic_list_state(side: Side) -> State {
+    let mut state = tab();
+    state.side = side;
+    state.desk.selected = jodeldiplom::core::desk::Channel::Mic;
+    state.karaoke.mic.id = Some("a".into());
+    state.karaoke.mic.name = Some("Mic A".into());
+    state
+}
+
+/// Microphones A and B, as listed.
+fn two_mics() -> Vec<jodeldiplom::core::mics::MicChoice> {
+    [("a", "Mic A"), ("b", "Mic B")]
+        .map(|(id, name)| jodeldiplom::core::mics::MicChoice {
+            id: id.into(),
+            name: name.into(),
+        })
+        .to_vec()
+}
+
+/// K6b, in the core: the list opens only while the microphone is open or
+/// did not open; a listing that comes after it closed is dropped; a choice
+/// of an entry not there (past the end, or before the listing came) only
+/// closes it; on the Mixer tab it opens from the MIC strip, and closes
+/// when another strip is selected.
+#[test]
+fn the_microphones_list_takes_only_what_belongs_to_it() {
+    use jodeldiplom::core::desk::{Channel, DeskAction};
+    use jodeldiplom::core::mics::MicPick;
+    for side in [Side::Karaoke, Side::Mixer] {
+        let mut state = mic_list_state(side);
+        // Not while the microphone is opening.
+        let name = state.karaoke.mic.name.take();
+        assert!(!update(&mut state, Action::MicList).contains(&Effect::ListMics));
+        assert!(state.karaoke.mic_list.is_none());
+        state.karaoke.mic.name = name;
+        // Opened: listed afresh; a second press closes it.
+        let fx = update(&mut state, Action::MicList);
+        assert!(fx.contains(&Effect::ListMics), "{side:?}: {fx:?}");
+        assert_eq!(state.karaoke.mic_list.as_ref().map(|l| l.on), Some(side));
+        update(&mut state, Action::MicList);
+        assert!(state.karaoke.mic_list.is_none());
+        // A late listing with no list open is dropped.
+        update(&mut state, Action::Mics(Ok(two_mics())));
+        assert!(state.karaoke.mic_list.is_none());
+        // Chosen before the listing came: nothing chosen, closed.
+        update(&mut state, Action::MicList);
+        let fx = update(&mut state, Action::ChooseMic(0));
+        assert!(!fx.iter().any(|e| matches!(e, Effect::ChooseMic(_))));
+        assert!(state.karaoke.mic_list.is_none());
+        // Past the end: the same.
+        update(&mut state, Action::MicList);
+        update(&mut state, Action::Mics(Ok(two_mics())));
+        let fx = update(&mut state, Action::ChooseMic(2));
+        assert!(!fx.iter().any(|e| matches!(e, Effect::ChooseMic(_))));
+        assert!(state.karaoke.mic_list.is_none());
+        // Mic B chosen: taken as listed.
+        update(&mut state, Action::MicList);
+        update(&mut state, Action::Mics(Ok(two_mics())));
+        let fx = update(&mut state, Action::ChooseMic(1));
+        assert!(
+            fx.contains(&Effect::ChooseMic(MicPick::Device(two_mics()[1].clone()))),
+            "{side:?}: {fx:?}"
+        );
+        assert!(state.karaoke.mic_list.is_none());
+    }
+    // On the Mixer tab, another strip selected: the strip stops
+    // listening, and the list closes.
+    let mut state = mic_list_state(Side::Mixer);
+    update(&mut state, Action::MicList);
+    update(&mut state, Action::Mics(Ok(two_mics())));
+    assert!(state.karaoke.mic_list.is_some());
+    update(&mut state, Action::Desk(DeskAction::Select(Channel::Main)));
+    assert!(state.karaoke.mic_list.is_none());
+    // Not from the Mixer tab while the MIC strip is not selected.
+    assert!(!update(&mut state, Action::MicList).contains(&Effect::ListMics));
+    assert!(state.karaoke.mic_list.is_none());
+}
+
 #[test]
 fn the_speech_model_is_found_where_the_build_put_it() {
     use jodeldiplom::work::lyrics::models::{model_in, MODEL_DIR, MODEL_FILE};

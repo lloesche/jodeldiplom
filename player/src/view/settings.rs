@@ -15,6 +15,7 @@ use crate::core::keymap::{self, Context, Op};
 use crate::core::transition::Preset;
 use crate::core::{device_window, folder_window, FolderRow, Gpu, SettingsRow, State};
 use crate::theme::THEMES;
+use crate::view::choices::{Entry, List, Mark};
 
 /// The rows a device list or the data folder's list shows at most.
 pub const LIST_ROWS: usize = 8;
@@ -89,47 +90,6 @@ impl Control {
     }
 }
 
-/// How an entry of a list is marked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mark {
-    /// The device chosen.
-    Chosen,
-    /// Another device.
-    Device,
-    /// Make the data folder in the folder shown.
-    Here,
-    /// Up a folder.
-    Up,
-    /// A folder to open.
-    Folder,
-}
-
-/// An entry of a list.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Entry {
-    /// Its place in the whole list (what a click chooses).
-    pub index: usize,
-    /// Its mark.
-    pub mark: Mark,
-    /// Its name.
-    pub name: String,
-    /// What it takes, in a few words (a device's formats).
-    pub detail: String,
-    /// The one the keys are on.
-    pub selected: bool,
-}
-
-/// The device list or the data folder's list, under its row: the
-/// entries shown ([`LIST_ROWS`] at most, the selected one in view) and
-/// what shows while it is listed or empty.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct List {
-    /// The entries shown.
-    pub entries: Vec<Entry>,
-    /// Still listing, or nothing found.
-    pub note: Option<String>,
-}
-
 /// A row of the settings.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -145,7 +105,8 @@ pub struct Row {
     pub about: Option<String>,
     /// How it is set.
     pub control: Control,
-    /// Its list, while open.
+    /// Its list, while open (the device list or the data folder's: the
+    /// entries shown, [`LIST_ROWS`] at most, the selected one in view).
     pub list: Option<List>,
 }
 
@@ -468,19 +429,6 @@ fn folders(state: &State) -> Option<List> {
     })
 }
 
-impl Mark {
-    /// The mark as the outline writes it.
-    fn symbol(self) -> &'static str {
-        match self {
-            Mark::Chosen => "●",
-            Mark::Device => "○",
-            Mark::Here => "✓",
-            Mark::Up => "↑",
-            Mark::Folder => "▸",
-        }
-    }
-}
-
 /// An outline of the screen, one line a piece with its kind in brackets:
 /// for the snapshots.
 impl fmt::Display for Settings {
@@ -535,22 +483,7 @@ impl fmt::Display for Settings {
                     writeln!(f, "{under}  {about}")?;
                 }
                 if let Some(list) = &row.list {
-                    for e in &list.entries {
-                        let selected = if e.selected { " selected" } else { "" };
-                        write!(
-                            f,
-                            "{under}  [entry{selected}] {} {}",
-                            e.mark.symbol(),
-                            e.name
-                        )?;
-                        if !e.detail.is_empty() {
-                            write!(f, "  {}", e.detail)?;
-                        }
-                        writeln!(f)?;
-                    }
-                    if let Some(note) = &list.note {
-                        writeln!(f, "{under}  [note] {note}")?;
-                    }
+                    list.outline(f, under)?;
                 }
             }
         }

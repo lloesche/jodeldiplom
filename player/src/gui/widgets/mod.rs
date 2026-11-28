@@ -2,7 +2,8 @@
 //! [`super::look`]: buttons, surfaces, the progress bar, the track (a
 //! seek bar's or a slider's), the spectrum, the icons, the covers, a
 //! list's rows and the tabs; a card's items that take a click and
-//! segmented controls, switches and checks, key hints, links, a text
+//! segmented controls, switches and checks, a value that opens a list
+//! and the list under it, key hints, links, a text
 //! field; keeping what the keys are on in view; an area that takes the
 //! pointer over what something else draws; an envelope's curve, a
 //! piano keyboard and a waveform with its beats. A screen that needs one
@@ -11,6 +12,7 @@
 
 pub mod area;
 pub mod button;
+pub mod choices;
 pub mod cover;
 pub mod envelope;
 pub mod field;

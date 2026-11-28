@@ -6,7 +6,9 @@
 //! then the controls (the sliders,
 //! the sync's row under the delay; the game's switches) and what is known
 //! (the lyrics of the song and the next two, the microphone and its
-//! meter, the echo canceller, the word timing; a few notes on the mode),
+//! meter, its name the value that opens the microphones' list under it
+//! ([`widgets::choices`], as the settings' device), the echo canceller,
+//! the word timing; a few notes on the mode),
 //! side by side where there is room, the keys at the pane's foot. Under
 //! the pane, where the voice's lane goes, what it says while it has
 //! nothing to show ([`voice`]). While a sync shows, its panel over the
@@ -33,7 +35,7 @@ use crate::core::keymap::{self, Context, Op};
 use crate::core::Action;
 use crate::gui::look::{self, radius, size, space};
 use crate::gui::pointer::{Grab, WheelOn};
-use crate::gui::widgets::{self, Icon};
+use crate::gui::widgets::{self, choices, Icon};
 use crate::gui::window::Message;
 use crate::view::karaoke::{
     track_id, Control, Hint, LyricsRow, Mic, SliderRow, Switch, Tab, EDIT, ENTER, MEASURE,
@@ -394,7 +396,12 @@ fn known<'a>(tab: &Tab, turn: f32) -> Element<'a, Message> {
     if !tab.lyrics.is_empty() {
         rows = rows.push(Space::new().height(space::XS).boxed());
     }
-    rows = rows.push(mic(&tab.mic, turn));
+    rows = rows.push(mic(&tab.mic, tab.mic_opener.as_deref(), turn));
+    if let Some(list) = &tab.mics {
+        rows = rows.push(choices::list(list, NAME, "mic", |e| {
+            Message::Act(Action::ChooseMic(e.index))
+        }));
+    }
     if let Some(echo) = &tab.echo {
         rows = rows.push(
             row![
@@ -475,8 +482,9 @@ fn hints<'a>(keys: &[Hint]) -> Element<'a, Message> {
     widgets::hints(&pairs).height(KEYS).boxed()
 }
 
-/// The microphone: its meter and name, opening, silent or not open.
-fn mic<'a>(m: &Mic, turn: f32) -> Element<'a, Message> {
+/// The microphone: its meter and name, opening, silent or not open; the
+/// value that opens the microphones' list (its name, or "another").
+fn mic<'a>(m: &Mic, opener: Option<&str>, turn: f32) -> Element<'a, Message> {
     let mut line = Row::<Element<'a, Message>>::new()
         .spacing(space::S)
         .align_y(Alignment::Center)
@@ -486,7 +494,7 @@ fn mic<'a>(m: &Mic, turn: f32) -> Element<'a, Message> {
         Mic::Opening => {
             line = line.push(busy(turn)).push(dim("opening…", look::TEXT_DIM));
         }
-        Mic::Open { name, level } => {
+        Mic::Open { level, .. } => {
             line = line
                 .push(
                     widgets::icon(Icon::Mic)
@@ -498,15 +506,6 @@ fn mic<'a>(m: &Mic, turn: f32) -> Element<'a, Message> {
                     container(widgets::progress(*level, look::ACCENT))
                         .width(METER)
                         .center_y(14.0)
-                        .boxed(),
-                )
-                .push(
-                    text(name.clone())
-                        .size(size::LABEL)
-                        .font(look::font::body())
-                        .color(look::TEXT)
-                        .wrapping(text::Wrapping::None)
-                        .ellipsis(text::Ellipsis::End)
                         .boxed(),
                 );
         }
@@ -540,14 +539,29 @@ fn mic<'a>(m: &Mic, turn: f32) -> Element<'a, Message> {
                 );
         }
     }
-    if let Some(key) = m.key() {
-        line = line
-            .push(Space::new().width(Fill).boxed())
-            .push(hints(&[key]));
+    // The value takes the rest of the line, shortened at its end; its key
+    // under it.
+    if let Some(value) = opener {
+        line = line.push(
+            container(
+                mouse_area(choices::opener::<Message>(value, text::Ellipsis::End))
+                    .on_press(Message::Act(Action::MicList))
+                    .interaction(iced::mouse::Interaction::Pointer),
+            )
+            .width(Fill)
+            .boxed(),
+        );
     }
     let mut out = Column::<Element<'a, Message>>::new()
         .spacing(space::XS)
         .push(line.boxed());
+    if let Some(key) = m.key() {
+        out = out.push(
+            row![Space::new().width(NAME + space::S), hints(&[key])]
+                .align_y(Alignment::Center)
+                .boxed(),
+        );
+    }
     if let Some(hint) = under {
         out = out.push(
             row![

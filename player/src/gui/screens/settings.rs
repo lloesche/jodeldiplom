@@ -12,17 +12,17 @@
 //! view ([`reveal`]).
 
 use iced::widget::{column, container, responsive, row, scrollable, text, Column, Space};
-use iced::{Alignment, Background, Border, Element, Fill, Length, Padding, Size, Widget as _};
+use iced::{Alignment, Background, Element, Fill, Length, Padding, Size, Widget as _};
 
 use crate::core::{Action, State};
-use crate::gui::look::{self, radius, size, space};
+use crate::gui::look::{self, size, space};
+use crate::gui::widgets::choices::{self, opener};
 use crate::gui::widgets::{
-    self, check, hints, item, panel, progress, segment, segmented, switch, Reveal,
+    check, hints, item, panel, progress, segment, segmented, switch, Reveal,
 };
 use crate::gui::window::Message;
-use crate::view::settings::{
-    self, Control, Entry, List, Mark, Row, Section, Settings, Tone, TITLE,
-};
+use crate::view::choices::Mark;
+use crate::view::settings::{self, Control, Row, Section, Settings, Tone, TITLE};
 
 /// The narrowest window whose cards go in two columns, in points.
 const TWO_COLUMNS: f32 = 960.0;
@@ -204,7 +204,12 @@ fn setting<'a>(r: &Row) -> Element<'a, Message> {
     .on_press(Message::Act(Action::SettingsClick(r.index, 0)));
     let mut all = Column::new().push(made.into());
     if let Some(list) = &r.list {
-        all = all.push(entries(list, indent));
+        all = all.push(choices::list(list, indent, "entry", |e| {
+            Message::Act(match e.mark {
+                Mark::Chosen | Mark::Device => Action::ChooseDevice(e.index),
+                Mark::Here | Mark::Up | Mark::Folder => Action::FolderRow(e.index),
+            })
+        }));
     }
     all.boxed()
 }
@@ -222,36 +227,11 @@ fn control<'a>(r: &Row) -> Element<'a, Message> {
                 .on_press_maybe(step.map(|s| Message::Act(Action::SettingsClick(r.index, s))))
         }))
         .boxed(),
-        Control::Open(value) => container(
-            container(
-                row![
-                    text(value.clone())
-                        .size(size::BODY)
-                        .font(look::font::body())
-                        .color(look::TEXT)
-                        .wrapping(text::Wrapping::None)
-                        .ellipsis(text::Ellipsis::Start),
-                    text("▾").size(size::CAPTION).color(look::TEXT_DIM),
-                ]
-                .spacing(space::S)
-                .align_y(Alignment::Center),
-            )
-            .center_y(look::height::CHIP + 4.0)
-            .padding(Padding::from([0.0, space::M]))
-            .style(|_| container::Style {
-                background: Some(Background::Color(look::RAISED)),
-                border: Border {
-                    color: look::EDGE,
-                    width: look::line::EDGE,
-                    radius: radius::CONTROL.into(),
-                },
-                ..container::Style::default()
-            }),
-        )
-        // Half the row at most: a long path is shortened at its start.
-        .width(Fill)
-        .align_x(Alignment::End)
-        .boxed(),
+        Control::Open(value) => container(opener::<Message>(value.clone(), text::Ellipsis::Start))
+            // Half the row at most: a long path is shortened at its start.
+            .width(Fill)
+            .align_x(Alignment::End)
+            .boxed(),
         Control::Moving { share, failed } => {
             let tone = if *failed { look::FAIL } else { look::ACCENT };
             row![
@@ -266,92 +246,4 @@ fn control<'a>(r: &Row) -> Element<'a, Message> {
             .boxed()
         }
     }
-}
-
-/// A list under its row, set in as the row is (and a little more): its
-/// entries, each taking a click, and what shows while it is listed or
-/// empty.
-fn entries<'a>(list: &List, indent: f32) -> Element<'a, Message> {
-    let mut all = Column::new().spacing(2.0).padding(Padding {
-        left: indent + space::L,
-        top: 2.0,
-        ..Padding::ZERO
-    });
-    for e in &list.entries {
-        all = all.push(entry(e));
-    }
-    if let Some(note) = &list.note {
-        all = all.push(
-            container(
-                text(note.clone())
-                    .size(size::LABEL)
-                    .font(look::font::body())
-                    .color(look::TEXT_DIM),
-            )
-            .padding(Padding::from([space::S, space::M]))
-            .boxed(),
-        );
-    }
-    all.boxed()
-}
-
-/// An entry of a list: its mark, name and detail.
-fn entry<'a>(e: &Entry) -> Element<'a, Message> {
-    let mark: Element<'a, Message> = match e.mark {
-        Mark::Chosen => widgets::badge(Space::new(), 8.0, look::GOOD, look::GOOD).boxed(),
-        Mark::Device => widgets::badge(
-            Space::new(),
-            8.0,
-            iced::Color::TRANSPARENT,
-            look::TEXT_FAINT,
-        )
-        .boxed(),
-        Mark::Here => widgets::icon(widgets::Icon::Check)
-            .size(14.0)
-            .color(look::GOOD)
-            .boxed(),
-        Mark::Up => text("↑").size(size::BODY).color(look::TEXT_DIM).boxed(),
-        Mark::Folder => text("▸").size(size::BODY).color(look::FOLDER).boxed(),
-    };
-    let name_color = match e.mark {
-        Mark::Folder => look::FOLDER,
-        Mark::Up => look::TEXT_DIM,
-        _ => look::TEXT,
-    };
-    let mut line = row![
-        container(mark).center_x(16.0),
-        text(e.name.clone())
-            .size(size::BODY)
-            .font(if e.selected {
-                look::font::label()
-            } else {
-                look::font::body()
-            })
-            .color(name_color)
-            .wrapping(text::Wrapping::None)
-            .ellipsis(text::Ellipsis::End),
-    ]
-    .spacing(space::S)
-    .align_y(Alignment::Center);
-    if !e.detail.is_empty() {
-        line = line.push(
-            text(e.detail.clone())
-                .size(size::CAPTION)
-                .font(look::font::numbers())
-                .color(look::TEXT_FAINT)
-                .wrapping(text::Wrapping::None)
-                .ellipsis(text::Ellipsis::End)
-                .boxed(),
-        );
-    }
-    let action = match e.mark {
-        Mark::Chosen | Mark::Device => Action::ChooseDevice(e.index),
-        Mark::Here | Mark::Up | Mark::Folder => Action::FolderRow(e.index),
-    };
-    item(line.boxed())
-        .padding(Padding::from([6.0, space::M]))
-        .selected(e.selected)
-        .id(format!("entry-{}", e.index))
-        .on_press(Message::Act(action))
-        .boxed()
 }

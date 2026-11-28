@@ -234,6 +234,38 @@ fn setup_shots(headless: &mut Headless, out: &Path, scratch: &Path) {
     }
 }
 
+/// A microphone open for the shots: a USB headset.
+fn shot_mic() -> jodeldiplom::core::karaoke::MicShown {
+    jodeldiplom::core::karaoke::MicShown {
+        id: Some("usb".into()),
+        name: Some("Headset Microphone (USB Audio)".into()),
+        error: None,
+        silent: false,
+    }
+}
+
+/// The microphones' list open on `side`, listed: the headset in use among
+/// three.
+fn shot_mics(side: Side) -> jodeldiplom::core::mics::MicList {
+    use jodeldiplom::core::mics::{MicChoice, MicList};
+    let mics = [
+        ("array", "Microphone Array (Realtek Audio)"),
+        ("usb", "Headset Microphone (USB Audio)"),
+        ("cable", "CABLE Output (Virtual Cable)"),
+    ];
+    MicList {
+        on: side,
+        mics: Some(
+            mics.iter()
+                .map(|&(id, name)| MicChoice {
+                    id: id.into(),
+                    name: name.into(),
+                })
+                .collect(),
+        ),
+    }
+}
+
 /// The playing track's words timed over the Transition tab's span: a line sung
 /// from a quarter of the way in, its words a little apart.
 fn sung_words(state: &mut State) {
@@ -731,6 +763,34 @@ fn main() {
                 k.side = Side::Karaoke;
                 k.config.karaoke_voice = 44;
                 k
+            }),
+            ("karaoke-mic", {
+                // The microphone open, its name the value that opens the
+                // microphones' list.
+                let mut k = state.clone();
+                k.side = Side::Karaoke;
+                k.karaoke.mic = shot_mic();
+                k
+            }),
+            ("karaoke-mic-list", {
+                // The microphones' list open under it, the one in use
+                // chosen.
+                let mut k = state.clone();
+                k.side = Side::Karaoke;
+                k.karaoke.mic = shot_mic();
+                k.karaoke.mic_list = Some(shot_mics(Side::Karaoke));
+                k
+            }),
+            ("mixer-mic-list", {
+                // The microphones' list open over the desk, under the MIC
+                // strip's name.
+                let mut d = state.clone();
+                d.side = Side::Mixer;
+                d.desk.selected = jodeldiplom::core::desk::Channel::Mic;
+                common::fill_desk(&mut d, 96_000);
+                d.karaoke.mic = shot_mic();
+                d.karaoke.mic_list = Some(shot_mics(Side::Mixer));
+                d
             }),
             ("karaoke-lane", {
                 // The tab on a generated song with its stems in: the

@@ -4,7 +4,9 @@
 //! microphone and the master; the strips shown are the core's rule, so
 //! the keys go round the same ones. The faders, scales and meters are a
 //! canvas each ([`fader`]); what each strip says is [`said`], its widgets
-//! [`strips`]; the look is [`crate::gui::look`]'s. Everything sends the
+//! [`strips`]; the look is [`crate::gui::look`]'s. The microphones' list,
+//! while open, floats under the MIC strip's name
+//! ([`crate::gui::widgets::choices`]). Everything sends the
 //! core's [`DeskAction`]s; the wheel over a strip goes to the window,
 //! which turns it into steps.
 //!
@@ -18,12 +20,13 @@ mod strips;
 use std::fmt::Write as _;
 use std::time::Instant;
 
-use iced::widget::{container, mouse_area, pin, space, stack};
+use iced::widget::{container, mouse_area, opaque, pin, space, stack};
 use iced::{Element, Size, Widget as _};
 
-use crate::core::desk::{taper, DeskAction, StripKind};
+use crate::core::desk::{taper, Channel, DeskAction, StripKind};
 use crate::core::{Action, State};
 use crate::gui::look;
+use crate::gui::widgets::choices;
 use crate::gui::window::Message;
 
 /// The Mixer tab's keys, under its desk, from the keymap: each key (or
@@ -44,6 +47,9 @@ pub fn keys() -> [(String, &'static str); 6] {
 /// The room each side of a strip's card inside its place on the desk, in
 /// points: the stems' cards, side by side, stand this twice apart.
 const INSET: f32 = 1.0;
+
+/// The microphones' list's width over the desk, at most, in points.
+const MIC_LIST: f32 = 320.0;
 
 /// The Mixer tab, `size` points, its strips where [`layout`] has them.
 /// The layers are the same whatever shows (the ground, the stems' bracket
@@ -98,6 +104,22 @@ pub fn view<'a>(state: &'a State, caps: &'a Caps, size: Size) -> Element<'a, Mes
                 .boxed(),
         );
     }
+    // Last, over the strips: the microphones' list while it is open.
+    let list = crate::view::choices::mics(state).zip(desk.strip(Channel::Mic));
+    if let Some((list, mic)) = list {
+        let w = MIC_LIST.min(size.width);
+        let x = mic.frame.x.min(size.width - w).max(0.0);
+        let y = mic.frame.y + strips::under_first_line();
+        let list = choices::list(&list, 0.0, "mic", |e| {
+            Message::Act(Action::ChooseMic(e.index))
+        });
+        layers.push(
+            pin(container(opaque(choices::floating(list).width(w))))
+                .x(x)
+                .y(y)
+                .boxed(),
+        );
+    }
     container(stack(layers))
         .width(size.width)
         .height(size.height)
@@ -124,6 +146,10 @@ pub fn outline(state: &State, size: Size) -> String {
         let said = said::said(state, s.channel);
         let _ = writeln!(out, "[strip] at {}, {} wide", s.frame.x, s.frame.width);
         let _ = write!(out, "{said}");
+    }
+    if let Some(list) = crate::view::choices::mics(state) {
+        let _ = writeln!(out, "[mics]");
+        let _ = write!(out, "{list}");
     }
     let keys: Vec<String> = keys()
         .iter()

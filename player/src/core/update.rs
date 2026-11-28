@@ -133,6 +133,8 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::OpenSettings(row) => settings::open_at(state, row, &mut fx),
         Action::SettingsClick(row, step) => settings::click(state, row, step, &mut fx),
         Action::ChooseDevice(index) => settings::choose_device_at(state, index, &mut fx),
+        Action::MicList => super::mics::toggle(state, &mut fx),
+        Action::ChooseMic(index) => super::mics::choose(state, index, &mut fx),
         Action::FolderRow(index) => settings::folder_row(state, index, &mut fx),
         Action::FoldersListed(dir, folders) => settings::folders_listed(state, dir, folders),
         Action::PaletteRun(index) => help::run_palette_at(state, index, &mut fx),
@@ -176,6 +178,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::JumpMissed { text } => browse::jump_missed(state, &text, &mut fx),
         Action::JumpTo { dir, select } => browse::jump_to(state, dir, select, &mut fx),
         Action::Devices(result) => settings::devices(state, result),
+        Action::Mics(result) => super::mics::listed(state, result),
         Action::Engine(event) => engine_event(state, event),
         Action::Rhythm(path, recipe, result) => work::rhythm(state, path, recipe, result),
         Action::Gpu(name) => {
@@ -218,6 +221,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     super::stems::follow(state, &mut fx);
     super::sync::follow(state, &mut fx);
     desk::settle(state, &mut fx);
+    super::mics::settle(state);
     super::synth_tab::settle(state, &mut fx);
     super::shader_tab::settle(state);
     work::prepare(state, &mut fx);
@@ -260,6 +264,8 @@ fn is_input(action: &Action) -> bool {
         | Action::OpenSettings(_)
         | Action::SettingsClick(..)
         | Action::ChooseDevice(_)
+        | Action::MicList
+        | Action::ChooseMic(_)
         | Action::FolderRow(_)
         | Action::PaletteRun(_)
         | Action::HelpScroll(_) => true,
@@ -282,6 +288,7 @@ fn is_input(action: &Action) -> bool {
         | Action::JumpTo { .. }
         | Action::FoldersListed(..)
         | Action::Devices(_)
+        | Action::Mics(_)
         | Action::Engine(_)
         | Action::EngineGone(_)
         | Action::Rhythm(..)
@@ -509,7 +516,7 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             super::sync::begin(state, fx);
         }
         Op::KeyDown | Op::KeyUp | Op::KeyReset => super::key::step(state, op, fx),
-        Op::MicNext => fx.push(Effect::NextMic),
+        Op::MicNext => fx.push(Effect::ChooseMic(super::mics::MicPick::Next)),
         Op::DeskEcho => desk::toggle_echo(state, fx),
         Op::ValueDown => settings::step_row(state, -1, fx),
         Op::ValueUp => settings::step_row(state, 1, fx),

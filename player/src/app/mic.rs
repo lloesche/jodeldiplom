@@ -1,6 +1,7 @@
 //! The microphone and the singing heard through it, for the
 //! [`App`](super::App): the microphone opened in the background while
-//! Karaoke shows and closed after, the next one chosen, its reading for
+//! Karaoke shows and closed after, another one chosen (the next, or one
+//! from the list: [`crate::core::mics`]), its reading for
 //! each frame, the singer's pitch held against the song's notes, the
 //! singing kept ([`crate::store::keep`]), a recording for the echo canceller,
 //! and the workers the game's singing needs (the original singer's phrases,
@@ -17,6 +18,7 @@ use std::time::{Duration, Instant};
 use jodel_output::input::Input;
 use jodel_output::mixer::Mixer;
 
+use crate::core::mics::MicPick;
 use crate::core::{self, Action, State};
 use crate::work::outbox::Notify;
 
@@ -218,6 +220,7 @@ impl MicSession {
         match result {
             Ok(input) => {
                 state.karaoke.mic = core::karaoke::MicShown {
+                    id: Some(input.info().id.clone()),
                     name: Some(input.info().name.clone()),
                     error: None,
                     silent: false,
@@ -229,6 +232,7 @@ impl MicSession {
             Err(why) => {
                 self.failed = true;
                 state.karaoke.mic = core::karaoke::MicShown {
+                    id: None,
                     name: None,
                     error: Some(why),
                     silent: false,
@@ -237,27 +241,41 @@ impl MicSession {
         }
     }
 
-    /// `i`: the next microphone, set in the settings (not saved) and the
-    /// one open closed (`mixer` told); its name, or why there is none.
-    pub(crate) fn next(
+    /// How the microphones are listed.
+    pub(crate) fn lister(&self) -> MicLister {
+        Arc::clone(&self.list)
+    }
+
+    /// The microphone `pick` names (the next one for `i`, the microphones
+    /// listed here; or one chosen from the list, as it was listed: one gone
+    /// since fails to open in the background and says why), set in the
+    /// settings (not saved) and the one open closed (`mixer` told), for
+    /// [`MicSession::turn`] to open; its name, or why there is none.
+    pub(crate) fn choose(
         &mut self,
+        pick: &MicPick,
         state: &mut State,
         mixer: Option<&Mixer>,
     ) -> Result<String, String> {
-        let list = match (self.list)() {
-            Ok(list) if !list.is_empty() => list,
-            Ok(_) => return Err("No microphone found".into()),
-            Err(why) => return Err(format!("Listing microphones failed: {why}")),
+        let (id, name) = match pick {
+            MicPick::Next => {
+                let list = match (self.list)() {
+                    Ok(list) if !list.is_empty() => list,
+                    Ok(_) => return Err("No microphone found".into()),
+                    Err(why) => return Err(format!("Listing microphones failed: {why}")),
+                };
+                let current = self
+                    .input
+                    .as_ref()
+                    .map(|m| m.info().id.clone())
+                    .or_else(|| state.config.karaoke_mic_device.clone());
+                let at = current
+                    .and_then(|id| list.iter().position(|(i, _)| *i == id))
+                    .map_or(0, |i| (i + 1) % list.len());
+                list[at].clone()
+            }
+            MicPick::Device(mic) => (mic.id.clone(), mic.name.clone()),
         };
-        let current = self
-            .input
-            .as_ref()
-            .map(|m| m.info().id.clone())
-            .or_else(|| state.config.karaoke_mic_device.clone());
-        let at = current
-            .and_then(|id| list.iter().position(|(i, _)| *i == id))
-            .map_or(0, |i| (i + 1) % list.len());
-        let (id, name) = list[at].clone();
         state.config.karaoke_mic_device = Some(id);
         self.input = None;
         self.failed = false;

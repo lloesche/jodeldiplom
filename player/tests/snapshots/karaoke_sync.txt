@@ -15,6 +15,7 @@
 [lyrics] Undertow
 [lyrics] Glass Rooms
 [mic] Headset 0 %
+[open] Headset ▾
 [key] i the next one
 [echo] on, once music plays
 [words] not timed: the speech model is not in this build (make puts it there)

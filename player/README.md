@@ -697,9 +697,11 @@ is heard in the voice's stem as it is separated, by
 the processor), and kept with the track's waveforms. A note is the median
 of the frames around it the network is sure of, to the nearest semitone.
 
-The microphone (the system's default input, or the one `i` picks) is open
-while the tab or the mode shows (and on the Mixer tab while its strip is
-selected), to hear the singer: it is never played.
+The microphone (the system's default input, or the one chosen: from the
+list its name opens on the tab and on the Mixer tab's strip, listed
+afresh each time it opens, or the next one with `i`; kept in the
+settings) is open while the tab or the mode shows (and on the Mixer tab
+while its strip is selected), to hear the singer: it is never played.
 Nothing of it reaches the speakers, so what plays is exactly what it
 would be without it, and nothing can feed back. It sees what the device
 plays (a tap at the output's last step that only reads), so the music's

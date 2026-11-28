@@ -1505,6 +1505,45 @@ fn the_panels_buttons_take_clicks_and_nothing_else_does() {
     assert!(shown(&gui).karaoke.sync.is_none());
 }
 
+/// K6b: the microphone's name opens the microphones' list, on the
+/// Karaoke tab and on the Mixer tab's MIC strip while it listens; a
+/// microphone in the list open there is chosen by a click.
+#[test]
+fn the_microphones_name_opens_its_list_and_a_click_there_chooses_one() {
+    use jodeldiplom::core::desk::Channel;
+    use jodeldiplom::core::mics::{MicChoice, MicList};
+    let _gpu = gpu();
+    for side in [Side::Karaoke, Side::Mixer] {
+        let mut state = common::karaoke_tab();
+        state.side = side;
+        state.desk.selected = Channel::Mic;
+        state.karaoke.mic.id = Some("a".into());
+        state.karaoke.mic.name = Some("Mic A".into());
+        let pressed = click(&window(state.clone()), "Mic A").unwrap();
+        assert!(
+            matches!(acts(&pressed)[..], [Action::MicList]),
+            "{side:?}: {pressed:?}"
+        );
+        let mics = [("a", "Mic A"), ("b", "Mic B")]
+            .map(|(id, name)| MicChoice {
+                id: id.into(),
+                name: name.into(),
+            })
+            .to_vec();
+        state.karaoke.mic_list = Some(MicList {
+            on: side,
+            mics: Some(mics),
+        });
+        let gui = window(state);
+        assert!(shows(&gui, "Mic B"), "{side:?}");
+        let chosen = click(&gui, "Mic B").unwrap();
+        assert!(
+            matches!(acts(&chosen)[..], [Action::ChooseMic(1)]),
+            "{side:?}: {chosen:?}"
+        );
+    }
+}
+
 /// The Karaoke tab, every song's words timed: one every second from 5 s,
 /// each sung for 0.3 s.
 fn lyrics_state() -> State {

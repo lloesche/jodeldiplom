@@ -12,6 +12,7 @@
 
 pub mod bottom;
 pub mod bubbles;
+pub mod choices;
 pub mod command_palette;
 pub mod help;
 pub mod info;
