@@ -111,8 +111,7 @@ mod tests {
 
     #[test]
     fn the_delays_go_to_a_file_and_back_a_pair_each() {
-        let dir = std::env::temp_dir().join(format!("jodel-delays-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new("delays");
         let config = dir.join("config.toml");
         let mut kept = Delays::new();
         let headset = ("{0.0.0}.{abc}".to_owned(), "{0.0.1}.{def}".to_owned());
@@ -155,6 +154,5 @@ mod tests {
         assert_eq!(new[&pair("mic")].nudge_ms, Some(0));
         assert_eq!(new[&pair("usb")].nudge_ms, None);
         assert!(load_beside(None).is_empty() && save_beside(None, &kept).is_none());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

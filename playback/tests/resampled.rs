@@ -81,7 +81,6 @@ fn pcm_at_44k_plays_resampled_to_48k() {
     assert!((seconds - frames as f64 / 44_100.0).abs() < 1.0 / 44_100.0);
     // Half-scale tones do not clip.
     assert!(!events.iter().any(|e| matches!(e, Event::Clipped { .. })));
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -146,7 +145,6 @@ fn seek_equals_a_fresh_resample_from_the_target() {
         streams[0].1 == device_bytes(&want, S24Packed),
         "bytes differ"
     );
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 /// Tracks on the same resampled route play into one stream, each resampled
@@ -176,7 +174,6 @@ fn gapless_resampled_tracks_keep_their_exact_lengths() {
     assert_eq!(ends.len(), 2);
     assert_eq!(ends[0].0, first);
     assert_eq!(ends[1].0, want.len() as u64 / 2);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 /// A full-scale square wave rings past full scale: the output saturates
@@ -215,5 +212,4 @@ fn clipping_is_counted_and_reported() {
     // At most four a second of output.
     assert!(clips.windows(2).all(|w| w[1].1 - w[0].1 >= 12_000));
     assert!(clips.len() <= 5, "{clips:?}");
-    std::fs::remove_dir_all(dir).unwrap();
 }

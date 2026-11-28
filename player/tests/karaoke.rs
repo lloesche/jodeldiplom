@@ -686,14 +686,12 @@ fn the_microphone_is_open_while_karaoke_shows() {
     app.dispatch(Action::Tick(1));
     assert_eq!(opened.lock().unwrap().len(), opens);
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&tree.root);
 }
 
 #[test]
 fn the_speech_model_is_found_where_the_build_put_it() {
     use jodeldiplom::work::lyrics::models::{model_in, MODEL_DIR, MODEL_FILE};
-    let root = std::env::temp_dir().join(format!("jodel-model-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = jodel_testkit::TempDir::new("model");
     let put = |dir: &std::path::Path| {
         durable::write_atomic(&dir.join(MODEL_DIR).join(MODEL_FILE), b"x").unwrap();
         dir.join(MODEL_DIR).join(MODEL_FILE)
@@ -714,7 +712,6 @@ fn the_speech_model_is_found_where_the_build_put_it() {
     // Beside the binary comes first.
     let beside = put(&exe);
     assert_eq!(model_in(Some(&exe), Some(&settings)), Some(beside));
-    let _ = std::fs::remove_dir_all(&root);
     // Nothing to download in the player: `d` on the tab does nothing.
     let state = tab();
     let d = jodeldiplom::core::keymap::lookup(&state, jodeldiplom::core::keymap::Key::ch('d'));
@@ -727,8 +724,7 @@ fn the_speech_model_is_found_where_the_build_put_it() {
 #[test]
 fn the_speech_recogniser_is_found_beside_the_speech_model() {
     use jodeldiplom::work::lyrics::models::{asr_model_in, ASR_FILE, MODEL_DIR};
-    let root = std::env::temp_dir().join(format!("jodel-asr-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = jodel_testkit::TempDir::new("asr");
     let exe = root.join("Contents").join("MacOS");
     let settings = root.join("settings");
     std::fs::create_dir_all(&exe).unwrap();
@@ -737,7 +733,6 @@ fn the_speech_recogniser_is_found_beside_the_speech_model() {
     durable::write_atomic(&resources.join(ASR_FILE), b"x").unwrap();
     let found = asr_model_in(Some(&exe), Some(&settings)).unwrap();
     assert!(found.ends_with(ASR_FILE), "{found:?}");
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// In the mode, Next is the stage's button and nothing of the cells; the

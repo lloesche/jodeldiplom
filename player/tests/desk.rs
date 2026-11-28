@@ -276,7 +276,6 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
     app.dispatch(Action::ShowSide(Side::Browser));
     assert!(app.state.karaoke.mic.name.is_none());
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&tree.root);
 }
 
 #[test]
@@ -360,13 +359,13 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     // resampled (a debug build keeps up in real time).
     const RATE: u32 = 44_100;
     const SEEK: f64 = 1.0;
-    let dir = common::temp_dir("desk-stems");
+    let dir = jodel_testkit::TempDir::new("desk-stems");
     let file = dir.join("chord.wav");
     common::write_wav(&file, RATE, 10.0);
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
     let memory = MemoryOutput::new(caps, SimClock::Paced);
-    let mut options = AppOptions::new(dir.clone());
+    let mut options = AppOptions::new(dir.to_path_buf());
     options.output = Output::Memory(memory.clone());
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.separator = quarter;
@@ -536,7 +535,6 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     for f in back..seek_from {
         assert_eq!(got[2 * f], chord(f, RATE), "frame {f}, after");
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The device is opened once, as the player starts, at the rate the system
@@ -549,7 +547,7 @@ fn the_device_opens_once_for_songs_at_any_rate() {
     let _guard = jodel_testkit::real_time();
     use jodel_output::{Capabilities, SampleFormat, StreamFormat};
     use jodeldiplom::app::MemoryOutput;
-    let dir = common::temp_dir("one-rate");
+    let dir = jodel_testkit::TempDir::new("one-rate");
     let rates = [44_100, 48_000, 96_000];
     for (k, rate) in rates.into_iter().enumerate() {
         common::write_wav(&dir.join(format!("{k}.wav")), rate, 1.0);
@@ -557,7 +555,7 @@ fn the_device_opens_once_for_songs_at_any_rate() {
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(48_000, 2, SampleFormat::S24In32Low));
     let memory = MemoryOutput::new(caps, SimClock::Realtime);
-    let mut options = AppOptions::new(dir.clone());
+    let mut options = AppOptions::new(dir.to_path_buf());
     options.output = Output::Memory(memory.clone());
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.separator = || None;
@@ -589,5 +587,4 @@ fn the_device_opens_once_for_songs_at_any_rate() {
         assert_eq!((route.input_rate, route.output_rate), (rate, 48_000));
         assert_eq!(route.resample.is_some(), rate != 48_000, "{rate}");
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }

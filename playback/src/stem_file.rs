@@ -562,14 +562,9 @@ impl<'a> BitReader<'a> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("jodel-stem-file-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp(name: &str) -> jodel_testkit::TempDir {
+        jodel_testkit::TempDir::new(&format!("stem-file-{name}"))
     }
 
     /// Four stems of `frames`: a sine, noise-like, silence then a tone, and
@@ -662,7 +657,6 @@ mod tests {
         let raw = frames as u64 * CHANNELS as u64 * 2;
         let size = fs::metadata(&path).unwrap().len();
         assert!(size < raw * 9 / 10, "{size} of {raw}");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A file not finished is not left behind; one cut short, or of another
@@ -697,7 +691,6 @@ mod tests {
         damaged[foot..foot + 8].copy_from_slice(&u64::MAX.to_le_bytes());
         fs::write(&path, &damaged).unwrap();
         assert!(StemFile::open(&path).is_err());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

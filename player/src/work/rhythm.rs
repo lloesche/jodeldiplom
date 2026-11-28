@@ -759,8 +759,7 @@ mod tests {
 
     #[test]
     fn the_last_three_analyses_are_kept_newest_first() {
-        let dir = std::env::temp_dir().join(format!("jodel-recent-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new("recent-test");
         assert!(recent(&dir).is_empty());
         for i in 1..=4 {
             remember(&dir, &format!("at {i}\ntrack: {i}.flac (3:00)\n")).unwrap();
@@ -778,7 +777,6 @@ mod tests {
             crate::diag::recent_lines(&[], 0),
             vec!["none yet (analyses taken from the cache are not counted)".to_owned()]
         );
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A 16-bit mono WAV of `seconds` of clicks at 120 BPM.
@@ -796,9 +794,7 @@ mod tests {
     /// once, and one analysed ahead is ready when its analysis is kept.
     #[test]
     fn the_cache_answers_while_an_analysis_is_under_way() {
-        let dir = std::env::temp_dir().join(format!("jodel-rhythm-loader-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("rhythm-loader");
         let cache = dir.join("cache");
         let recipe = RhythmRecipe {
             methods: vec![Method::Flux],
@@ -876,7 +872,6 @@ mod tests {
         // B was analysed ahead (and kept) meanwhile, or is now: both ready.
         assert!(ready.contains(&a) && ready.contains(&b), "{ready:?}");
         drop(worker);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Dropped while both its threads wait, the worker ends them both:

@@ -81,13 +81,6 @@ fn headerless(text: &[u8]) -> String {
     text.split_once('\n').unwrap().1.to_owned()
 }
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("jodel-schemas-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
 #[test]
 fn analysis_files_are_pinned() {
     let mut a = Analysis {
@@ -151,8 +144,8 @@ fn waveform_files_are_pinned() {
 
 #[test]
 fn lyrics_files_are_pinned() {
-    let dir = temp_dir("lyrics");
-    let c = Cache::new(&dir);
+    let dir = jodel_testkit::TempDir::new("lyrics");
+    let c = Cache::new(dir.path());
     let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
     // As found: its words, and when the source synced its lines (no line
     // or word times of their own).
@@ -199,7 +192,6 @@ fn lyrics_files_are_pinned() {
     assert_eq!(back.to_lrc(), timed.to_lrc());
     assert_eq!(back.lines[0].words[1].letters.len(), 4);
     assert_eq!(back.lines[0].synced, None);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A song's lyrics as edited by hand: a word moved, one not to be sung,
@@ -230,8 +222,8 @@ fn lyric_edit_files_are_pinned_and_every_version_is_read() {
 
 #[test]
 fn edited_lyrics_timed_are_pinned() {
-    let dir = temp_dir("edited");
-    let c = Cache::new(&dir);
+    let dir = jodel_testkit::TempDir::new("edited");
+    let c = Cache::new(dir.path());
     let edits = edits();
     // The edits timed: every word, the ones set by hand where they were set.
     let mut timed = edits.clone();
@@ -256,7 +248,6 @@ fn edited_lyrics_timed_are_pinned() {
     let mut other = edits.clone();
     other.lines[2].words[2].text = "go!".into();
     assert_eq!(c.edited("e", &other), None);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -395,8 +386,8 @@ fn a_file_without_a_header_is_the_users_first_version_or_no_cache() {
         rhythm::from_text(key, &headerless(analysis.as_bytes())),
         None
     );
-    let dir = temp_dir("headerless");
-    let c = Cache::new(&dir);
+    let dir = jodel_testkit::TempDir::new("headerless");
+    let c = Cache::new(dir.path());
     let found = Lyrics::parse_text("One line\n", Source::Lrclib);
     c.store_text("k", &found).unwrap();
     c.store_timed("k", &found).unwrap();
@@ -408,7 +399,6 @@ fn a_file_without_a_header_is_the_users_first_version_or_no_cache() {
     let text = c.text("k");
     assert!(matches!(text, Kept::Outdated), "{text:?}");
     assert_eq!(c.timed("k"), None);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A cache file of the original singer's phrases: pinned, read back the

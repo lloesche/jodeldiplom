@@ -220,8 +220,7 @@ mod tests {
     /// goes, and edits forgotten are gone.
     #[test]
     fn edits_are_kept_and_found_while_the_data_folder_moves() {
-        let dir = std::env::temp_dir().join(format!("jodel-edits-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new("edits");
         let song = dir.join("music/a song.flac");
         durable::write_atomic(&song, b"not music").unwrap();
         let (old, new) = (dir.join("old"), dir.join("new"));
@@ -250,6 +249,5 @@ mod tests {
         store.save(&song, None).unwrap();
         assert_eq!(store.load(&song), None);
         assert_eq!(moved.load(&song), None);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

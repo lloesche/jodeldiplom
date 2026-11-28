@@ -112,8 +112,7 @@ mod tests {
     /// up, it goes.
     #[test]
     fn a_resumable_file_is_gone_on_from_then_takes_its_name() {
-        let dir = std::env::temp_dir().join(format!("durable-resumable-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new("durable-resumable");
         let path = dir.join("deep").join("model.bin");
         let mut part = Resumable::open(&path).unwrap();
         part.write_all(b"the first half, ").unwrap();
@@ -138,6 +137,5 @@ mod tests {
         part.write_all(b"not it").unwrap();
         part.discard().unwrap();
         assert!(!Resumable::part_of(&path).exists());
-        let _ = fs::remove_dir_all(&dir);
     }
 }

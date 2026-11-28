@@ -7,3 +7,7 @@ license = "MIT"
 description = "Files written whole or not at all, and made durable: every crate here writes through it"
 
 [dependencies]
+
+[dev-dependencies]
+# A temporary folder that goes.
+jodel-testkit = { path = "../testkit" }

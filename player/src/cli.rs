@@ -386,8 +386,7 @@ mod tests {
     /// caches in the data folder it names; none of the usual player's.
     #[test]
     fn a_config_player_keeps_its_own_folders() {
-        let dir = std::env::temp_dir().join(format!("jodel-own-config-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new("own-config");
         let (settings, music) = (dir.join("settings"), dir.join("music"));
         durable::create_dir_all(&settings).unwrap();
         durable::create_dir_all(&music).unwrap();
@@ -418,7 +417,6 @@ mod tests {
             assert!(p.starts_with(&dir), "{}", p.display());
             assert!(usual.as_deref().is_none_or(|u| !p.starts_with(u)));
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// What setup gives (every needed model's path, in the manifest's
@@ -489,8 +487,7 @@ mod tests {
 
     #[test]
     fn overrides_apply_on_top_of_the_file() {
-        let dir = std::env::temp_dir().join(format!("jodeldiplom-cli-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("cli");
         let file = dir.join("c.toml");
         durable::write_atomic(&file, b"headroom = 1\n").unwrap();
         let a = args(&["--config", file.to_str().unwrap()]).unwrap();
@@ -505,18 +502,16 @@ mod tests {
         let track = dir.join("t.flac");
         durable::write_atomic(&track, b"").unwrap();
         let (start_dir, autoplay) = start(Some(&track)).unwrap();
-        assert_eq!(start_dir, dir);
+        assert_eq!(start_dir, dir.path());
         assert_eq!(autoplay, Some(track));
         assert!(start(Some(&dir.join("missing"))).is_err());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A setting the player does not know is said once: the file is written
     /// again without it, the rest kept, and the next start is clean.
     #[test]
     fn settings_not_known_are_said_once() {
-        let dir = std::env::temp_dir().join(format!("jodeldiplom-unknown-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("unknown");
         let file = dir.join("c.toml");
         durable::write_atomic(&file, b"resample = false\nheadroom = 1\n").unwrap();
         let a = args(&["--config", file.to_str().unwrap()]).unwrap();
@@ -530,13 +525,11 @@ mod tests {
         let again = settings(&a).unwrap();
         assert!(again.warnings.is_empty(), "{:?}", again.warnings);
         assert_eq!(again.saved, s.saved);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn the_app_bundle_starts_in_the_music_folder() {
-        let home = std::env::temp_dir().join(format!("jodeldiplom-home-{}", std::process::id()));
-        std::fs::create_dir_all(&home).unwrap();
+        let home = jodel_testkit::TempDir::new("home");
         let cwd = PathBuf::from("/somewhere");
         let bundled = Path::new("/Applications/Jodeldiplom.app/Contents/MacOS/jodeldiplom");
         let bare = Path::new("/usr/local/bin/jodeldiplom");
@@ -545,7 +538,7 @@ mod tests {
         // From the bundle: home without a Music folder, then Music.
         assert_eq!(
             default_folder(cwd.clone(), Some(bundled), Some(&home)),
-            home
+            home.path()
         );
         std::fs::create_dir_all(home.join("Music")).unwrap();
         assert_eq!(
@@ -553,6 +546,5 @@ mod tests {
             home.join("Music")
         );
         assert_eq!(default_folder(cwd.clone(), Some(bundled), None), cwd);
-        std::fs::remove_dir_all(&home).unwrap();
     }
 }

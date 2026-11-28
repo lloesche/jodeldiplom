@@ -217,7 +217,7 @@ fn wait(
 
 #[test]
 fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
-    let dir = common::temp_dir("preview");
+    let dir = jodel_testkit::TempDir::new("preview");
     let (song, ramp, two, three) = (
         dir.join("song.wav"),
         dir.join("ramp.wav"),
@@ -321,13 +321,12 @@ fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
     player.send(Command::Stop).unwrap();
     drop(player);
     drop(mixer);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
     let _guard = jodel_testkit::real_time();
-    let dir = common::temp_dir("preview-end");
+    let dir = jodel_testkit::TempDir::new("preview-end");
     let (short, one, other) = (
         dir.join("short.wav"),
         dir.join("one.wav"),
@@ -380,7 +379,6 @@ fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
     previews.end();
     wait("the players are gone", &mixer, &mut previews, |p| p.done());
     drop(mixer);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// Where `h[start..]` is not `from` falling and `to` rising, equal-power,
@@ -398,7 +396,7 @@ fn crossfade_off(h: &[i32], start: usize, from: i32, to: i32) -> Option<(usize, 
 
 #[test]
 fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
-    let dir = common::temp_dir("preview-moves");
+    let dir = jodel_testkit::TempDir::new("preview-moves");
     let song = dir.join("song.wav");
     let level = 1_000_000;
     wav(&song, RATE, 30 * RATE, |_| level);
@@ -492,13 +490,12 @@ fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
     player.send(Command::Stop).unwrap();
     drop(player);
     drop(mixer);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
     let _guard = jodel_testkit::real_time();
-    let dir = common::temp_dir("preview-rates");
+    let dir = jodel_testkit::TempDir::new("preview-rates");
     let specs = [
         (44_100, 1_000_000),
         (96_000, 2_000_000),
@@ -538,7 +535,6 @@ fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
     previews.end();
     wait("the players are gone", &mixer, &mut previews, |p| p.done());
     drop(mixer);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// The song is both heads of its player (a transition's next track plays
@@ -546,7 +542,7 @@ fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
 /// and brings both back at its end.
 #[test]
 fn a_preview_ducks_both_heads_of_the_song() {
-    let dir = common::temp_dir("preview-heads");
+    let dir = jodel_testkit::TempDir::new("preview-heads");
     let (a, b, file) = (dir.join("a.wav"), dir.join("b.wav"), dir.join("file.wav"));
     let (level_a, level_b, level) = (1_000_000, 500_000, 2_000_000);
     wav(&a, RATE, 30 * RATE, |_| level_a);
@@ -594,7 +590,6 @@ fn a_preview_ducks_both_heads_of_the_song() {
     }
     drop(players);
     drop(mixer);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// Right after the player starts, nothing played yet: Ctrl held over a
@@ -635,5 +630,4 @@ fn a_preview_right_after_start_reaches_the_mixer() {
         app.desk()
     );
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&tree.root);
 }

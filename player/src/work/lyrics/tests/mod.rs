@@ -84,9 +84,7 @@ impl WordTimer for Transcriber {
 /// as heard.
 #[test]
 fn a_track_with_no_lyrics_found_is_heard_instead() {
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-heard-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("lyrics-heard");
     let song = dir.join("song.flac");
     fs::write(&song, b"not audio").unwrap();
     let probe = |path: &Path| {
@@ -136,7 +134,6 @@ fn a_track_with_no_lyrics_found_is_heard_instead() {
         "{again:?}"
     );
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A hearer that takes a while and fails, counting its hearings.
@@ -169,9 +166,7 @@ impl WordTimer for SlowFailing {
 #[test]
 fn a_track_with_no_lyrics_found_is_heard_once_a_run() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-once-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("lyrics-once");
     let song = dir.join("song.flac");
     fs::write(&song, b"not audio").unwrap();
     let probe = |path: &Path| {
@@ -228,7 +223,6 @@ fn a_track_with_no_lyrics_found_is_heard_once_a_run() {
     thread::sleep(Duration::from_millis(500));
     assert_eq!(hearings.load(Ordering::SeqCst), 1);
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A hearer that hears as [`Transcriber`] does, counting its hearings.
@@ -259,9 +253,7 @@ impl WordTimer for CountingHearer {
 #[test]
 fn a_track_heard_and_kept_is_not_heard_again_after_a_restart() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-restart-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("lyrics-restart");
     let song = dir.join("song.flac");
     fs::write(&song, b"not audio").unwrap();
     let hearings = Arc::new(AtomicUsize::new(0));
@@ -312,14 +304,11 @@ fn a_track_heard_and_kept_is_not_heard_again_after_a_restart() {
     );
     assert_eq!(hearings.load(Ordering::SeqCst), 1);
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn lyrics_found_come_again_with_their_words_timed_and_kept() {
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-timer-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("lyrics-timer");
     let song = dir.join("song.flac");
     fs::write(&song, b"not audio").unwrap();
     fs::write(dir.join("song.lrc"), "[00:01.00]One line\n").unwrap();
@@ -377,7 +366,6 @@ fn lyrics_found_come_again_with_their_words_timed_and_kept() {
         Some(Maker::new("marker", 1))
     );
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A timer that keeps the words set by hand where they were set (as the
@@ -410,9 +398,7 @@ impl WordTimer for Keeper {
 /// edits forgotten, its text as found again.
 #[test]
 fn a_song_edited_by_hand_is_timed_with_its_edits_and_found_so_again() {
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-edited-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("lyrics-edited");
     let song = dir.join("song.flac");
     fs::write(&song, b"not audio").unwrap();
     fs::write(
@@ -505,7 +491,6 @@ fn a_song_edited_by_hand_is_timed_with_its_edits_and_found_so_again() {
         .load(&song)
         .is_none());
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// What the voice of the songs in these tests is heard to sing.
@@ -538,9 +523,7 @@ impl WordTimer for Hearer {
 
 #[test]
 fn a_fetched_text_that_does_not_fit_is_swapped_for_one_that_does() {
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-fit-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("lyrics-fit");
     let song = dir.join("song.flac");
     fs::write(&song, b"not audio").unwrap();
     let record = |id: u32, text: &str| {
@@ -611,7 +594,6 @@ fn a_fetched_text_that_does_not_fit_is_swapped_for_one_that_does() {
     };
     assert_eq!(kept.lines[0].text(), "You search through the years");
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A timer that finds the text fits and times it with its last line put
@@ -642,9 +624,7 @@ impl WordTimer for Repeater {
 
 #[test]
 fn a_fitting_text_timed_with_repeats_put_in_is_kept_as_found() {
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-repeats-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("lyrics-repeats");
     let song = dir.join("song.flac");
     fs::write(&song, b"not audio").unwrap();
     let record = r#"{"id":1,"trackName":"Song","artistName":"Band","albumName":"LP",
@@ -700,7 +680,6 @@ fn a_fitting_text_timed_with_repeats_put_in_is_kept_as_found() {
     assert_eq!(texts(&kept), ["First line", "The chorus"]);
     assert_eq!(cache.timed(&key).unwrap().lines.len(), 3);
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A song got ready ahead is timed into the cache without a word to
@@ -708,9 +687,7 @@ fn a_fitting_text_timed_with_repeats_put_in_is_kept_as_found() {
 /// comes timed at once.
 #[test]
 fn songs_got_ready_ahead_are_timed_into_the_cache_quietly() {
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-ahead-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("lyrics-ahead");
     let song = dir.join("song.flac");
     fs::write(&song, b"not audio").unwrap();
     fs::write(dir.join("song.lrc"), "[00:01.00]One line\n").unwrap();
@@ -760,7 +737,6 @@ fn songs_got_ready_ahead_are_timed_into_the_cache_quietly() {
     };
     assert_eq!(by, Some(jodel_lyrics::Maker::new("marker", 1)));
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// How a stub answers the `n`-th request, for `url`.
@@ -818,10 +794,8 @@ const RECORD: &str = r#"{"id":7,"trackName":"Song","artistName":"Band","albumNam
     "syncedLyrics":"[00:12.00]Hello there\n[00:15.50]General Kenobi"}"#;
 
 /// A folder for one test, with a track file in it.
-fn place(name: &str) -> (PathBuf, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("jodel-lyrics-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+fn place(name: &str) -> (jodel_testkit::TempDir, PathBuf) {
+    let dir = jodel_testkit::TempDir::new(&format!("lyrics-{name}"));
     let file = dir.join("song.flac");
     fs::write(&file, b"not really audio").unwrap();
     (dir, file)

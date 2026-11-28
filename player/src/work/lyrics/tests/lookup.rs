@@ -83,7 +83,6 @@ fn the_tag_then_the_sidecar_then_the_web() {
         assert_eq!(web.asked().len(), 2 + n);
         assert!(matches!(cache.text(&key), Kept::Current(_)));
     }
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -139,7 +138,6 @@ fn a_text_kept_by_an_older_player_waits_for_the_web() {
         f.cache.as_ref().unwrap().text(&key),
         Kept::Current(_)
     ));
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A timer that counts how often it is asked to hear a song.
@@ -209,7 +207,6 @@ fn lrclib_is_asked_once_a_second_at_most() {
         Answer::Failed("stopped".into())
     );
     assert_eq!(web.asked().len(), 2);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -235,7 +232,6 @@ fn a_search_follows_when_get_finds_nothing() {
         asked[1],
         "http://lrclib.test/api/search?track_name=Song&artist_name=Band"
     );
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -287,8 +283,6 @@ fn nothing_found_is_believed_for_thirty_days() {
         Answer::NotFound
     );
     assert_eq!(empty.asked().len(), 2, "get and search, once");
-    let _ = fs::remove_dir_all(&dir);
-    let _ = fs::remove_dir_all(&dir2);
 }
 
 #[test]
@@ -348,8 +342,6 @@ fn a_busy_service_is_waited_out() {
         Answer::Failed("no network".into())
     );
     assert!(!dir2.join("cache").exists());
-    let _ = fs::remove_dir_all(&dir);
-    let _ = fs::remove_dir_all(&dir2);
 }
 
 #[test]
@@ -373,7 +365,6 @@ fn offline_or_nameless_tracks_never_reach_the_web() {
     );
     assert!(web.asked().is_empty());
     assert!(!dir.join("cache").exists(), "nothing recorded");
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -402,7 +393,6 @@ fn our_word_times_come_with_the_text_they_were_made_from() {
         panic!("no sidecar");
     };
     assert_eq!(timed, None);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// Serves one request a connection on a local port with `answers`, in
@@ -463,7 +453,7 @@ fn the_web_client_against_a_local_server() {
         http_answer("200 OK", "", &body),
     ]);
     let lrclib = Lrclib::new(web, base);
-    let (dir, file) = place("web");
+    let (_dir, file) = place("web");
     let found = lrclib.find(&track(&file)).unwrap();
     let Found::Lyrics(lyrics) = found else {
         panic!("no lyrics");
@@ -475,7 +465,6 @@ fn the_web_client_against_a_local_server() {
     assert!(asked
         .iter()
         .all(|h| h.starts_with("GET /api/get?artist_name=Band&")));
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -528,7 +517,6 @@ fn the_worker_answers_in_the_order_asked() {
     assert_eq!(lines(&rx.recv_timeout(wait).unwrap().1).len(), 2);
     assert_eq!(web.asked().len(), 1);
     drop(worker);
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -164,8 +164,7 @@ fn a_knob_s_driver_is_chosen_and_a_pass_added() {
 }
 
 fn player() -> App {
-    let dir = common::temp_dir("shader-tab");
-    let mut options = AppOptions::new(dir);
+    let mut options = AppOptions::new(jodel_testkit::thread_dir("shader-tab"));
     options.output = Output::Null(SimClock::Realtime);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Err("no microphone".into()));

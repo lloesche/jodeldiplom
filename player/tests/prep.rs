@@ -588,5 +588,4 @@ fn an_idle_preparation_view_asks_the_app_for_no_frames() {
     assert!(!app.animating(), "at rest");
     assert!(app.state.due().is_none());
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&tree.root);
 }

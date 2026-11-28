@@ -133,12 +133,12 @@ mod tests {
     fn moving(
         tag: &str,
     ) -> (
+        jodel_testkit::TempDir,
         std::path::PathBuf,
         crate::store::dirs::Data,
         crate::store::dirs::Data,
     ) {
-        let dir = std::env::temp_dir().join(format!("jodel-scores-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new(&format!("scores-{tag}"));
         let (old, new) = (
             crate::store::dirs::Data(dir.join("old")),
             crate::store::dirs::Data(dir.join("new")),
@@ -148,14 +148,14 @@ mod tests {
         std::fs::write(old.scores(), to_text(&earlier)).unwrap();
         let settings = dir.join("settings");
         crate::store::mover::begin(&settings, &[(old.0.clone(), new.0.clone())]).unwrap();
-        (settings, old, new)
+        (dir, settings, old, new)
     }
 
     /// Started again while the data folder moves (the player knows only the
     /// new place), the bests still in the old one load.
     #[test]
     fn bests_load_while_the_data_folder_moves() {
-        let (_, old, new) = moving("load");
+        let (_dir, _, old, new) = moving("load");
         let bests = load(&new.scores());
         assert_eq!(bests.len(), 2);
         assert_eq!(bests["A"].points, 3000);
@@ -167,7 +167,7 @@ mod tests {
     /// read the old file, nothing of it is written over.
     #[test]
     fn a_best_sung_during_a_move_survives_it_with_the_older_ones() {
-        let (settings, old, new) = moving("sung");
+        let (_dir, settings, old, new) = moving("sung");
         // C sung, and B beaten (A not), as the player holds them.
         let sung: Bests = [("C".to_owned(), best(900)), ("B".to_owned(), best(2500))].into();
         save(&new.scores(), &sung).unwrap();

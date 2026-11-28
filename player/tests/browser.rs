@@ -96,7 +96,6 @@ fn listing_puts_folders_first_and_hides_the_rest() {
         none.extend(hits)
     });
     assert!(none.is_empty());
-    std::fs::remove_dir_all(&tree.root).unwrap();
 }
 
 #[test]
@@ -115,7 +114,7 @@ fn details_are_read_for_the_rows_on_screen() {
     app.shutdown();
 
     // A folder longer than the screen: only what is shown is read.
-    let big = common::temp_dir("big");
+    let big = jodel_testkit::TempDir::new("big");
     for i in 0..40 {
         std::fs::copy(
             jodel_testkit::fixture(common::F44),
@@ -123,7 +122,7 @@ fn details_are_read_for_the_rows_on_screen() {
         )
         .unwrap();
     }
-    let mut app = start(big.clone(), (100, 16));
+    let mut app = start(big.to_path_buf(), (100, 16));
     // The rows the list shows in that window.
     let height = usize::from(app.state.fit.list_rows);
     assert!(common::wait_for(&mut app, WAIT, |a| {
@@ -140,8 +139,6 @@ fn details_are_read_for_the_rows_on_screen() {
         .contains_key(&big.join("39.flac"))));
     assert!(app.state.details.len() < 40);
     app.shutdown();
-    std::fs::remove_dir_all(&tree.root).unwrap();
-    std::fs::remove_dir_all(&big).unwrap();
 }
 
 #[test]
@@ -207,7 +204,6 @@ fn filter_then_search_below_then_queue_a_folder() {
         .iter()
         .all(|p| a.state.details.contains_key(p))));
     app.shutdown();
-    std::fs::remove_dir_all(&tree.root).unwrap();
 }
 
 fn format_fixture(name: &str) -> PathBuf {

@@ -616,11 +616,8 @@ mod tests {
     use super::*;
     use crate::work::told::Told;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mover-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp(name: &str) -> jodel_testkit::TempDir {
+        jodel_testkit::TempDir::new(&format!("mover-{name}"))
     }
 
     /// The move started on the journal in `settings`, and what it tells.

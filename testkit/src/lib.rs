@@ -41,6 +41,7 @@ pub fn fixture(name: &str) -> PathBuf {
 /// A new empty folder under the system's temporary folder, removed (with
 /// what is in it) when dropped: left behind, the tests' audio files filled
 /// a small temporary file system run after run.
+#[derive(Debug)]
 pub struct TempDir(PathBuf);
 
 impl TempDir {
@@ -76,9 +77,44 @@ impl AsRef<Path> for TempDir {
 }
 
 impl Drop for TempDir {
+    /// Removes the folder, trying again with a growing pause for about five
+    /// seconds: on Windows a file a worker thread has only just let go of,
+    /// or one a virus scanner or indexer holds, still refuses for a while.
+    /// A folder that stays is named loudly on stderr and left: a passing
+    /// test is never failed by the machine's housekeeping.
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let start = std::time::Instant::now();
+        let mut pause = std::time::Duration::from_millis(10);
+        loop {
+            match std::fs::remove_dir_all(&self.0) {
+                Ok(()) => return,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+                Err(e) if start.elapsed() > std::time::Duration::from_secs(5) => {
+                    eprintln!(
+                        "WARNING: a temporary folder would not go and is left behind: {}: {e}",
+                        self.0.display()
+                    );
+                    return;
+                }
+                Err(_) => {}
+            }
+            std::thread::sleep(pause);
+            pause = (pause * 2).min(std::time::Duration::from_millis(500));
+        }
     }
+}
+
+/// A new empty folder that lasts until the calling test's thread ends, for
+/// a helper that builds something (a player) that cannot carry a
+/// [`TempDir`] back to its test.
+pub fn thread_dir(tag: &str) -> PathBuf {
+    thread_local! {
+        static KEPT: std::cell::RefCell<Vec<TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let dir = TempDir::new(tag);
+    let path = dir.path().to_path_buf();
+    KEPT.with(|k| k.borrow_mut().push(dir));
+    path
 }
 
 /// A call an allocator takes.

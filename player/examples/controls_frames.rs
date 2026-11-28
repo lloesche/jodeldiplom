@@ -249,8 +249,7 @@ fn main() {
         .and_then(|k| args.get(k + 1))
         .map(|name| jodeldiplom::theme::Theme::named(name).expect("a theme"));
     let size = Size::new(w / scale, h / scale);
-    let dir = std::env::temp_dir().join(format!("jodeldiplom-controls-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("a folder for the player");
+    let dir = jodel_testkit::TempDir::new("controls");
     let mut headless = Headless::new();
     println!("drawn by {}", headless.name());
     let id = window::Id::unique();
@@ -284,7 +283,7 @@ fn main() {
                 state.playing.position -= 0.25;
             }
             let clock = AppClock::stepped();
-            let mut gui = Gui::headless(player(dir.clone(), &clock));
+            let mut gui = Gui::headless(player(dir.to_path_buf(), &clock));
             clock.step(std::time::Duration::from_millis(state.now_ms));
             gui.set_art(Some(cover()));
             let _ = gui.update(event(window::Event::Resized(size)));
@@ -304,5 +303,4 @@ fn main() {
             println!("{}", file.display());
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }

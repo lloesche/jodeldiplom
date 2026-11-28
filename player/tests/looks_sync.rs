@@ -130,13 +130,13 @@ fn lands(run: &[Seen], moments: &[f64], pulse: impl Fn(&Seen) -> f32) -> usize {
 /// after a seek; while paused the look holds still.
 #[test]
 fn the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause() {
-    let dir = common::temp_dir("looks-sync");
+    let dir = jodel_testkit::TempDir::new("looks-sync");
     let file = dir.join("a.wav");
     common::write_wav(&file, RATE, 30.0);
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
     let memory = MemoryOutput::new(caps, SimClock::Manual);
-    let mut options = AppOptions::new(dir.clone());
+    let mut options = AppOptions::new(dir.to_path_buf());
     let clock = AppClock::stepped();
     options.clock = clock.clone();
     options.output = Output::Memory(memory.clone());

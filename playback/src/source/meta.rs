@@ -193,9 +193,7 @@ mod tests {
 
     #[test]
     fn folder_cover_prefers_cover_then_folder_then_front() {
-        let dir = std::env::temp_dir().join(format!("jodel-playback-cover-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("playback-cover");
         let track = dir.join("01.flac");
         assert_eq!(folder_cover(&track), None);
         fs::write(dir.join("Front.PNG"), b"front").unwrap();
@@ -210,6 +208,5 @@ mod tests {
         assert_eq!(&*cover.data, b"cover");
         assert_eq!(cover.mime, "image/jpeg");
         assert_eq!(cover.origin, CoverOrigin::Folder(dir.join("COVER.jpeg")));
-        fs::remove_dir_all(&dir).unwrap();
     }
 }

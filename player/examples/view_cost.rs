@@ -209,7 +209,7 @@ fn main() {
         }
     }
     drop(gui);
-    let _ = std::fs::remove_dir_all(&tree.root);
+    drop(tree);
     if over {
         std::process::exit(1);
     }

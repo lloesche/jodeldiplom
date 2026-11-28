@@ -38,15 +38,8 @@ fn sha(data: &[u8]) -> String {
     h.hex()
 }
 
-fn temp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "jodel-setup-{name}-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp(name: &str) -> jodel_testkit::TempDir {
+    jodel_testkit::TempDir::new(&format!("setup-{name}"))
 }
 
 /// A made-up web: each URL's bytes; packing concatenates the parts.
@@ -636,7 +629,11 @@ fn a_stamp_goes_stale_when_the_file_changes() {
 
 /// Setup run once over `manifest` into a fresh `places` under `name`,
 /// everything got: its folder, the places, and the made-up web.
-fn set_up(name: &str, manifest: &[Need], work: Fake) -> (PathBuf, Places, Arc<Fake>) {
+fn set_up(
+    name: &str,
+    manifest: &[Need],
+    work: Fake,
+) -> (jodel_testkit::TempDir, Places, Arc<Fake>) {
     let dir = temp(name);
     let places = places(&dir);
     let work = Arc::new(work);

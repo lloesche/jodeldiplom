@@ -82,12 +82,11 @@ mod tests {
 
     #[test]
     fn a_second_player_finds_the_first_running_and_runs_once_it_is_gone() {
-        let dir = std::env::temp_dir().join(format!("jodeldiplom-single-{}", std::process::id()));
+        let dir = jodel_testkit::TempDir::new("single");
         let first = take(&dir);
         assert!(matches!(first, Start::Alone(Some(_))), "{first:?}");
         assert!(matches!(take(&dir), Start::Running));
         drop(first);
         assert!(matches!(take(&dir), Start::Alone(Some(_))));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

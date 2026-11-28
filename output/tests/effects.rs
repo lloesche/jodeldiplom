@@ -162,8 +162,7 @@ fn the_microphone_hears_the_effects_as_what_plays() {
     wait_until("hearing", || {
         mixer.mic().port == jodel_output::mixer::MicPort::Hearing
     });
-    let dir = std::env::temp_dir().join(format!("jodel-fx-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("fx");
     let path = dir.join("echo.wav");
     let mut recording = singer.input.record_echo(&path, 2.0).unwrap();
     // In the middle, a little after the frame mixed now.
@@ -177,7 +176,6 @@ fn the_microphone_hears_the_effects_as_what_plays() {
         std::thread::sleep(Duration::from_millis(10));
     };
     let bytes = std::fs::read(&file).unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
     let floats: Vec<f32> = bytes[80..]
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))

@@ -13,3 +13,7 @@ durable = { path = "../durable" }
 jodel-dsp = { path = "../dsp" }
 # The checkpoints read as published.
 jodel-tensors = { path = "../tensors" }
+
+[dev-dependencies]
+# A temporary folder that goes.
+jodel-testkit = { path = "../testkit" }

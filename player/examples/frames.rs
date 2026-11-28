@@ -133,5 +133,4 @@ fn main() {
         );
     }
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&tree.root);
 }

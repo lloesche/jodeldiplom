@@ -198,7 +198,6 @@ fn lossless_formats_decode_exactly() {
     let (source, got) = read_all(&aiff16);
     assert_eq!((source.info().bits, source.info().rate), (16, 48_000));
     assert!(got == sixteen.iter().map(|s| s << 8).collect::<Vec<_>>());
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -344,7 +343,6 @@ fn lossy_files_route_as_pcm_and_read_user_tags() {
     assert!(!route.lossless);
     assert_eq!(route.headroom, LOSSY_HEADROOM);
     assert_eq!(route.describe(), "44.1 kHz decoded from MP3 (-1.5 dB)");
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -388,7 +386,6 @@ fn unsupported_codecs_say_so() {
     std::fs::write(&junk, vec![0x55u8; 4096]).unwrap();
     let error = probe(&junk).unwrap_err().to_string();
     assert!(error.contains("not a FLAC, WAV, AIFF, CAF"), "{error}");
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 fn wav(path: &Path, bits: u16, float: bool, samples: impl Iterator<Item = f64>) {
@@ -480,7 +477,6 @@ fn wide_pcm_is_requantized_once_and_exact_where_it_fits() {
     for (&q, &y) in got.iter().zip(&loud).skip(1).take(500) {
         assert!((f64::from(q) - (y as f32 as f64) * 8_388_608.0).abs() < 2.0);
     }
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 fn lossy_options() -> PlayerOptions {

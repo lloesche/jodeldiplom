@@ -147,9 +147,7 @@ pub(crate) mod tests {
     /// The drawing step's write, read back from the song's folder.
     #[test]
     fn scenes_written_to_a_folder_are_read_back_from_it() {
-        let dir = std::env::temp_dir().join(format!("jodel-scenes-text-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("scenes-text");
         let scenes = Scenes {
             made: "0123456789abcdef".into(),
             scenes: vec![Scene {
@@ -162,6 +160,5 @@ pub(crate) mod tests {
         assert_eq!(Scenes::read(&dir), None);
         scenes.write(&dir).unwrap();
         assert_eq!(Scenes::read(&dir), Some(scenes));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

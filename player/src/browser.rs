@@ -675,7 +675,7 @@ mod tests {
     /// folder.
     #[test]
     fn folders_are_listed_for_the_data_folder() {
-        let root = std::env::temp_dir().join(format!("jodeldiplom-folders-{}", std::process::id()));
+        let root = jodel_testkit::TempDir::new("folders");
         for name in [
             "b",
             "A",
@@ -696,12 +696,11 @@ mod tests {
             !tops.is_empty() && tops.iter().all(|p| p.is_dir()),
             "{tops:?}"
         );
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn typed_paths_resolve_to_folders_and_files() {
-        let root = std::env::temp_dir().join(format!("jodeldiplom-jump-{}", std::process::id()));
+        let root = jodel_testkit::TempDir::new("jump");
         let album = root.join("Album");
         fs::create_dir_all(&album).unwrap();
         let file = album.join("01 a.flac");
@@ -733,7 +732,6 @@ mod tests {
                 Some((PathBuf::from(format!("{drive}\\")), None))
             );
         }
-        fs::remove_dir_all(&root).unwrap();
     }
 
     /// A FLAC header: STREAMINFO, a large picture block, then the comments.
@@ -767,8 +765,7 @@ mod tests {
 
     #[test]
     fn rows_come_from_the_flac_header_alone() {
-        let dir = std::env::temp_dir().join(format!("jodeldiplom-header-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("header");
         let tagged = dir.join("tagged.flac");
         fs::write(
             &tagged,
@@ -790,7 +787,6 @@ mod tests {
         assert_eq!(details.chip, "FLAC 44.1");
         assert_eq!(details.title.as_deref(), Some("Other"));
         assert_eq!(details.seconds, Some(3.0));
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

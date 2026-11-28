@@ -449,10 +449,8 @@ mod tests {
     }
 
     /// A file's bytes and SHA-256, a folder for it, and where it goes.
-    fn file(name: &str) -> (Vec<u8>, String, PathBuf, PathBuf) {
-        let dir =
-            std::env::temp_dir().join(format!("jodel-download-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+    fn file(name: &str) -> (Vec<u8>, String, jodel_testkit::TempDir, PathBuf) {
+        let dir = jodel_testkit::TempDir::new(&format!("download-{name}"));
         let data: Vec<u8> = (0..300_000u32).map(|i| (i * 7 % 251) as u8).collect();
         let mut hash = Sha256::new();
         hash.update(&data);
@@ -470,7 +468,7 @@ mod tests {
     /// there: only the rest asked for, the whole checked.
     #[test]
     fn a_download_cut_off_goes_on_where_it_stopped() {
-        let (data, sha, dir, to) = file("cut");
+        let (data, sha, _dir, to) = file("cut");
         let (url, ranges) = server(&data, vec![cut(120_000), ranged()]);
         let len = data.len() as u64;
         let first = download(&url, &to, len, &sha, |_, _| {});
@@ -483,7 +481,6 @@ mod tests {
         assert_eq!(seen.first(), Some(&120_000), "{seen:?}");
         assert_eq!(fs::read(&to).unwrap(), data);
         assert!(!Resumable::part_of(&to).exists());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A server that sends the whole again for a range has the file filled
@@ -493,7 +490,7 @@ mod tests {
     /// file kept is thrown away and the whole asked for.
     #[test]
     fn a_range_not_given_or_bytes_too_many_start_the_file_afresh() {
-        let (data, sha, dir, to) = file("afresh");
+        let (data, sha, _dir, to) = file("afresh");
         let len = data.len() as u64;
         for (answers, asked) in [
             (vec![whole()], vec!["120000-"]),
@@ -517,7 +514,6 @@ mod tests {
         download(&url, &to, len, &sha, |_, _| {}).unwrap();
         assert_eq!(ranges.recv().unwrap(), "", "all of it");
         assert_eq!(fs::read(&to).unwrap(), data);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Kept whole (cut off between its last byte and its name), it is
@@ -526,7 +522,7 @@ mod tests {
     /// is fetched once more, and is the file.
     #[test]
     fn a_whole_download_kept_needs_no_network() {
-        let (data, sha, dir, to) = file("kept-whole");
+        let (data, sha, _dir, to) = file("kept-whole");
         let len = data.len() as u64;
         left(&to, &data);
         download("http://127.0.0.1:9/nowhere", &to, len, &sha, |_, _| {}).unwrap();
@@ -538,7 +534,6 @@ mod tests {
         download(&url, &to, len, &sha, |_, _| {}).unwrap();
         assert_eq!(ranges.try_iter().collect::<Vec<_>>(), [""]);
         assert_eq!(fs::read(&to).unwrap(), data);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Bytes kept that are wrong (a tail torn by a crash) make the file
@@ -546,7 +541,7 @@ mod tests {
     /// and is the file then, not given up as another.
     #[test]
     fn kept_bytes_wrong_are_fetched_afresh_and_right() {
-        let (data, sha, dir, to) = file("kept-wrong");
+        let (data, sha, _dir, to) = file("kept-wrong");
         let mut torn = data[..120_000].to_vec();
         torn[119_999] ^= 1;
         left(&to, &torn);
@@ -555,7 +550,6 @@ mod tests {
         assert_eq!(ranges.try_iter().collect::<Vec<_>>(), ["120000-", ""]);
         assert_eq!(fs::read(&to).unwrap(), data);
         assert!(!Resumable::part_of(&to).exists());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A server whose file is longer than the one expected, or another of
@@ -563,7 +557,7 @@ mod tests {
     /// ([`Fault::Wrong`]), nothing kept.
     #[test]
     fn a_file_longer_than_expected_or_another_is_not_the_file() {
-        let (data, sha, dir, to) = file("longer");
+        let (data, sha, _dir, to) = file("longer");
         for answer in [longer(), another_file()] {
             let (url, ranges) = server(&data, vec![answer]);
             let got = download(&url, &to, data.len() as u64, &sha, |_, _| {});
@@ -572,7 +566,6 @@ mod tests {
             assert!(!Resumable::part_of(&to).exists());
             assert!(!to.exists());
         }
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

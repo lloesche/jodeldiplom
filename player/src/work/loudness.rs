@@ -330,9 +330,7 @@ mod tests {
     /// back from its file in the folder after.
     #[test]
     fn a_song_is_measured_once_and_kept() {
-        let dir = std::env::temp_dir().join(format!("jodel-loudness-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("loudness");
         let song = dir.join("sine.wav");
         // Five seconds of a stereo sine at 1 kHz peaking at -20 dBFS, as
         // 16-bit WAV.
@@ -358,6 +356,5 @@ mod tests {
             (kept.lufs.unwrap() - m.lufs.unwrap()).abs() < 1e-3,
             "{kept:?}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

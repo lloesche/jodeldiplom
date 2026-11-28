@@ -287,11 +287,8 @@ fn selected(state: &State) -> Option<&PathBuf> {
 mod tests {
     use super::*;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("jodel-session-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp(name: &str) -> jodel_testkit::TempDir {
+        jodel_testkit::TempDir::new(&format!("session-{name}"))
     }
 
     #[test]
@@ -312,7 +309,6 @@ mod tests {
         fs::write(&path, "#EXTM3U\n#JODELDIPLOM-CURRENT:5\n/m/x.flac\n").unwrap();
         assert_eq!(Session::load(&path).unwrap().current, None);
         assert_eq!(Session::load(&dir.join("none.m3u8")), None);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -335,7 +331,6 @@ mod tests {
         );
         assert!(is_playlist(&path) && is_playlist(Path::new("x.M3U8")));
         assert!(!is_playlist(Path::new("x.flac")));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -361,6 +356,5 @@ mod tests {
             queue_name(&dir, &mixed[2..]),
             dir.join("Third_ Live – 1 track.m3u8")
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 }

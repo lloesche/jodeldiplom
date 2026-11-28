@@ -64,8 +64,7 @@ fn hear(gui: &mut Gui, event: iced::Event) {
 
 /// A player with no output, no devices and no microphone.
 fn player() -> App {
-    let dir = common::temp_dir("screens-window");
-    let mut options = AppOptions::new(dir);
+    let mut options = AppOptions::new(jodel_testkit::thread_dir("screens-window"));
     options.output = Output::Null(SimClock::Realtime);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Err("no microphone".into()));
@@ -251,8 +250,7 @@ fn downloads_come_to(made: &Made, n: usize) -> bool {
 #[test]
 fn the_setup_screen_offers_try_again_and_quit_by_click_and_key() {
     let _gpu = gpu();
-    let dir = std::env::temp_dir().join(format!("jodeldiplom-screens-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = jodel_testkit::TempDir::new("screens-setup");
 
     // Under way: Quit alone.
     let stalls = Web::Stalls {
@@ -301,7 +299,6 @@ fn the_setup_screen_offers_try_again_and_quit_by_click_and_key() {
         assert!(!downloads_come_to(&made, 3), "tried again after {key:?}");
         let _ = std::fs::remove_dir_all(dir.join("offline-keys"));
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// K8: the window's first view is the setup screen, at once, saying what
@@ -314,8 +311,8 @@ fn the_first_view_comes_before_the_slow_start() {
     use jodeldiplom::app::Starting;
     use jodeldiplom::view::setup::LOOKING;
     let _gpu = gpu();
-    let dir = common::temp_dir("slow-start");
-    let mut options = AppOptions::new(dir.clone());
+    let dir = jodel_testkit::TempDir::new("slow-start");
+    let mut options = AppOptions::new(dir.to_path_buf());
     options.output = Output::Null(SimClock::Realtime);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Err("no microphone".into()));
@@ -345,7 +342,6 @@ fn the_first_view_comes_before_the_slow_start() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(simulator(&gui).find(LOOKING).is_err());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The simulator over `gui`'s view.
@@ -1800,8 +1796,7 @@ fn dot_follows_the_playhead_again_after_the_wheel() {
 /// A player with no output, no devices and no microphone, timing by
 /// `clock`.
 fn mode_player(clock: &jodeldiplom::app::AppClock) -> App {
-    let dir = common::temp_dir("controls-window");
-    let mut options = AppOptions::new(dir);
+    let mut options = AppOptions::new(jodel_testkit::thread_dir("controls-window"));
     options.output = Output::Null(SimClock::Realtime);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Err("no microphone".into()));

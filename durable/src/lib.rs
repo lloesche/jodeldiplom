@@ -424,10 +424,8 @@ impl Drop for AtomicDir {
 mod tests {
     use super::*;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("durable-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        dir
+    fn temp(name: &str) -> jodel_testkit::TempDir {
+        jodel_testkit::TempDir::new(&format!("durable-{name}"))
     }
 
     #[test]
@@ -441,7 +439,6 @@ mod tests {
         assert_eq!(left.len(), 1, "no temporary left: {left:?}");
         rename_durable(&path, &dir.join("moved.toml")).unwrap();
         assert_eq!(fs::read(dir.join("moved.toml")).unwrap(), b"two, longer");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -465,7 +462,6 @@ mod tests {
         let part = file.temporary_path().to_path_buf();
         drop(file);
         assert!(!other.exists() && !part.exists());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -481,7 +477,6 @@ mod tests {
         assert!(!part.exists(), "the temporary is gone");
         let left: Vec<_> = fs::read_dir(&dir).unwrap().flatten().collect();
         assert_eq!(left.len(), 1, "only the folder: {left:?}");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -510,7 +505,6 @@ mod tests {
         assert!(again.commit().is_err());
         assert!(!part.exists());
         assert_eq!(fs::read(path.join("voice.wav")).unwrap(), b"voice");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A file held open inside a folder refuses the folder's rename on
@@ -533,7 +527,6 @@ mod tests {
         take.commit().unwrap();
         letting_go.join().unwrap();
         assert_eq!(fs::read(path.join("voice.wav")).unwrap(), b"voice");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -548,7 +541,6 @@ mod tests {
         // A file in the way.
         write_atomic(&dir.join("a/file"), b"x").unwrap();
         assert!(create_dir_all(&dir.join("a/file/d")).is_err());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -591,6 +583,5 @@ mod tests {
         let meta = fs::metadata(&folder).unwrap();
         let written = last_written(&folder, &meta).unwrap();
         assert!(written + Duration::from_secs(1) > later, "{written:?}");
-        let _ = fs::remove_dir_all(&dir);
     }
 }

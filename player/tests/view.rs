@@ -1241,7 +1241,7 @@ fn the_mixer_tab_is_a_desk() {
 fn setup_screen() {
     use jodeldiplom::view::setup::Screen;
     use setup_web::{start, when, Web};
-    let dir = common::temp_dir("setup-screen");
+    let dir = jodel_testkit::TempDir::new("setup-screen");
     let stalls = Web::Stalls {
         share: 0.43,
         after: std::time::Duration::ZERO,
@@ -1284,5 +1284,4 @@ fn setup_screen() {
     let empty = Screen::of(&jodeldiplom::setup::Status::default());
     assert!(empty.steps.is_empty());
     assert_eq!((empty.folded_done, empty.folded_to_come), (0, 0));
-    let _ = std::fs::remove_dir_all(&dir);
 }

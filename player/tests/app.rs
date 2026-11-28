@@ -124,7 +124,6 @@ fn alt_enter_plays_the_folder_through_the_null_output() {
     let spectrum = app.spectrum();
     assert!(spectrum.is_empty(), "rate {}", spectrum.rate);
     app.shutdown();
-    std::fs::remove_dir_all(&tree.root).unwrap();
 }
 
 /// Paused, the picture stands still: the spectrum is frozen and the app
@@ -161,7 +160,6 @@ fn paused_the_window_has_nothing_to_redraw() {
         == PlayState::Playing));
     assert!(app.animating(), "playing again");
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&tree.root);
 }
 
 /// Paused, another queue row double-clicked plays at once: no more presses
@@ -173,12 +171,12 @@ fn a_song_picked_while_paused_plays() {
     use jodeldiplom::core::karaoke;
     use jodeldiplom::core::Side;
     let _guard = jodel_testkit::real_time();
-    let dir = common::temp_dir("paused-pick");
+    let dir = jodel_testkit::TempDir::new("paused-pick");
     for name in ["a", "b"] {
         common::write_wav(&dir.join(format!("{name}.wav")), 44_100, 8.0);
         durable::write_atomic(&dir.join(format!("{name}.lrc")), b"la la la\nla la\n").unwrap();
     }
-    let mut options = AppOptions::new(dir.clone());
+    let mut options = AppOptions::new(dir.to_path_buf());
     options.output = Output::Null(SimClock::Realtime);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Ok(jodel_output::input::Input::feed(48_000, 240).0));
@@ -260,7 +258,6 @@ fn a_song_picked_while_paused_plays() {
         "the double click after Karaoke mode"
     );
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// No microphone (none opens), Karaoke mode entered where the song plays,
@@ -273,10 +270,10 @@ fn the_demo_sings_with_no_microphone() {
     use jodeldiplom::core::{Rhythm, Rhythmed, Side};
     use std::time::Instant;
     let _guard = jodel_testkit::real_time();
-    let dir = common::temp_dir("demo-no-mic");
+    let dir = jodel_testkit::TempDir::new("demo-no-mic");
     common::write_wav(&dir.join("a.wav"), 44_100, 30.0);
     durable::write_atomic(&dir.join("a.lrc"), b"la la la la\n").unwrap();
-    let mut options = AppOptions::new(dir.clone());
+    let mut options = AppOptions::new(dir.to_path_buf());
     options.output = Output::Null(SimClock::Realtime);
     // The beats by the flux alone, and of the mix: the networks' inference
     // (the beat network's, and the separator's where there is a GPU, as on
@@ -375,7 +372,6 @@ fn the_demo_sings_with_no_microphone() {
     draw_until(&mut app, from + 5.5);
     assert_eq!(app.state.karaoke.singing.last_heard(), last);
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -453,7 +449,6 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     app.dispatch(Action::Op(Op::Quit));
     assert!(app.state.quit);
     app.shutdown();
-    std::fs::remove_dir_all(&tree.root).unwrap();
 }
 
 /// The session: the queue, the track in it and the browser's folder and
@@ -529,7 +524,6 @@ fn the_session_and_saved_queues_come_back() {
         .is_some()));
     assert_eq!(app.state.queue.paths, queued);
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&keep);
 }
 
 /// No separator: the stems are never made (a transition fades its tracks
@@ -569,18 +563,18 @@ const MIX_RATE: u32 = 44_100;
 fn armed_transition(
     tag: &str,
     separator: fn() -> Option<&'static dyn jodel_playback::stems::Separator>,
-) -> (App, std::path::PathBuf) {
+) -> (App, jodel_testkit::TempDir) {
     use jodel_output::{Capabilities, SampleFormat, StreamFormat};
     use jodel_playback::{Command, Envelope, TempoMode, TransitionPlan};
     use jodeldiplom::app::MemoryOutput;
     use jodeldiplom::core::transition::Status;
-    let dir = common::temp_dir(tag);
+    let dir = jodel_testkit::TempDir::new(tag);
     let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
     common::write_wav(&a, MIX_RATE, 8.0);
     common::write_wav(&b, MIX_RATE, 12.0);
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(MIX_RATE, 2, SampleFormat::S24In32Low));
-    let mut options = AppOptions::new(dir.clone());
+    let mut options = AppOptions::new(dir.to_path_buf());
     options.output = Output::Memory(MemoryOutput::new(caps, SimClock::Paced));
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.separator = separator;
@@ -646,7 +640,7 @@ fn on_b(app: &App) -> bool {
 fn a_transition_plays_on_the_desk_and_a_mute_after_it_lands_on_the_new_heads_frame() {
     let _guard = jodel_testkit::real_time();
     use jodeldiplom::core::desk::{DeskChange, StripKind};
-    let (mut app, dir) = armed_transition("app-transition", no_separator);
+    let (mut app, _dir) = armed_transition("app-transition", no_separator);
     assert!(
         common::wait_for(&mut app, WAIT, on_b),
         "{:?}",
@@ -676,7 +670,6 @@ fn a_transition_plays_on_the_desk_and_a_mute_after_it_lands_on_the_new_heads_fra
         anchor.seconds + 1.0
     );
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The app's state with the desk as it is now looked at (the meters left
@@ -734,7 +727,7 @@ fn the_voice_and_the_mixer_tab_follow_a_transition_on_the_desk() {
     let _guard = jodel_testkit::real_time();
     use jodeldiplom::core::desk::{DeskChange, StripKind};
     use jodeldiplom::core::transition::Status;
-    let (mut app, dir) = armed_transition("app-transition-voice", quarter);
+    let (mut app, _dir) = armed_transition("app-transition-voice", quarter);
     app.run(Effect::Desk(DeskChange::Lane(StripKind::Vocals, 0.25)));
     // Both heads open: the next track's beside the playing one.
     assert!(common::wait_for(&mut app, WAIT, |a| heads_and_voice(a).0 == 2));
@@ -759,5 +752,4 @@ fn the_voice_and_the_mixer_tab_follow_a_transition_on_the_desk() {
         heads_and_voice(&app)
     );
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&dir);
 }

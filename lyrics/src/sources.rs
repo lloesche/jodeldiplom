@@ -233,9 +233,7 @@ mod tests {
 
     #[test]
     fn the_tag_and_the_sidecar_are_found() {
-        let dir = std::env::temp_dir().join(format!("jodel-lyrics-sidecar-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("lyrics-sidecar");
         let track = Track {
             path: dir.join("song.flac"),
             tags: tags(&[("LYRICS", "[00:01.00]From the tag")]),
@@ -266,6 +264,5 @@ mod tests {
             panic!("no sidecar");
         };
         assert_eq!(l.lines[0].text(), "First");
-        let _ = fs::remove_dir_all(&dir);
     }
 }

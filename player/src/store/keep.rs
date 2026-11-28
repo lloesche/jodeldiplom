@@ -291,11 +291,10 @@ mod tests {
         assert_eq!(kept.late, [(0, 0.15, "default"), (200, 0.16, "singing")]);
         // The key from where it changed, back as it was written.
         assert_eq!(kept.keys, [(100, 2)]);
-        let dir = std::env::temp_dir().join(format!("keep-keys-{}", std::process::id()));
+        let dir = jodel_testkit::TempDir::new("keep-keys");
         let folder = kept.save(&dir).unwrap();
         let about = std::fs::read_to_string(folder.join(ABOUT)).unwrap();
         assert_eq!(read_keys(&about), [(100, 2)]);
-        let _ = std::fs::remove_dir_all(&dir);
         let (back, rate) = read_wav(&wav::pcm16(kept.rate, 1, &kept.samples)).unwrap();
         assert_eq!((back.len(), rate), (300, 1000));
         assert!((back[0] - 0.5).abs() < 1e-3 && (back[150] + 0.5).abs() < 1e-3);
@@ -306,8 +305,7 @@ mod tests {
     fn a_save_cut_short_leaves_no_take() {
         let mut kept = kept();
         kept.push(&[0.5; 100], 1000, 2.0, false, Sung::new(0.15, "default", 0));
-        let dir = std::env::temp_dir().join(format!("keep-cut-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new("keep-cut");
         let takes = || -> Vec<PathBuf> {
             std::fs::read_dir(&dir)
                 .unwrap()
@@ -336,7 +334,6 @@ mod tests {
         }
         assert_eq!(durable::sweep(&dir, std::time::Duration::ZERO), 1);
         assert!(!part.exists());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The pitch tracker's frames in `seconds`.

@@ -534,8 +534,7 @@ fn the_cleaner_takes_the_echo_of_what_plays_out_of_the_voice() {
     let (input, mut feed) = Input::feed(rate, 240);
     assert!(input.echo_cancel(), "on as it opens");
     // A recording of what the canceller works with, from the start.
-    let dir = std::env::temp_dir().join(format!("jodel-echo-record-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = jodel_testkit::TempDir::new("echo-record");
     let recorded = dir.join("echo.wav");
     let mut recording = input.record_echo(&recorded, 0.5).unwrap();
     assert!(input.record_echo(&recorded, 0.5).is_err(), "one at a time");
@@ -637,7 +636,6 @@ fn the_cleaner_takes_the_echo_of_what_plays_out_of_the_voice() {
         (echo_level + 6.0).abs() < 1.5,
         "the microphone at {echo_level:.1} dB"
     );
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// The echo canceller learns the room once: song after song on the same

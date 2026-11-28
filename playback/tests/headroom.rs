@@ -127,7 +127,6 @@ fn headroom_keeps_inter_sample_overs_from_clipping() {
         .unwrap();
     assert_eq!(start.route.resample.unwrap().headroom, one);
     assert!(start.route.describe().ends_with("(160/147, -1 dB)"));
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 /// A floating-point file over full scale, played at its own rate: it clips
@@ -174,7 +173,6 @@ fn headroom_keeps_a_floating_point_file_from_clipping() {
         .unwrap();
     let ratio = f64::from(peak) / 8_388_608.0;
     assert!((ratio - 1.12 * Headroom(20).gain()).abs() < 1e-3, "{ratio}");
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 /// A lossless route plays the file's samples whatever the headroom.
@@ -205,7 +203,6 @@ fn lossless_routes_have_no_headroom() {
     drop(player);
     let streams = captured(&captures);
     assert!(streams[0].1 == device_bytes(&read_all(&fixture(F44)), S24In32Low));
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 /// A headroom change while a track plays moves a resampled track to the new
@@ -254,5 +251,4 @@ fn a_headroom_change_reroutes_resampled_tracks_only() {
         // Same format: the output stays open.
         assert_eq!(captured(&captures).len(), 1);
     }
-    std::fs::remove_dir_all(dir).unwrap();
 }

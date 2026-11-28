@@ -503,7 +503,7 @@ fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     let mut headless = Headless::new();
     println!("drawn by {}", headless.name());
-    let scratch = common::temp_dir("shots-setup");
+    let scratch = jodel_testkit::TempDir::new("shots-setup");
     if wanted("setup") {
         setup_shots(&mut headless, &out, &scratch);
     }
@@ -892,6 +892,4 @@ fn main() {
     }
     // The player stops with the window's state.
     drop(shots);
-    let _ = std::fs::remove_dir_all(&tree.root);
-    let _ = std::fs::remove_dir_all(&scratch);
 }

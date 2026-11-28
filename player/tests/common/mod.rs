@@ -10,7 +10,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -28,21 +27,6 @@ use jodeldiplom::core::{NowTrack, Prepared, State};
 pub const F44: &str = "ramp-44100-16bit.flac";
 /// The 48 kHz, 24-bit ramp (8,193 frames).
 pub const F48: &str = "ramp-48000-24bit.flac";
-
-/// A new empty folder under the system's temporary folder.
-pub fn temp_dir(tag: &str) -> PathBuf {
-    static NEXT: AtomicU32 = AtomicU32::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    let dir = std::env::temp_dir().join(format!(
-        "jodeldiplom-{tag}-{}-{n}-{nanos}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
 
 /// Writes a 24-bit stereo WAV of `seconds` at `rate`: a quiet chord.
 pub fn write_wav(path: &Path, rate: u32, seconds: f64) {
@@ -97,11 +81,14 @@ pub struct Tree {
     pub album: PathBuf,
     /// `Archive`.
     pub archive: PathBuf,
+    /// Holds the folder: it goes with the tree.
+    _dir: jodel_testkit::TempDir,
 }
 
 /// Builds the music folder under a new temporary folder.
 pub fn music_tree(tag: &str) -> Tree {
-    let root = temp_dir(tag);
+    let dir = jodel_testkit::TempDir::new(tag);
+    let root = dir.path().to_path_buf();
     let album = root.join("Synthetic Ramps");
     let archive = root.join("Archive");
     fs::create_dir_all(archive.join("Deep")).unwrap();
@@ -119,6 +106,7 @@ pub fn music_tree(tag: &str) -> Tree {
         root,
         album,
         archive,
+        _dir: dir,
     }
 }
 

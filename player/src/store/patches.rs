@@ -181,8 +181,7 @@ mod tests {
     /// folder goes, and forgotten ones are gone.
     #[test]
     fn patches_are_kept_and_found_while_the_data_folder_moves() {
-        let dir = std::env::temp_dir().join(format!("jodel-patches-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new("patches");
         let (old, new) = (dir.join("old/patches"), dir.join("new/patches"));
         assert!(load_all(&old).is_empty());
         let [(t, a, pop), (u, b, chime)] = edited();
@@ -213,6 +212,5 @@ mod tests {
         save(&old, t.name, a, None).unwrap();
         assert_eq!(found(&new), vec![("spooky", b, chime)]);
         assert_eq!(found(&old), vec![("spooky", b, chime)]);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

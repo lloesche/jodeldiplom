@@ -330,5 +330,4 @@ fn a_switch_in_real_time_leaves_no_gap() {
     assert!(worst <= 2, "the new gain from {at}: off by {worst}");
     // Only the device's silence after the end.
     assert!(got[before.len()..].iter().all(|&s| s == 0));
-    std::fs::remove_dir_all(dir).unwrap();
 }

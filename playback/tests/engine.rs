@@ -458,7 +458,6 @@ fn plain_pcm_plays_untouched_and_seeks_exactly() {
     let mut want = samples[..2 * 7_777].to_vec();
     want.extend(&samples[2 * 30_001..]);
     assert!(captured(&captures)[0].1 == device_bytes(&want, S24In32Low));
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

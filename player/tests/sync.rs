@@ -654,7 +654,6 @@ fn the_app_plays_the_clicks_and_hears_a_ta_after_each() {
     }));
     drop(singer);
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&tree.root);
 }
 
 /// The engine started again (another output, a failure) while the clicks
@@ -679,5 +678,4 @@ fn the_output_changing_mid_sync_ends_it() {
     assert!(!app.animating() || app.sync_clock().is_none());
     drop(singer);
     app.shutdown();
-    let _ = std::fs::remove_dir_all(&tree.root);
 }

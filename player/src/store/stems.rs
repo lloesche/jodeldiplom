@@ -223,9 +223,7 @@ mod tests {
 
     #[test]
     fn the_least_recently_used_go_first() {
-        let dir = std::env::temp_dir().join(format!("jodel-stems-prune-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("stems-prune");
         let now = SystemTime::now();
         for (i, name) in ["old", "middle", "new"].iter().enumerate() {
             let path = dir.join(format!("{name}.stems"));
@@ -249,16 +247,13 @@ mod tests {
         let a = file_for(&dir, &track).unwrap();
         fs::write(&track, b"longer").unwrap();
         assert_ne!(file_for(&dir, &track).unwrap(), a);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A stems file there but not whole (cut off, or garbage) is not taken
     /// as kept: it is removed, so that the stems are made again.
     #[test]
     fn stems_not_whole_are_not_kept_and_go() {
-        let dir = std::env::temp_dir().join(format!("jodel-stems-garbage-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("stems-garbage");
         let track = dir.join("song.flac");
         fs::write(&track, b"a track").unwrap();
         let file = file_for(&dir, &track).unwrap();
@@ -280,7 +275,6 @@ mod tests {
         fs::write(&file, &whole[..whole.len() / 2]).unwrap();
         assert!(!is_kept(&dir, &track));
         assert!(!file.exists(), "cut off removed");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// What wants a track's stems waits while its analysis separates them
@@ -318,15 +312,13 @@ mod tests {
     fn a_write_that_fails_wakes_what_waits_with_nothing_kept() {
         use std::time::Duration;
         const GUARD: Duration = Duration::from_secs(10);
-        let dir = std::env::temp_dir().join(format!("jodel-stems-dropped-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("stems-dropped");
         let track = dir.join("dropped.flac");
         fs::write(&track, b"a track").unwrap();
         let to = file_for(&dir, &track).unwrap();
         let keeping = Keeping::create(&to, &track, 44_100, "a test").expect("made");
         let (tx, rx) = std::sync::mpsc::channel();
-        let (waiting_dir, waiting_track) = (dir.clone(), track.clone());
+        let (waiting_dir, waiting_track) = (dir.to_path_buf(), track.clone());
         std::thread::spawn(move || {
             let _ = tx.send(open_waiting(&waiting_dir, &waiting_track).is_some());
         });
@@ -336,6 +328,5 @@ mod tests {
         );
         drop(keeping);
         assert_eq!(rx.recv_timeout(GUARD), Ok(false), "woken, nothing kept");
-        let _ = fs::remove_dir_all(&dir);
     }
 }

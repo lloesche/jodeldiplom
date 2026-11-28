@@ -660,14 +660,14 @@ fn a_seek_calls_off_what_the_game_planned() {
 /// examiner's pen from its last, each where it was cued.
 #[test]
 fn the_result_is_heard_after_the_song() {
-    let dir = common::temp_dir("reveal-heard");
+    let dir = jodel_testkit::TempDir::new("reveal-heard");
     let song = dir.join("a.wav");
     common::write_wav(&song, RATE, 3.0);
     durable::write_atomic(&dir.join("a.lrc"), b"la la la\nla la\n").unwrap();
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
     let memory = MemoryOutput::new(caps, SimClock::Manual);
-    let mut options = AppOptions::new(dir.clone());
+    let mut options = AppOptions::new(dir.to_path_buf());
     let clock = AppClock::stepped();
     options.clock = clock.clone();
     options.output = Output::Memory(memory.clone());
@@ -768,7 +768,6 @@ fn the_result_is_heard_after_the_song() {
         pen.1 > 0.12 && pen.1 > 8.0 * pen.2,
         "the signature: {pen:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// With the notes hidden the game's bubbles are not shown, so its sounds

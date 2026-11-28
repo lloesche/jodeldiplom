@@ -238,9 +238,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_song_s_scenes_are_taken_apart_once_and_made_ready_from_what_is_kept() {
-        let dir = std::env::temp_dir().join(format!("jodel-scenes-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("scenes");
         let song = dir.join("a song.wav");
         durable::write_atomic(&song, b"a song").unwrap();
         let store = SceneStore::new(dir.join("scenes"), dir.join("scene-parts"));
@@ -308,6 +306,5 @@ pub(crate) mod tests {
         assert_eq!(nets.calls.load(Ordering::SeqCst), 3);
         assert!(took[0].is_none() && took[1].is_some());
         assert_ne!(prepare(&scenes, &store).unwrap().id, story.id);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -321,9 +321,7 @@ mod tests {
 
     #[test]
     fn the_cache_follows_the_file() {
-        let dir = std::env::temp_dir().join(format!("jodel-rhythm-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("rhythm-test");
         let file = dir.join("track.wav");
         fs::write(&file, b"one").unwrap();
         let cache = dir.join("cache");
@@ -359,7 +357,6 @@ mod tests {
         // Another size: analysed afresh.
         fs::write(&file, b"longer").unwrap();
         assert!(load(&cache, &file, &recipe(&[Method::Network])).is_none());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A track analysed (with its stems kept) before the data folder moves
@@ -368,9 +365,7 @@ mod tests {
     /// started meanwhile). Nothing is analysed again.
     #[test]
     fn an_analysis_is_found_while_and_after_the_data_folder_moves() {
-        let dir = std::env::temp_dir().join(format!("jodel-rhythm-moved-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("rhythm-moved");
         let track = dir.join("track.wav");
         fs::write(&track, b"one").unwrap();
         let (old, new) = (
@@ -409,7 +404,6 @@ mod tests {
         crate::store::mover::finish(&settings);
         assert!(!old.0.exists());
         assert!(found(&old) && found(&new), "once it moved");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// The names the caches keep a file's analysis, lyrics and stems by,
@@ -417,9 +411,7 @@ mod tests {
     /// analysis's key after it, and the names hashed from them.
     #[test]
     fn the_cache_keys_are_pinned() {
-        let dir = std::env::temp_dir().join(format!("jodel-keys-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = jodel_testkit::TempDir::new("keys-test");
         let file = dir.join("track.wav");
         fs::write(&file, b"one").unwrap();
         let modified = (fs::metadata(&file).unwrap().modified().unwrap())
@@ -444,6 +436,5 @@ mod tests {
         assert_eq!(stems, Path::new("s").join("d79ad5e0042c7176.stems"));
         let analysis = cache_file(Path::new("a"), "song.flac 123 456 v5 flux+network+stems");
         assert_eq!(analysis, Path::new("a").join("c587afc5db07616b.txt"));
-        let _ = fs::remove_dir_all(&dir);
     }
 }

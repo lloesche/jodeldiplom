@@ -329,8 +329,7 @@ mod tests {
     /// by hand stay.
     #[test]
     fn clean_cache_forgets_every_cache_in_both_places() {
-        let dir = std::env::temp_dir().join(format!("jodel-forget-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = jodel_testkit::TempDir::new("forget");
         let folders = Folders {
             settings: dir.join("settings"),
             data: Data(dir.join("new")),
@@ -377,6 +376,5 @@ mod tests {
         let song = folders.data.scenes().join("a song");
         std::fs::create_dir_all(&song).unwrap();
         assert!(folders.data.swept().contains(&song));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
