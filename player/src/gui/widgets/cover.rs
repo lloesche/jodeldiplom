@@ -197,7 +197,11 @@ impl Covers {
             (self.scenes.iter()).find_map(|(k, h)| Arc::ptr_eq(k, picture).then(|| h.clone()))
         };
         let tiles = (story.scenes.iter())
-            .filter_map(|(index, picture, shown)| Some((*index, handle(picture)?, *shown)))
+            .filter_map(|(index, picture, shown)| {
+                let (w, h) = picture.dimensions();
+                let shape = w as f32 / h.max(1) as f32;
+                Some((*index, handle(picture)?, *shown, shape))
+            })
             .collect();
         let building = Building {
             cover: fitted.as_ref().map(|f| f.image.clone()),
@@ -296,8 +300,9 @@ fn fitted(tile: Rectangle, shape: f32) -> Rectangle {
 /// in the song's order, row by row), fading in as it came.
 struct Building {
     cover: Option<Handle>,
-    /// Each scene drawn: which, its picture, how far it has faded in.
-    tiles: Vec<(usize, Handle, f32)>,
+    /// Each scene drawn: which, its picture, how far it has faded in, and
+    /// its picture's shape (width over height).
+    tiles: Vec<(usize, Handle, f32, f32)>,
     of: usize,
 }
 
@@ -324,7 +329,7 @@ impl<M> iced::widget::canvas::Program<M> for Building {
         frame.fill_rectangle(iced::Point::ORIGIN, bounds.size(), shade);
         let (rows, columns) = grid(self.of, bounds.size(), SCENE_SHAPE);
         let tile = Size::new(bounds.width / columns as f32, bounds.height / rows as f32);
-        for (index, handle, shown) in &self.tiles {
+        for (index, handle, shown, shape) in &self.tiles {
             let (row, column) = (index / columns, index % columns);
             let at = iced::Point::new(
                 column as f32 * tile.width + TILE_GAP / 2.0,
@@ -333,7 +338,7 @@ impl<M> iced::widget::canvas::Program<M> for Building {
             let size = Size::new(tile.width - TILE_GAP, tile.height - TILE_GAP);
             let mut scene = Picture::new(handle.clone());
             scene.opacity = *shown;
-            frame.draw_image(fitted(Rectangle::new(at, size), SCENE_SHAPE), scene);
+            frame.draw_image(fitted(Rectangle::new(at, size), *shape), scene);
         }
         vec![frame.into_geometry()]
     }

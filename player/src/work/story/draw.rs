@@ -14,7 +14,7 @@
 //!   4B, as a [`Painter`]) for every picture still to draw, the portraits
 //!   first, each kept as it lands and its prompt let go, each picture begun
 //!   ([`Story::Drawing`]) and each scene told to the preparation view
-//!   ([`Story::Scene`], a square of [`SCENE_SIDE`]), given up as soon as the
+//!   ([`Story::Scene`], [`SCENE_WIDTH`] across), given up as soon as the
 //!   song is no longer wanted; then [`Drawing::keep`] describes them.
 //!
 //! The same plan always draws the same pictures: each picture's seed is
@@ -38,7 +38,7 @@ use image::{imageops, DynamicImage, ImageFormat, RgbImage};
 use jodel_gpu::image::{Drawer, Embeds, Picture, Reference, TextEncoder};
 use jodel_gpu::Footprint;
 
-use crate::core::prep::{Picture as Begun, Story, SCENE_SIDE};
+use crate::core::prep::{Picture as Begun, Story, SCENE_WIDTH};
 use crate::core::story::pictures::{self, Ask, Pictures, MOST_REFERENCES};
 use crate::core::story::Plan;
 use crate::store::{cache, mover};
@@ -386,18 +386,13 @@ impl Drawing {
     }
 }
 
-/// A scene's `picture` as it is told: the square from its middle, made
-/// [`SCENE_SIDE`] across.
+/// A scene's `picture` as it is told: the whole of it, made
+/// [`SCENE_WIDTH`] across, its shape kept (the preparation view fits each
+/// tile to it).
 fn told(picture: &RgbImage) -> image::RgbaImage {
     let (w, h) = picture.dimensions();
-    let side = w.min(h);
-    let square = imageops::crop_imm(picture, (w - side) / 2, (h - side) / 2, side, side);
-    let small = imageops::resize(
-        &square.to_image(),
-        SCENE_SIDE,
-        SCENE_SIDE,
-        imageops::FilterType::Triangle,
-    );
+    let height = (u64::from(SCENE_WIDTH) * u64::from(h) / u64::from(w.max(1))).max(1) as u32;
+    let small = imageops::resize(picture, SCENE_WIDTH, height, imageops::FilterType::Triangle);
     DynamicImage::ImageRgb8(small).to_rgba8()
 }
 

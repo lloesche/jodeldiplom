@@ -56,10 +56,10 @@ pub const SHOWN_MS: u64 = 12_000;
 pub const PREVIEW_LINES: usize = 2;
 /// The most of a story kept, in bytes (its oldest words go first).
 pub const STORY_CHARS: usize = 4_000;
-/// The side of a scene's picture as it is told (a square from its
-/// middle, [`Story::Scene`]), in pixels: what the preparation view shows
-/// it at, a tile of the cover.
-pub const SCENE_SIDE: u32 = 192;
+/// The width of a scene's picture as it is told ([`Story::Scene`]: the
+/// whole picture made smaller, its shape kept), in pixels: what the
+/// preparation view shows it at, a tile of the cover.
+pub const SCENE_WIDTH: u32 = 256;
 
 /// The stems separated so far ([`Heard::Separating`]).
 #[derive(Clone, Debug, PartialEq)]
@@ -281,8 +281,8 @@ pub enum Story {
     Reading,
     /// A picture begun.
     Drawing(Picture),
-    /// A scene drawn: which, of how many, and its picture ([`SCENE_SIDE`]
-    /// square).
+    /// A scene drawn: which, of how many, and its picture ([`SCENE_WIDTH`]
+    /// across, its shape kept).
     Scene {
         /// Which scene, from 0.
         index: usize,
