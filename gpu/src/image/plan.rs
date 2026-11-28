@@ -9,6 +9,7 @@ use std::ops::Range;
 use super::gpu::Tiles;
 use super::Kernel;
 use crate::engine::{self, params, spread, After, Matrix, Mul, MUL_NUMBERS};
+use crate::pace::{Cost, M4_MAX_BANDWIDTH, RTX_5080_BANDWIDTH};
 
 /// The matrix kernels' own flags (`tail.wgsl`'s `MX_*`): A as a
 /// convolution's patches, the products added times a gate per column.
@@ -132,6 +133,15 @@ fn rate(family: Family, coop: Option<Tiles>) -> f64 {
     }
 }
 
+/// The bytes a second the kernels that are not cut move their values at
+/// on `coop`'s tiles' GPU (as [`rate`]; estimates: `pace::cost`).
+fn bandwidth(coop: Option<Tiles>) -> f64 {
+    match coop {
+        Some(Tiles::Sixteen) => RTX_5080_BANDWIDTH,
+        Some(Tiles::Eight) | None => M4_MAX_BANDWIDTH,
+    }
+}
+
 /// The GPU time a slice takes at most on `coop`'s tiles, in seconds: a
 /// pace's piece ([`crate::pace::PIECE`]); two on 16 × 16, which cuts only
 /// the 5080's largest multiplies (its dispatches took up to 11 ms and its
@@ -146,20 +156,22 @@ fn piece(coop: Option<Tiles>) -> f64 {
 }
 
 /// The FLOPs a row (of a multiply's A, or an attention's query) of `op`
-/// costs, `op` of `family`: a multiply's 2 · n · k, an attention's 4 ·
-/// keys · 128 · heads.
+/// costs, `op` of `family`: a multiply's 2 · n · k, its n in whole tiles
+/// of 128 columns (what the kernel works through: the decoder's last
+/// convolution, to 3 channels, takes a whole tile's time, and was one
+/// dispatch of some 28 ms on the M4 Max where 3 columns were counted), an
+/// attention's 4 · keys · 128 · heads.
 fn row_flops(op: &Op, family: Family) -> f64 {
     let n = |i: usize| op.params[i] as f64;
     match family {
-        Family::Multiply => 2.0 * n(1) * n(2),
+        Family::Multiply => 2.0 * op.params[1].next_multiple_of(128) as f64 * n(2),
         Family::Attention => 4.0 * n(1) * 128.0 * n(2),
     }
 }
 
 /// The FLOPs of a cut kernel's dispatch `op` (its slice of rows of tiles
 /// or blocks of queries; the last rows past `n0` not counted), else 0:
-/// what the tests hold the slices to.
-#[cfg(test)]
+/// what its cost and the tests' slices are reckoned by.
 pub(crate) fn flops(op: &Op) -> f64 {
     let Some(c) = cut(op.kernel) else {
         return 0.0;
@@ -406,18 +418,17 @@ impl Plan {
         rate(cut.family, self.coop) * self.piece
     }
 
-    /// `kernel`'s dispatch of `groups` workgroups, cut into slices where it
-    /// is a cut kernel ([`cut`]): as many workgroups along the cut's axis a
-    /// slice as a full one's FLOPs fit [`Plan::budget`] (one at least), each
-    /// slice's first in its numbers; the same work, each workgroup's the
-    /// same. The dispatches pushed, by index.
-    fn push(
-        &mut self,
+    /// `kernel`'s dispatch of `groups` workgroups (with `values` as its
+    /// numbers, `bufs` bound), costing `cost`; checked to write a slot of
+    /// the plan's that it does not read.
+    fn op(
+        &self,
         kernel: Kernel,
         bufs: [Buf; 5],
         values: &[usize],
         groups: [u32; 3],
-    ) -> Range<usize> {
+        cost: Cost,
+    ) -> Op {
         let out = bufs[DST];
         debug_assert!(
             !matches!(out, Buf::W(_) | Buf::Small),
@@ -427,23 +438,56 @@ impl Plan {
             !reads(&bufs, out),
             "{kernel:?} binds the slot it writes to read ({out:?})"
         );
-        let start = self.ops.len();
-        let mut op = Op {
+        Op {
             kernel,
             buffers: bufs,
             params: params(values),
             groups,
-        };
-        let Some(c) = cut(kernel) else {
-            self.ops.push(op);
-            return start..self.ops.len();
-        };
+            cost,
+        }
+    }
+
+    /// A kernel's dispatch that is not cut ([`cut`]), moving `moved` f32s
+    /// (read and written): its cost those at the GPU's bandwidth
+    /// ([`bandwidth`]). The dispatch pushed, by index.
+    fn push(
+        &mut self,
+        kernel: Kernel,
+        bufs: [Buf; 5],
+        values: &[usize],
+        groups: [u32; 3],
+        moved: usize,
+    ) -> Range<usize> {
+        debug_assert!(cut(kernel).is_none(), "{kernel:?} is cut: `push_cut`");
+        let cost = Cost::traffic(moved as f64 * 4.0, bandwidth(self.coop));
+        let start = self.ops.len();
+        self.ops.push(self.op(kernel, bufs, values, groups, cost));
+        start..self.ops.len()
+    }
+
+    /// A cut kernel's dispatch ([`cut`]) of `groups` workgroups, cut into
+    /// slices: as many workgroups along the cut's axis a slice as a full
+    /// one's FLOPs fit [`Plan::budget`] (one at least), each slice's first
+    /// in its numbers; the same work, each workgroup's the same. Each costs
+    /// its FLOPs at its family's rate here. The dispatches pushed, by
+    /// index.
+    fn push_cut(
+        &mut self,
+        kernel: Kernel,
+        bufs: [Buf; 5],
+        values: &[usize],
+        groups: [u32; 3],
+    ) -> Range<usize> {
+        let c = cut(kernel).expect("a cut kernel");
+        let start = self.ops.len();
+        let mut op = self.op(kernel, bufs, values, groups, Cost::UNESTIMATED);
         let all = groups[c.axis];
         let one = c.rows as f64 * row_flops(&op, c.family);
         let per = (self.budget(c) / one).floor().min(f64::from(all)).max(1.0) as u32;
         for first in (0..all).step_by(per as usize) {
             op.params[c.first] = first as usize;
             op.groups[c.axis] = per.min(all - first);
+            op.cost = Cost::work(flops(&op), rate(c.family, self.coop));
             self.ops.push(op.clone());
         }
         start..self.ops.len()
@@ -520,7 +564,7 @@ impl Plan {
         assert!(a.0.off.is_multiple_of(4) && a.1.is_multiple_of(4) && w.k.is_multiple_of(4));
         let (numbers, src2) = self.mm_numbers(a, m, w, c, tail);
         let kernel = self.mm_kernel();
-        let ops = self.push(
+        let ops = self.push_cut(
             kernel,
             [a.0.buf(), w.buf, c.0.buf(), Buf::Small, src2],
             &numbers,
@@ -564,7 +608,7 @@ impl Plan {
             src2 = n.stats.buf();
         }
         let kernel = self.mm_kernel();
-        let ops = self.push(
+        let ops = self.push_cut(
             kernel,
             [conv.input.buf(), w.buf, out.buf(), Buf::Small, src2],
             &numbers,
@@ -600,6 +644,7 @@ impl Plan {
                 eps.to_bits() as usize,
             ],
             [rows as u32, 1, 1],
+            2 * rows * d,
         );
     }
 
@@ -632,6 +677,7 @@ impl Plan {
                 eps.to_bits() as usize,
             ],
             [rows as u32, 1, 1],
+            2 * rows * d,
         );
     }
 
@@ -671,6 +717,7 @@ impl Plan {
             ],
             // 32 heads a workgroup.
             [(tokens * heads).div_ceil(32) as u32, 1, 1],
+            2 * tokens * heads * 128,
         );
     }
 
@@ -727,7 +774,7 @@ impl Plan {
         let scale = 1.0f32 / 128f32.sqrt();
         let kernel = self.coop.map_or(Kernel::Attention, Tiles::attention);
         let per = cut(kernel).expect("an attention is cut").rows;
-        self.push(
+        self.push_cut(
             kernel,
             [q.buf(), Buf::Small, out.buf(), Buf::Small, Buf::Small],
             &[
@@ -755,6 +802,7 @@ impl Plan {
             [d.buf(), Buf::Small, x.buf(), Buf::Small, Buf::Small],
             &[count, x.off, d.off, dt.to_bits() as usize],
             spread(count),
+            3 * count,
         );
         self.reads_its_output(ops);
     }
@@ -766,6 +814,7 @@ impl Plan {
             [x.buf(), Buf::Small, y.buf(), Buf::Small, Buf::Small],
             &[count, x.off, y.off],
             spread(count),
+            2 * count,
         );
     }
 
@@ -790,6 +839,7 @@ impl Plan {
             [x.buf(), Buf::Small, y.buf(), Buf::Small, Buf::Small],
             &[rows, width, x.off, xs, y.off, ys],
             spread(rows * width / 4),
+            2 * rows * width,
         );
     }
 
@@ -808,6 +858,7 @@ impl Plan {
             [x.buf(), Buf::Small, y.buf(), Buf::Small, Buf::Small],
             &[h, w, x.off, channels, y.off, mean, spread_at],
             spread(h * w * 128),
+            2 * h * w * 128,
         );
     }
 
@@ -824,6 +875,7 @@ impl Plan {
             [x.buf(), Buf::Small, y.buf(), Buf::Small, Buf::Small],
             &[h, w, x.off, y.off, mean, spread_at],
             spread(h * w * 128),
+            2 * h * w * 128,
         );
     }
 
@@ -847,12 +899,14 @@ impl Plan {
             [x.buf(), Buf::Small, part.buf(), Buf::Small, Buf::Small],
             &[pixels, channels, x.off, channels / 32, chunk, part.off],
             [chunks as u32, 1, 1],
+            pixels * channels,
         );
         self.push(
             Kernel::GnReduce,
             [part.buf(), Buf::Small, stats.buf(), Buf::Small, Buf::Small],
             &[chunks, part.off, stats.off, eps.to_bits() as usize],
             [1, 1, 1],
+            chunks * 96,
         );
     }
 
@@ -864,6 +918,7 @@ impl Plan {
             [Buf::Small, Buf::Small, x.buf(), Buf::Small, Buf::Small],
             &[rows, n, x.off, xs, scale.to_bits() as usize],
             [rows as u32, 1, 1],
+            2 * rows * n,
         );
         self.reads_its_output(ops);
     }
@@ -880,6 +935,7 @@ impl Plan {
             [x.buf(), Buf::Small, y.buf(), Buf::Small, Buf::Small],
             &[rows, cols, x.off, xs, y.off, ys],
             [cols.div_ceil(16) as u32, rows.div_ceil(16) as u32, 1],
+            2 * rows * cols,
         );
     }
 }

@@ -127,6 +127,7 @@ fn norm(ops: &mut Vec<Op>, x: Buf, y: Buf, rows: usize, dim: usize, w: usize) {
         params: params(&[rows, dim, 0, dim, w, 0, dim, 1]),
         // 32 invocations a row.
         groups: spread(32 * rows),
+        cost: crate::pace::Cost::UNESTIMATED,
     });
 }
 
@@ -162,6 +163,7 @@ fn attention(
             buffers: [Buf::Table, Buf::Weights, Buf::Qkv],
             params: params(&[tokens, len, len, heads, 3 * dim, col, 1]),
             groups: spread(tokens * heads * 16),
+            cost: crate::pace::Cost::UNESTIMATED,
         });
     }
     ops.push(Op {
@@ -169,6 +171,7 @@ fn attention(
         buffers: [Buf::Qkv, Buf::Gates, Buf::Attended],
         params: params(&[len, dim, heads]),
         groups: [len.div_ceil(64) as u32, heads as u32, (tokens / len) as u32],
+        cost: crate::pace::Cost::UNESTIMATED,
     });
     matmul(
         ops,
@@ -196,6 +199,7 @@ fn feed_forward(ops: &mut Vec<Op>, w: &Named, name: &str, x: Buf, (tokens, dim):
         buffers: [Buf::Table, Buf::Weights, Buf::Hidden],
         params: params(&[count]),
         groups: spread(count),
+        cost: crate::pace::Cost::UNESTIMATED,
     });
     matmul(
         ops,
@@ -217,6 +221,7 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
             buffers,
             params: params(p),
             groups: spread(count),
+            cost: crate::pace::Cost::UNESTIMATED,
         });
     };
     // The stem: each band scaled, patches of 4 bands by 3 frames, to 32

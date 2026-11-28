@@ -247,7 +247,9 @@ const NUMBERS: [(&str, &[&str]); 10] = [
             "heads",
             "group",
             "mask",
-            "block0",
+            "tile0",
+            "tiles",
+            "state",
         ],
     ),
 ];

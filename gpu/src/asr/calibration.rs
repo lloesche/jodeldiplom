@@ -58,6 +58,7 @@ impl Stats {
                         buffers: [op.buffers[0], Buf::Small, Buf::Stats, Buf::Spare],
                         params: params(&[m, k, a_off, lda, s_off]),
                         groups: spread(k),
+                        cost: crate::pace::Cost::UNESTIMATED,
                     });
                 }
             }

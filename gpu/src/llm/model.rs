@@ -51,7 +51,7 @@ impl Matrix {
     }
 
     /// Its bytes.
-    fn bytes(&self) -> usize {
+    pub(super) fn bytes(&self) -> usize {
         self.rows * self.row_bytes()
     }
 

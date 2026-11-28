@@ -77,14 +77,17 @@ pub(crate) trait Kernels: Copy + Eq + Hash + 'static {
 }
 
 /// One dispatch as planned: its kernel, the buffers it binds (`B`, a key
-/// its network turns into buffers: [`Program::record`]), its `P` numbers
-/// and its workgroups.
+/// its network turns into buffers: [`Program::record`]), its `P` numbers,
+/// its workgroups and what it costs.
 #[derive(Clone, Debug)]
 pub(crate) struct Op<K, B, const P: usize> {
     pub(crate) kernel: K,
     pub(crate) buffers: B,
     pub(crate) params: [usize; P],
     pub(crate) groups: [u32; 3],
+    /// Its estimated GPU time, made with it by its plan
+    /// ([`crate::pace::Cost::UNESTIMATED`] where the network makes none).
+    pub(crate) cost: crate::pace::Cost,
 }
 
 /// One dispatch as recorded: its kernel, its bind group (by index), its

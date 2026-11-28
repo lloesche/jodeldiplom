@@ -153,6 +153,7 @@ fn each(ops: &mut Vec<Op>, kernel: Kernel, buffers: [Buf; 3], count: usize, valu
         buffers,
         params: params(values),
         groups: spread(count),
+        cost: crate::pace::Cost::UNESTIMATED,
     });
 }
 
@@ -276,6 +277,7 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
             buffers: [Buf::Qkv, Buf::Weights, Buf::Attended],
             params: params(&[f]),
             groups: [f.div_ceil(64) as u32, 12, 1],
+            cost: crate::pace::Cost::UNESTIMATED,
         });
         matmul(
             &mut ops,

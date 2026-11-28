@@ -36,6 +36,9 @@ pub(crate) struct Program<K> {
 /// from one recording to the next ([`Recorded::again`]).
 pub(crate) struct Recorded<K, B> {
     dispatches: Vec<Dispatch<K>>,
+    /// What each dispatch costs, as its op was planned ([`Op::cost`]): what
+    /// a submission's size is reckoned in ([`pace::dispatch`]).
+    costs: Vec<pace::Cost>,
     groups: Vec<wgpu::BindGroup>,
     /// Each set of buffers' bind group (its index in `groups`).
     index: HashMap<B, usize>,
@@ -362,6 +365,7 @@ impl<K: Kernels> Program<K> {
     pub(crate) fn recording<B>(&self, room: usize) -> Recorded<K, B> {
         Recorded {
             dispatches: Vec::new(),
+            costs: Vec::new(),
             groups: Vec::new(),
             index: HashMap::new(),
             params: self.params_buffer(room),
@@ -556,7 +560,8 @@ impl<K: Kernels, B: Copy + Eq + Hash> Recorded<K, B> {
     /// over the last ones (in the queue's order, so after the work sent
     /// before: a run left running reads its own), a bind group made for
     /// each set of buffers not bound before (`bound` gives a key's buffers,
-    /// in binding order: 0, 1, 2, then 4 on); `Err` past its room.
+    /// in binding order: 0, 1, 2, then 4 on), each costing what its op
+    /// does; `Err` past its room.
     pub(crate) fn again<'a, const P: usize>(
         &mut self,
         program: &Program<K>,
@@ -584,6 +589,7 @@ impl<K: Kernels, B: Copy + Eq + Hash> Recorded<K, B> {
                 }
             })
             .collect();
+        self.costs = ops.iter().map(|op| op.cost).collect();
         Ok(())
     }
 
@@ -595,6 +601,7 @@ impl<K: Kernels, B: Copy + Eq + Hash> Recorded<K, B> {
     pub(crate) fn repeat(&mut self, times: usize) {
         let once = std::mem::take(&mut self.dispatches);
         self.dispatches = (0..times).flat_map(|_| once.iter().copied()).collect();
+        self.costs = self.costs.repeat(times);
     }
 
     /// The bytes of its parameters' buffer.
@@ -607,6 +614,11 @@ impl<K, B> Recorded<K, B> {
     /// What it dispatches, in order.
     pub(crate) fn dispatches(&self) -> &[Dispatch<K>] {
         &self.dispatches
+    }
+
+    /// What each dispatch costs, in order.
+    pub(crate) fn costs(&self) -> &[pace::Cost] {
+        &self.costs
     }
 
     /// The bind groups its dispatches bind (by index).

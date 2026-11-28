@@ -98,6 +98,7 @@ fn tiled(ops: &mut Vec<Op>, mul: &Mul, per_piece: usize, parts: Option<Buf>) {
             buffers: [mul.from.0, Buf::Small, mul.to.0, Buf::Spare],
             params: params(&numbers),
             groups: [tiles[0], tiles[1], 1],
+            cost: crate::pace::Cost::UNESTIMATED,
         });
         return;
     };
@@ -109,12 +110,14 @@ fn tiled(ops: &mut Vec<Op>, mul: &Mul, per_piece: usize, parts: Option<Buf>) {
         buffers: [mul.from.0, Buf::Small, mul.to.0, buf],
         params: params(&numbers),
         groups: [tiles[0], tiles[1], count as u32],
+        cost: crate::pace::Cost::UNESTIMATED,
     });
     ops.push(Op {
         kernel: Kernel::SplitSum,
         buffers: [buf, Buf::Small, mul.to.0, Buf::Spare],
         params: params(&numbers),
         groups: spread(mul.m * mul.n / 4),
+        cost: crate::pace::Cost::UNESTIMATED,
     });
 }
 
@@ -170,6 +173,7 @@ pub(super) fn rows(ops: &mut Vec<Op>, mul: &Mul, before: Before) {
         buffers: [mul.from.0, Buf::Small, mul.to.0, dst2],
         params: params(&values),
         groups: [row_blocks as u32, blocks as u32, 1],
+        cost: crate::pace::Cost::UNESTIMATED,
     });
 }
 
@@ -193,6 +197,7 @@ pub(super) fn per_row(
         buffers: [buffers[0], buffers[1], buffers[2], Buf::Spare],
         params: params(values),
         groups: [x as u32, rows.div_ceil(x).max(1) as u32, 1],
+        cost: crate::pace::Cost::UNESTIMATED,
     });
 }
 
@@ -209,5 +214,6 @@ pub(super) fn each(
         buffers: [buffers[0], buffers[1], buffers[2], Buf::Spare],
         params: params(values),
         groups: spread(count),
+        cost: crate::pace::Cost::UNESTIMATED,
     });
 }

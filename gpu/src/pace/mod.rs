@@ -43,6 +43,7 @@
 //! way. All of this is the process's one pace, which every network's work
 //! keeps to. The submissions themselves are made in [`submit`].
 
+mod cost;
 mod submit;
 
 use std::cell::Cell;
@@ -50,6 +51,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+pub(crate) use cost::within_two_pieces;
+pub(crate) use cost::{Cost, M4_MAX_BANDWIDTH, RTX_5080_BANDWIDTH};
 pub(crate) use submit::{dispatch, dispatch_left, finish, Ran, Track, Uploading};
 
 thread_local! {
@@ -94,13 +98,6 @@ const WORKING: Duration = Duration::from_millis(250);
 /// How long one submission should take on the GPU (and a picture model's
 /// dispatch at most: `image::plan`).
 pub(crate) const PIECE: Duration = Duration::from_millis(5);
-/// The dispatches a run's first submission takes where nothing is learned
-/// yet: one, no longer than a piece (`image::plan` cuts the long ones),
-/// the next sized from its time towards [`PIECE`], at most twice the last
-/// (`submit::learned`). An eighth of the run, as it was, put some 3 s of
-/// klein's first picture on the M4 Max in one submission (Gemma's first
-/// words 0.8 s), and the window's frames waited behind it.
-pub(crate) const FIRST: usize = 1;
 /// The longest rest after one.
 const LONGEST_REST: Duration = Duration::from_millis(60);
 /// The longest background work waits for other work at a time.
@@ -470,14 +467,15 @@ fn owe(pieces: &mut Pieces, took: Duration, duty: f32) {
     }
 }
 
-/// How many dispatches a submission takes, learned per run: about
-/// [`PIECE`] of GPU time; whether the work is background work, which
-/// rests, and the rest it owes; what its runs cost so far; and the pace it
-/// keeps to (the process's).
+/// How large a submission is, learned per run: about [`PIECE`] of GPU
+/// time, reckoned in its dispatches' estimated costs ([`Cost`]: a norm
+/// some microseconds, a multiply's slice a piece), each kind corrected by
+/// the submissions' times ([`cost::Sizing`]); whether the work is
+/// background work, which rests, and the rest it owes; what its runs cost
+/// so far; and the pace it keeps to (the process's).
 #[derive(Clone, Debug)]
 pub(crate) struct Pieces {
-    /// [`FIRST`] at first, then learned from each submission's time.
-    per: usize,
+    sizing: cost::Sizing,
     rests: bool,
     owed: Duration,
     counts: Counts,
@@ -488,7 +486,7 @@ impl Pieces {
     /// For work that does not rest (the stems of the track playing).
     pub(crate) fn foreground() -> Pieces {
         Pieces {
-            per: FIRST,
+            sizing: cost::Sizing::default(),
             rests: false,
             owed: Duration::ZERO,
             counts: Counts::default(),
@@ -523,19 +521,6 @@ impl Pieces {
         self.counts.tally()
     }
 
-    /// Where the submission from dispatch `start` of a run of `len` ends:
-    /// as many as it takes now, in whole steps of `whole` dispatches
-    /// (`Recorded::whole`).
-    pub(crate) fn end(&self, start: usize, whole: usize, len: usize) -> usize {
-        (start + self.per.next_multiple_of(whole)).min(len)
-    }
-
-    /// `n` dispatches (of a run of `all`) took `took`: how many the next
-    /// submissions take, learned from it ([`submit::learned`]).
-    pub(crate) fn learn(&mut self, n: usize, all: usize, took: Duration) {
-        self.per = submit::learned(self.per, n, all, took);
-    }
-
     /// Before a submission: background work gives way ([`give_way`]).
     fn before(&mut self) {
         if self.rests {
@@ -564,9 +549,9 @@ impl Pieces {
     }
 }
 
-/// What a run of a decoding model is, each kind paced on its own (how
-/// many dispatches make a submission of a few milliseconds is learned
-/// for each: a prompt's are heavier than a step's).
+/// What a run of a decoding model is, each kind paced on its own (the
+/// sizes are learned for each: a prompt's multiplies and a step's one-row
+/// ones are estimated unlike ways).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     /// The prompt (the recogniser's encoder with it).

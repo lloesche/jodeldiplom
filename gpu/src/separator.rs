@@ -143,6 +143,7 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
             params: params(&[rows, dim, x_off, ldx, weight, 0, ldy]),
             // 32 invocations a row.
             groups: spread(32 * rows),
+            cost: crate::pace::Cost::UNESTIMATED,
         });
     };
     // [rows][cols] tokens to [cols][rows].
@@ -152,6 +153,7 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
             buffers: [from, Buf::Weights, to],
             params: params(&[rows, cols, DIM]),
             groups: spread(rows * cols * DIM),
+            cost: crate::pace::Cost::UNESTIMATED,
         });
     };
     // A transformer layer (`name`) on `x`: sequences of `len` tokens, the
@@ -189,6 +191,7 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
                 buffers: [Buf::Table, Buf::Weights, buf],
                 params: params(&[tokens, len, turned, heads, DIM]),
                 groups: spread(tokens * heads * 16),
+                cost: crate::pace::Cost::UNESTIMATED,
             });
         }
         ops.push(Op {
@@ -196,6 +199,7 @@ fn plan(w: &Named, frames: usize) -> Vec<Op> {
             buffers: [Buf::Queries, Buf::KeysValues, Buf::Attended],
             params: params(&[len]),
             groups: [len.div_ceil(64) as u32, HEADS as u32, (tokens / len) as u32],
+            cost: crate::pace::Cost::UNESTIMATED,
         });
         matmul(ops, dense(Buf::Attended, x, (DIM, DIM), "o.w", Tiled::Add));
         norm(

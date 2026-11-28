@@ -324,9 +324,16 @@ fn join(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: v
 // position's and those before it, back to the window (0: none), each at
 // its place (`mask`). The queries are in src; `group` is the query heads
 // a key/value head; the output is written from dst's start, a row's heads
-// side by side. A dispatch takes the blocks from `block0` on (the plan
-// cuts a long attention into slices of blocks, each block's sums as in one
-// dispatch).
+// side by side. A dispatch takes a span of each block's walk over its
+// keys: its tiles from `tile0`, `tiles` of them (the plan cuts a long
+// attention so: a workgroup walks its keys one tile after another, so a
+// dispatch takes as long as its longest walk, however few blocks it
+// takes). A block's largest score, its total and its weighted sums so far
+// are carried from one span to the next in dst from `state`
+// (`[row][head]`, the largest and the total then the D sums), each as it
+// was, so the sums are those of one dispatch bit for bit; the span that
+// ends a block's walk writes its output. A block whose walk ended before
+// the span does nothing.
 // The tile in f32s, written a value an invocation and read four at a time
 // ([`flash4`]): never one lane of a shared vec4 written (on Apple's GPUs
 // that may write the whole vector back, over its neighbours' values).
@@ -367,8 +374,7 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
     let lane = lid % lanes;
     let h = wid.y;
     let g = h / flash_group();
-    // A dispatch may take a slice of the blocks, from block0 on.
-    let block = flash_block0() + wid.x;
+    let block = wid.x;
     let row = block * per_block + qi;
     let real = row < rows;
     let pos = flash_first() + row;
@@ -378,16 +384,40 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
     if (window > 0u) {
         lo = max(block_first + 1u, window) - window;
     }
+    // The block's walk over its keys, a tile of 8 a turn, and the span of
+    // it this dispatch takes (the same in every invocation: its loop is
+    // uniform).
+    let walk = (block_last + 8u - lo) / 8u;
+    let t0 = flash_tile0();
+    if (t0 >= walk) {
+        return;
+    }
+    let t1 = t0 + min(walk - t0, flash_tiles());
     let keys = flash_keys() + g * d * positions;
     let values = flash_values() + g * positions * d;
     let d4 = d / 4u;
+    let carried = flash_state() + (row * heads + h) * (d + 2u);
+    let sums = carried + 2u + lane * 16u;
     var best = -1e30;
     var total = 0.0;
     var o0 = vec4<f32>(0.0);
     var o1 = vec4<f32>(0.0);
     var o2 = vec4<f32>(0.0);
     var o3 = vec4<f32>(0.0);
-    for (var k0 = lo; k0 <= block_last; k0 += 8u) {
+    if (t0 > 0u && real) {
+        best = dst[carried];
+        total = dst[carried + 1u];
+        o0 = vec4<f32>(dst[sums], dst[sums + 1u], dst[sums + 2u], dst[sums + 3u]);
+        o1 = vec4<f32>(dst[sums + 4u], dst[sums + 5u], dst[sums + 6u], dst[sums + 7u]);
+        o2 = vec4<f32>(dst[sums + 8u], dst[sums + 9u], dst[sums + 10u], dst[sums + 11u]);
+        o3 = vec4<f32>(dst[sums + 12u], dst[sums + 13u], dst[sums + 14u], dst[sums + 15u]);
+    }
+    // Every invocation has read the sums carried before the query's first
+    // writes the new ones (after the walk): the loop's barriers order only
+    // workgroup memory.
+    storageBarrier();
+    for (var tile = t0; tile < t1; tile++) {
+        let k0 = lo + 8u * tile;
         // The keys: neighbours take neighbouring positions.
         for (var i = lid; i < 8u * d; i += FLASH_LANES) {
             let j = i % 8u;
@@ -456,14 +486,25 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
         o3 = o3 * fade + tile_mix(at + 3u, d4, pa, pb);
         workgroupBarrier();
     }
-    if (real) {
-        let out = row * heads * d + h * d + lane * 16u;
-        let o = array<vec4<f32>, 4>(o0 / total, o1 / total, o2 / total, o3 / total);
-        for (var i = 0u; i < 4u; i++) {
-            dst[out + 4u * i] = o[i].x;
-            dst[out + 4u * i + 1u] = o[i].y;
-            dst[out + 4u * i + 2u] = o[i].z;
-            dst[out + 4u * i + 3u] = o[i].w;
-        }
+    if (!real) {
+        return;
+    }
+    // The walk ended: the output. Else the sums so far, for the next span
+    // (each a whole f32; the largest and the total, the same in each of
+    // the query's invocations, by its first).
+    var out = sums;
+    var o = array<vec4<f32>, 4>(o0, o1, o2, o3);
+    if (t1 == walk) {
+        out = row * heads * d + h * d + lane * 16u;
+        o = array<vec4<f32>, 4>(o0 / total, o1 / total, o2 / total, o3 / total);
+    } else if (lane == 0u) {
+        dst[carried] = best;
+        dst[carried + 1u] = total;
+    }
+    for (var i = 0u; i < 4u; i++) {
+        dst[out + 4u * i] = o[i].x;
+        dst[out + 4u * i + 1u] = o[i].y;
+        dst[out + 4u * i + 2u] = o[i].z;
+        dst[out + 4u * i + 3u] = o[i].w;
     }
 }

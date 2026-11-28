@@ -8,6 +8,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use super::cost::{toward, Spent};
 use super::{Counts, Live, Pieces, PIECE};
 use crate::engine::{Kernels, Program, Recorded};
 use crate::profile::Stamps;
@@ -85,14 +86,14 @@ pub(crate) struct Ran {
 }
 
 /// How to time a run whose last submission was left running: that one's
-/// number ([`Track`]), its dispatches (with those of the one before it
-/// where that was still running), the run's, and when the GPU could start
-/// them as the run saw it (when they were made, or when the one before
-/// them was done, if later).
+/// number ([`Track`]), what its dispatches cost (with those of the one
+/// before it where that was still running), the run's, and when the GPU
+/// could start them as the run saw it (when they were made, or when the
+/// one before them was done, if later).
 pub(crate) struct Left {
     number: u64,
-    n: usize,
-    all: usize,
+    spent: Spent,
+    all: Spent,
     from: Instant,
 }
 
@@ -114,32 +115,14 @@ pub(crate) fn finish<K: Kernels>(
     if let Some(from) = start {
         let now = Instant::now();
         track.found_done(now);
-        pieces.learn(left.n, left.all, now - from);
+        pieces.sizing.learn(left.spent, left.all, now - from);
     }
     Ok(())
-}
-
-/// Halfway from `now` towards `ideal`: how a size is learned, smoothly.
-fn toward(now: f64, ideal: f64) -> f64 {
-    now * 0.5 + ideal * 0.5
 }
 
 /// What `amount` that took `took` would be in a piece's time ([`PIECE`]).
 fn in_a_piece(amount: f64, took: Duration) -> f64 {
     amount * PIECE.as_secs_f64() / took.as_secs_f64().max(1e-5)
-}
-
-/// Towards [`PIECE`] a submission ([`toward`]), from `per` dispatches,
-/// where `n` (of a run of `all`) took `took` (at least one, none where
-/// there are none), at most twice the more of `per` and `n` (a submission
-/// of whole steps, or one taken with the one before, takes more than
-/// `per`; a run's short last one fewer): dispatches cost unlike amounts (a
-/// norm some microseconds, a multiply's slice a piece), so a submission of
-/// cheap ones says little of the next, and one twice as long as the last
-/// is the most a wrong guess costs.
-pub(super) fn learned(per: usize, n: usize, all: usize, took: Duration) -> usize {
-    let next = toward(per as f64, in_a_piece(n as f64, took)).round() as usize;
-    next.min(2 * per.max(n)).clamp(1, all.max(1))
 }
 
 /// Waits until the GPU has done the submission `index` (numbered `number`)
@@ -508,9 +491,10 @@ impl Mode {
     }
 }
 
-/// A submission made: its index, its number, its dispatches (with those of
-/// the one before it where that still ran), and when they were made.
-type Made = (wgpu::SubmissionIndex, u64, usize, Instant);
+/// A submission made: its index, its number, what its dispatches cost
+/// (with those of the one before it where that still ran), and when they
+/// were made.
+type Made = (wgpu::SubmissionIndex, u64, Spent, Instant);
 
 /// A run's submissions as they go: the one still running, when the one
 /// before it was done, and whether its first wait may also wait for work
@@ -523,13 +507,13 @@ struct Timing {
 }
 
 impl Timing {
-    /// A submission of `n` dispatches made at `made`, taken with the one
-    /// before where that still runs: their dispatches together, and when
-    /// the first of them was made.
-    fn with_running(&mut self, n: usize, made: Instant) -> (usize, Instant) {
+    /// A submission that cost `spent` made at `made`, taken with the one
+    /// before where that still runs: their costs together, and when the
+    /// first of them was made.
+    fn with_running(&mut self, spent: Spent, made: Instant) -> (Spent, Instant) {
         match self.running.take() {
-            Some((_, _, before, at)) => (before + n, at),
-            None => (n, made),
+            Some((_, _, before, at)) => (before.and(spent), at),
+            None => (spent, made),
         }
     }
 
@@ -556,7 +540,8 @@ fn submissions<K: Kernels, B>(
     leave: bool,
 ) -> Result<Ran, String> {
     let (device, queue, label) = (&program.device, &program.queue, program.label());
-    let (groups, ops) = (recorded.groups(), recorded.dispatches());
+    let (groups, ops, costs) = (recorded.groups(), recorded.dispatches(), recorded.costs());
+    let all = Spent::of(costs);
     let _live = (!pieces.rests).then(|| Live::start(pieces.pace));
     let (mut prelude, mut finish) = (Some(prelude), Some(finish));
     let mut start = 0;
@@ -569,7 +554,7 @@ fn submissions<K: Kernels, B>(
     // decoder steps (`Recorded::whole`).
     let whole = recorded.whole;
     loop {
-        let end = pieces.end(start, whole, ops.len());
+        let (end, spent) = pieces.sizing.end(start, whole, costs);
         let last = end == ops.len();
         let recording = Instant::now();
         let mut encoder =
@@ -595,7 +580,7 @@ fn submissions<K: Kernels, B>(
         let giving_way = pieces.duty() < 1.0;
         if giving_way {
             if let Some(before) = timing.running.take() {
-                settle(program, pieces, &mut timing, before, ops.len(), None)?;
+                settle(program, pieces, &mut timing, before, all, None)?;
             }
         }
         pieces.before();
@@ -609,18 +594,17 @@ fn submissions<K: Kernels, B>(
         pieces
             .counts
             .add_time(Counts::RECORDED, recorded + made.elapsed());
-        let n = end - start;
         // The submission to wait for now: this one with the one before, or
         // the one before while this one runs; none where this one is left
         // running.
         let waited = match Mode::of(last, leave, giving_way, stamps.is_some()) {
             Mode::Leave => {
                 program.track.leave(number);
-                let (n, at) = timing.with_running(n, made);
+                let (spent, at) = timing.with_running(spent, made);
                 let left = Left {
                     number,
-                    n,
-                    all: ops.len(),
+                    spent,
+                    all,
                     from: timing.done_at.map_or(at, |d| d.max(at)),
                 };
                 return Ok(Ran {
@@ -629,13 +613,13 @@ fn submissions<K: Kernels, B>(
                 });
             }
             Mode::Wait => {
-                let (n, at) = timing.with_running(n, made);
-                Some((index, number, n, at))
+                let (spent, at) = timing.with_running(spent, made);
+                Some((index, number, spent, at))
             }
-            Mode::Pipeline => timing.running.replace((index, number, n, made)),
+            Mode::Pipeline => timing.running.replace((index, number, spent, made)),
         };
         if let Some(made) = waited {
-            settle(program, pieces, &mut timing, made, ops.len(), stamps)?;
+            settle(program, pieces, &mut timing, made, all, stamps)?;
         }
         if let Some(last) = written {
             return Ok(Ran { last, left: None });
@@ -644,15 +628,15 @@ fn submissions<K: Kernels, B>(
     }
 }
 
-/// A submission of a run of `all` dispatches, `made`, waited for, `stamps`
+/// A submission `made` (of a run that costs `all`), waited for, `stamps`
 /// (where it is profiled) read: the next submissions' size learned from
 /// it, and, for background work, the rest it owes ([`Pieces::after`]).
 fn settle<K: Kernels>(
     program: &Program<K>,
     pieces: &mut Pieces,
     timing: &mut Timing,
-    (index, number, n, at): Made,
-    all: usize,
+    (index, number, spent, at): Made,
+    all: Spent,
     stamps: Option<Stamps>,
 ) -> Result<(), String> {
     wait(&pieces.counts, program, index, number)?;
@@ -660,10 +644,9 @@ fn settle<K: Kernels>(
         stamps.add(&program.device, &program.queue)?;
     }
     let took = timing.took(at);
-    // Towards PIECE a submission, smoothly (at least one, none where there
-    // are none).
+    // Towards PIECE a submission, smoothly.
     if !std::mem::take(&mut timing.after_left) {
-        pieces.learn(n, all, took);
+        pieces.sizing.learn(spent, all, took);
     }
     pieces.after(took);
     Ok(())
@@ -685,20 +668,6 @@ mod tests {
         fn entry(self) -> &'static str {
             match self {}
         }
-    }
-
-    /// A submission's size goes halfway towards [`PIECE`] of GPU time, both
-    /// ways, within the run.
-    #[test]
-    fn the_size_goes_halfway_towards_a_piece() {
-        let ms = Duration::from_millis;
-        // 100 dispatches in 10 ms: 50 would take PIECE.
-        assert_eq!(learned(100, 100, 400, ms(10)), 75);
-        // In 2 ms: 250 would.
-        assert_eq!(learned(100, 100, 400, ms(2)), 175);
-        // Never past the run, never none.
-        assert_eq!(learned(400, 400, 400, ms(1)), 400);
-        assert_eq!(learned(1, 1, 400, Duration::from_secs(10)), 1);
     }
 
     /// A batch's size goes towards a piece's time, never past its bounds,
@@ -813,7 +782,7 @@ mod tests {
             let read = crate::device::read_back(&program.device, &staging, 4).unwrap();
             assert_eq!(read, [0.0; 4], "the prelude, then the finish");
             assert_eq!(pieces.tally().submissions, 1);
-            assert_eq!(pieces.per, 1);
+            assert_eq!(pieces.sizing, Default::default(), "nothing learned");
             assert_eq!(pieces.pace.live.load(Ordering::Acquire), 0);
         }
     }

@@ -285,21 +285,54 @@ A run as one submission keeps the GPU until it is done, and a window
 drawing on the same GPU waits for it: a stutter every chunk. So every
 network here (the separator, the beat network, the speech models) goes in
 submissions of about 5 ms of GPU time each, their size learned as they
-run (`pace`), and other work on the GPU gets in between. A run's first
-submission, before anything is learned, is one dispatch (one whole step
-of the recogniser's), and the size learned from a submission's time is
-at most twice the more of the size it had and the dispatches that
-submission held (`pace::submit::learned`; the next is made before the
-last is settled, so it lags one behind): an eighth of the run, as the
-first was before, put some 3 s of klein's first picture on the M4 Max
-in one submission (Gemma's first words 0.8 s), the window's frames
-behind it, and a few cheap dispatches say little of how many costly
-ones fit. The next submission is made while the last one runs (that one
-waited for then), so the GPU never waits for the processor between
-them. The recogniser's decoder steps are never split
-(`Recorded::whole`): a submission is whole steps, one at least, so a
-step costs one submission and one wait at most; where a step takes
-longer than 5 ms, the window waits for it.
+run (`pace`), and other work on the GPU gets in between.
+
+How a submission is sized (`pace::cost`):
+- Each dispatch carries its estimated GPU time, made with it by its plan
+  (`engine::Op::cost`): klein's and Gemma's plans reckon a multiply's or
+  an attention's FLOPs at their path's measured rate, a norm's or a
+  copy's values at the GPU's bandwidth, and 10 µs more for each dispatch
+  (the bandwidths and the 10 µs are guesses). The other networks make no
+  estimate, and each of their dispatches counts as a piece.
+- The two kinds of estimate (`pace::Bound`: the arithmetic, and the
+  values moved) are corrected on their own. For each, a pace learns the
+  estimated seconds that fill a piece of GPU time: halfway from what it
+  had towards what the last submission's time says, in whole dispatches
+  of that submission's, at most twice the more of what it had and what
+  that submission held. A submission takes dispatches while they fit a
+  piece by those, one whole step at least.
+- A run's first submission is one dispatch (one whole step of the
+  recogniser's), and so is the next, made before the first is learned
+  from. For a network that makes no estimate this is the count of
+  dispatches as it was learned before (one, one, two, four, then towards
+  a piece), submission for submission.
+- The cap bounds how fast the estimates of a submission grow, not its
+  time: after a submission whose estimates were too high, one of
+  dispatches whose estimates are too low takes twice a piece times how
+  far their errors are apart. So the kinds are corrected apart, and a
+  check holds klein's and Gemma's plans to two pieces a submission with
+  the values moved three times their estimate and the start of a
+  dispatch twice its own (`pace::within_two_pieces`). A dispatch far
+  slower than its estimate (a model's first use) adds its excess to its
+  submission, on top of up to two pieces: nothing sizes it before its
+  time is known.
+
+Why: counted in dispatches, a few cheap ones were followed by twice as
+many costly ones, made before the one that would shrink them was
+settled, and submissions in klein's plan on the f32 path took up to 10.6
+pieces. An eighth of the run in the first submission, as it was before
+that, put some 3 s of klein's first picture on the M4 Max in one
+submission (Gemma's first words 0.8 s), with the window's frames behind
+it. A first submission of half a piece by the estimates held the 5080
+past the system's 2 s and lost the device, with the picture's 8 × 8
+attention written out (emulated) there.
+
+The next submission is made while the last one runs (that one waited for
+then), so the GPU never waits for the processor between them. The
+recogniser's decoder steps are never split (`Recorded::whole`): a
+submission is whole steps, one at least, so a step costs one submission
+and one wait at most; where a step takes longer than 5 ms, the window
+waits for it.
 The language model's steps, about 21 ms on an M4 Max, may be split. A
 run left running (a decoding model makes its next run before it reads
 the last) learns from its time, which starts where the run before it,
@@ -371,17 +404,32 @@ zeroed the same way (`Program::room`: the buffers made, those not
 written zeroed, then the writes put up, in one paced upload) before
 their first use, where
 wgpu would zero each one not written yet all at once in the submission
-that first uses it (Gemma's context is gigabytes on a large card). A single dispatch cannot be cut by
-the pace, so the long ones are cut where they are planned: klein's
-multiplies and attention (`image::plan`), and Gemma's prompt attention
-on the f32 path, the Mac's (`llm::plan`: slices of its blocks of queries,
-a 5 ms piece's worth at the M4 Max's rate but 128 workgroups at least,
-so about 10 ms where a whole chunk took 31 ms). The 8-bit path's is not
-cut: the 5080 runs that kernel as slowly (0.5 TFLOP/s), but shares its
-GPU with the window between dispatches, and slices of few workgroups
-cost it a quarter of its prompt's speed or more. `GpuSeparator::shared()` never rests, and while it has
-work on the GPU background work waits before each submission (a second
-at most at a time), so one network is on the GPU at once.
+that first uses it (Gemma's context is gigabytes on a large card).
+
+A single dispatch cannot be cut by the pace, so the long ones are cut
+where they are planned, to a piece's worth at their path's rate:
+- klein's multiplies and attention (`image::plan`). A multiply's columns
+  are counted in whole tiles of 128, so the decoder's last convolution,
+  to 3 channels, is cut too: it was one dispatch of some 28 ms at a
+  picture's end on the M4 Max.
+- Gemma's prompt (`llm::plan`): its matrix multiplies by rows of tiles
+  (on the f32 path a chunk's gates and ups, some 54 GFLOP, 12 ms on the
+  M4 Max; the 8-bit path's are short enough), and its attention by keys
+  on either path. Every block of queries takes every span (`flash`'s
+  `tile0` and `tiles`), its sums carried in `H` from one span to the
+  next, bit for bit those of one dispatch. Fewer blocks would not cut
+  it: each workgroup walks its keys one tile after another, so the
+  slices of fewer blocks it had took as long, the global layers' deep in
+  a story's prompt 37 to 60 ms on the M4 Max.
+
+The cuts come from the rates written in the plans, so the pace's
+corrections size the submissions but not a single dispatch: on a GPU
+slower than the one a path's rates were measured on, its slices are as
+much longer (`docs/todo.md`).
+
+`GpuSeparator::shared()` never rests, and while it has work on the GPU
+background work waits before each submission (a second at most at a
+time), so one network is on the GPU at once.
 `pace::report()` says how it went (ticks late, those that found the
 window starved and how long that held it giving way, rests, time
 waited);
@@ -896,7 +944,8 @@ allocator holds 6.5 GB at its peak with the encoder freed first (PyTorch:
 A pace (`pace`) gives way to the window between submissions, never inside
 a dispatch, so klein cuts each multiply and attention into dispatches of
 about a pace's piece (5 ms) of the GPU it is for (`Plan::budget`: the
-kernel's rate measured on that path times the piece; two pieces on 16 ×
+kernel's rate measured on that path times the piece, a multiply's columns
+counted in whole tiles of 128; two pieces on 16 ×
 16, which cuts only the 5080's largest multiplies, as one piece made its
 picture 5 % slower), by rows of tiles or blocks of queries, the same work
 and the same values. On the M4 Max a multiply of 515 GFLOP had taken

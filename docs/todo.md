@@ -58,19 +58,24 @@ Measured on the owner's M4 Max (Metal, the f32 path), 2026-11-28:
 klein is within what others measure on the same chip (about 24 s a
 picture; 18 to 27 s at about 1 MP), so nothing is open there.
 
-- **Gemma's prompt still holds the window up** (the owner's Mac,
-  2026-11-28, e3c47a0, the window not telling the pace): a 178 ms frame
-  (99th percentile 53 ms). Metal System Trace shows single GPU pieces of
-  37 to 60 ms in the prompt (the longest 59.9 ms), and a frame can queue
-  behind two or three of them, hence the 139 to 178 ms frames; nothing
-  else in the run is over 60 ms on the GPU (klein's first picture now
-  27.8 ms at most, at its end, likely the decode). The suspect: the
-  prompt's dispatches not cut to a piece, the flash attention's slices
-  (their estimated rate) or the prompt's matrix multiplies. The real cure
-  for the overshoot (klein's too: a few cheap dispatches, then twice as
-  many costly ones, made before the one that would shrink them is
-  settled): size submissions by the plan's estimated cost, not by a count
-  of dispatches (`image::plan` knows each op's FLOPs).
+- **klein's first picture still bursts on the 5080** (2026-11-28, the
+  frames probe): five or so frames of 24 ms in a row, once a first
+  picture, in 6 of 8 runs with submissions sized by their costs and 1 of
+  5 before. Traced in one run to single dispatches on their first use
+  running 7 to 17 times their estimate (one slice estimated at 10 ms took
+  120 ms, at the decoder's start): no pace sizes one dispatch. Find what
+  the first use waits for (the decoder's buffers made resident, a
+  pipeline compiled late) and whether its first submissions can touch it
+  first. The Mac's frames were clean (klein's first picture 13.2 ms at
+  most).
+- **Gemma's prompt cut by the pace's correction** (2026-11-28): its
+  multiplies and attention are cut at their path's measured rate
+  (`llm::plan::cost`), so on a GPU slower than the one measured each
+  slice is as much longer, and no pace can split it. A prompt is planned
+  for each prompt: cut at the rate over what the prompt's pace has
+  learned (its estimates of the arithmetic over their time, one at most),
+  with slack in the room (`ContextPlan::peak_bytes`) for the dispatches
+  that adds.
 - **Checkpoints mapped into memory, not read** (2026-11-28): a story
   load's fresh memory on the processor is the checkpoints' own
   (`SafeTensors::open` reads a whole `.safetensors` file, some 9.4 GB for

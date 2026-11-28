@@ -179,6 +179,7 @@ impl<B: Copy> TiledMul<B> {
             buffers: [self.from.0, weights, self.to.0],
             params: params(&self.numbers()),
             groups: [self.n.div_ceil(64) as u32, self.m.div_ceil(128) as u32, 1],
+            cost: crate::pace::Cost::UNESTIMATED,
         }
     }
 }

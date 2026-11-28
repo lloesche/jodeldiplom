@@ -250,6 +250,7 @@ impl Plan {
             buffers: [src, src2, dst],
             params: p,
             groups,
+            cost: crate::pace::Cost::UNESTIMATED,
         });
     }
 

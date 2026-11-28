@@ -133,6 +133,7 @@ impl Rig {
             buffers: (),
             params: params(numbers),
             groups,
+            cost: crate::pace::Cost::UNESTIMATED,
         };
         let recorded = p.record(&[op], |()| bufs.iter().collect()).unwrap();
         let mut pieces = crate::pace::Pieces::foreground();
@@ -592,6 +593,33 @@ fn rows_through_a_matrix_are_the_reference_for_every_kind() {
             );
             let e = off(&got.dst, &want);
             assert!(e < 1e-5, "{kind:?}, q8 {q8}, flags {flags}: {e}");
+            // Cut as the plan cuts a long one: a tile of rows, then the
+            // rest, each from its rows' place (their words and scales in
+            // `ints`, their products in `dst`), bit for bit the whole's.
+            let row_words = if q8 { k / 4 } else { k };
+            let mut cut = data.clone();
+            for (r0, n_rows) in [(0, 64), (64, rows - 64)] {
+                let numbers = [
+                    n_rows,
+                    n,
+                    k,
+                    r0 * row_words,
+                    k,
+                    m.at,
+                    r0 * width,
+                    width,
+                    0,
+                    flags,
+                    qs + r0 * k / 32 * 2,
+                    0,
+                    NONE,
+                    NONE,
+                ];
+                let groups = [(n / 64) as u32, n_rows.div_ceil(64) as u32, 1];
+                cut = rig.run(kernel, &numbers, groups, &cut);
+            }
+            let same = (cut.dst.iter().zip(&got.dst)).all(|(a, b)| a.to_bits() == b.to_bits());
+            assert!(same, "{kind:?}, q8 {q8}, flags {flags}: cut in two");
         }
     }
 }
@@ -1008,38 +1036,43 @@ fn step_is(
 }
 
 /// A prompt's attention over `rows` rows from `first` (their queries in
-/// `cache`), through flash.
+/// `cache`), through flash in one dispatch.
 fn flash(
     rig: &Rig,
     kind: (usize, usize),
     places: (usize, usize),
     input: (&[f32], usize, usize),
 ) -> Vec<f32> {
-    let blocks = input.2.div_ceil(256 / (kind.0 / 16));
-    flash_blocks(rig, kind, places, input, (0, blocks))
+    flash_spans(rig, kind, places, input, &[(0, 1 << 20)])
 }
 
-/// [`flash`]'s dispatch of `n` blocks of queries from `block0` (a slice,
-/// as the plan cuts a long one).
-fn flash_blocks(
+/// [`flash`] in a dispatch for each of `spans` (each block's walk over its
+/// keys from tile `tile0`, `tiles` of them, as the plan cuts a long one),
+/// the sums carried in the output's buffer after the output.
+fn flash_spans(
     rig: &Rig,
     (d, window): (usize, usize),
     (places, mask): (usize, usize),
     (cache, first, rows): (&[f32], usize, usize),
-    (block0, n): (usize, usize),
+    spans: &[(usize, usize)],
 ) -> Vec<f32> {
     let (k_at, v_at, q_at) = layout(d, places);
-    let data = Data {
+    let state = rows * 8 * d;
+    let mut data = Data {
         src: cache.to_vec(),
-        dst: vec![0.0; rows * 8 * d],
+        dst: vec![0.0; state + rows * 8 * (d + 2)],
         ints: vec![0; TOKENS],
         ..Data::default()
     };
-    let numbers = [
-        rows, first, d, window, q_at, k_at, v_at, places, 8, 4, mask, block0,
-    ];
-    rig.run(Kernel::Flash, &numbers, [n as u32, 8, 1], &data)
-        .dst
+    let blocks = rows.div_ceil(256 / (d / 16));
+    for &(tile0, tiles) in spans {
+        let numbers = [
+            rows, first, d, window, q_at, k_at, v_at, places, 8, 4, mask, tile0, tiles, state,
+        ];
+        data = rig.run(Kernel::Flash, &numbers, [blocks as u32, 8, 1], &data);
+    }
+    data.dst.truncate(state);
+    data.dst
 }
 
 #[test]
@@ -1108,12 +1141,14 @@ fn a_steps_attention_and_a_prompts_are_the_reference() {
     }
 }
 
-/// A prompt's attention cut into slices of its blocks of queries, as the
-/// plan cuts a long one: each row's values bit for bit as in one dispatch,
-/// for a sliding layer's heads and a global layer's (512 values, the ones
-/// cut), a chunk from position 0 and one deeper in.
+/// A prompt's attention cut into spans of its blocks' walks over their
+/// keys, as the plan cuts a long one, the sums carried from one to the
+/// next: each row's values bit for bit as in one dispatch, for a sliding
+/// layer's heads and a global layer's (512 values), a chunk from position
+/// 0 (its blocks' walks of unlike lengths, some ended before a span) and
+/// one deeper in, in spans of one tile, of three, and of one then the rest.
 #[test]
-fn a_prompts_attention_in_slices_is_bit_for_bit_whole() {
+fn a_prompts_attention_in_spans_is_bit_for_bit_whole() {
     let Some(rig) = rig() else { return };
     let mut noise = Noise(9);
     let (before, rows) = (70, 60);
@@ -1129,21 +1164,19 @@ fn a_prompts_attention_in_slices_is_bit_for_bit_whole() {
                 cache = prepare_into(&rig, &heads, (0, first), whole, turn, cache);
             }
             let cache = prepare_into(&rig, &heads, (first, n), whole, turn, cache);
-            let per_block = 256 / (d / 16);
-            let blocks = n.div_ceil(per_block);
             let input = (&cache[..], first, n);
-            let all = flash_blocks(&rig, (d, window), whole, input, (0, blocks));
-            let cut = blocks / 2;
-            assert!(0 < cut && cut < blocks, "{blocks} blocks");
-            let a = flash_blocks(&rig, (d, window), whole, input, (0, cut));
-            let b = flash_blocks(&rig, (d, window), whole, input, (cut, blocks - cut));
-            let at = cut * per_block * 8 * d;
-            let same =
-                |x: &[f32], y: &[f32]| x.iter().zip(y).all(|(x, y)| x.to_bits() == y.to_bits());
-            assert!(
-                same(&a[..at], &all[..at]) && same(&b[at..], &all[at..]),
-                "d {d}, from {first}: cut at block {cut} of {blocks}"
-            );
+            let all = flash(&rig, (d, window), whole, input);
+            let longest = (first + n).div_ceil(8);
+            let ones: Vec<(usize, usize)> = (0..longest).map(|t| (t, 1)).collect();
+            let threes: Vec<(usize, usize)> = (0..longest).step_by(3).map(|t| (t, 3)).collect();
+            for spans in [ones, threes, vec![(0, 1), (1, longest)]] {
+                let cut = flash_spans(&rig, (d, window), whole, input, &spans);
+                let same = cut
+                    .iter()
+                    .zip(&all)
+                    .all(|(x, y)| x.to_bits() == y.to_bits());
+                assert!(same, "d {d}, from {first}: {} spans", spans.len());
+            }
         }
     }
 }

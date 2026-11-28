@@ -79,6 +79,7 @@ impl Inner {
                     parts,
                 ]),
                 groups: [b as u32, KV_HEADS as u32, chunks as u32],
+                cost: crate::pace::Cost::UNESTIMATED,
             });
             rows(
                 ops,
@@ -212,6 +213,7 @@ impl Inner {
                 buffers: [Buf::QkvD, Buf::Cache, Buf::AttnD, Buf::Spare],
                 params: params(&[n, start, cache, seq, positions]),
                 groups: [n.div_ceil(64) as u32, HEADS as u32, b as u32],
+                cost: crate::pace::Cost::UNESTIMATED,
             });
             // Long matrices cut in parts (their sums in `Gu`, unused
             // here).
@@ -312,6 +314,7 @@ impl Inner {
                 self.tensors.embed.format.bits(),
             ]),
             groups: [b as u32, 1, 1],
+            cost: crate::pace::Cost::UNESTIMATED,
         });
     }
 }

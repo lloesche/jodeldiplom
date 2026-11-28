@@ -153,6 +153,7 @@ impl Inner {
                 buffers: [Buf::Qkv, Buf::Small, Buf::Attn, Buf::Spare],
                 params: params(&[steps, window]),
                 groups: [steps.div_ceil(64) as u32, ENC_HEADS as u32, b as u32],
+                cost: crate::pace::Cost::UNESTIMATED,
             });
             let (w, bias) = layer.o;
             matmul(
