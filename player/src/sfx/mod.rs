@@ -346,7 +346,7 @@ impl Sfx {
         let moved = state.playing.anchors_forgotten != self.anchors;
         self.anchors = state.playing.anchors_forgotten;
         let halted = state.playing.state != PlayState::Playing;
-        let clock = karaoke.lag.sung_clock(state.heard());
+        let clock = karaoke.sung_clock(state.heard());
         let frame = self.moments.frame(&karaoke.singing, clock);
         if moved || halted || frame.sought {
             self.call_off(desk);
@@ -375,7 +375,7 @@ impl Sfx {
             // Heard that much later than the singing's time; for now, on
             // the frame the desk mixes next.
             let on = match at {
-                Some(at) => state.playing.frame_at(at + karaoke.lag.late),
+                Some(at) => state.playing.frame_at(at + karaoke.sung_late()),
                 None => now,
             };
             match (
@@ -426,7 +426,7 @@ impl Sfx {
         let heard = state.playing.frame_at(t)?;
         let speed = state.playing.speed?;
         let fader = *desk.heads.get(heard.head)?;
-        let late = state.karaoke.lag.late;
+        let late = state.karaoke.sung_late();
         let mut lines = [None; Clock::LINES];
         let sung = (state.karaoke.singing.notes.lines.iter())
             .filter_map(|l| Some((l.notes.first()?.start, l.notes.last()?.end)))

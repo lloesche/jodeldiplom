@@ -977,14 +977,20 @@ really found, as its workers tell it: never a progress they did not tell.
   perfect singer in place of the microphone (with one open or none), for
   showing the game off. Its frames are the notes the bubbles are made of,
   a few cents of slow wobble on them, nothing where no note is due, at
-  the singing's own time (the song heard less how late the voice comes),
-  so the words burst, the streak, the multiplier up to ×32 Diva, the
+  the song's time as heard: no voice of it comes late, so while it is
+  held the game's delay is none, and its arrow takes up each note as the
+  note reaches the playhead (on the frame's own time, at any frame rate);
+  the words burst, the streak, the multiplier up to ×32 Diva, the
   shots, the shine and the sounds go as for a singer on time; the
-  microphone's pitch is
-  not listened to meanwhile, nor is the delay estimated from it. Let go
-  of (or the window left, or the mode), it stops at once: nothing after.
-  "AUTO" shows in the stage's top left corner while it is held. A song
-  the demo sang in (since its scoring last started) shows its result and
+  microphone's pitch is not listened to meanwhile, nor is the delay
+  estimated from it. Let go of (or the window left, or the mode), it
+  stops at once: nothing after, what it sang stands (no word judged
+  again, the streak kept, no moment taken back), and the microphone is
+  heard from where it stopped (its voice comes late, so its first frames
+  are of moments the demo sang; a seek, another song or the mode left
+  ends that wait at once). Pressing or letting go of it moves the stage's
+  and the sounds' time by the delay at once. "AUTO" shows in the stage's
+  top left corner while it is held. A song the demo sang in (since its scoring last started) shows its result and
   diploma as any, never as a best ("Sung by the demo key: not a best"
   where the best goes), and its singing is not kept (`karaoke_keep`);
   nor is a song's without a voice in it (under a second of the pitch
@@ -992,8 +998,11 @@ really found, as its workers tell it: never a progress they did not tell.
   sung).
   - `held_through_a_phrase_every_word_bursts_and_the_multiplier_goes_up`,
     `let_go_it_stops_at_once`,
+    `let_go_what_it_sang_stands_and_the_microphone_goes_on_after_it`,
     `nothing_is_sung_off_the_notes_and_nothing_without_the_key`
     (`core::singing::demo`)
+  - `the_demo_s_arrow_takes_up_each_note_as_it_reaches_the_playhead`
+    (bubbles)
   - `a_song_the_demo_sang_shows_its_result_and_sets_no_best`
   - `the_demo_key_is_held_in_the_mode_only`
   - `the_demo_sings_with_no_microphone` (app)
@@ -1479,8 +1488,13 @@ really found, as its workers tell it: never a progress they did not tell.
   before it plays, a moment's pulse peaking on it; the singing's live
   signals on its own clock (the voice's lag taken off). Every bar's first
   beat and every kick peaks on the frame whose heard time is nearest it,
-  through a pause (the look holding still) and a seek.
-  - `the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause`
+  through a pause (the look holding still) and a seek. That time, as each
+  frame draws it, moves on by a frame's time each frame (no step where
+  the position is told, every 100 ms of frames played) and stays within
+  two frames of the song the device plays, at 60 and at 120 frames a
+  second.
+  - `the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause`,
+    `the_song_s_time_as_drawn_moves_by_the_frame_with_the_device`
   - `a_pulse_peaks_on_its_moment` (looks)
   - `the_same_time_reads_the_same` (looks)
   - `the_curves_find_what_the_song_has` (looks)

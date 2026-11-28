@@ -347,6 +347,10 @@ impl MicSession {
     /// nothing heard. The demo key held, the demo sings instead
     /// ([`crate::core::singing::Demo`]).
     pub(crate) fn sing(&mut self, state: &mut State) {
+        // Every frame, whatever is heard: the demo let go of hands over to
+        // the microphone on the song's time.
+        let (now, late) = (state.heard(), state.karaoke.lag.late);
+        state.karaoke.demo.follow(now, late);
         let heard = self.input.is_some();
         let song = core::karaoke::song_index(state).filter(|_| core::karaoke::in_mode(state));
         // Where in the song each block was sung, through the head it was
@@ -370,11 +374,13 @@ impl MicSession {
             return;
         };
         let game = state.show().scored;
-        let sung_now = state.karaoke.lag.sung_clock(state.heard());
+        let sung_now = state.karaoke.sung_clock(state.heard());
         // Estimated even with a delay measured: the singing corrects it
         // ([`crate::core::lag::correction`]).
         let karaoke = &mut state.karaoke;
         let (singing, estimate) = (&mut karaoke.singing, &mut karaoke.lag.estimate);
+        // The microphone's own delay (the demo's path returns below before
+        // it is used): what its frames are placed by and Keep records.
         let (late, source) = (karaoke.lag.late, karaoke.lag.source);
         let demo = &mut karaoke.demo;
         singing.prepare(&path, &lyrics, &waveform);
@@ -444,8 +450,7 @@ impl MicSession {
                 yin.push(&[x], |cents| {
                     voiced += usize::from(cents.is_some());
                     let t = at + i as f64 / rate - centre;
-                    singing.hear(t - late, cents);
-                    estimate.hear(singing, t, cents);
+                    demo.microphone((&mut *singing, &mut *estimate), (t, late), cents);
                 });
             }
         }

@@ -613,6 +613,66 @@ fn the_arrow_shows_while_singing_however_late_the_voice() {
     assert!(at(LATE + 0.45, LATE + 0.5).all(|s| !s.1));
 }
 
+/// Where the singer's arrow is down the stage in `frame`, if it shows.
+fn arrow_y(frame: &StageFrame) -> Option<f32> {
+    let arrow = frame.instances.iter().find(|i| i.is(Shape::Arrow))?;
+    Some((arrow.quad[1] + arrow.quad[3]) / 2.0)
+}
+
+/// The demo key held, the voice's delay at its default (150 ms) for a
+/// singer: the demo sings on the song's own time, so its arrow shows from
+/// the first note's start and takes up the next note ("la" on C4, "lo" on
+/// G4 from 1 s) as it reaches the playhead: most of the way there within
+/// the arrow's glide (a tenth of a second and a little), never before it,
+/// at 60 and 120 frames a second alike.
+#[test]
+fn the_demo_s_arrow_takes_up_each_note_as_it_reaches_the_playhead() {
+    for fps in [60.0, 120.0] {
+        let (singing, lyrics) = common::bubble_song();
+        let mut karaoke = jodeldiplom::core::karaoke::KaraokeState {
+            singing,
+            ..Default::default()
+        };
+        assert_eq!(karaoke.lag.late, 0.15, "a singer's delay in force");
+        karaoke.demo.hold();
+        let mut stage = Stage::default();
+        let area = (0.0, 0.0, 800.0, 450.0);
+        let mut ys = Vec::new();
+        let mut f = 0;
+        loop {
+            let t = f64::from(f) / fps;
+            if t > 1.9 {
+                break;
+            }
+            // As a frame does: the demo sung up to the singing's time now,
+            // the stage drawn at the song's time with the delay in force.
+            let to = karaoke.sung_clock(t);
+            karaoke.demo.sing(&mut karaoke.singing, to);
+            let late = karaoke.sung_late();
+            let picture = common::bubble_picture(&karaoke.singing, &lyrics, (t, late));
+            let mut song = Song::new(&karaoke.singing, lyrics.lines.iter().collect(), Some(3.0));
+            (song.late, song.demo) = (late, true);
+            let frame = stage.frame(&song, &picture, area, t, (1.0 / fps) as f32);
+            ys.push((t, arrow_y(&frame)));
+            f += 1;
+        }
+        let at = |s: f64| {
+            let k = ys.iter().position(|&(t, _)| t >= s - 1e-9).unwrap();
+            ys[k].1
+        };
+        assert!(at(2.0 / fps).is_some(), "{fps}: shown from the start");
+        let (c4, g4) = (at(0.95).unwrap(), at(1.9).unwrap());
+        assert!(c4 - g4 > 20.0, "{fps}: G4 above C4 ({c4} {g4})");
+        let share = |s: f64| (c4 - at(s).unwrap()) / (c4 - g4);
+        assert!(
+            share(1.0) < 0.1,
+            "{fps}: not before its note: {}",
+            share(1.0)
+        );
+        assert!(share(1.12) > 0.9, "{fps}: on its note: {}", share(1.12));
+    }
+}
+
 /// The stage sought back a little (under a second) past a word scored and
 /// its bubble's burst, and on again: no burst shows twice in a frame, and
 /// none comes again (no ghost of the word scored, its bubble bursting

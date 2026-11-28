@@ -40,6 +40,11 @@ impl App {
             }
         }
         self.last_drawn = Some((track, heard, now));
+        // What follows (the singing heard, the demo's, the sounds) goes by
+        // this frame's time, never the last one's.
+        let ms = self.now_ms();
+        self.state.drawn_heard = Some(heard);
+        self.state.drawn_ms = Some(ms);
         self.note_pair();
         // A sync under way hears the voice; the singer's delay follows.
         let sync = crate::sync::frame(&mut self.clicks, self.mic.listen(&mut self.state));
@@ -51,8 +56,7 @@ impl App {
             .mic
             .and_then(|m| m.echo())
             .map(|(_, learnt, delay)| (learnt, delay.map(f64::from)));
-        let now = self.now_ms() as f64 / 1000.0;
-        core::lag::follow(&mut self.state, echo, now);
+        core::lag::follow(&mut self.state, echo, ms as f64 / 1000.0);
         self.mic.sing(&mut self.state);
         if let Some(said) = self.mic.save_kept(&self.state, false) {
             self.dispatch(said);
@@ -63,8 +67,6 @@ impl App {
         if core::desk::shown(&self.state) {
             self.look_at_desk();
         }
-        self.state.drawn_heard = Some(heard);
-        self.state.drawn_ms = Some(self.now_ms());
         if let Some(engine) = &mut self.engine {
             engine.sound_effects(&self.state);
         }

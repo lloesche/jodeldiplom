@@ -4,12 +4,6 @@ Work agreed on but not started, roughly in the order it was raised.
 
 ## Karaoke
 
-- **The arrow trails in auto mode** (the owner on the Mac, 2026-11-28,
-  holding `p`): the pitch arrow seemed to lag behind, at a steady 60 fps
-  on the external screen and 120 on the laptop's. Not the frame rate:
-  look at the arrow's smoothing, the pitch tracker's window and the
-  delay the game allows for the microphone (auto mode sings exactly on
-  the notes).
 - **Fullscreen does not follow a display change** (the owner on the Mac,
   2026-11-28): the external screen went off mid-song and the game came
   back on the laptop's screen at the external screen's 4K size, not

@@ -1,13 +1,15 @@
-//! The looks keep time with the song as it is heard: the whole player on
-//! a memory device playing on the test's time (each window frame 1/60 s
-//! of the app's clock and as much played by the device), the Shader tab's
-//! look read at each frame's heard time ([`App::heard_for_frame`], the
-//! time the stage and the lyrics are drawn at) over a song whose beats are
-//! known, through a pause and a seek.
+//! The song's time as the frames draw it, and the looks with it, keep time
+//! with the song as it is heard: the whole player on a memory device
+//! playing on the test's time (each window frame 1/60 s, or 1/120 s, of
+//! the app's clock and as much played by the device). The time each frame
+//! is drawn at ([`App::heard_for_frame`], what the stage, the arrow and the
+//! lyrics go by) moves on with the device; the Shader tab's look
+//! is read at it over a song whose beats are known, through a pause and a
+//! seek.
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use jodel_looks::Driver;
@@ -22,8 +24,18 @@ use jodeldiplom::gui::backdrop::song_look::Looks;
 
 const RATE: u32 = 48_000;
 const GUARD: Duration = Duration::from_secs(60);
-/// The device frames of a window's frame.
-const FRAME: u64 = RATE as u64 / 60;
+
+/// Held by each test for its whole: one player at a time. The engine tells
+/// the position from its own thread, on the wall clock, and a machine
+/// loaded (by the other test's player) delays a report past the frames'
+/// tolerance; nothing else is shared between them.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// [`ONE_AT_A_TIME`], held (a test that failed holding it still lets the
+/// next go).
+fn one_at_a_time() -> MutexGuard<'static, ()> {
+    ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Waits until the mixer has filled the device for its next period.
 fn mixer_waits(device: &SimTime, timebase: impl Fn() -> Timebase) {
@@ -46,10 +58,12 @@ fn device_time(captures: &Captures) -> SimTime {
     }
 }
 
-/// The window's frames on the test's time.
+/// The window's frames on the test's time, each `frame` device frames
+/// long.
 struct Window {
     clock: AppClock,
     time: SimTime,
+    frame: u64,
 }
 
 impl Window {
@@ -59,12 +73,95 @@ impl Window {
         let timebase = |a: &App| a.desk().unwrap().master.timebase;
         mixer_waits(&self.time, || timebase(app));
         self.clock.step(Duration::from_nanos(
-            FRAME * 1_000_000_000 / u64::from(RATE),
+            self.frame * 1_000_000_000 / u64::from(RATE),
         ));
-        self.time.advance(FRAME).unwrap();
+        self.time.advance(self.frame).unwrap();
         mixer_waits(&self.time, || timebase(app));
         app.pump();
         app.heard_for_frame()
+    }
+}
+
+/// The whole player on a memory device on the test's time, a 30 s chord
+/// (`tag` names its folder) playing, its window's frames `frame` device
+/// frames long; what the device captures.
+fn playing(tag: &str, frame: u64) -> (App, Window, Captures) {
+    let dir = jodel_testkit::thread_dir(tag);
+    let file = dir.join("a.wav");
+    common::write_wav(&file, RATE, 30.0);
+    let mut caps = Capabilities::new();
+    caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
+    let memory = MemoryOutput::new(caps, SimClock::Manual);
+    let mut options = AppOptions::new(dir.clone());
+    let clock = AppClock::stepped();
+    options.clock = clock.clone();
+    options.output = Output::Memory(memory.clone());
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.mic = Arc::new(|_| Err("no microphone".into()));
+    options.mics = Arc::new(|| Ok(Vec::new()));
+    options.separator = || None;
+    options.config.beat_voting = false;
+    options.config.beat_method = jodel_rhythm::Method::Flux;
+    options.config.stems = false;
+    options.autoplay = Some(file);
+    let mut app = common::fitted_app(options, 120, 36);
+    let engine = memory.captures().last().expect("an engine").clone();
+    let mut window = Window {
+        clock,
+        time: device_time(&engine),
+        frame,
+    };
+    let guard = Instant::now() + GUARD;
+    while app.state.playing.state != PlayState::Playing {
+        assert!(Instant::now() < guard, "playing");
+        window.frame(&mut app);
+    }
+    (app, window, engine)
+}
+
+/// The song's time as each frame draws it ([`App::heard_for_frame`], what
+/// the stage, the arrow and the lyrics go by) against the song as the
+/// device plays it (from its first frame of the chord, in the bytes it
+/// played): past its first two seconds, at 60 and at 120 frames a second,
+/// every frame moves on by a frame's time (within a quarter of one: no
+/// step at the reports), and it is never two frames from where the song
+/// is heard (the engine tells the position on its own thread, so a report
+/// may come a frame after the one it was made in).
+#[test]
+fn the_song_s_time_as_drawn_moves_by_the_frame_with_the_device() {
+    let _one = one_at_a_time();
+    for fps in [60, 120] {
+        let frame = RATE as u64 / fps;
+        let (mut app, mut window, engine) = playing("song-time", frame);
+        let device = |a: &App| a.desk().unwrap().master.timebase.heard;
+        let drawn: Vec<(f64, u64)> = (0..5 * fps)
+            .map(|_| {
+                let heard = window.frame(&mut app);
+                (heard, device(&app))
+            })
+            .collect();
+        let bytes = engine.list()[0].sink.bytes();
+        let frame_bytes = StreamFormat::new(RATE, 2, SampleFormat::S24In32Low).frame_bytes();
+        let first = (bytes.chunks_exact(frame_bytes))
+            .position(|f| f.iter().any(|&b| b != 0))
+            .expect("the chord played") as u64;
+        let dt = 1.0 / fps as f64;
+        let settled = &drawn[2 * fps as usize..];
+        for (k, pair) in settled.windows(2).enumerate() {
+            let ((was, _), (heard, played)) = (pair[0], pair[1]);
+            let step = heard - was;
+            assert!(
+                (step - dt).abs() < dt / 4.0,
+                "{fps}: frame {k}: a step of {step:.4} s"
+            );
+            let truth = played.saturating_sub(first) as f64 / f64::from(RATE);
+            let off = heard - truth;
+            assert!(
+                off.abs() < 2.0 * dt,
+                "{fps}: frame {k}: {off:+.4} s from the song heard"
+            );
+        }
+        app.shutdown();
     }
 }
 
@@ -130,35 +227,8 @@ fn lands(run: &[Seen], moments: &[f64], pulse: impl Fn(&Seen) -> f32) -> usize {
 /// after a seek; while paused the look holds still.
 #[test]
 fn the_looks_land_on_the_heard_beats_across_a_seek_and_a_pause() {
-    let dir = jodel_testkit::TempDir::new("looks-sync");
-    let file = dir.join("a.wav");
-    common::write_wav(&file, RATE, 30.0);
-    let mut caps = Capabilities::new();
-    caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
-    let memory = MemoryOutput::new(caps, SimClock::Manual);
-    let mut options = AppOptions::new(dir.to_path_buf());
-    let clock = AppClock::stepped();
-    options.clock = clock.clone();
-    options.output = Output::Memory(memory.clone());
-    options.devices = Arc::new(|| Ok(Vec::new()));
-    options.mic = Arc::new(|_| Err("no microphone".into()));
-    options.mics = Arc::new(|| Ok(Vec::new()));
-    options.separator = || None;
-    options.config.beat_voting = false;
-    options.config.beat_method = jodel_rhythm::Method::Flux;
-    options.config.stems = false;
-    options.autoplay = Some(file.clone());
-    let mut app = common::fitted_app(options, 120, 36);
-    let engine = memory.captures().last().expect("an engine").clone();
-    let mut window = Window {
-        clock,
-        time: device_time(&engine),
-    };
-    let guard = Instant::now() + GUARD;
-    while app.state.playing.state != PlayState::Playing {
-        assert!(Instant::now() < guard, "playing");
-        window.frame(&mut app);
-    }
+    let _one = one_at_a_time();
+    let (mut app, mut window, _) = playing("looks-sync", RATE as u64 / 60);
     app.dispatch(Action::ShowSide(Side::Shader));
     // The song's beats as the look hears them: a steady grid at 120 a
     // minute, bars of four, from the song's start.

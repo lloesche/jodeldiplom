@@ -1,6 +1,7 @@
-//! How late the singer's voice comes (the input latency), one value for
-//! everything that holds
-//! the voice against the song (the scoring, what Keep records): the time
+//! How late the singer's voice comes through the microphone (the input
+//! latency), one value for everything that holds that voice against the
+//! song (the scoring, what Keep records; the demo's is none, see the
+//! end): the time
 //! from a frame of the music going to the device to the microphone hearing
 //! the singer sing it (the output's buffers, the ear, the microphone's).
 //!
@@ -30,6 +31,13 @@
 //! Mid-song the value in force moves at most [`SLEW`] a second towards a
 //! new one, so the scoring never jumps; a nudge or a sync is taken at once,
 //! and so is anything while no song is sung ([`Lag::step`]).
+//!
+//! [`Lag::late`] is the microphone's alone: what its frames are placed by
+//! and what Keep records. The game (the stage, the effects, the sounds,
+//! the singing's clock) reads the delay of whoever sings now through
+//! [`crate::core::karaoke::KaraokeState::sung_late`] and
+//! [`crate::core::karaoke::KaraokeState::sung_clock`]: this one for the
+//! microphone, none while the demo key is held.
 
 pub mod estimate;
 
@@ -315,12 +323,6 @@ impl Lag {
         let k = self.known;
         let nudge = nudge_ms.map(|ms| f64::from(ms) / 1000.0);
         target(k.measured, k.echo, self.estimate.lag, nudge).late
-    }
-
-    /// The singing's own time at `heard` seconds into the song as heard:
-    /// its frames of a moment come [`Lag::late`] after it ([`sung_clock`]).
-    pub fn sung_clock(&self, heard: f64) -> f64 {
-        sung_clock(heard, self.late)
     }
 }
 

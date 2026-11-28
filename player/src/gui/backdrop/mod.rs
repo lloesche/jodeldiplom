@@ -216,7 +216,7 @@ impl Visualiser {
                 song: Some(song),
                 singing,
                 now: heard,
-                clock: state.karaoke.lag.sung_clock(heard),
+                clock: state.karaoke.sung_clock(heard),
                 signals,
             })
         });

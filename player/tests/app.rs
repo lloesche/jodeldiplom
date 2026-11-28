@@ -262,7 +262,8 @@ fn a_song_picked_while_paused_plays() {
 
 /// No microphone (none opens), Karaoke mode entered where the song plays,
 /// four words a second each coming up on C4: `p` held, the demo sings
-/// them as the frames are drawn, every word hit and the song marked as the
+/// them as the frames are drawn, each frame up to its own time (within a
+/// frame of the pitch tracker's), every word hit and the song marked as the
 /// demo's; let go of, nothing more is heard.
 #[test]
 fn the_demo_sings_with_no_microphone() {
@@ -352,12 +353,19 @@ fn the_demo_sings_with_no_microphone() {
     app.state.karaoke.lyrics.insert(path.clone(), found);
     press(&mut app, Key::ch('p'));
     assert!(app.state.karaoke.demo.held());
-    // Drawn frame by frame through the last word.
+    // Drawn frame by frame through the last word; while it is held, the
+    // demo has sung up to the frame's own time, within a frame of the
+    // pitch tracker's (never the frame before's).
     let draw_until = |app: &mut App, t: f64| {
         let end = Instant::now() + WAIT;
         while Instant::now() < end && app.state.playing.position < t {
             app.pump_wait(Duration::from_millis(16));
-            app.heard_for_frame();
+            let heard = app.heard_for_frame();
+            let sung = app.state.karaoke.singing.last_heard();
+            if let Some(sung) = sung.filter(|_| app.state.karaoke.demo.held()) {
+                let hop = jodel_rhythm::yin::HOP;
+                assert!((sung - heard).abs() <= hop + 1e-9, "{sung} at {heard}");
+            }
         }
     };
     draw_until(&mut app, from + 4.6);

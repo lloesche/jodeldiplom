@@ -366,7 +366,7 @@ fn main() {
         app.pump_wait(Duration::from_millis(16));
         app.heard_for_frame();
         let state = &mut app.state;
-        let t = state.karaoke.lag.sung_clock(state.heard());
+        let t = state.karaoke.sung_clock(state.heard());
         // Over a miss the demo is let go (and stays so a while after, so it
         // starts again where the song is), and a singer heard in its place
         // humming no note at all.

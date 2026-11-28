@@ -802,7 +802,7 @@ fn the_game_is_silent_with_its_notes_hidden() {
     state.karaoke.singing = common::bubble_song().0;
     // A phrase sung now, to the top tier.
     let sung = |state: &mut State| {
-        let at = state.karaoke.lag.sung_clock(state.heard());
+        let at = state.karaoke.sung_clock(state.heard());
         let shone = Shone {
             line: 0,
             end: at,

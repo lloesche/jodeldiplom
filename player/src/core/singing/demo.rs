@@ -4,11 +4,16 @@
 //! without singing. Each of its frames (a [`HOP`] apart, as the pitch
 //! tracker's) is the note the bubbles are made of at its time, a few cents
 //! of slow wobble on it so the arrow lives, and nothing where no note is
-//! due. They come at the singing's own time (the song heard less how late
-//! the voice comes: [`crate::core::lag::sung_clock`]), as a singer's on
-//! time would, and go through [`Singing::hear`] as the microphone's do:
+//! due. They come at the song's time as heard, for no voice of it comes
+//! late (while it is held the game's delay is none:
+//! [`crate::core::karaoke::KaraokeState::sung_late`]; the arrow takes up each
+//! note as it reaches the playhead), and go through [`Singing::hear`] as
+//! the microphone's do:
 //! the bubbles, the streak, the shine and the result follow as for
-//! singing. Let go of, it stops at once: no frame of it after.
+//! singing. Let go of, it stops at once: no frame of it after, and what it
+//! sang stands, the microphone heard from where it stopped
+//! ([`Demo::microphone`]: its voice comes late, so its first frames are
+//! of moments the demo sang).
 //!
 //! A song it sang in is marked ([`super::Tally::demo`], kept with the
 //! scoring: a song started over is no longer marked): its result shows,
@@ -27,12 +32,16 @@ const WOBBLE_HZ: f64 = 5.0;
 /// is, never singing what was not heard.
 const GAP: f64 = 0.5;
 
-/// The demo key: held or not, and where its singing got to.
+/// The demo key: held or not, where its singing got to, and, let go of,
+/// where it had sung to.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Demo {
     held: bool,
     /// When its last frame was, in the singing's time.
     last: Option<f64>,
+    /// Let go of: the latest it sang to, until the microphone takes over
+    /// from there ([`Demo::follow`]).
+    sang_to: Option<f64>,
 }
 
 impl Demo {
@@ -46,14 +55,57 @@ impl Demo {
         self.held = true;
     }
 
-    /// The key let go of: the demo stops at once.
+    /// The key let go of: the demo stops at once, what it sang stands (to
+    /// the latest it sang to, also when it was let go of and held again
+    /// within a frame, singing nothing between).
     pub fn let_go(&mut self) {
         self.held = false;
-        self.last = None;
+        self.sang_to = match (self.last.take(), self.sang_to) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+    }
+
+    /// Nothing of what it sang waits for the microphone any more: the mode
+    /// left, another song.
+    pub fn forget_sang(&mut self) {
+        self.sang_to = None;
+    }
+
+    /// Once a frame, the song heard at `heard` seconds, the microphone's
+    /// voice coming `late`: the microphone has taken over once its frames
+    /// are past where the demo sang to, or the song's time went back from
+    /// there (a seek, another song).
+    pub fn follow(&mut self, heard: f64, late: f64) {
+        if let Some(to) = self.sang_to {
+            if heard - late > to || heard < to - HOP {
+                self.sang_to = None;
+            }
+        }
+    }
+
+    /// The microphone's frame caught at `at` seconds into the song, its
+    /// voice coming `late`, at `cents`: heard by `singing` at the singing's
+    /// time (`at` less `late`) and by the delay's `estimate`; not while
+    /// that time is at or before where the demo, just let go of, sang to
+    /// (the voice comes late, so the microphone's first frames after the
+    /// key are of moments the demo sang: they would take its singing back).
+    pub fn microphone(
+        &self,
+        (singing, estimate): (&mut Singing, &mut crate::core::lag::estimate::Estimator),
+        (at, late): (f64, f64),
+        cents: Option<f32>,
+    ) {
+        let t = at - late;
+        if self.sang_to.is_none_or(|to| t > to + 1e-9) {
+            singing.hear(t, cents);
+            estimate.hear(singing, at, cents);
+        }
     }
 
     /// While held, the perfect singer's frames after its last up to `to`
-    /// (the singing's time) heard by `singing`, the song marked as the
+    /// (the singing's time: the song's, with the demo held) heard by
+    /// `singing`, the song marked as the
     /// demo's; nothing while not.
     pub fn sing(&mut self, singing: &mut Singing, to: f64) {
         if !self.held {
@@ -194,6 +246,80 @@ mod tests {
         demo.hold();
         demo.sing(&mut singing, 5.0);
         assert!(singing.heard[heard..].iter().all(|h| h.t >= 5.0 - 1e-9));
+    }
+
+    /// Let go of just after a word was scored (and held and let go of
+    /// again within a frame), the microphone's frames coming 150 ms late
+    /// (silent, the singer just let go of a key) through the path
+    /// MicSession::sing takes: what the demo sang stands (the word hit,
+    /// the streak, no moment taken back), the microphone heard from where
+    /// it stopped; the song sought back, it is heard from there at once.
+    #[test]
+    fn let_go_what_it_sang_stands_and_the_microphone_goes_on_after_it() {
+        use crate::core::lag::estimate::Estimator;
+        let mut singing = a_line();
+        let mut estimate = Estimator::default();
+        let mut demo = Demo::default();
+        demo.hold();
+        // Let go of just after the first word was scored (0.3 s after its
+        // end), so a take-back would cut that moment.
+        frames(&mut demo, &mut singing, 0.0, 2.35);
+        demo.let_go();
+        // Held and let go of again within a frame, singing nothing: where
+        // it sang to stands.
+        demo.hold();
+        demo.let_go();
+        let popped = |s: &Singing| {
+            (s.moments().iter()).any(|m| matches!(m.cue, Cue::Pop(b) if (b.line, b.word) == (0, 0)))
+        };
+        assert!(popped(&singing), "the first word burst");
+        let (tally, last) = (singing.tally, singing.last_heard().unwrap());
+        assert_eq!((tally.hit_words, tally.scored_words), (1, 1), "{tally:?}");
+        let late = 0.15;
+        // The demo's frames the microphone's first come over, all hit.
+        let overlap = |s: &Singing| -> Vec<(f64, bool)> {
+            (s.heard.iter())
+                .filter(|h| h.t > last - late - 1e-9 && h.t <= last + 1e-9)
+                .map(|h| (h.t, h.hit))
+                .collect()
+        };
+        let sang = overlap(&singing);
+        assert!(sang.len() >= 14 && sang.iter().all(|h| h.1), "{sang:?}");
+        let mut cursor = crate::core::singing::Cursor::default();
+        let _ = singing.moments_since(&mut cursor);
+        // The microphone as MicSession::sing hears it, silent: a frame
+        // caught as the song is heard at `at`, each window frame followed.
+        let mut at = last;
+        while at <= 2.9 {
+            demo.follow(at, late);
+            demo.microphone((&mut singing, &mut estimate), (at, late), None);
+            at += HOP;
+        }
+        assert!(
+            !singing.moments_since(&mut cursor).sought,
+            "nothing taken back"
+        );
+        assert_eq!(overlap(&singing), sang, "the demo's frames stand");
+        // The first word scored hit, the streak as it was.
+        let now = singing.tally;
+        assert_eq!(
+            (now.hit_words, now.scored_words, now.streak),
+            (tally.hit_words, tally.scored_words, tally.streak)
+        );
+        assert!(popped(&singing), "the word stays hit");
+        assert!(singing.last_heard().unwrap() > 2.7, "the microphone heard");
+        // Held and let go of again, then the song sought back: the
+        // microphone heard from there at once.
+        demo.hold();
+        frames(&mut demo, &mut singing, 2.9, 3.2);
+        demo.let_go();
+        demo.follow(1.0, late);
+        demo.microphone((&mut singing, &mut estimate), (1.0, late), None);
+        assert_eq!(
+            singing.last_heard(),
+            Some(1.0 - late),
+            "a seek back is heard"
+        );
     }
 
     #[test]

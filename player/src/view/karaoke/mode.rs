@@ -190,7 +190,7 @@ fn with_notes(
             }
         };
         if ours {
-            let game = (show.scored, state.karaoke.lag.late);
+            let game = (show.scored, state.karaoke.sung_late());
             sung_on(singing, game, i, &notes, heard, l);
         }
         l.notes = notes.notes;

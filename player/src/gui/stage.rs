@@ -134,7 +134,8 @@ pub struct Song<'a> {
     pub game: bool,
     /// How long the song is, in seconds, where known.
     pub length: Option<f64>,
-    /// How late the voice comes, in seconds: the singing's time is the song's less it.
+    /// How late the voice comes, in seconds: the singing's time is the song's less it
+    /// (none while the demo sings: [`crate::core::karaoke::KaraokeState::sung_late`]).
     pub late: f64,
     /// Whether the demo key is held ([`crate::core::singing::Demo`]).
     pub demo: bool,
@@ -177,7 +178,7 @@ impl<'a> Song<'a> {
                 .and_then(|t| t.info.duration())
                 .map(|d| d.as_secs_f64())
                 .filter(|&d| d > 0.0),
-            late: state.karaoke.lag.late,
+            late: state.karaoke.sung_late(),
             demo: state.karaoke.demo.held(),
             heard,
             signals,

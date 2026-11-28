@@ -181,6 +181,30 @@ pub struct KaraokeState {
     pub look: Option<Arc<jodel_looks::Look>>,
 }
 
+impl KaraokeState {
+    /// How late the voice the game hears comes, in seconds: the
+    /// microphone's delay in force ([`super::lag::Lag::late`]); none while
+    /// the demo key is held, for the demo is the game's own singer, heard
+    /// as the song is (its arrow takes up each note as the note reaches the
+    /// playhead). What everything that holds the voice against the song
+    /// goes by: the singing's clock ([`KaraokeState::sung_clock`]), the
+    /// stage, the effects and the game's sounds.
+    pub fn sung_late(&self) -> f64 {
+        if self.demo.held() {
+            0.0
+        } else {
+            self.lag.late
+        }
+    }
+
+    /// The singing's own time at `heard` seconds into the song as heard:
+    /// its frames of a moment come [`KaraokeState::sung_late`] after it
+    /// ([`super::lag::sung_clock`]).
+    pub fn sung_clock(&self, heard: f64) -> f64 {
+        super::lag::sung_clock(heard, self.sung_late())
+    }
+}
+
 /// Whether the Karaoke tab is what keys act on.
 pub fn on_tab(state: &State) -> bool {
     state.keys_on(Side::Karaoke)
@@ -220,7 +244,7 @@ pub fn sung_pitch(singing: &super::singing::Singing, clock: f64) -> f32 {
 pub fn live(state: &State, heard: f64, signals: &mut jodel_looks::Signals) {
     use jodel_looks::Driver;
     let singing = &state.karaoke.singing;
-    let sung = state.karaoke.lag.sung_clock(heard);
+    let sung = state.karaoke.sung_clock(heard);
     let pitch = jodel_looks::drive::pitch(sung_pitch(singing, sung));
     signals.set(Driver::Pitch, pitch);
     let recent: Vec<bool> = (singing.heard.iter().rev())
@@ -484,6 +508,7 @@ pub(crate) fn leave(state: &mut State, fx: &mut Vec<Effect>) {
     }
     state.karaoke.dragging = None;
     state.karaoke.demo.let_go();
+    state.karaoke.demo.forget_sang();
     state.karaoke.controls = controls::Controls::Hidden;
     fx.push(Effect::Engine(Command::HoldAtEnd(false)));
 }
@@ -549,9 +574,11 @@ pub(crate) fn held(state: &mut State, index: usize) {
 
 /// A track starts to be heard (Next's, one a mix ran into, one played on
 /// the tab after the mode): the engine holds none now, and the result of
-/// the song before is gone.
+/// the song before is gone, and nothing the demo sang in it waits for the
+/// microphone.
 pub(crate) fn track_started(state: &mut State) {
     state.karaoke.held = None;
+    state.karaoke.demo.forget_sang();
     result::track_started(state);
 }
 
