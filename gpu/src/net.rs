@@ -500,9 +500,9 @@ fn on(
         "jodel-gpu network",
         &shared_source(&[include_str!("net.wgsl")]),
     );
-    let model = Model::new(program, &sizes(values.len()), READ, pieces)?;
-    model.write(Buf::Weights, &values);
-    model.write(Buf::Table, &rotary(0..f, engine::HEAD_32, Angles::F32));
+    let table = rotary(0..f, engine::HEAD_32, Angles::F32);
+    let writes = [(Buf::Weights, &values[..]), (Buf::Table, &table[..])];
+    let model = Model::new(program, &sizes(values.len()), &writes, READ, pieces)?;
     Ok(PackedNet { model, weights })
 }
 

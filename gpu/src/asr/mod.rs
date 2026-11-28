@@ -400,10 +400,8 @@ impl Inner {
         all.push((Buf::Stats, stats.len));
         all.push((Buf::Spare, 1));
         all.push((Buf::Weights, packed.weights.len()));
-        let buffers = program.buffers(&all)?;
-        let write = |buf: Buf, data: &[u8]| program.queue.write_buffer(&buffers[&buf], 0, data);
-        write(Buf::Weights, &bytes(&packed.weights));
-        write(Buf::Small, &bytes(&packed.small));
+        let (weights, small) = (bytes(&packed.weights), bytes(&packed.small));
+        let buffers = program.room(&all, &[(Buf::Weights, &weights), (Buf::Small, &small)])?;
         let recorded = program.recording(MAX_OPS);
         let staging = [program.staging(room.staging), program.staging(room.staging)];
         Ok(Inner {

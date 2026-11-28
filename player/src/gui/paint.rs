@@ -34,6 +34,86 @@ pub const REST: Duration = Duration::from_millis(250);
 /// How early a tick may come for a calm frame (the timers' jitter).
 const SLACK: Duration = Duration::from_millis(3);
 
+/// The shortest gap between ticks taken for a refresh: shorter ones come
+/// from the pacer's redraws while the window goes in or out of fullscreen
+/// (every 4 ms), or catch up after a late one.
+const SHORTEST: Duration = Duration::from_millis(6);
+
+/// When a tick was due ([`Lateness::tick`]): at the display's refresh,
+/// at a timer's interval, or not at a time the window keeps (the rest's
+/// tick, which comes whatever the pace).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Due {
+    Refresh,
+    Every(Duration),
+    Rest,
+}
+
+/// The ticks as they come, to tell when the window is starved of the
+/// GPU. iced gets each frame (`get_current_texture`, on Metal
+/// `nextDrawable`, which waits while the GPU is busy with other work) and
+/// presents it on the thread that ticks, inside its own loop, so that wait
+/// cannot be timed here; it shows as the next tick coming late, a refresh
+/// tick and a timer's alike. A tick a quarter of its interval or more past
+/// it is late (the pace starts giving way only on several close together:
+/// [`jodel_gpu::pace::tick`]): the refresh's interval is the shortest gap
+/// between refresh ticks lately, [`SHORTEST`] at least (it creeps up a
+/// hundredth a tick, so another display's slower refresh, or a 120 Hz one
+/// drawn at 60, is taken in within a second or two), a timer's is its own.
+/// Only gaps between two ticks due the same way count, and none after a
+/// tick whose own frame left less than a quarter of the interval (the
+/// window's own work, not the GPU's). A display past about 165 Hz is not
+/// timed at the refresh (its gaps are under [`SHORTEST`]); and a starved
+/// window whose frames come steadily at half the refresh is learned as a
+/// slower display after a second or so (as a 120 Hz one drawn at 60 is),
+/// late long enough to start giving way first: the trace's starved ticks
+/// show whether that comes and goes.
+#[derive(Debug)]
+struct Lateness {
+    last: Option<(Instant, Due)>,
+    refresh: Option<Duration>,
+    /// How long the last tick's frame took to draw.
+    drew: Duration,
+}
+
+impl Lateness {
+    fn new() -> Lateness {
+        Lateness {
+            last: None,
+            refresh: None,
+            drew: Duration::ZERO,
+        }
+    }
+
+    /// A tick at `at`, due as `due`: whether it came late.
+    fn tick(&mut self, at: Instant, due: Due) -> bool {
+        let drew = std::mem::take(&mut self.drew);
+        let before = self.last.replace((at, due));
+        if due == Due::Rest {
+            self.last = None;
+            return false;
+        }
+        let Some(gap) = before
+            .filter(|&(_, d)| d == due)
+            .map(|(l, _)| at.saturating_duration_since(l))
+            .filter(|&g| g >= SHORTEST && g < REST)
+        else {
+            return false;
+        };
+        let interval = match due {
+            Due::Every(every) => every,
+            _ => {
+                let r = self.refresh.map_or(gap, |r| r.mul_f64(1.01).min(gap));
+                self.refresh = Some(r);
+                r
+            }
+        };
+        // Late, unless the window's own frame left it less than a quarter of
+        // the interval.
+        drew + interval / 4 < interval && gap >= interval + interval / 4
+    }
+}
+
 /// How often the ticks come.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pace {
@@ -128,6 +208,12 @@ pub struct Paint {
     pub spectrum: SpectrumFrame,
     /// What the guards measure on the Shader tab's picture.
     readout: super::screens::shader::readout::Readout,
+    /// The ticks as they come, to tell when the window is starved of the
+    /// GPU; whether this tick came late (told with its frame); and how
+    /// the last plan paced the ticks (when this one was due).
+    lateness: Lateness,
+    late: bool,
+    paced_by: Option<Pace>,
 }
 
 impl Paint {
@@ -144,7 +230,22 @@ impl Paint {
             frames: crate::trace::Frames::default(),
             spectrum: SpectrumFrame::default(),
             readout: Default::default(),
+            lateness: Lateness::new(),
+            late: false,
+            paced_by: None,
         }
+    }
+
+    /// A tick at `at`, the rest's (`rest`) or one the plan paced: whether
+    /// it came late ([`Lateness`]), told to background GPU work with its
+    /// frame ([`Paint::draw`]).
+    pub fn ticked(&mut self, at: Instant, rest: bool) {
+        let due = match (rest, self.paced_by) {
+            (false, Some(Pace::Refresh)) => Due::Refresh,
+            (false, Some(Pace::Every(every))) => Due::Every(every),
+            _ => Due::Rest,
+        };
+        self.late = self.lateness.tick(at, due);
     }
 
     /// The one decision of a tick at `at`: how often the ticks come from
@@ -218,10 +319,11 @@ impl Paint {
     }
 
     /// Draws what `plan` says, for the tick at `at`, `heard` seconds into
-    /// the track. A frame of what moves (no input in it) at the display's
-    /// refresh lets background GPU work know how the window keeps up, and
-    /// makes it give way ([`jodel_gpu::pace::frame`]); calm frames leave
-    /// the GPU time enough and say nothing.
+    /// the track. Background GPU work is told of each tick
+    /// ([`jodel_gpu::pace::tick`]): whether it came late ([`Lateness`], or
+    /// in Karaoke mode the stage's last frame not through the GPU yet),
+    /// and whether what moves (no input in it) is drawn at the display's
+    /// refresh; it gives way while that moves, or the ticks come late.
     pub fn draw(
         &mut self,
         plan: Plan,
@@ -230,8 +332,10 @@ impl Paint {
         place: Place,
         (heard, at): (f64, Instant),
     ) {
+        self.paced_by = Some(plan.pace);
         let draw = plan.draw;
         if draw == Draw::Nothing {
+            jodel_gpu::pace::tick(std::mem::take(&mut self.late), false);
             return;
         }
         let paced = !self.dirty;
@@ -264,11 +368,12 @@ impl Paint {
         } else {
             (false, Duration::ZERO)
         };
-        if paced && plan.pace == Pace::Refresh {
-            jodel_gpu::pace::frame(late);
-        }
-        self.frames
-            .frame(gap, late, started.elapsed(), handed, &what);
+        let smooth = paced && plan.pace == Pace::Refresh;
+        let tick_late = std::mem::take(&mut self.late);
+        jodel_gpu::pace::tick(tick_late || (smooth && late), smooth);
+        let drew = started.elapsed();
+        self.lateness.drew = drew;
+        self.frames.frame(gap, late, drew, handed, &what);
     }
 
     /// The whole frame: what the core keeps of the window's size, the
@@ -356,6 +461,100 @@ impl Paint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ticks `gap` apart, due as `due`, from `at` on: how many came late.
+    fn late_ticks(
+        l: &mut Lateness,
+        at: &mut Instant,
+        (n, gap): (usize, Duration),
+        due: Due,
+    ) -> usize {
+        (0..n)
+            .filter(|_| {
+                *at += gap;
+                l.tick(*at, due)
+            })
+            .count()
+    }
+
+    /// A tick a quarter of its interval or more late is told, at 60 Hz and
+    /// at 120 Hz; one on time, the ticks starting again after a pause or
+    /// after the rest's tick, are not.
+    #[test]
+    fn a_tick_a_quarter_of_a_frame_late_is_told() {
+        for hz in [60.0, 120.0] {
+            let frame = Duration::from_secs_f64(1.0 / hz);
+            let mut l = Lateness::new();
+            let mut at = Instant::now();
+            assert_eq!(late_ticks(&mut l, &mut at, (30, frame), Due::Refresh), 0);
+            at += frame / 5;
+            assert!(!l.tick(at, Due::Refresh), "{hz} Hz, a fifth late");
+            at += frame + frame / 3;
+            assert!(l.tick(at, Due::Refresh), "{hz} Hz, a third late");
+            at += 2 * frame;
+            assert!(l.tick(at, Due::Refresh), "{hz} Hz, a frame missed");
+            at += REST;
+            assert!(!l.tick(at, Due::Refresh), "the ticks stopped");
+            assert!(!l.tick(at + 5 * frame, Due::Rest));
+            at += 9 * frame;
+            assert!(!l.tick(at, Due::Refresh), "after the rest's tick");
+        }
+    }
+
+    /// Calm ticks after ticks at the refresh are on time at their own
+    /// interval, and late past it.
+    #[test]
+    fn calm_ticks_are_late_only_past_their_own_interval() {
+        let frame = Duration::from_secs_f64(1.0 / 60.0);
+        let mut l = Lateness::new();
+        let mut at = Instant::now();
+        assert_eq!(late_ticks(&mut l, &mut at, (60, frame), Due::Refresh), 0);
+        let calm = Due::Every(CALM);
+        assert_eq!(late_ticks(&mut l, &mut at, (60, CALM), calm), 0);
+        assert_eq!(late_ticks(&mut l, &mut at, (5, CALM * 3 / 2), calm), 5);
+    }
+
+    /// A burst of ticks 4 ms apart (going fullscreen) does not make the
+    /// refresh 4 ms; a 120 Hz display drawn at 60 is taken in within a
+    /// second or two; a tick after a slow frame of the window's own is not
+    /// told.
+    #[test]
+    fn the_refresh_is_not_fooled_by_bursts_or_slow_frames() {
+        let frame = Duration::from_secs_f64(1.0 / 60.0);
+        let mut l = Lateness::new();
+        let mut at = Instant::now();
+        late_ticks(&mut l, &mut at, (60, frame), Due::Refresh);
+        late_ticks(
+            &mut l,
+            &mut at,
+            (100, Duration::from_millis(4)),
+            Due::Refresh,
+        );
+        assert_eq!(late_ticks(&mut l, &mut at, (60, frame), Due::Refresh), 0);
+        // 120 Hz, then drawn at 60.
+        let mut l = Lateness::new();
+        late_ticks(&mut l, &mut at, (60, frame / 2), Due::Refresh);
+        let early = late_ticks(&mut l, &mut at, (120, frame), Due::Refresh);
+        assert!(early < 60, "{early} of the first 120 late");
+        assert_eq!(late_ticks(&mut l, &mut at, (60, frame), Due::Refresh), 0);
+        // Its own frame slow, leaving less than a quarter of the frame.
+        l.drew = frame * 4 / 5;
+        at += 2 * frame;
+        assert!(!l.tick(at, Due::Refresh), "after a slow frame of its own");
+        at += 2 * frame;
+        assert!(l.tick(at, Due::Refresh), "late again");
+        // At 120 Hz, a frame of 3 ms leaves time enough: a late tick after it
+        // is told.
+        let fast = frame / 2;
+        let mut l = Lateness::new();
+        late_ticks(&mut l, &mut at, (60, fast), Due::Refresh);
+        l.drew = Duration::from_millis(3);
+        at += 2 * fast;
+        assert!(
+            l.tick(at, Due::Refresh),
+            "late after a frame of 3 ms at 120 Hz"
+        );
+    }
 
     /// A window in view where nothing moves by itself.
     fn still() -> Seen {
@@ -459,8 +658,8 @@ mod tests {
     }
 
     /// A window nobody can see (its frames stopped coming) draws nothing,
-    /// whatever moves, so its frames make no background GPU work give way
-    /// ([`jodel_gpu::pace::frame`] is told only of frames drawn); its ticks
+    /// whatever moves, so nothing it draws makes background GPU work give
+    /// way ([`jodel_gpu::pace::tick`] says nothing moves); its ticks
     /// stay at the refresh, so the first that comes again shows it.
     #[test]
     fn a_window_nobody_can_see_draws_nothing() {

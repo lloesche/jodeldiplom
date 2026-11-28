@@ -898,9 +898,22 @@ fn step_is(
 /// `cache`), through flash.
 fn flash(
     rig: &Rig,
+    kind: (usize, usize),
+    places: (usize, usize),
+    input: (&[f32], usize, usize),
+) -> Vec<f32> {
+    let blocks = input.2.div_ceil(256 / (kind.0 / 16));
+    flash_blocks(rig, kind, places, input, (0, blocks))
+}
+
+/// [`flash`]'s dispatch of `n` blocks of queries from `block0` (a slice,
+/// as the plan cuts a long one).
+fn flash_blocks(
+    rig: &Rig,
     (d, window): (usize, usize),
     (places, mask): (usize, usize),
     (cache, first, rows): (&[f32], usize, usize),
+    (block0, n): (usize, usize),
 ) -> Vec<f32> {
     let (k_at, v_at, q_at) = layout(d, places);
     let data = Data {
@@ -909,10 +922,11 @@ fn flash(
         ints: vec![0; TOKENS],
         ..Data::default()
     };
-    let per_block = 256 / (d / 16);
-    let numbers = [rows, first, d, window, q_at, k_at, v_at, places, 8, 4, mask];
-    let groups = [rows.div_ceil(per_block) as u32, 8, 1];
-    rig.run(Kernel::Flash, &numbers, groups, &data).dst
+    let numbers = [
+        rows, first, d, window, q_at, k_at, v_at, places, 8, 4, mask, block0,
+    ];
+    rig.run(Kernel::Flash, &numbers, [n as u32, 8, 1], &data)
+        .dst
 }
 
 #[test]
@@ -977,6 +991,46 @@ fn a_steps_attention_and_a_prompts_are_the_reference() {
             step((2, 2, 1));
             step((4, 1, 1));
             step((4, 1, 2));
+        }
+    }
+}
+
+/// A prompt's attention cut into slices of its blocks of queries, as the
+/// plan cuts a long one: each row's values bit for bit as in one dispatch,
+/// for a sliding layer's heads and a global layer's (512 values, the ones
+/// cut), a chunk from position 0 and one deeper in.
+#[test]
+fn a_prompts_attention_in_slices_is_bit_for_bit_whole() {
+    let Some(rig) = rig() else { return };
+    let mut noise = Noise(9);
+    let (before, rows) = (70, 60);
+    let places = before + rows;
+    for (d, window) in [(128, 40), (512, 0)] {
+        let heads = Heads::new(&mut noise, places, d);
+        let turn = all_turned(d);
+        let whole = (places, ALL_BITS);
+        for first in [0, before] {
+            let n = if first == 0 { before } else { rows };
+            let mut cache = empty_cache(d, places, before.max(rows));
+            if first > 0 {
+                cache = prepare_into(&rig, &heads, (0, first), whole, turn, cache);
+            }
+            let cache = prepare_into(&rig, &heads, (first, n), whole, turn, cache);
+            let per_block = 256 / (d / 16);
+            let blocks = n.div_ceil(per_block);
+            let input = (&cache[..], first, n);
+            let all = flash_blocks(&rig, (d, window), whole, input, (0, blocks));
+            let cut = blocks / 2;
+            assert!(0 < cut && cut < blocks, "{blocks} blocks");
+            let a = flash_blocks(&rig, (d, window), whole, input, (0, cut));
+            let b = flash_blocks(&rig, (d, window), whole, input, (cut, blocks - cut));
+            let at = cut * per_block * 8 * d;
+            let same =
+                |x: &[f32], y: &[f32]| x.iter().zip(y).all(|(x, y)| x.to_bits() == y.to_bits());
+            assert!(
+                same(&a[..at], &all[..at]) && same(&b[at..], &all[at..]),
+                "d {d}, from {first}: cut at block {cut} of {blocks}"
+            );
         }
     }
 }

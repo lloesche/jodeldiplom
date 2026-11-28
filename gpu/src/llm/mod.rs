@@ -512,10 +512,10 @@ impl Inner {
     /// stop), the step recorded.
     fn reserve(&mut self, context: usize) -> Result<(), String> {
         let room = ContextPlan::new(&self.layout, context)?;
-        let buffers = self.program.buffers(&room.sizes.buffers())?;
-        self.program
-            .queue
-            .write_buffer(&buffers[&Buf::Rope], 0, &bytes(&room.sizes.rope()));
+        // The context zeroed and the rotary tables put up, paced (the cache
+        // is gigabytes on a large card).
+        let rope = bytes(&room.sizes.rope());
+        let buffers = (self.program).room(&room.sizes.buffers(), &[(Buf::Rope, &rope)])?;
         let mut steps = self.record(&buffers, &self.plan(&room).step())?;
         steps.repeat(STEPS_A_READ);
         let staging = [0, 1].map(|_| self.program.staging(plan::STAGING_WORDS));

@@ -303,21 +303,63 @@ reads back is read once its own last submission is done
 while it ran, stays on the GPU while the processor reads (before, each
 read drained the queue, a round trip a read that no tally counted).
 
-Background work gives way while the window draws at the display's
-refresh (something on it moving smoothly): `GpuSeparator::background()` (a
+Background work gives way to the window: `GpuSeparator::background()` (a
 separator of its own, so the analyses never wait for the stems of the
 track playing nor hold them up; the shared one where a second does not
-fit), `GpuNetwork`, `GpuSpeech` and `GpuAsr`. A window calls
-`pace::frame(late)` for each such frame (not for its calm frames, a few
-dozen a second at most, which leave the GPU time enough); while it does,
-background work waits for each submission and rests after it (before its
-next submission, its processor work done meanwhile), keeping to a share of the time that starts at 50 %, is cut by 40 % on
-each frame that came late while it ran (to 10 % at least) and climbs 5
-points a second while frames are on time (to 75 % at most); otherwise it
-runs flat out. `GpuSeparator::shared()` never rests, and while it has
+fit), `GpuNetwork`, `GpuSpeech`, `GpuAsr`, Gemma and klein. The window
+tells the pace of each tick (`pace::tick(late, smooth)`): whether it
+came late, and whether something on it moves smoothly. While something
+moves, and while the window is starved of the GPU, background work
+keeps to a share of the time: one submission on the GPU at most (it
+waits for each before it makes the next, the next recorded meanwhile, so
+a frame never queues behind several) and a rest after each, so the GPU
+is idle the rest of the time for the window's frames and the
+compositor's. The share starts at 50 %, each late tick past the fourth
+of a second (while background work ran: a model's weights going up
+included) cuts it by 40 % (to 10 % at least), and a second of ticks on
+time gives back 5 points (to 75 % at most). A tick is late a quarter of
+its interval past it: on the M4 Max the window's main thread waited in
+`nextDrawable` for most of its time while stories were made, and iced
+gets and presents the frames, so that wait is not timed itself; it shows
+as the next tick coming late (`gui::paint`'s `Lateness`: the refresh's
+interval the shortest gap between refresh ticks lately, a timer's its
+own). Four late ticks within a second are a starved window (a starved
+one's ticks are nearly all late; the 5080's few late ones, while a model
+loads, come one or two at a time), and background work keeps to the
+share until ten seconds after the last late tick (so it does not flap).
+Where the ticks come on time, as on the 5080 (the system shares its GPU
+between the window and the work), nothing is given way for lateness and
+the work runs at full speed (giving way there regardless cost klein
+10–25 % and Gemma's steps a fifth, and bought nothing). Otherwise
+background work runs flat out. A model's weights go up the same way
+(`pace::Uploading`): in batches of about 5 ms of the GPU's copying (32 MB
+to start, then learned, 4 to 256 MB; a large tensor written in parts),
+each sent and waited for, a background thread's giving way between them
+and counting as its work running, so that a window starved while a model
+loads (on the M4 Max, as while klein draws) is told and given way to.
+Every model's weights go so: Gemma's, klein's transformer, text encoder
+and autoencoder, the recogniser's, the depth and cut-out networks', the
+separator's, the beat network's and the speech model's (no tensor is
+written to the GPU another way, and none is converted there at load).
+And the buffers a plan, a context or a network's room is made with are
+zeroed the same way (`Program::room`: the buffers made, those not
+written zeroed, then the writes put up, in one paced upload) before
+their first use, where
+wgpu would zero each one not written yet all at once in the submission
+that first uses it (Gemma's context is gigabytes on a large card). A single dispatch cannot be cut by
+the pace, so the long ones are cut where they are planned: klein's
+multiplies and attention (`image::plan`), and Gemma's prompt attention
+on the f32 path, the Mac's (`llm::plan`: slices of its blocks of queries,
+a 5 ms piece's worth at the M4 Max's rate but 128 workgroups at least,
+so about 10 ms where a whole chunk took 31 ms). The 8-bit path's is not
+cut: the 5080 runs that kernel as slowly (0.5 TFLOP/s), but shares its
+GPU with the window between dispatches, and slices of few workgroups
+cost it a quarter of its prompt's speed or more. `GpuSeparator::shared()` never rests, and while it has
 work on the GPU background work waits before each submission (a second
 at most at a time), so one network is on the GPU at once.
-`pace::report()` says how it went (frames late, rests, time waited);
+`pace::report()` says how it went (ticks late, those that found the
+window starved and how long that held it giving way, rests, time
+waited);
 `GpuSeparator::tally()`, `GpuNetwork::tally()` and `GpuAsr::hearing()`
 what each network's GPU work cost (submissions and the processor's time
 recording them, waits for the GPU and their time, rests, time held back),

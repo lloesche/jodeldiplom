@@ -231,12 +231,14 @@ impl Made {
         debug_assert_eq!(plan.check(), None, "a slot read after it was handed over");
         let program = &loaded.gpu.program;
         guarded(&program.device, || {
-            let slots = plan
-                .slots
-                .iter()
-                .enumerate()
-                .map(|(i, &len)| program.storage(&format!("image slot {i}"), whole_vectors(len)))
-                .collect::<Result<Vec<_>, String>>()?;
+            // The slots made and zeroed, paced ([`Program::room`]).
+            let sizes: Vec<(usize, usize)> = (plan.slots.iter().enumerate())
+                .map(|(i, &len)| (i, whole_vectors(len)))
+                .collect();
+            let mut made = program.room(&sizes, &[])?;
+            let slots: Vec<wgpu::Buffer> = (0..sizes.len())
+                .map(|i| made.remove(&i).expect("every slot made"))
+                .collect();
             let staging = program.staging(read);
             let recorded = program.record(&plan.ops, |bufs: [Buf; 5]| {
                 bufs.iter()

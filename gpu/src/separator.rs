@@ -491,12 +491,9 @@ fn on(
     let values = weights.take_values();
     let source = shared_source(&[include_str!("separator.wgsl")]);
     let program = Program::new(device, queue, limits, label, &source);
-    let model = Model::new(program, &sizes(values.len()), READ, pieces)?;
-    model.write(Buf::Weights, &values);
-    model.write(
-        Buf::Table,
-        &rotary(0..MAX_FRAMES + REGISTERS, engine::HEAD_32, Angles::F32),
-    );
+    let table = rotary(0..MAX_FRAMES + REGISTERS, engine::HEAD_32, Angles::F32);
+    let writes = [(Buf::Weights, &values[..]), (Buf::Table, &table[..])];
+    let model = Model::new(program, &sizes(values.len()), &writes, READ, pieces)?;
     Ok(PackedNet { model, weights })
 }
 

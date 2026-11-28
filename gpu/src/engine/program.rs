@@ -503,11 +503,38 @@ impl<K: Kernels> Program<K> {
         }
     }
 
+    /// A network's, a plan's or a context's room: a storage buffer for each
+    /// of `sizes` (as [`Program::buffers`] makes them), those `writes` does
+    /// not write to zeroed on the GPU and then `writes` (each a buffer's
+    /// bytes from its start) put up, all in paced batches of one
+    /// [`pace::Uploading`] ([`pace::Uploading::clear`]): wgpu would zero
+    /// each buffer not written yet all at once in the submission that first
+    /// uses it, and a written one never needs it. The zeroing goes first,
+    /// so no write is ever cleared.
+    pub(crate) fn room<B: Copy + Eq + Hash + std::fmt::Debug>(
+        &self,
+        sizes: &[(B, usize)],
+        writes: &[(B, &[u8])],
+    ) -> Result<HashMap<B, wgpu::Buffer>, String> {
+        let buffers = self.buffers(sizes)?;
+        let mut upload = self.upload();
+        for (b, buffer) in &buffers {
+            if !writes.iter().any(|(w, _)| w == b) {
+                upload.pacing.clear(self, buffer)?;
+            }
+        }
+        for (b, data) in writes {
+            upload.write(&buffers[b], 0, data)?;
+        }
+        upload.finish()?;
+        Ok(buffers)
+    }
+
     /// Writes of a model's weights to its buffers ([`Upload::write`]).
     pub(crate) fn upload(&self) -> Upload<'_, K> {
         Upload {
             program: self,
-            staged: 0,
+            pacing: pace::Uploading::new(),
         }
     }
 
@@ -595,21 +622,19 @@ impl<K, B> Recorded<K, B> {
     }
 }
 
-/// The bytes written to the GPU between waits as weights go up: wgpu
-/// stages each write until it is sent, so without a wait the staging of a
-/// whole model would be held at once.
-const UPLOAD_BATCH: u64 = 256 << 20;
-
-/// A model's weights going up to its buffers, the copies waited for every
-/// [`UPLOAD_BATCH`] bytes and at the end ([`Upload::finish`]).
+/// A model's weights going up to its buffers, in batches paced as other
+/// work is ([`pace::Uploading`]), the last waited for at the end
+/// ([`Upload::finish`]).
 pub(crate) struct Upload<'a, K> {
     program: &'a Program<K>,
-    staged: u64,
+    pacing: pace::Uploading,
 }
 
 impl<K: Kernels> Upload<'_, K> {
     /// `data` into `buffer` from byte `at` (a multiple of 4; a last part
-    /// word written with zeros after it).
+    /// word written with zeros after it), a batch sent each time one is
+    /// full (a large write in parts, so that no copy is longer than a
+    /// batch's).
     pub(crate) fn write(
         &mut self,
         buffer: &wgpu::Buffer,
@@ -619,24 +644,96 @@ impl<K: Kernels> Upload<'_, K> {
         debug_assert!(at.is_multiple_of(4), "an upload to byte {at}");
         let queue = &self.program.queue;
         let whole = data.len() & !3;
-        queue.write_buffer(buffer, at, &data[..whole]);
+        let mut done = 0;
+        while done < whole {
+            let n = (whole - done).min(self.pacing.room() as usize);
+            queue.write_buffer(buffer, at + done as u64, &data[done..done + n]);
+            done += n;
+            self.pacing.wrote(self.program, n as u64)?;
+        }
         if whole < data.len() {
             let mut tail = [0u8; 4];
             tail[..data.len() - whole].copy_from_slice(&data[whole..]);
             queue.write_buffer(buffer, at + whole as u64, &tail);
-        }
-        self.staged += data.len() as u64;
-        if self.staged >= UPLOAD_BATCH {
-            self.staged = 0;
-            queue.submit([]);
-            self.program.wait()?;
+            self.pacing.wrote(self.program, 4)?;
         }
         Ok(())
     }
 
     /// Every write sent and waited for.
-    pub(crate) fn finish(self) -> Result<(), String> {
-        self.program.queue.submit([]);
-        self.program.wait()
+    pub(crate) fn finish(mut self) -> Result<(), String> {
+        self.pacing.finish(self.program)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No kernels: a program for writes and clears alone.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    enum NoKernel {}
+
+    impl Kernels for NoKernel {
+        const ALL: &'static [NoKernel] = &[];
+        const PARAM_BYTES: u64 = 48;
+        const EXTRA: &'static [Access] = &[];
+        fn entry(self) -> &'static str {
+            match self {}
+        }
+    }
+
+    /// `buffer`'s bytes, read back.
+    fn bytes_of(program: &Program<NoKernel>, buffer: &wgpu::Buffer) -> Vec<u8> {
+        let staging = program.staging((buffer.size() / 4) as usize);
+        let mut encoder = program.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
+        program.queue.submit([encoder.finish()]);
+        let words =
+            crate::device::read_back(&program.device, &staging, (buffer.size() / 4) as usize);
+        words
+            .unwrap()
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect()
+    }
+
+    /// Weights going up in batches of 16 bytes: a write of 39 bytes at byte
+    /// 8 is put up in parts, its last part word padded with zeros, the
+    /// bytes around it kept; a buffer zeroed in parts reads as zeros. Skipped
+    /// (with a note) where there is no usable GPU.
+    #[test]
+    fn weights_go_up_in_parts_and_a_buffer_is_zeroed_in_parts() {
+        let program = crate::device::open("jodel-gpu upload", |device, queue, limits| {
+            Ok(Program::<NoKernel>::new(
+                device,
+                queue,
+                limits,
+                "jodel-gpu upload",
+                "",
+            ))
+        });
+        let Ok((program, _)) = program else {
+            eprintln!("no usable GPU: skipped");
+            return;
+        };
+        let program = crate::Turned::new(program);
+        let buffer = program.storage("jodel-gpu upload", 64).unwrap();
+        program.queue.write_buffer(&buffer, 0, &[0xAB; 256]);
+        let data: Vec<u8> = (1..=39).collect();
+        let mut upload = Upload {
+            program: &program,
+            pacing: pace::Uploading::of(16),
+        };
+        upload.write(&buffer, 8, &data).unwrap();
+        upload.finish().unwrap();
+        let got = bytes_of(&program, &buffer);
+        let mut want = vec![0xAB; 256];
+        want[8..47].copy_from_slice(&data);
+        want[47] = 0;
+        assert_eq!(got, want);
+        let mut pacing = pace::Uploading::of(16);
+        pacing.clear(&program, &buffer).unwrap();
+        assert_eq!(bytes_of(&program, &buffer), vec![0; 256]);
     }
 }

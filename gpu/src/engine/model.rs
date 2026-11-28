@@ -44,15 +44,20 @@ impl<K: Kernels, B> OnDevice for Model<K, B> {
 }
 
 impl<K: Kernels, B: Copy + Eq + Hash + Debug> Model<K, B> {
-    /// `program`'s network with a buffer for each of `sizes` and room for
-    /// `read` f32s read back, its runs paced as `pieces` say.
+    /// `program`'s network with a buffer for each of `sizes`, `writes` put
+    /// in theirs (its weights, its tables) and the others zeroed
+    /// ([`Program::room`]), and room for `read` f32s read back, its runs
+    /// paced as `pieces` say.
     pub(crate) fn new(
         program: Program<K>,
         sizes: &[(B, usize)],
+        writes: &[(B, &[f32])],
         read: usize,
         pieces: Pieces,
     ) -> Result<Model<K, B>, String> {
-        let buffers = program.buffers(sizes)?;
+        let written: Vec<(B, Vec<u8>)> = writes.iter().map(|&(b, v)| (b, bytes(v))).collect();
+        let writes: Vec<(B, &[u8])> = written.iter().map(|(b, v)| (*b, &v[..])).collect();
+        let buffers = program.room(sizes, &writes)?;
         let staging = program.staging(read);
         Ok(Model {
             program,
@@ -61,13 +66,6 @@ impl<K: Kernels, B: Copy + Eq + Hash + Debug> Model<K, B> {
             plans: HashMap::new(),
             pieces,
         })
-    }
-
-    /// `values` written to the start of `buf`.
-    pub(crate) fn write(&self, buf: B, values: &[f32]) {
-        self.program
-            .queue
-            .write_buffer(&self.buffers[&buf], 0, &bytes(values));
     }
 
     /// The plan `key`, recorded from `ops` if it is not yet.

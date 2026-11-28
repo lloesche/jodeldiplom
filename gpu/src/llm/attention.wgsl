@@ -324,7 +324,9 @@ fn join(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: v
 // position's and those before it, back to the window (0: none), each at
 // its place (`mask`). The queries are in src; `group` is the query heads
 // a key/value head; the output is written from dst's start, a row's heads
-// side by side.
+// side by side. A dispatch takes the blocks from `block0` on (the plan
+// cuts a long attention into slices of blocks, each block's sums as in one
+// dispatch).
 // The tile in f32s, written a value an invocation and read four at a time
 // ([`flash4`]): never one lane of a shared vec4 written (on Apple's GPUs
 // that may write the whole vector back, over its neighbours' values).
@@ -365,11 +367,13 @@ fn flash(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid: 
     let lane = lid % lanes;
     let h = wid.y;
     let g = h / flash_group();
-    let row = wid.x * per_block + qi;
+    // A dispatch may take a slice of the blocks, from block0 on.
+    let block = flash_block0() + wid.x;
+    let row = block * per_block + qi;
     let real = row < rows;
     let pos = flash_first() + row;
-    let block_first = flash_first() + wid.x * per_block;
-    let block_last = flash_first() + min(wid.x * per_block + per_block, rows) - 1u;
+    let block_first = flash_first() + block * per_block;
+    let block_last = flash_first() + min(block * per_block + per_block, rows) - 1u;
     var lo = 0u;
     if (window > 0u) {
         lo = max(block_first + 1u, window) - window;

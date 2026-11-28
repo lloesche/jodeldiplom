@@ -75,9 +75,6 @@ struct Planned {
 /// One network's part on the GPU.
 pub(crate) struct Net {
     gpu: Arc<Turned<Gpu>>,
-    /// The network's name: its buffers' label (and an error's, where one
-    /// does not fit).
-    label: &'static str,
     weights: wgpu::Buffer,
     /// The weights' f32s; the tail for constants follows them.
     base: usize,
@@ -103,7 +100,6 @@ impl Net {
         })?;
         Ok(Net {
             gpu,
-            label,
             weights,
             base: base.len(),
             tail,
@@ -159,16 +155,17 @@ impl Net {
         self.planned = None;
         let gpu = Arc::clone(&self.gpu);
         let program = &gpu.program;
-        let (label, weights, base) = (self.label, &self.weights, self.base);
+        let (weights, base) = (&self.weights, self.base);
         let planned = guarded(&program.device, || {
-            program
-                .queue
-                .write_buffer(weights, (base * 4) as u64, &bytes(tail));
-            let buffers = plan
-                .sizes
-                .iter()
-                .map(|&len| program.storage(label, len))
-                .collect::<Result<Vec<_>, String>>()?;
+            let mut upload = program.upload();
+            upload.write(weights, (base * 4) as u64, &bytes(tail))?;
+            upload.finish()?;
+            // The plan's buffers made and zeroed, paced ([`Program::room`]).
+            let sizes: Vec<(usize, usize)> = plan.sizes.iter().copied().enumerate().collect();
+            let mut made = program.room(&sizes, &[])?;
+            let buffers: Vec<wgpu::Buffer> = (0..sizes.len())
+                .map(|i| made.remove(&i).expect("every buffer made"))
+                .collect();
             let staging = program.staging(read);
             // A kernel's buffers: src, the weights, dst, then src2.
             let recorded = program.record(&plan.ops, |[src, src2, dst]: [usize; 3]| {

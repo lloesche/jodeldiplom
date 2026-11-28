@@ -97,8 +97,9 @@ and what is drawn now.
 - **Nothing** while the window is covered: when the refresh's ticks stop
   coming, the window draws nothing until they come again.
 
-Background GPU work gives way while the window draws at the refresh
-(`jodel_gpu::pace::frame`).
+Background GPU work gives way while the window draws at the refresh, and
+while its ticks come late, the window starved of the GPU
+(`jodel_gpu::pace::tick`).
 
 ## What shows
 

@@ -437,8 +437,8 @@ fn on(
         "jodel-gpu speech",
         &shared_source(&[include_str!("speech.wgsl")]),
     );
-    let model = Model::new(program, &sizes, read, Pieces::resting())?;
-    model.write(Buf::Weights, &values);
+    let writes = [(Buf::Weights, &values[..])];
+    let model = Model::new(program, &sizes, &writes, read, Pieces::resting())?;
     Ok(PackedNet { model, weights })
 }
 

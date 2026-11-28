@@ -620,6 +620,7 @@ impl Gui {
             self.last_refresh = Some(at);
             self.occluded = false;
         }
+        self.paint.ticked(at, !refresh);
         let (place, seen) = (self.place(), self.seen());
         match &mut self.phase {
             Phase::Setup { .. } => {

@@ -1688,15 +1688,21 @@ thread of its own; the trace says which. Every 5 s it also writes a line
 on the window's frames: how many, how many came late (the frame before
 the last was not through the GPU by the next one), the longest gap, how
 long drawing and handing the changes to the GPU took, and how
-background GPU work gave way (frames late while it ran, its rests, the
-share of the GPU it keeps to now).
+background GPU work gave way (ticks late while it ran, how many of them
+found the window starved and how long that held it giving way, its
+rests, the share of the GPU it keeps to now).
 
 The window comes first on the GPU: every network runs in submissions of
 about 5 ms (`jodel_gpu::pace`), and background work (the analyses, the
-lyrics' timing, the queue got ready) rests between them while something
-on screen moves, to a share that falls when frames come late, and waits
-whenever the stems of the tracks playing are on the GPU. Those have their
-own separator and never rest.
+lyrics' timing, the queue got ready, the stories) rests between them
+while something on screen moves smoothly, and while the window is
+starved of the GPU (its ticks a quarter of their interval late, four
+within a second, as while the Mac's `nextDrawable` waits behind other
+work; until ten seconds after the last late tick): one submission on the
+GPU at most, to a share of the time that falls with each late tick past
+the fourth of a second and climbs back while they come on time. It waits
+whenever the stems of the tracks playing are on the GPU.
+Those have their own separator and never rest.
 
 `--diag` prints the build, the system, the settings, the output devices,
 the microphones (and two seconds of what comes in from karaoke's one), the

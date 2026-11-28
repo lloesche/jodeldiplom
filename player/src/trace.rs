@@ -114,8 +114,9 @@ impl Frames {
         note(format_args!(
             "frames ({what}): {} in {:.1} s ({:.0} a second), {} late, longest gap {:.0} ms; \
              drawing {:.1} ms on average, {:.1} at most; showing {:.1} ms on average, {:.1} at most; \
-             background GPU work: {} frames late while it ran, {} rests, {:.0} ms in all, \
-             {:.0} ms waiting for the stems playing, its share now {:.0} %",
+             background GPU work: {} ticks late while it ran, {} of them starved (held \
+             {:.1} s), {} rests, {:.0} ms in all, {:.0} ms waiting for the stems playing, its \
+             share now {:.0} %",
             self.count,
             span.as_secs_f64(),
             n / span.as_secs_f64(),
@@ -126,6 +127,8 @@ impl Frames {
             ms(self.show.0) / n,
             ms(self.show.1),
             gpu.late,
+            gpu.starved,
+            gpu.starved_for.as_secs_f64(),
             gpu.rests,
             ms(gpu.rested),
             ms(gpu.waited),

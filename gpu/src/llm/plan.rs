@@ -56,6 +56,64 @@ impl Bind {
 
 /// The rows of a prompt a chunk takes at most.
 pub(super) const CHUNK: usize = 512;
+
+// The rate a slice of `flash` is sized by on the f32 path (Metal's), in
+// FLOP/s (two a multiply-add, four a value of a key: `flash_slices`): the
+// M4 Max's, from a chunk's attention that took 31 ms there in one
+// dispatch (a chunk deep in a story's prompt, its length not recorded:
+// some 15 to 20 GFLOP, as a global layer's chunk from position 2048 is
+// 19.4). The RTX 5080 runs the kernel as fast (a prompt of 1,403 tokens,
+// its 72 dispatches 165 GFLOP in 0.28 to 0.34 s); there the system shares
+// the GPU with the window between dispatches, and the 8-bit path's
+// attention is not cut.
+const M4_MAX_FLASH_F32: f64 = 0.5e12;
+
+/// The blocks of queries a slice takes at least: with the heads, 128
+/// workgroups, enough to keep a GPU busy (fewer cost the 5080 its prompt's
+/// speed).
+const FLASH_LEAST_BLOCKS: usize = 16;
+
+/// A prompt's attention of `rows` rows from position `first`, heads of
+/// `d` values and a window of `window` (0: none), cut into slices of whole
+/// blocks of queries (`flash`'s `block0` and how many): as many blocks a
+/// slice as keep its FLOPs (a block's: its queries, their heads, the keys
+/// its tiles take, four FLOPs a value of a key) within a pace's piece
+/// ([`crate::pace::PIECE`]) at `rate`, [`FLASH_LEAST_BLOCKS`] at least.
+/// The sums of each block are the same however it is cut.
+fn flash_slices(
+    (d, window): (usize, usize),
+    rows: usize,
+    first: usize,
+    rate: f64,
+) -> Vec<(usize, usize)> {
+    let budget = rate * crate::pace::PIECE.as_secs_f64();
+    let per_block = FLASH_LANES / (d / 16);
+    let blocks = rows.div_ceil(per_block);
+    let flops = |b: usize| {
+        let block_first = first + b * per_block;
+        let block_last = first + ((b + 1) * per_block).min(rows) - 1;
+        let lo = if window > 0 {
+            (block_first + 1).max(window) - window
+        } else {
+            0
+        };
+        let keys = (block_last + 1 - lo).next_multiple_of(8);
+        (keys * per_block * HEADS * 4 * d) as f64
+    };
+    let mut slices = Vec::new();
+    let mut b0 = 0;
+    while b0 < blocks {
+        let (mut b1, mut sum) = (b0 + 1, flops(b0));
+        while b1 < blocks && (b1 - b0 < FLASH_LEAST_BLOCKS || sum + flops(b1) <= budget) {
+            sum += flops(b1);
+            b1 += 1;
+        }
+        slices.push((b0, b1 - b0));
+        b0 = b1;
+    }
+    slices
+}
+
 /// The splits of a step's attention (`attend`, taking chunks of 64
 /// positions in turn): a sliding layer's window is 8 chunks, a split each.
 /// A global layer's are 16, and one more for every so many chunks
@@ -302,13 +360,16 @@ impl ContextPlan {
             ));
         }
         let sizes = Sizes::new(context + PAST);
-        // Either path's dispatches are as many, and a chunk's are as many
-        // wherever it is and however many rows it has (the last's more).
+        // Either path's step is as many dispatches. A chunk is as many on
+        // the 8-bit path wherever it is and however many rows it has (the
+        // last's more); on the f32 path its attention is cut finer the
+        // deeper it is (`flash_slices`), so the room is planned on that
+        // path, each chunk before the last as many as the deepest of them.
         let plan = Plan {
             layout,
             sizes,
             shape: super::Shape {
-                q8: true,
+                q8: false,
                 per: KEPT_CHUNKS_A_SPLIT,
             },
         };
@@ -316,7 +377,11 @@ impl ContextPlan {
         let chunks = context.div_ceil(CHUNK);
         let prompt = match chunks {
             0 => 0,
-            _ => (chunks - 1) * plan.chunk(0, CHUNK, false).len() + plan.chunk(0, 1, true).len(),
+            _ => {
+                let last = (chunks - 1) * CHUNK;
+                let deepest = plan.chunk(last.saturating_sub(CHUNK), CHUNK, false).len();
+                (chunks - 1) * deepest + plan.chunk(last, context - last, true).len()
+            }
         };
         Ok(ContextPlan {
             context,
@@ -686,33 +751,43 @@ impl Plan<'_> {
     }
 
     /// Layer `l`'s attention for `rows` rows from position `first` (a
-    /// prompt's), into `H`.
+    /// prompt's), into `H`: on the f32 path (Metal's) its blocks of
+    /// queries in slices of about a pace's piece ([`flash_slices`]), so
+    /// that no dispatch keeps the GPU from the window long; on the 8-bit
+    /// path in one dispatch.
     fn flash(&self, ops: &mut Vec<Op>, l: usize, rows: usize, first: usize) {
         let d = head_of(l);
         let window = if is_global(l) { 0 } else { WINDOW };
         let at = self.sizes.kv(l);
-        let per_block = FLASH_LANES / (d / 16);
-        ops.push(Op {
-            kernel: Kernel::Flash,
-            buffers: Bind::rows(at.buf, Buf::H),
-            params: named(
-                "flash",
-                &[
-                    ("rows", rows),
-                    ("first", first),
-                    ("d", d),
-                    ("window", window),
-                    ("queries", at.queries),
-                    ("keys", at.keys),
-                    ("values", at.values),
-                    ("positions", at.places),
-                    ("heads", HEADS),
-                    ("group", HEADS / KV_HEADS),
-                    ("mask", at.mask),
-                ],
-            ),
-            groups: [rows.div_ceil(per_block) as u32, HEADS as u32, 1],
-        });
+        let slices = if self.shape.q8 {
+            vec![(0, rows.div_ceil(FLASH_LANES / (d / 16)))]
+        } else {
+            flash_slices((d, window), rows, first, M4_MAX_FLASH_F32)
+        };
+        for (block0, blocks) in slices {
+            ops.push(Op {
+                kernel: Kernel::Flash,
+                buffers: Bind::rows(at.buf, Buf::H),
+                params: named(
+                    "flash",
+                    &[
+                        ("rows", rows),
+                        ("first", first),
+                        ("d", d),
+                        ("window", window),
+                        ("queries", at.queries),
+                        ("keys", at.keys),
+                        ("values", at.values),
+                        ("positions", at.places),
+                        ("heads", HEADS),
+                        ("group", HEADS / KV_HEADS),
+                        ("mask", at.mask),
+                        ("block0", block0),
+                    ],
+                ),
+                groups: [blocks as u32, HEADS as u32, 1],
+            });
+        }
     }
 
     /// Layer `l`'s per-layer inputs of `rows` rows from position `first`
@@ -926,8 +1001,50 @@ impl Plan<'_> {
 mod tests {
     use super::*;
 
-    /// Either path's step and chunks are as many dispatches (the room is
-    /// planned on one); a position more of context holds the keys and
+    /// A prompt's attention is cut into slices that take every block of
+    /// queries once, in order, [`FLASH_LEAST_BLOCKS`] at least but where
+    /// fewer are left; a short one stays whole, and a chunk deep into a
+    /// long context is cut, on the f32 path only: the 8-bit path's chunks
+    /// have one dispatch of it a layer with keys and values of its own.
+    #[test]
+    fn a_long_attention_is_cut_into_slices_of_whole_blocks() {
+        for kind in [(LOCAL_HEAD, WINDOW), (GLOBAL_HEAD, 0)] {
+            let per_block = FLASH_LANES / (kind.0 / 16);
+            for (rows, first) in [(7, 0), (CHUNK, 0), (CHUNK, 8 * CHUNK), (100, 30 * CHUNK)] {
+                let slices = flash_slices(kind, rows, first, M4_MAX_FLASH_F32);
+                let mut next = 0;
+                for (i, &(b0, n)) in slices.iter().enumerate() {
+                    assert_eq!(b0, next, "{kind:?}, rows {rows} from {first}");
+                    assert!(n >= FLASH_LEAST_BLOCKS || i + 1 == slices.len());
+                    next += n;
+                }
+                assert_eq!(next, rows.div_ceil(per_block));
+            }
+            assert_eq!(flash_slices(kind, 7, 0, M4_MAX_FLASH_F32).len(), 1);
+        }
+        let deep = flash_slices((GLOBAL_HEAD, 0), CHUNK, 4 * CHUNK, M4_MAX_FLASH_F32).len();
+        assert!(deep >= 4, "{deep}");
+        let layout = super::super::model::tests::gemma();
+        let sizes = ContextPlan::new(&layout, 6 * CHUNK).unwrap().sizes;
+        let [fast, full] = [true, false].map(|q8| Plan {
+            layout: &layout,
+            sizes,
+            shape: super::super::Shape {
+                q8,
+                per: KEPT_CHUNKS_A_SPLIT,
+            },
+        });
+        let flashes = |plan: &Plan| {
+            let ops = plan.chunk(4 * CHUNK, CHUNK, false);
+            ops.iter().filter(|op| op.kernel == Kernel::Flash).count()
+        };
+        assert_eq!(flashes(&fast), OWN_KV);
+        assert!(flashes(&full) > OWN_KV, "{}", flashes(&full));
+    }
+
+    /// Either path's step is as many dispatches, and the f32 path's chunks
+    /// the most (its attention cut finest: the room is planned on it); a
+    /// position more of context holds the keys and
     /// values of each global layer with its own, its rows of both rotary
     /// tables (a global layer's pairs turned only) and its token, and
     /// nothing else (the sliding layers' rings stay as they are); a
@@ -946,16 +1063,18 @@ mod tests {
             },
         });
         assert_eq!(fast.step().len(), full.step().len());
-        let mut prompt = 0;
         for (first, rows, last) in [
             (0, CHUNK, false),
             (CHUNK, CHUNK, false),
             (2 * CHUNK, 100, true),
         ] {
             let n = full.chunk(first, rows, last).len();
-            assert_eq!(fast.chunk(first, rows, last).len(), n, "chunk at {first}");
-            prompt += n as u64;
+            assert!(fast.chunk(first, rows, last).len() <= n, "chunk at {first}");
         }
+        // Planned at the most: each chunk before the last as the deepest of
+        // them on the f32 path.
+        let deepest = full.chunk(CHUNK, CHUNK, false).len();
+        let prompt = (2 * deepest + full.chunk(2 * CHUNK, 100, true).len()) as u64;
         let more = ContextPlan::new(&layout, context + 1).unwrap();
         let kv: usize = (0..OWN_KV)
             .filter(|&l| is_global(l))
