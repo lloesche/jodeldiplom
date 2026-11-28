@@ -4,6 +4,20 @@ Work agreed on but not started, roughly in the order it was raised.
 
 ## Karaoke
 
+- **The arrow trails in auto mode** (the owner on the Mac, 2026-11-28,
+  holding `p`): the pitch arrow seemed to lag behind, at a steady 60 fps
+  on the external screen and 120 on the laptop's. Not the frame rate:
+  look at the arrow's smoothing, the pitch tracker's window and the
+  delay the game allows for the microphone (auto mode sings exactly on
+  the notes).
+- **Fullscreen does not follow a display change** (the owner on the Mac,
+  2026-11-28): the external screen went off mid-song and the game came
+  back on the laptop's screen at the external screen's 4K size, not
+  refitted; leaving and entering Karaoke mode fixed it. Refit on a scale
+  factor or monitor change.
+- **The look over the lyrics** (the owner, 2026-11-28): the story's look
+  shaders were a bit much and the pills with the words hard to read;
+  tune the strength over the lyric band.
 - **The scenes show what the song is about,** not its lines word for word
   (on the Echt song the prompts described the lyrics almost literally):
   images and metaphors of its story, with the story-shape change below.
