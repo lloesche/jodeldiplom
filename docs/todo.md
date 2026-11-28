@@ -87,11 +87,6 @@ picture; 18 to 27 s at about 1 MP), so nothing is open there.
   (`mmap`/`MapViewOfFile`), and `Tensors::raw`'s borrowed bytes come from
   it.
 
-## Checks on the Mac (the owner)
-
-- The sounds in a real song with the conductor (are they "tinny"?).
-- The mic: unplug it, change its rate, switch mics.
-
 ## From the whole-codebase review
 
 Refactors, roughly in the order they unblock each other.
