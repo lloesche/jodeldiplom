@@ -1462,9 +1462,10 @@ really found, as its workers tell it: never a progress they did not tell.
 ## Shader
 
 - **L1.** The Shader tab is the seventh tab, after the Synth tab (`tab`
-  goes round to it). It shows the song's pictures (its story's scenes in
-  the game, else its cover blurred) as Karaoke mode draws them, its stage
-  over them, with the tab's look in force
+  goes round to it). It shows the song's pictures, its stage over them:
+  its story's scenes as Karaoke mode draws them wherever it has them (the
+  game on or off), else its cover sharp and still, else a built-in
+  picture (never the dark ground), with the tab's look in force
   while it shows; elsewhere the look in force is the song's own, else
   the theme's (none in classic and spooky: their frames as before). Its
   keys: `↑` `↓` the looks (drawn at once: every preset by family, then
@@ -1473,6 +1474,8 @@ really found, as its workers tell it: never a progress they did not tell.
   clears it), `[` `]` the stack's passes, `,` `.` move the selected one,
   `del` takes it out, `C` copies the stack as JSON, `K` keeps it.
   - `the_shader_tab_is_in_the_tab_cycle_and_its_keys_edit_the_stack`
+  - `the_shader_tab_shows_the_story_else_the_cover_else_a_picture` (`backdrop`)
+  - `the_backdrop_shows_by_the_mode_s_setting_and_by_the_tab` (`backdrop`)
   - `every_theme_overrides_what_there_is_once` (`theme`)
 - **L2.** A knob's slider takes a press and follows the pointer from
   anywhere until it is let go of; its range, unit and meaning are the

@@ -1502,8 +1502,10 @@ letters written on the keys they play.
 
 The Shader tab (`tab` to it, after the Synth tab, the last of the seven)
 is a workbench for Karaoke mode's looks ([`jodel-looks`](../looks),
-`docs/looks.md`). On the right the playing song's pictures (its cover)
-are drawn as Karaoke mode draws them, the stage and its lyrics over
+`docs/looks.md`). On the right the playing song's pictures are drawn
+(its story's scenes as Karaoke mode draws them, whether the game is on
+or off; without a story its cover, sharp and still; with no cover
+either a built-in picture), the stage and its lyrics over
 them, through the tab's look, moved by the song as in the game. On the
 left a browser of every look: the presets by family (yours first), then
 every pass as a look of its own under its pass family, searched as `/`

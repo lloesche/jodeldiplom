@@ -737,7 +737,8 @@ impl App {
     }
 
     /// The track heard's story scenes, once ready, while the game's
-    /// backdrop shows ([`crate::work::scenes::PlayingStory::story`]);
+    /// backdrop or the Shader tab shows
+    /// ([`crate::work::scenes::PlayingStory::story`]);
     /// `None` where it has none (or not yet).
     pub fn story(&self) -> Option<Arc<crate::work::scenes::Story>> {
         (self.playing_story.as_ref()).and_then(crate::work::scenes::PlayingStory::story)
@@ -745,13 +746,14 @@ impl App {
 
     /// The song's own look follows its story: the look of the story held
     /// for the track heard, or none (the theme's); its scenes are wanted
-    /// while the game's backdrop shows. Whether the look changed.
+    /// while the game's backdrop or the Shader tab shows
+    /// ([`core::karaoke::scenes_shown`]). Whether the look changed.
     fn follow_story(&mut self) -> bool {
         let Some(playing) = &self.playing_story else {
             return false;
         };
         let state = &self.state;
-        playing.show_scenes(core::karaoke::stage_shown(state) && state.show().story);
+        playing.show_scenes(core::karaoke::scenes_shown(state));
         let look = playing.look();
         let held = &mut self.state.karaoke.look;
         let changed = look.as_ref().map(Arc::as_ptr) != held.as_ref().map(Arc::as_ptr);

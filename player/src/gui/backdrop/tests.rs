@@ -1,9 +1,10 @@
 //! The backdrop by the game's setting: without it the blurred cover alone,
 //! with it the story's scenes (the plain ground before the song's story is
 //! there, a scene all through the song once it is), graded by the theme
-//! of its frame, the look over it taking the scene's palette; and on the
-//! GPU the blurred cover, the plain ground and the scene drawn, nothing
-//! held once it is gone.
+//! of its frame, the look over it taking the scene's palette; the Shader
+//! tab's: the story, else the cover sharp, else the built-in picture; and
+//! on the GPU the blurred cover, the plain ground, the sharp cover and the
+//! scene drawn, nothing held once it is gone.
 
 use std::sync::Arc;
 
@@ -75,7 +76,7 @@ fn the_backdrop_is_the_story_s_scenes_and_the_plain_ground_before_it_comes() {
     let plain = v.step(&cue(None, 12.0), WINDOW, DT);
     assert!(plain.scene.is_none() && plain.picture(WINDOW).is_none());
     assert!(plain.palette().is_empty());
-    assert_eq!(plain.ground.of, (0, WINDOW), "the gradient");
+    assert_eq!(plain.ground.of, (Source::Gradient, WINDOW), "the gradient");
     let s = story([[200, 40, 40], [40, 40, 200]]);
     let drawn = |v: &mut Visualiser, at: f64| {
         let f = v.step(&cue(Some(&s), at), WINDOW, DT);
@@ -113,12 +114,120 @@ fn plain_karaoke_has_the_blur_alone_and_the_game_its_story() {
     let mut v = Visualiser::default();
     let blur = v.step(&blurred(&red), WINDOW, DT);
     assert!(blur.scene.is_none() && blur.palette().is_empty());
-    assert_eq!(blur.ground.of, (red.id, WINDOW), "the cover blurred");
+    assert_eq!(
+        blur.ground.of,
+        (Source::Blurred(red.id), WINDOW),
+        "the cover blurred"
+    );
     let story = v.step(&cue(Some(&s), 15.0), WINDOW, DT);
     assert_eq!(story.scene.expect("a scene").drawn.0, 0);
-    assert_eq!(story.ground.of, (0, WINDOW), "the gradient under it");
+    assert_eq!(
+        story.ground.of,
+        (Source::Gradient, WINDOW),
+        "the gradient under it"
+    );
     let back = v.step(&blurred(&red), WINDOW, DT);
     assert!(back.scene.is_none() && back.ground == blur.ground);
+}
+
+/// A state on `screen` and `side`, stories made here, the game on or off
+/// (`game`).
+fn shown_on(
+    screen: crate::core::Screen,
+    side: crate::core::Side,
+    game: bool,
+) -> crate::core::State {
+    let mut state = crate::core::State::new("/music".into(), crate::config::Config::default());
+    state.config.karaoke_game = game;
+    state.preparing.push(crate::core::Job::Story);
+    (state.screen, state.side) = (screen, side);
+    state
+}
+
+/// What the backdrop shows for `state`, with the song's `story` (where
+/// its scenes are wanted) and cover `art`, as the frame picks it.
+fn shows_for(state: &crate::core::State, story: Option<&Arc<Showing>>, art: Option<&Art>) -> Shows {
+    let scenes = crate::core::karaoke::scenes_shown(state);
+    let story = story.filter(|_| scenes).cloned();
+    Shows::of(state, scenes, story, art)
+}
+
+/// Where the choice is made: the mode with the game off shows the cover
+/// blurred, with it on the story (the plain ground till it comes); the
+/// Shader tab, the game off, the song's story where it has one, else its
+/// cover sharp.
+#[test]
+fn the_backdrop_shows_by_the_mode_s_setting_and_by_the_tab() {
+    use crate::core::{Screen, Side};
+    let s = story([[40, 40, 200], [40, 40, 200]]);
+    let red = art([200, 40, 40]);
+    let mode = |game| shown_on(Screen::Karaoke, Side::Browser, game);
+    let tab = |game| shown_on(Screen::Main, Side::Shader, game);
+    let off = shows_for(&mode(false), Some(&s), Some(&red));
+    assert!(
+        matches!(off, Shows::Blur(Some(ref a)) if a.id == red.id),
+        "{off:?}"
+    );
+    let on = shows_for(&mode(true), Some(&s), Some(&red));
+    assert!(matches!(on, Shows::Story(Some(_))), "{on:?}");
+    let coming = shows_for(&mode(true), None, Some(&red));
+    assert!(matches!(coming, Shows::Story(None)), "{coming:?}");
+    let story = shows_for(&tab(false), Some(&s), Some(&red));
+    assert!(matches!(story, Shows::Story(Some(_))), "{story:?}");
+    let cover = shows_for(&tab(false), None, Some(&red));
+    assert!(matches!(cover, Shows::Still(Some(_))), "{cover:?}");
+}
+
+/// The Shader tab's backdrop: a song with a story shows its scenes (its
+/// cover not under them); one with only a cover shows the cover sharp,
+/// unshaded and still, filling the window; one with neither the built-in
+/// picture, light enough and varied for a look to act on, never the dark
+/// ground. The tab wants the song's scenes whatever the game; the mode
+/// only with its story shown.
+#[test]
+fn the_shader_tab_shows_the_story_else_the_cover_else_a_picture() {
+    use crate::core::{Screen, Side};
+    let s = story([[40, 40, 200], [40, 40, 200]]);
+    let red = art([200, 40, 40]);
+    let mut v = Visualiser::default();
+    let shader = shown_on(Screen::Main, Side::Shader, true);
+    let tab = |story: Option<&Arc<Showing>>, art: Option<&Art>| Cue {
+        shows: shows_for(&shader, story, art),
+        at: 15.0,
+        ..Cue::default()
+    };
+    // With a story: its scene.
+    let scenes = v.step(&tab(Some(&s), Some(&red)), WINDOW, DT);
+    assert_eq!(scenes.scene.expect("a scene").drawn.0, 0);
+    assert_eq!(scenes.ground.of.0, Source::Gradient);
+    // Only a cover: the cover sharp, as it is, no scene.
+    let cover = v.step(&tab(None, Some(&red)), WINDOW, DT);
+    assert!(cover.scene.is_none());
+    assert_eq!(cover.ground.of, (Source::Cover(red.id), WINDOW));
+    let image = &cover.ground.image;
+    assert_eq!(image.dimensions(), (64, 36), "the cover's middle, cut wide");
+    assert!(image.pixels().all(|p| p.0 == [200, 40, 40]), "not shaded");
+    // Neither: the built-in picture, not dark, not flat.
+    let none = v.step(&tab(None, None), WINDOW, DT);
+    assert!(none.scene.is_none());
+    assert_eq!(none.ground.of, (Source::BuiltIn, WINDOW));
+    let image = &none.ground.image;
+    let light = |p: &image::Rgb<u8>| p.0.iter().map(|&c| u32::from(c)).sum::<u32>() / 3;
+    let mean = image.pixels().map(light).sum::<u32>() / (image.width() * image.height());
+    assert!(mean > 80, "{mean}");
+    let (least, most) = (
+        image.pixels().map(light).min(),
+        image.pixels().map(light).max(),
+    );
+    assert!(most.zip(least).is_some_and(|(m, l)| m - l > 60));
+    // The tab wants the scenes with the game off too; the mode not.
+    let wanted =
+        |screen, side, game| crate::core::karaoke::scenes_shown(&shown_on(screen, side, game));
+    assert!(wanted(Screen::Main, Side::Shader, false));
+    assert!(wanted(Screen::Main, Side::Shader, true));
+    assert!(wanted(Screen::Karaoke, Side::Browser, true));
+    assert!(!wanted(Screen::Karaoke, Side::Browser, false));
+    assert!(!wanted(Screen::Main, Side::Karaoke, true));
 }
 
 /// The scene is graded as the frame's cue says (the theme in force then):
@@ -160,7 +269,8 @@ fn the_look_takes_the_palette_of_the_scene_showing() {
 
 /// The GPU's frames: without the game the red cover blurred and dark; with
 /// it the plain ground (dark, not black) before the story, its blue scene
-/// once it is there; black and nothing held once the backdrop is gone.
+/// once it is there; the Shader tab's red cover sharp, as bright as it
+/// is; black and nothing held once the backdrop is gone.
 #[test]
 fn the_backdrop_draws_its_scene_on_the_gpu_and_the_plain_ground_without() {
     let Ok(mut gpu) = crate::gui::present::Offscreen::new(false) else {
@@ -187,6 +297,12 @@ fn the_backdrop_draws_its_scene_on_the_gpu_and_the_plain_ground_without() {
     );
     let [r, g, b] = rgb(shown(Some(&v.step(&cue(Some(&s), 15.0), (w, h), DT)))[middle]);
     assert!(b > 2 * g && b > 2 * r && b > 60, "{:?}", [r, g, b]);
+    let still = Cue {
+        shows: Shows::Still(Some(art([220, 40, 40]))),
+        ..Cue::default()
+    };
+    let [r, g, b] = rgb(shown(Some(&v.step(&still, (w, h), DT)))[middle]);
+    assert!(r > 200 && g < 60 && b < 60, "{:?}", [r, g, b]);
     let gone = shown(None);
     assert_eq!(gone[middle] & 0x00ff_ffff, 0);
 }

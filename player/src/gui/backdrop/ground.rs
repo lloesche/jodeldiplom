@@ -3,7 +3,10 @@
 //! without one), made small ([`small`]): the GPU scales it up to the
 //! window ([`super::Visualiser`]). Without the game it is the backdrop
 //! (the cover, [`super::Shows::Blur`]); with it, the plain gradient under
-//! the story's scenes ([`super::Shows::Story`]).
+//! the story's scenes ([`super::Shows::Story`]). The Shader tab's ground,
+//! where the song has no story's scenes, is its cover sharp and still,
+//! else a built-in picture, cropped to the screen's shape ([`still`],
+//! [`super::Shows::Still`]).
 
 use image::imageops::{self, FilterType};
 use image::RgbImage;
@@ -35,6 +38,21 @@ pub fn small(art: Option<&Art>, (width, height): (u32, u32)) -> RgbImage {
     }
 }
 
+/// The long side of the built-in picture ([`still`] without a cover).
+const BUILT_IN: u32 = 512;
+
+/// The Shader tab's ground for `art` (none: the built-in picture,
+/// [`crate::work::art::sample_cover`]) on a screen of `width` × `height`:
+/// its middle in the screen's shape, sharp and unshaded, at its own size
+/// (the GPU scales it to the screen).
+pub fn still(art: Option<&Art>, (width, height): (u32, u32)) -> RgbImage {
+    let (w, h) = (width.max(1), height.max(1));
+    match art {
+        Some(art) => crop(&art.image, w, h),
+        None => crop(&crate::work::art::sample_cover(BUILT_IN), w, h),
+    }
+}
+
 /// The size the cover is blurred at for a screen of `w` × `h`.
 fn small_size(w: u32, h: u32) -> (u32, u32) {
     if w >= h {
@@ -47,7 +65,18 @@ fn small_size(w: u32, h: u32) -> (u32, u32) {
 /// `image` cropped to the screen's shape (`w` × `h`), shrunk and blurred
 /// three times.
 fn blur_small(image: &RgbImage, w: u32, h: u32) -> RgbImage {
-    // The middle of the cover in the screen's shape (it fills the screen).
+    let crop = crop(image, w, h);
+    let (sw, sh) = small_size(w, h);
+    let mut small = imageops::resize(&crop, sw, sh, FilterType::Triangle);
+    for _ in 0..3 {
+        box_blur(&mut small, 2);
+    }
+    small
+}
+
+/// The middle of `image` in the screen's shape (`w` × `h`): what fills
+/// the screen.
+fn crop(image: &RgbImage, w: u32, h: u32) -> RgbImage {
     let (iw, ih) = (image.width().max(1), image.height().max(1));
     let screen = f64::from(w) / f64::from(h);
     let (cw, ch) = if f64::from(iw) / f64::from(ih) > screen {
@@ -55,13 +84,7 @@ fn blur_small(image: &RgbImage, w: u32, h: u32) -> RgbImage {
     } else {
         (iw, ((f64::from(iw) / screen).round() as u32).clamp(1, ih))
     };
-    let crop = imageops::crop_imm(image, (iw - cw) / 2, (ih - ch) / 2, cw, ch).to_image();
-    let (sw, sh) = small_size(w, h);
-    let mut small = imageops::resize(&crop, sw, sh, FilterType::Triangle);
-    for _ in 0..3 {
-        box_blur(&mut small, 2);
-    }
-    small
+    imageops::crop_imm(image, (iw - cw) / 2, (ih - ch) / 2, cw, ch).to_image()
 }
 
 /// A plain ground without a cover, `w` × `h`: the window's background, a

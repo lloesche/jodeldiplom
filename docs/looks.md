@@ -234,7 +234,8 @@ for the music, not for a people's flags or faiths).
 ## The Shader tab
 
 The seventh tab: the playing song drawn as Karaoke mode draws it (its
-story's scenes in the game, else its cover blurred), through the tab's
+story's scenes wherever it has them, the game on or off; else its cover
+sharp and still; else a built-in picture, never the dark ground), through the tab's
 look, moved by the song as in the game (nothing playing: still). On the
 left a browser of every look: the presets by
 family, then every pass as a look of its own under its pass family

@@ -168,8 +168,9 @@ pub fn fit(image: &RgbImage, width: u32, height: u32) -> (RgbImage, u32, u32) {
     (scaled, (width - fw) / 2, (height - fh) / 2)
 }
 
-/// A generated square cover for tests and screenshots: concentric
-/// rings over a diagonal gradient.
+/// A generated square cover for tests and screenshots, and the Shader
+/// tab's picture where a song has none: concentric rings over a diagonal
+/// gradient.
 pub fn sample_cover(size: u32) -> RgbImage {
     RgbImage::from_fn(size, size, |x, y| {
         let (fx, fy) = (x as f32 / size as f32, y as f32 / size as f32);

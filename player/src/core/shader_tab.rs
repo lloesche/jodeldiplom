@@ -1,8 +1,10 @@
 //! The Shader tab ([`Side::Shader`]): a workbench for Karaoke mode's looks
-//! ([`jodel_looks`]). The song's pictures (its cover today) are drawn as
-//! the mode draws them, the backdrop and the stage over it, with the
-//! tab's look in force while it shows ([`State::look`]), moved by the song
-//! playing exactly as in the game (no song: a made-up beat). The presets
+//! ([`jodel_looks`]). The song heard's pictures are drawn under the stage:
+//! its story's scenes as the mode draws them wherever it has them (the
+//! game on or off), else its cover sharp and still, else a built-in
+//! picture, never the dark ground ([`crate::gui::backdrop::Shows::of`]);
+//! the tab's look in force while it shows ([`State::look`]), moved by the
+//! song playing exactly as in the game (no song: a made-up beat). The presets
 //! are listed by family (the ones kept here first), searched by `/`; one
 //! picked is the stack edited: its passes added, taken out and moved, each
 //! pass's knobs on sliders (their ranges and meanings from the pass), each

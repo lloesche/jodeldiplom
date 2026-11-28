@@ -10,17 +10,20 @@
 //! section begun and the singer's glow lifting its light ([`music`],
 //! [`pulse`]). The song's look draws over it ([`looks`]). The text needs
 //! nothing of it: the lane has its glass, the bubbles their dark bodies
-//! and the lyrics their dark outline. The Shader tab shows it as the mode
-//! does. The game switched mid-song cuts from one to the other.
+//! and the lyrics their dark outline. The game switched mid-song cuts from
+//! one to the other. The Shader tab shows the song's story's scenes as the
+//! mode does wherever the song has them (the game on or off); without
+//! them its cover, sharp and still, else a built-in picture
+//! ([`Shows::of`]): always a picture for the look to act on.
 //!
 //! [`Visualiser`] is the processor's side, frame by frame: the ground (the
 //! blurred cover without the game; with it the plain dark gradient the
-//! scenes cover once the song's story is there), the story as shown (cut
-//! on the song's analysis), the music felt, the scene's numbers for the
-//! shader and the look's ([`BackdropFrame`]). [`gpu`] draws it at its share
-//! of the window's size. The stage's widget
-//! ([`super::stage_view`]) draws it as Karaoke mode's ground, under the
-//! stage.
+//! scenes cover once the song's story is there; the Shader tab's sharp
+//! picture), the story as shown (cut on the song's analysis), the music
+//! felt, the scene's numbers for the shader and the look's
+//! ([`BackdropFrame`]). [`gpu`] draws it at its share of the window's
+//! size. The stage's widget ([`super::stage_view`]) draws it as Karaoke
+//! mode's ground, under the stage.
 
 pub mod gpu;
 pub mod ground;
@@ -41,14 +44,17 @@ use crate::work::art::Art;
 use crate::work::picture::Swatch;
 
 /// What the backdrop shows: the song's cover blurred alone, filling the
-/// window (none: the gradient); or the song's story's scenes (none yet:
-/// the plain dark gradient).
+/// window (none: the gradient); the song's story's scenes (none yet: the
+/// plain dark gradient); or, on the Shader tab, the song's cover sharp
+/// and still (none: the built-in picture).
 #[derive(Clone, Debug)]
 pub enum Shows {
     /// The blurred cover.
     Blur(Option<Art>),
     /// The story, as shown.
     Story(Option<Arc<scenes::Showing>>),
+    /// The cover sharp and still.
+    Still(Option<Art>),
 }
 
 impl Default for Shows {
@@ -57,14 +63,71 @@ impl Default for Shows {
     }
 }
 
+impl Shows {
+    /// What the backdrop shows for `state`, with the song's `story` as
+    /// shown (none: it has none, or `scenes` are not wanted:
+    /// [`crate::core::karaoke::scenes_shown`]) and its cover `art`. On the
+    /// Shader tab the story where the song has one, else its cover sharp
+    /// and still, else the built-in picture: never the dark ground. In the
+    /// mode the story where it shows it (the plain ground till it comes),
+    /// else the blurred cover.
+    pub fn of(
+        state: &crate::core::State,
+        scenes: bool,
+        story: Option<Arc<scenes::Showing>>,
+        art: Option<&Art>,
+    ) -> Shows {
+        if crate::core::shader_tab::shows(state) {
+            story.map_or_else(|| Shows::Still(art.cloned()), |s| Shows::Story(Some(s)))
+        } else if scenes {
+            Shows::Story(story)
+        } else {
+            Shows::Blur(art.cloned())
+        }
+    }
+
+    /// What its ground is made of.
+    fn source(&self) -> Source {
+        match self {
+            Shows::Blur(Some(art)) => Source::Blurred(art.id),
+            Shows::Blur(None) | Shows::Story(_) => Source::Gradient,
+            Shows::Still(Some(art)) => Source::Cover(art.id),
+            Shows::Still(None) => Source::BuiltIn,
+        }
+    }
+
+    /// Its ground's pixels for a `window` ([`ground`]).
+    fn ground(&self, window: (u32, u32)) -> RgbImage {
+        match self {
+            Shows::Blur(art) => ground::small(art.as_ref(), window),
+            Shows::Story(_) => ground::small(None, window),
+            Shows::Still(art) => ground::still(art.as_ref(), window),
+        }
+    }
+}
+
+/// What a ground is made of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Source {
+    /// The plain dark gradient.
+    Gradient,
+    /// The cover of this id, blurred.
+    Blurred(u64),
+    /// The cover of this id, sharp.
+    Cover(u64),
+    /// The built-in picture.
+    BuiltIn,
+}
+
 /// The ground: the blurred cover (the gradient without one) as small as it
-/// is made, for a window, and which it is of.
+/// is made, or the Shader tab's sharp picture, for a window, and which it
+/// is of.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Ground {
-    /// The cover's id (0: none) and the window it is cut for.
-    pub of: (u64, (u32, u32)),
-    /// The pixels (the GPU scales them up).
-    pub image: Arc<RgbImage>,
+pub(crate) struct Ground {
+    /// What it is made of and the window it is cut for.
+    pub(crate) of: (Source, (u32, u32)),
+    /// The pixels (the GPU scales them to the window).
+    pub(crate) image: Arc<RgbImage>,
 }
 
 /// What the backdrop is given for a frame.
@@ -92,7 +155,7 @@ pub struct Cue {
 #[derive(Clone, Debug)]
 pub struct BackdropFrame {
     /// The ground.
-    pub ground: Ground,
+    pub(crate) ground: Ground,
     /// The story's scene showing.
     pub scene: Option<scenes::SceneFrame>,
     /// The look.
@@ -184,17 +247,18 @@ impl Visualiser {
             .looks
             .cue(state, (app.art(), &song_heard), (heard, dt), window);
         // The story where it shows, cut on its bars again where it or the
-        // analysis is new; else the cover.
-        let shows = if state.show().story {
-            self.showing = app.story().map(|story| match self.showing.take() {
+        // analysis is new; else the cover (on the Shader tab sharp, else
+        // the built-in picture).
+        let scenes = crate::core::karaoke::scenes_shown(state);
+        self.showing = if scenes {
+            app.story().map(|story| match self.showing.take() {
                 Some(s) if s.is_of(&story, song) => s,
                 _ => Arc::new(scenes::Showing::new(story, song)),
-            });
-            Shows::Story(self.showing.clone())
+            })
         } else {
-            self.showing = None;
-            Shows::Blur(app.art().cloned())
+            None
         };
+        let shows = Shows::of(state, scenes, self.showing.clone(), app.art());
         let song = song.filter(|_| playing);
         let section = song.zip(self.heard).is_some_and(|(s, was)| {
             heard > was && heard - was < 0.5 && s.section_between(was, heard)
@@ -237,20 +301,21 @@ impl Visualiser {
     }
 
     /// `dt` seconds on with `cue`, in a `window` of pixels: the frame. The
-    /// ground is the cover blurred where that shows, else the gradient,
-    /// under the story's scene where one shows.
+    /// ground is the cover blurred where that shows, the cover sharp (or
+    /// the built-in picture) where that does, else the gradient, under the
+    /// story's scene where one shows.
     pub fn step(&mut self, cue: &Cue, window: (u32, u32), dt: f32) -> BackdropFrame {
         let dt = dt.clamp(0.0, 0.1);
-        let (art, story) = match &cue.shows {
-            Shows::Blur(art) => (art.as_ref(), None),
-            Shows::Story(story) => (None, story.as_ref()),
+        let story = match &cue.shows {
+            Shows::Story(story) => story.as_ref(),
+            Shows::Blur(_) | Shows::Still(_) => None,
         };
-        let of = (art.map_or(0, |a| a.id), window);
+        let of = (cue.shows.source(), window);
         let ground = match self.ground.take() {
             Some(g) if g.of == of => g,
             _ => Ground {
                 of,
-                image: Arc::new(ground::small(art, window)),
+                image: Arc::new(cue.shows.ground(window)),
             },
         };
         self.ground = Some(ground.clone());

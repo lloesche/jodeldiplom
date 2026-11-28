@@ -9,7 +9,8 @@
 //! The main screen also with tags and a device name too long for any
 //! column (`gui-main-long`), with tags in Japanese (`gui-main-cjk`),
 //! narrow (`gui-main-narrow`, `gui-main-narrow-long`), and last without
-//! a cover (`gui-main-noart`, the Japanese tags).
+//! a cover (`gui-main-noart`, the Japanese tags), the Shader tab too
+//! (`gui-shader-noart`).
 //! The queue with a song being got ready, its preparation in the right
 //! column at each step: the stems being separated (`gui-prep-stems`), the
 //! key found (`gui-prep-key`), the beat found (`gui-prep-beat`), the words
@@ -948,6 +949,13 @@ fn main() {
         let cjk = retagged(&screens[0].1, CJK, None);
         for (suffix, size, scale) in SIZES {
             shots.shot(&format!("main-noart{suffix}"), &cjk, size, scale);
+        }
+    }
+    // The Shader tab without a story or a cover: the built-in picture.
+    if let Some((_, shader)) = screens.iter().find(|(name, _)| *name == "shader") {
+        if wanted("shader-noart") {
+            shots.gui.set_art(None);
+            shots.shot("shader-noart", shader, SIZES[0].1, SIZES[0].2);
         }
     }
     // The player stops with the window's state.

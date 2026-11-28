@@ -1,14 +1,15 @@
 //! The backdrop on the GPU ([`super`]): the ground (the blurred cover, or
-//! the plain gradient, small) in a texture of its own, sent over when it
-//! or the window changes, and stretched smoothly over a texture the
-//! window's size; or the story's scene showing drawn into it instead
+//! the plain gradient, small; the Shader tab's sharp picture) in a texture
+//! of its own, sent over when it or the window changes, and stretched
+//! smoothly over a texture the window's size; or the story's scene showing
+//! drawn into it instead
 //! ([`super::scenes::gpu`]: its pictures' textures sent over ahead of their
 //! cuts, their smaller levels made here). Drawn in a submission of its own
 //! before the window's, and kept for the window's pass to read
 //! ([`BackdropPass::under`]) pixel for pixel. A frame like the last one is
 //! not drawn again.
 
-use super::{BackdropFrame, Ground};
+use super::{BackdropFrame, Ground, Source};
 
 /// The most levels a picture's textures have (a 1024 picture's down to 4).
 const LEVELS: u32 = 9;
@@ -322,7 +323,7 @@ pub(super) fn texture(
 
 /// The ground on the GPU: which it is, its texture and what reads it.
 struct GroundTexture {
-    of: (u64, (u32, u32)),
+    of: (Source, (u32, u32)),
     _texture: wgpu::Texture,
     bind: wgpu::BindGroup,
 }
@@ -340,7 +341,7 @@ enum Drawn {
     /// The story's scene.
     Scene(super::scenes::gpu::Drawn),
     /// The ground (which it is).
-    Ground((u64, (u32, u32))),
+    Ground((Source, (u32, u32))),
 }
 
 /// The backdrop's passes, the ground and the scenes on the GPU and the

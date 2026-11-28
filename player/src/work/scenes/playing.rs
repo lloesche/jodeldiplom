@@ -82,7 +82,8 @@ impl PlayingStory {
     }
 
     /// Whether the song playing's scenes are wanted (the game's backdrop
-    /// shows): made ready as they come to be, let go as they go.
+    /// or the Shader tab shows): made ready as they come to be, let go as
+    /// they go.
     pub fn show_scenes(&self, scenes: bool) {
         self.shared.queue.change(|asked| {
             if asked.scenes != scenes {

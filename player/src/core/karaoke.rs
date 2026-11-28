@@ -225,6 +225,13 @@ pub fn stage_shown(state: &State) -> bool {
     in_mode(state) || super::shader_tab::shows(state)
 }
 
+/// Whether the song heard's story scenes are wanted behind the stage: in
+/// the mode where it shows the story ([`Show::story`]), and on the Shader
+/// tab wherever the song has them, the game on or off.
+pub fn scenes_shown(state: &State) -> bool {
+    (in_mode(state) && state.show().story) || super::shader_tab::shows(state)
+}
+
 /// How long after the singer's last pitch heard it is still the pitch
 /// sung, seconds.
 const SUNG_HOLD: f64 = 0.1;
