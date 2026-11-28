@@ -22,6 +22,7 @@ use jodel_lyrics::{Line as Sung, Source, Word};
 use jodel_testkit::TempDir;
 
 use super::*;
+use crate::clock::AppClock;
 use crate::core::prep::Picture as Begun;
 use crate::core::story::pictures::{PORTRAIT, SCENE};
 use crate::core::story::tests::{song, GOOD};
@@ -51,8 +52,11 @@ type Log = Arc<Mutex<Vec<String>>>;
 /// `none` (and the language model has no context), the encoder fails
 /// where `no_encoder`; the language model writes in a context of
 /// `context` positions, its thought never ending (cut off by the context)
-/// where `endless`, and no room for a follow-up where `cramped`.
+/// where `endless`, and no room for a follow-up where `cramped`. They take
+/// their turns in stages of their own (made on their first turn, with no
+/// card to plan by), so that a test's turns wait for no other test's.
 struct Fakes {
+    stages: OnceLock<&'static Stages>,
     log: Log,
     answer: Mutex<String>,
     painted: AtomicUsize,
@@ -67,6 +71,7 @@ struct Fakes {
 impl Fakes {
     fn new() -> Fakes {
         Fakes {
+            stages: OnceLock::new(),
             log: Log::default(),
             answer: Mutex::new(GOOD.to_owned()),
             painted: AtomicUsize::new(0),
@@ -215,6 +220,11 @@ fn paint((w, h): (usize, usize), refs: usize) -> String {
 }
 
 impl Models for Fakes {
+    fn stages(&self) -> &Stages {
+        self.stages
+            .get_or_init(|| Stages::planned(AppClock::default(), || None))
+    }
+
     fn context(&self) -> Result<usize, String> {
         self.up()?;
         Ok(*self.context.lock().unwrap())
@@ -1099,6 +1109,39 @@ fn the_worker_gives_up_a_song_no_longer_wanted() {
     assert_eq!(drawn.recv_timeout(WAIT), Ok(paths[1].clone()));
     drop(worker);
     assert!(drawn.try_iter().all(|p| p != paths[0]), "given up");
+}
+
+/// A round on other stand-ins waits for no turn of these: while one round
+/// is held in its image model's turn (its painter waiting), a round on
+/// other stand-ins draws in full ([`Fakes`]: their stages are their own).
+#[test]
+fn a_round_on_other_stand_ins_waits_for_no_turn_of_these() {
+    let (_dir, places, paths, _) = setting("held", 1);
+    let (_free_dir, free_places, free_paths, _) = setting("free", 1);
+    let held = Fakes::new();
+    let (go, gate) = std::sync::mpsc::channel();
+    *held.gate.lock().unwrap() = Some((1, gate));
+    let (out, rx) = outbox();
+    std::thread::scope(|s| {
+        let holding = s.spawn(|| round_of(&[wanted(&paths[0])], &held, &places, &out));
+        // Its first picture begun: in the image model's turn until let go.
+        loop {
+            let news = rx.recv_timeout(WAIT).expect("the held round draws");
+            if let Action::Heard {
+                part: Heard::Story(Story::Drawing(_)),
+                ..
+            } = news
+            {
+                break;
+            }
+        }
+        let (free_out, _free_rx) = outbox();
+        let free = Fakes::new();
+        let song = [wanted(&free_paths[0])];
+        assert_eq!(round_of(&song, &free, &free_places, &free_out), free_paths);
+        go.send(()).unwrap();
+        assert_eq!(holding.join().unwrap(), paths);
+    });
 }
 
 /// A song left without its story now rests, and the thread waits to try

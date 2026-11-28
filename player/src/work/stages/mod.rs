@@ -32,9 +32,10 @@
 //! already loaded give way to the window's frames as all background work
 //! does ([`jodel_gpu::pace`]).
 //!
-//! One thread plans ([`Stages::global`]'s): it reads the budget, makes the
-//! plan, lets models go with no lock held, and only then starts the jobs
-//! granted. Queuing a job, ending one and singing only tell it.
+//! One thread plans each set of stages ([`Stages::planned`]: the
+//! process's, [`Stages::global`], or a test's own): it reads the budget,
+//! makes the plan, lets models go with no lock held, and only then starts
+//! the jobs granted. Queuing a job, ending one and singing only tell it.
 //!
 //! # A stage's job
 //!
@@ -62,7 +63,7 @@ mod tests;
 
 use std::cell::Cell;
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, Once, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use jodel_gpu::memory::Budget;
@@ -158,7 +159,7 @@ struct Inner {
 /// The GPU's stages (see the module's doc): their queues, and the models
 /// on the card. The process has one ([`Stages::global`]); a test makes
 /// its own on a stepped clock and a budget of its own, and plans it by
-/// hand (`plan_once`).
+/// hand (`plan_once`), or has it planned ([`Stages::planned`]).
 pub struct Stages {
     inner: Mutex<Inner>,
     changed: Condvar,
@@ -187,25 +188,34 @@ impl Stages {
         }
     }
 
-    /// The process's stages: the card's budget read through its backend,
-    /// on the wall clock, planned by a thread of their own (the planner:
-    /// `plan_once` each time it is told of a change, or once the
-    /// idle deadline is due).
+    /// The process's stages ([`Stages::planned`]): the card's budget read
+    /// through its backend, on the wall clock.
     ///
     /// # Panics
-    /// Where the planner's thread cannot be made (then on every call, so
-    /// that no job waits for a planner that is not there).
+    /// Where the planner's thread cannot be made (then on every call until
+    /// one can, so that no job waits for a planner that is not there).
     pub fn global() -> &'static Stages {
-        static STAGES: OnceLock<Stages> = OnceLock::new();
-        static PLANNER: Once = Once::new();
-        let stages =
-            STAGES.get_or_init(|| Stages::new(AppClock::default(), jodel_gpu::memory::budget));
-        PLANNER.call_once(|| {
-            std::thread::Builder::new()
-                .name("gpu stages".into())
-                .spawn(move || stages.plan_for_ever())
-                .expect("a thread for the GPU's stages");
-        });
+        static STAGES: OnceLock<&'static Stages> = OnceLock::new();
+        STAGES.get_or_init(|| Stages::planned(AppClock::default(), jodel_gpu::memory::budget))
+    }
+
+    /// Stages timed by `clock`, the card's budget read by `memory`, kept
+    /// for the rest of the process and planned by a thread of their own
+    /// (the planner: `plan_once` each time it is told of a change, or once
+    /// the idle deadline is due): the process's ([`Stages::global`]), or a
+    /// test's own, whose turns wait for no other test's.
+    ///
+    /// # Panics
+    /// Where the planner's thread cannot be made.
+    pub fn planned(
+        clock: AppClock,
+        memory: impl Fn() -> Option<Budget> + Send + Sync + 'static,
+    ) -> &'static Stages {
+        let stages: &'static Stages = Box::leak(Box::new(Stages::new(clock, memory)));
+        std::thread::Builder::new()
+            .name("gpu stages".into())
+            .spawn(move || stages.plan_for_ever())
+            .expect("a thread for the GPU's stages");
         stages
     }
 

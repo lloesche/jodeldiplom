@@ -79,7 +79,7 @@ use crate::setup::Unreadable;
 use crate::store::mover::locate;
 use crate::work::outbox::Outbox;
 use crate::work::scenes::{self, GpuNets, SceneModels, SceneStore, Scenes, TakenApart};
-use crate::work::stages::{self, Stage};
+use crate::work::stages::{Stage, Stages};
 use crate::work::story_models::StoryModels;
 use crate::work::{song_name, Queue};
 
@@ -117,6 +117,9 @@ pub const SETTLE: Duration = Duration::from_secs(2);
 
 /// The story's models, each run in its stage's turn.
 pub trait Models: Send + Sync {
+    /// The GPU's stages whose turns the models take, where they are
+    /// registered.
+    fn stages(&self) -> &Stages;
     /// The context the language model writes in on this card
     /// ([`super::context`]); why there is none now.
     fn context(&self) -> Result<usize, String>;
@@ -179,6 +182,9 @@ pub struct GpuModels {
     encoder: Arc<jodel_gpu::Kept<TextEncoder>>,
     drawer: Arc<jodel_gpu::Kept<Drawer>>,
     nets: GpuNets,
+    /// The stages the models are registered in, and take their turns in:
+    /// the process's.
+    stages: &'static Stages,
 }
 
 impl GpuModels {
@@ -236,18 +242,20 @@ impl GpuModels {
         ));
         unreadable.retries(TRANSFORMER_DIR, &drawer);
         unreadable.retries(PIPELINE_DIR, &drawer);
-        stages::register(Stage::StoryPlan, Arc::clone(&writer) as Arc<dyn Resident>);
-        stages::register(
+        let stages = Stages::global();
+        stages.register(Stage::StoryPlan, Arc::clone(&writer) as Arc<dyn Resident>);
+        stages.register(
             Stage::StoryEncode,
             Arc::clone(&encoder) as Arc<dyn Resident>,
         );
-        stages::register(Stage::StoryDraw, Arc::clone(&drawer) as Arc<dyn Resident>);
+        stages.register(Stage::StoryDraw, Arc::clone(&drawer) as Arc<dyn Resident>);
         GpuModels {
             language,
             writer,
             encoder,
             drawer,
             nets: GpuNets::new(scenes, unreadable),
+            stages,
         }
     }
 }
@@ -257,6 +265,10 @@ impl GpuModels {
 /// its device was lost runs its job again, the plan's words already told
 /// not told twice ([`past`]).
 impl Models for GpuModels {
+    fn stages(&self) -> &Stages {
+        self.stages
+    }
+
     fn context(&self) -> Result<usize, String> {
         self.language.context()
     }
@@ -758,7 +770,8 @@ fn cut(ask: &Ask, tried: &mut Tried, song: &StorySong, stand: Stands) -> Option<
     None
 }
 
-/// `job` for `song`, in `stage`'s turn: told working while it runs, with
+/// `job` for `song`, in `stage`'s turn in the models' stages
+/// ([`Models::stages`]): told working while it runs, with
 /// the step `begun` (where the job does not tell its own) and the news it
 /// tells (given `tell`), noted in the trace with how long it took (its
 /// model's setup included) and whether it was done (why not is the
@@ -771,7 +784,7 @@ fn turn<T, E>(
     job: impl FnOnce(&mut dyn FnMut(Story)) -> Result<T, E>,
 ) -> Result<T, E> {
     let name = song_name(&song.path);
-    stages::run(&[stage], &name, || {
+    ask.models.stages().run(&[stage], &name, || {
         let started = Instant::now();
         let working = |on| {
             ask.outbox.send(Action::Working {
