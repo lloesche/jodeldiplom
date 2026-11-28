@@ -477,6 +477,37 @@ fn a_song_made_is_not_made_again() {
     assert!(kept.scenes.iter().all(|s| s.picture.is_file()));
 }
 
+/// A picture damaged (cut off: not a picture any more) is let go when it
+/// is read, the song not made now; the next time that picture alone is
+/// drawn again, and the song is made: never left without its story.
+#[test]
+fn a_damaged_picture_is_drawn_again_alone() {
+    let (_dir, places, paths, _) = setting("damaged", 1);
+    let fakes = Fakes::new();
+    let (out, rx) = outbox();
+    let song = [wanted(&paths[0])];
+    assert_eq!(round_of(&song, &fakes, &places, &out), paths);
+    fakes.took();
+    told(&rx);
+    let second = Scenes::read(&folder(&places, &paths[0])).unwrap().scenes[1]
+        .picture
+        .clone();
+    let bytes = std::fs::read(&second).unwrap();
+    durable::write_atomic(&second, &bytes[..bytes.len() / 2]).unwrap();
+    assert!(round_of(&song, &fakes, &places, &out).is_empty());
+    assert!(!second.exists(), "let go");
+    assert!(of(&told(&rx), &paths[0])
+        .iter()
+        .any(|n| n.starts_with("not now")));
+    assert_eq!(round_of(&song, &fakes, &places, &out), paths);
+    let cut = "cut".to_owned();
+    assert_eq!(
+        fakes.took(),
+        [cut.clone(), "encode".into(), paint(SCENE, 2), cut]
+    );
+    assert!(image::open(&second).is_ok());
+}
+
 /// A song no longer wanted is given up between its pictures: those drawn
 /// kept, no description, not told ready; the next round draws only the
 /// rest.

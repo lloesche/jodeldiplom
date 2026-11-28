@@ -38,9 +38,33 @@ pub fn file_of(dir: &Path, identity: &str) -> PathBuf {
     dir.join(format!("{}.stems", crate::store::cache::name(&key)))
 }
 
-/// Whether the stems of `path` are kept in `dir` (whole).
+/// Whether the stems of `path` are kept in `dir` (whole: opened, its
+/// head, end and index read). A file under their name that is not a
+/// whole stems file (damaged: they are written under another name until
+/// they are) is removed, so that they are made again; one that cannot be
+/// opened now (held by another, say) is left, and not taken as kept.
 pub fn is_kept(dir: &Path, path: &Path) -> bool {
-    file_for(dir, path).is_some_and(|f| crate::store::mover::locate(&f).is_file())
+    let Some(file) = file_for(dir, path) else {
+        return false;
+    };
+    let at = crate::store::mover::locate(&file);
+    if !at.is_file() {
+        return false;
+    }
+    match StemFile::open(&at) {
+        Ok(_) => true,
+        Err(e) => {
+            use std::io::ErrorKind::{InvalidData, UnexpectedEof};
+            if matches!(e.kind(), InvalidData | UnexpectedEof) {
+                crate::trace::note(format_args!(
+                    "stems: {} is not whole ({e}): removed, made again",
+                    at.display()
+                ));
+                let _ = crate::store::mover::remove(&file);
+            }
+            false
+        }
+    }
 }
 
 /// The tracks whose stems are being written into their files now
@@ -225,6 +249,37 @@ mod tests {
         let a = file_for(&dir, &track).unwrap();
         fs::write(&track, b"longer").unwrap();
         assert_ne!(file_for(&dir, &track).unwrap(), a);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A stems file there but not whole (cut off, or garbage) is not taken
+    /// as kept: it is removed, so that the stems are made again.
+    #[test]
+    fn stems_not_whole_are_not_kept_and_go() {
+        let dir = std::env::temp_dir().join(format!("jodel-stems-garbage-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let track = dir.join("song.flac");
+        fs::write(&track, b"a track").unwrap();
+        let file = file_for(&dir, &track).unwrap();
+        assert!(!is_kept(&dir, &track));
+        let garbage: Vec<u8> = (0..4096u32).map(|i| (i * 31 % 256) as u8).collect();
+        fs::write(&file, &garbage).unwrap();
+        assert!(!is_kept(&dir, &track));
+        assert!(!file.exists(), "garbage removed");
+        // A whole one is kept; cut off, it is not, and goes.
+        let mut keeping = Keeping::create(&file, &track, 44_100, "a test").expect("made");
+        let frames = vec![0.25f32; 10_000];
+        let stem = [&frames[..], &frames[..]];
+        keeping
+            .push(jodel_playback::stems::PerStem([stem; 4]))
+            .unwrap();
+        keeping.finish().unwrap();
+        assert!(is_kept(&dir, &track));
+        let whole = fs::read(&file).unwrap();
+        fs::write(&file, &whole[..whole.len() / 2]).unwrap();
+        assert!(!is_kept(&dir, &track));
+        assert!(!file.exists(), "cut off removed");
         let _ = fs::remove_dir_all(&dir);
     }
 

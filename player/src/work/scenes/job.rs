@@ -66,9 +66,7 @@ fn picture_of(scene: &Scene) -> Result<(String, RgbImage), String> {
     let path = &scene.picture;
     let bytes = std::fs::read(crate::store::mover::locate(path))
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    let picture = image::load_from_memory(&bytes)
-        .map_err(|e| format!("{}: {e}", path.display()))?
-        .to_rgb8();
+    let picture = crate::work::story::draw::decoded_or_dropped(path, &bytes)?;
     Ok((picture_hash(&bytes), picture))
 }
 

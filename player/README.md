@@ -136,8 +136,23 @@ At every start the player looks for them in `models` beside its executable
 (or a macOS app's `Contents/Resources/models`), then in the data folder's
 `models` (a model's folder whole in one of them); a file is taken once it
 matched its checksum (hashed the first time, a stamp of its length and
-date in `checked.txt` sparing later starts the hashing). With all of them
-there, it never goes online for them.
+date in `checked.txt` sparing later starts the hashing: a start only stats
+each file, a few milliseconds for all of them). A file missing, or of
+another length (a download cut off, a file cut short), is got again alone;
+one changed since it was stamped is hashed again, and got again where it
+is wrong. A download cut off goes on where it stopped, however long ago
+(its `.partial` is kept: the bytes in it hashed again, the rest asked for);
+that is safe because the whole is checked against the built-in checksum,
+and a file that is not it starts afresh. A source that sends another file
+than the one built in is said so. With all of them there, it never goes
+online for them. While the player runs, a model that cannot be read (gone,
+or not read as its format) is hashed against its checksums in the
+background, one model at a time; one missing or damaged is got again
+alone, into the data folder where it is now (a move under way followed),
+the status line saying so as it begins and ends (its progress is not
+shown), and is used again at once; one whole is left (the fault was not
+its file's); one whose source sends another file is given up until the
+next start.
 
 The window comes up at once on the setup screen, at every start: while the
 graphics card is chosen and the files looked for, then the session read and

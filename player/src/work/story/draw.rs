@@ -403,9 +403,20 @@ fn file_name(file: &Path) -> std::borrow::Cow<'_, str> {
 
 /// The picture in `file`.
 fn read(file: &Path) -> Result<RgbImage, String> {
-    let at = mover::locate(file);
-    let image = image::open(&at).map_err(|e| format!("{}: {e}", at.display()))?;
-    Ok(image.to_rgb8())
+    let bytes = mover::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    decoded_or_dropped(file, &bytes)
+}
+
+/// The pixels of the picture `file` holds as `bytes`; a picture that is
+/// not one (cut off, or damaged: the drawing step writes each whole) is
+/// removed, so that the next round draws it again, alone.
+pub fn decoded_or_dropped(file: &Path, bytes: &[u8]) -> Result<RgbImage, String> {
+    image::load_from_memory(bytes)
+        .map(|image| image.to_rgb8())
+        .map_err(|e| {
+            let _ = mover::remove(file);
+            format!("{}: {e} (removed, to be drawn again)", file.display())
+        })
 }
 
 /// Where the head is in a portrait of side `side`: its left, its top and

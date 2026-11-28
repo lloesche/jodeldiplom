@@ -520,7 +520,11 @@ fn a_job_that_panicked_lets_the_next_go() {
 fn the_models_register_themselves_where_they_are_made() {
     crate::work::rhythm::register_networks();
     let models = crate::work::lyrics::models::Models::new("speech".into(), "asr".into());
-    let _timer = crate::work::lyrics::timer::SpeechTimer::new(models, None);
+    let _timer = crate::work::lyrics::timer::SpeechTimer::new(
+        models,
+        None,
+        crate::setup::Unreadable::none(),
+    );
     let story = StoryModels {
         language: "gemma.gguf".into(),
         transformer: "transformer".into(),
@@ -531,7 +535,11 @@ fn the_models_register_themselves_where_they_are_made() {
         depth: "depth".into(),
         matte: "matte".into(),
     };
-    let _story = crate::work::story::worker::GpuModels::new(&story, scenes);
+    let _story = crate::work::story::worker::GpuModels::new(
+        &story,
+        scenes,
+        crate::setup::Unreadable::none(),
+    );
     let inner = Stages::global().lock();
     for stage in Stage::ALL {
         assert!(inner.models[stage as usize].is_some(), "{stage:?}");

@@ -588,12 +588,15 @@ fn load_wanted(queue: &Queue<Wanted>, outbox: &Outbox, cache: Option<&Path>, gri
                 continue;
             }
             to_analyse(path);
-        } else if cache.is_some_and(|dir| is_stored(dir, &path, &recipe)) {
-            let analysis = cache.and_then(|dir| load_analysis(dir, &path, &recipe));
-            if !tell_ready(&path, analysis.as_ref(), outbox) {
+        } else if let Some(analysis) = cache
+            .filter(|dir| is_stored(dir, &path, &recipe))
+            .and_then(|dir| load_analysis(dir, &path, &recipe))
+        {
+            if !tell_ready(&path, Some(&analysis), outbox) {
                 return;
             }
         } else if cache.is_some() {
+            // Not kept, or kept but not read (damaged): analysed again.
             to_analyse(path);
         }
     }
@@ -703,12 +706,13 @@ fn analyse_wanted(
     };
     while let Some((path, recipe, lane)) = queue.next(next) {
         if lane == Ask::Ahead {
-            let stored = cache.is_some_and(|dir| is_stored(dir, &path, &recipe));
-            let gone = if stored {
-                let analysis = cache.and_then(|dir| load_analysis(dir, &path, &recipe));
-                !tell_ready(&path, analysis.as_ref(), outbox)
-            } else {
-                analyse(&path, &recipe, outbox, cache).is_none()
+            // Kept and read; else (not kept, or damaged) analysed again.
+            let kept = cache
+                .filter(|dir| is_stored(dir, &path, &recipe))
+                .and_then(|dir| load_analysis(dir, &path, &recipe));
+            let gone = match kept {
+                Some(analysis) => !tell_ready(&path, Some(&analysis), outbox),
+                None => analyse(&path, &recipe, outbox, cache).is_none(),
             };
             if gone {
                 return;

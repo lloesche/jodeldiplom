@@ -20,7 +20,9 @@
 //! it has matched its checksum: the first time it is hashed, and a stamp
 //! (its length and when it was written) spares later starts the hashing.
 //! When every file is there and stamped, nothing is got and the player
-//! never goes online for them.
+//! never goes online for them. A file missing or of another length is got
+//! again alone; while the player runs, one that cannot be read is checked
+//! and got again ([`Repair`]).
 //!
 //! Otherwise setup gets them. Then the player's own start ([`Then`]): its
 //! steps follow the files' on the same screen. The window shows it from
@@ -41,6 +43,7 @@ use crate::work::outbox::Notify;
 use crate::work::{Job, Teller};
 
 mod manifest;
+mod repair;
 mod stamp;
 mod status;
 mod system;
@@ -51,9 +54,11 @@ mod system;
 )]
 mod tests;
 
+pub use crate::work::download::Fault;
 pub use manifest::{manifest, manifest_for, under, Found, Need, Part, Source, Sum};
-use stamp::{hashes_to, known, present, stamp, verified};
-use status::failure;
+pub use repair::{Repair, Unreadable};
+use stamp::{forget, hashes_to, known, present, stamp, verified, STORE};
+use status::{failure, lasting};
 pub use status::{size, Failure, Paths, Status, Step, StepState, Unit};
 
 /// Where the needed files are looked for, and where setup puts them.
@@ -133,9 +138,9 @@ pub fn look(need: &Need, places: &Places) -> Lookup {
 /// memory. The player's is [`Real`]; tests make their own.
 pub trait Work: Send + Sync {
     /// Downloads `part` to `to` (checked against its length and SHA-256
-    /// before it takes the name), telling `progress` the bytes so far.
-    fn download(&self, part: &Part, to: &Path, progress: &mut dyn FnMut(u64))
-        -> Result<(), String>;
+    /// before it takes the name), telling `progress` the bytes so far; why
+    /// not, the web's fault or the disk's.
+    fn download(&self, part: &Part, to: &Path, progress: &mut dyn FnMut(u64)) -> Result<(), Fault>;
     /// Packs the checkpoint in `parts` into `to`, telling `progress` the
     /// tensors packed so far and in all.
     fn pack(
@@ -161,12 +166,7 @@ pub const PACK_BITS: u32 = 4;
 pub struct Real;
 
 impl Work for Real {
-    fn download(
-        &self,
-        part: &Part,
-        to: &Path,
-        progress: &mut dyn FnMut(u64),
-    ) -> Result<(), String> {
+    fn download(&self, part: &Part, to: &Path, progress: &mut dyn FnMut(u64)) -> Result<(), Fault> {
         crate::work::download::download(
             &part.url,
             to,
@@ -208,7 +208,8 @@ const START_WEIGHT: f64 = 1e6;
 
 /// The player's own start, once its files are here ([`Setup::start`]):
 /// its steps, in order, and what does them, given every needed model's
-/// path and told as each step after the first begins.
+/// path and the repair of the models while the player runs ([`Repair`]),
+/// and told as each step after the first begins.
 pub struct Then {
     /// Each step's title and why.
     pub steps: Vec<(String, String)>,
@@ -217,7 +218,7 @@ pub struct Then {
 }
 
 /// What does the player's own start's steps ([`Then::run`]).
-pub type Starts = Box<dyn FnOnce(Paths, &mut dyn FnMut()) + Send>;
+pub type Starts = Box<dyn FnOnce(Paths, Arc<Repair>, &mut dyn FnMut()) + Send>;
 
 /// How long hashing a byte takes against downloading one, for the weights.
 const HASH_WEIGHT: f64 = 0.05;
@@ -398,7 +399,7 @@ impl Setup {
         let worker = Arc::clone(&job);
         std::thread::Builder::new()
             .name("setup".into())
-            .spawn(move || run(manifest, &places, &*work, &worker, then))
+            .spawn(move || run(manifest, &places, work, &worker, then))
             .expect("a thread for setup");
         Setup { job }
     }
@@ -417,7 +418,7 @@ impl Setup {
 fn run(
     manifest: impl FnOnce() -> Vec<Need>,
     places: &Places,
-    work: &dyn Work,
+    work: Arc<dyn Work>,
     job: &Job<Status>,
     then: Option<Starts>,
 ) {
@@ -427,7 +428,7 @@ fn run(
     let manifest = manifest();
     crate::trace::took("setup: the files known", started, true);
     let paths = loop {
-        match attempt(&manifest, places, work, &mut teller) {
+        match attempt(&manifest, places, &*work, &mut teller) {
             Ok(paths) => break paths,
             Err(failure) => {
                 teller.set(true, |s| s.failure = Some(failure));
@@ -436,9 +437,11 @@ fn run(
             }
         }
     };
+    forget_partials(&manifest, places);
     teller.set(true, |s| s.current = None);
     if let Some(then) = then {
-        start_player(then, paths.clone(), &mut teller);
+        let repair = Repair::new(manifest, places.clone(), work, &paths);
+        start_player(then, paths.clone(), repair, &mut teller);
     }
     teller.set(true, |s| {
         s.current = None;
@@ -446,8 +449,37 @@ fn run(
     });
 }
 
+/// Removes the downloads cut off in the store ([`durable::Resumable`])
+/// that no file of `manifest` goes on from (a model no longer needed on
+/// this machine, or renamed by a later player): kept on purpose to be gone
+/// on from, they would otherwise stay for good.
+fn forget_partials(manifest: &[Need], places: &Places) {
+    let wanted: std::collections::HashSet<PathBuf> = (manifest.iter())
+        .flat_map(|need| need.files(&fetched_at(places, need)))
+        .map(|(path, _)| durable::Resumable::part_of(&path))
+        .collect();
+    let mut dirs = vec![places.store.clone()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let (path, kind) = (entry.path(), entry.file_type());
+            // Not followed through a link.
+            if kind.as_ref().is_ok_and(fs::FileType::is_dir) {
+                dirs.push(path);
+            } else if path.to_string_lossy().ends_with(durable::RESUMABLE)
+                && !wanted.contains(&path)
+            {
+                crate::trace::note(format_args!(
+                    "setup: {} is no model's: removed",
+                    path.display()
+                ));
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+}
+
 /// The player's own start, its steps (after the files') told as they go.
-fn start_player(then: Starts, paths: Paths, teller: &mut Teller<'_, Status>) {
+fn start_player(then: Starts, paths: Paths, repair: Arc<Repair>, teller: &mut Teller<'_, Status>) {
     let mut begun = Instant::now();
     // The step under way done, the next one begun.
     let mut next = || {
@@ -472,13 +504,18 @@ fn start_player(then: Starts, paths: Paths, teller: &mut Teller<'_, Status>) {
         begun = Instant::now();
     };
     next();
-    then(paths, &mut next);
+    then(paths, repair, &mut next);
     next();
 }
 
 /// What to do when the network let a step down.
 const NETWORK: &str = "Check that this computer is online, then try again. Once the files \
                        are here, the player never needs the network for them again.";
+
+/// What to do when what the server sends is not the file built in.
+const WRONG: &str = "The file where it is downloaded from is not the one this player \
+                     checks against. Try again later; if it stays so, a newer player may \
+                     know the new file.";
 
 /// One go at getting everything: the paths, or why it stopped. It looks
 /// (every model's path known from then on: where it was found, else where
@@ -579,6 +616,14 @@ fn room(
     }
 }
 
+/// Removes the wrong file of the store `path` names, where it goes and
+/// where it was ([`crate::store::mover::remove`]: a copy left in the old
+/// place would come over again), its read-only mark taken off first.
+fn remove(path: &Path) {
+    durable::make_replaceable(&crate::store::mover::locate(path));
+    let _ = crate::store::mover::remove(path);
+}
+
 /// Checks `need` found whole at `at`: whether every file of it is right.
 /// The wrong ones in the store are removed (one elsewhere is passed over).
 fn check_need(
@@ -596,8 +641,9 @@ fn check_need(
     for (path, sum) in need.expected(at) {
         if !verified(&places.store, &path, sum, before, teller)? {
             right = false;
-            if path.starts_with(&places.store) {
-                let _ = fs::remove_file(&path);
+            // One of the store's (where it goes, or not moved there yet).
+            if crate::store::mover::current(&path).starts_with(&places.store) {
+                remove(&path);
             }
         }
         before += sum.bytes;
@@ -632,7 +678,14 @@ fn fetch_need(
                     s.rate = (seconds > 1.0).then(|| done as f64 / seconds);
                 })
             })
-            .map_err(|e| failure(format!("Downloading {} failed: {e}", need.title), NETWORK))?;
+            .map_err(|fault| {
+                let what = format!("Downloading {} failed: {}", need.title, fault.why());
+                match fault {
+                    Fault::Web(_) => failure(what, NETWORK),
+                    Fault::Wrong(_) => lasting(what, WRONG),
+                    Fault::Disk(_) => failure(what, STORE),
+                }
+            })?;
             stamp(&places.store, &part.sum.sha256, to)?;
         }
         before += part.sum.bytes;
@@ -672,9 +725,8 @@ fn pack_need(
     }
     let dir = parts_dir(places, need);
     let to = need.at(&places.store);
-    let mut name = to.file_name().unwrap_or_default().to_os_string();
-    name.push(".partial");
-    let partial = to.with_file_name(name);
+    // Under a temporary name until it checks (a crash's swept).
+    let partial = durable::temporary(&to);
     teller.set(true, |s| s.unit = Some(Unit::Tensors));
     work.pack(&dir, &partial, &mut |done, all| {
         teller.set(false, |s| {
@@ -699,7 +751,8 @@ fn pack_need(
     if let Some(digest) = hashes_to(&partial, sha256, 0, teller)? {
         let _ = fs::remove_file(&partial);
         let _ = fs::remove_dir_all(&dir);
-        return Err(failure(
+        // Its download checked, so packing again gives the same.
+        return Err(lasting(
             format!(
                 "{} came out different from what it should be (SHA-256 {digest}).",
                 capital(&need.title)
@@ -707,6 +760,7 @@ fn pack_need(
             "Try again: the download is fetched afresh. If it comes out different again, this build of the player packs differently from the one its checksum was made with.",
         ));
     }
+    durable::make_replaceable(&to);
     durable::rename_durable(&partial, &to)
         .map_err(|e| failure(format!("{}: {e}", to.display()), "Try again."))?;
     stamp(&places.store, sha256, &to)

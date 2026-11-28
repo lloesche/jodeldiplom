@@ -194,6 +194,10 @@ pub fn from_text(key: &str, text: &str) -> Option<Analysis> {
             _ => return None,
         }
     }
+    // A downbeat is one of its beats (a damaged file's may not be).
+    if a.downbeats.iter().any(|&d| d >= a.beats.len()) {
+        return None;
+    }
     a.derive();
     Some(a)
 }
@@ -301,6 +305,18 @@ mod tests {
         let (s, t) = (a.summary.unwrap(), back.summary.unwrap());
         assert!((s.bpm - t.bpm).abs() < 0.01);
         assert!(from_text("song.flac 123 999 v1", &text).is_none());
+        // A damaged file whose downbeat is past its beats is not read
+        // (it is analysed again), never taken to index the beats with.
+        let past = format!("downbeats {}", a.beats.len());
+        let damaged = text.lines().map(|l| {
+            if l.starts_with("downbeats") {
+                past.as_str()
+            } else {
+                l
+            }
+        });
+        let damaged: String = damaged.map(|l| format!("{l}\n")).collect();
+        assert!(from_text("song.flac 123 456 v1", &damaged).is_none());
     }
 
     #[test]
@@ -381,8 +397,8 @@ mod tests {
         };
         store(&old.analyses(), &track, &a, &wave).unwrap();
         let stems = crate::store::stems::file_for(&old.stems(), &track).unwrap();
-        fs::create_dir_all(stems.parent().unwrap()).unwrap();
-        fs::write(&stems, b"stems").unwrap();
+        let keeping = crate::store::stems::Keeping::create(&stems, &track, 44_100, "a test");
+        keeping.expect("made").finish().unwrap();
         let settings = dir.join("settings");
         crate::store::mover::begin(&settings, &[(old.0.clone(), new.0.clone())]).unwrap();
         let found = |data: &crate::store::dirs::Data| {

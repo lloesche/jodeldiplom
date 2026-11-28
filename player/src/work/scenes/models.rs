@@ -13,6 +13,7 @@ use jodel_gpu::vision::{Depth, Matte};
 use jodel_gpu::{Footprint, GpuDepth, GpuMatte, Kept, OnDevice, Resident};
 
 use super::SceneNets;
+use crate::setup::Unreadable;
 use crate::work::stages::{self, Stage};
 
 /// The depth model's weights: Depth Anything 3 Small by ByteDance Seed
@@ -85,18 +86,24 @@ pub struct GpuNets {
 }
 
 impl GpuNets {
-    /// The models of the weights in `files`, set up on their first picture.
-    pub fn new(files: SceneModels) -> GpuNets {
+    /// The models of the weights in `files`, set up on their first
+    /// picture; one that cannot be read or set up told to `unreadable`
+    /// (checked, and got again where it is gone or damaged; then tried
+    /// again at once).
+    pub fn new(files: SceneModels, unreadable: Unreadable) -> GpuNets {
         let (plan, load) = (files.clone(), files);
+        let told = unreadable.clone();
         let vision = Arc::new(Kept::new(
             move || footprint(&plan),
             Box::new(move || {
-                let depth = GpuDepth::new(read(&load.depth)?)?;
-                let matte = GpuMatte::new(read(&load.matte)?)?;
+                let depth = told.report(DEPTH_FILE, read(&load.depth).and_then(GpuDepth::new))?;
+                let matte = told.report(MATTE_FILE, read(&load.matte).and_then(GpuMatte::new))?;
                 let name = depth.name();
                 Ok((Vision { depth, matte }, name))
             }),
         ));
+        unreadable.retries(DEPTH_FILE, &vision);
+        unreadable.retries(MATTE_FILE, &vision);
         stages::register(Stage::Scenes, Arc::clone(&vision) as Arc<dyn Resident>);
         GpuNets { vision }
     }

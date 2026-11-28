@@ -43,7 +43,11 @@ fn main() {
         data.join("models")
             .join(jodeldiplom::work::lyrics::models::ASR_FILE),
     );
-    let timer = SpeechTimer::new(models, Some(data.join("stems")));
+    let timer = SpeechTimer::new(
+        models,
+        Some(data.join("stems")),
+        jodeldiplom::setup::Unreadable::none(),
+    );
     let others = jodel_lyrics::prepare::Text::Found(&Vec::new);
     let timed = timer.time(song, &lyrics, &others).unwrap();
     println!(

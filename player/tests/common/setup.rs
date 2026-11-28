@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use jodeldiplom::setup::{manifest_for, Part, Places, Setup, Status, Work};
+use jodeldiplom::setup::{manifest_for, Fault, Part, Places, Setup, Status, Work};
 
 /// What the made-up web does after its first download.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,18 +30,13 @@ pub struct Made {
 }
 
 impl Work for Made {
-    fn download(
-        &self,
-        part: &Part,
-        to: &Path,
-        progress: &mut dyn FnMut(u64),
-    ) -> Result<(), String> {
+    fn download(&self, part: &Part, to: &Path, progress: &mut dyn FnMut(u64)) -> Result<(), Fault> {
         if self.downloads.fetch_add(1, Ordering::SeqCst) == 0 {
             progress(part.sum.bytes);
-            return durable::write_atomic(to, b"made up").map_err(|e| e.to_string());
+            return durable::write_atomic(to, b"made up").map_err(|e| Fault::Disk(e.to_string()));
         }
         match self.web {
-            Web::Offline => Err("the connection timed out".into()),
+            Web::Offline => Err(Fault::Web("the connection timed out".into())),
             Web::Stalls { share, after } => {
                 std::thread::sleep(after);
                 progress((part.sum.bytes as f64 * share) as u64);

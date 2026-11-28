@@ -118,6 +118,10 @@ pub struct AppOptions {
     /// models): no stories are made, and the game is played over the
     /// blurred cover as plain lyrics karaoke is.
     pub story: Option<crate::work::story_models::StoryModels>,
+    /// What checks a model that cannot be read while the player runs, and
+    /// gets it again where it is gone or damaged ([`crate::setup::Repair`]),
+    /// telling the status line; `None`: nothing does.
+    pub repair: Option<Arc<crate::setup::Repair>>,
     /// What the app times by ([`AppClock`]): the wall clock but in tests
     /// that step it.
     pub clock: AppClock,
@@ -151,6 +155,7 @@ impl AppOptions {
             separator: gpu_separator,
             scenes: None,
             story: None,
+            repair: None,
             clock: AppClock::default(),
         }
     }
@@ -340,6 +345,21 @@ impl App {
             .map(|d| crate::work::scenes::SceneStore::new(d.scenes(), d.scene_parts()));
         let playing_story =
             (scenes.clone()).map(|s| crate::work::scenes::PlayingStory::start(s, outbox.notify()));
+        // A model gone or damaged while the player runs is got again, said
+        // on the status line.
+        if let Some(repair) = &options.repair {
+            let told = outbox.clone();
+            repair.tell_to(Box::new(move |line| {
+                told.send(match line {
+                    Ok(info) => Action::Info(info),
+                    Err(failure) => Action::Failed(failure),
+                });
+            }));
+        }
+        let unreadable = (options.repair.as_ref()).map_or_else(
+            crate::setup::Unreadable::none,
+            crate::setup::Repair::unreadable,
+        );
         // Stories are made where there is a data folder to keep them and
         // the models, for every song of the queue once its lyrics are
         // settled; the song playing's story told of each one finished.
@@ -353,7 +373,7 @@ impl App {
                     scenes,
                     lyrics: Arc::new(move |path| crate::work::lyrics::settled(&story_lyrics, path)),
                 };
-                let models = Arc::new(GpuModels::new(&files, nets));
+                let models = Arc::new(GpuModels::new(&files, nets, unreadable));
                 StoryWorker::start(models, places, outbox.clone(), Arc::new(playing.on_drawn()))
             });
         if stories.is_some() {

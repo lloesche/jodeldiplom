@@ -220,7 +220,8 @@ impl StemFile {
         }
         let count = u64::from_le_bytes(foot[..8].try_into().unwrap_or_default());
         let index_at = u64::from_le_bytes(foot[8..16].try_into().unwrap_or_default());
-        if index_at + count * 8 != end || count > end / 4 {
+        let index_end = count.checked_mul(8).and_then(|b| index_at.checked_add(b));
+        if index_end != Some(end) || count > end / 4 {
             return Err(bad("its index"));
         }
         file.seek(SeekFrom::Start(index_at))?;
@@ -689,6 +690,13 @@ mod tests {
         assert!(StemFile::open(&path).is_err());
         fs::write(&path, &bytes).unwrap();
         assert!(StemFile::open(&path).is_ok());
+        // Its end damaged, an index of more blocks than any file holds:
+        // refused, not overflowed.
+        let mut damaged = bytes.clone();
+        let foot = damaged.len() - 24;
+        damaged[foot..foot + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+        fs::write(&path, &damaged).unwrap();
+        assert!(StemFile::open(&path).is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 

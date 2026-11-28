@@ -49,7 +49,12 @@
 //! left out of the rounds for [`RETRY`], twice as long each time again in
 //! a row up to [`MOST_RETRY`] ([`Tried`]), so it neither holds the songs
 //! after it off nor loads the models again and again; the thread waits
-//! for it ([`Next::At`]), and takes up a new ask at once meanwhile.
+//! for it ([`Next::At`]), and takes up a new ask at once meanwhile. A
+//! model that cannot be set up is told to setup's repair
+//! ([`crate::setup::Repair`]), which gets it again where its files are
+//! gone or damaged, and has it tried again at once on the song's next
+//! try. A picture that is not one
+//! any more (damaged) is let go as it is read, and drawn again alone.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,6 +70,7 @@ use super::{Failure, Kept, StoryJob};
 use crate::core::prep::Story;
 use crate::core::story::{Plan, Song};
 use crate::core::{Action, Facts, Heard, Job, StoryFact, StorySong};
+use crate::setup::Unreadable;
 use crate::store::mover::locate;
 use crate::work::outbox::Outbox;
 use crate::work::scenes::{self, GpuNets, SceneModels, SceneStore, Scenes, TakenApart};
@@ -132,36 +138,52 @@ pub struct GpuModels {
 
 impl GpuModels {
     /// The models in `files`, and the scenes' in `scenes`, registered for
-    /// their stages.
-    pub fn new(files: &StoryModels, scenes: SceneModels) -> GpuModels {
+    /// their stages; one that cannot be set up told to `unreadable`
+    /// (checked, and got again where it is gone or damaged; then tried
+    /// again at once).
+    pub fn new(files: &StoryModels, scenes: SceneModels, unreadable: Unreadable) -> GpuModels {
+        use crate::work::story_models::{
+            ENCODER_DIR, LANGUAGE_FILE, PIPELINE_DIR, TRANSFORMER_DIR,
+        };
         let (planned, language) = (files.language.clone(), files.language.clone());
+        let told = unreadable.clone();
         let language = Arc::new(jodel_gpu::Kept::new(
             move || super::memory(&locate(&planned)).ok(),
             Box::new(move || {
-                let gemma = Gemma::open(&locate(&language), Precision::Fast)?;
+                let opened = Gemma::open(&locate(&language), Precision::Fast);
+                let gemma = told.report(LANGUAGE_FILE, opened)?;
                 let name = gemma.gpu_name().to_owned();
                 Ok((gemma, name))
             }),
         ));
+        unreadable.retries(LANGUAGE_FILE, &language);
         let encoder = files.encoder.clone();
+        let told = unreadable.clone();
         let encoder = Arc::new(jodel_gpu::Kept::new(
             || Some(TextEncoder::planned()),
             Box::new(move || {
-                let model = TextEncoder::load(&locate(&encoder), Precision::Fast)?;
+                let loaded = TextEncoder::load(&locate(&encoder), Precision::Fast);
+                let model = told.report(ENCODER_DIR, loaded)?;
                 let name = model.gpu_name().to_owned();
                 Ok((model, name))
             }),
         ));
+        unreadable.retries(ENCODER_DIR, &encoder);
         let (transformer, pipeline) = (files.transformer.clone(), files.pipeline.clone());
+        let told = unreadable.clone();
         let drawer = Arc::new(jodel_gpu::Kept::new(
             || Some(super::draw::memory()),
             Box::new(move || {
                 let (t, p) = (locate(&transformer), locate(&pipeline));
-                let model = Drawer::load(&t, &p, Precision::Fast)?;
+                // Either folder may be the one at fault: both checked.
+                let loaded = Drawer::load(&t, &p, Precision::Fast);
+                let model = told.report(PIPELINE_DIR, told.report(TRANSFORMER_DIR, loaded))?;
                 let name = model.gpu_name().to_owned();
                 Ok((model, name))
             }),
         ));
+        unreadable.retries(TRANSFORMER_DIR, &drawer);
+        unreadable.retries(PIPELINE_DIR, &drawer);
         stages::register(Stage::StoryPlan, Arc::clone(&language) as Arc<dyn Resident>);
         stages::register(
             Stage::StoryEncode,
@@ -172,7 +194,7 @@ impl GpuModels {
             language,
             encoder,
             drawer,
-            nets: GpuNets::new(scenes),
+            nets: GpuNets::new(scenes, unreadable),
         }
     }
 }

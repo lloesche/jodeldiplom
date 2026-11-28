@@ -65,6 +65,12 @@ impl<T> Retrying<T> {
         Ok(self.on.as_mut().expect("set up"))
     }
 
+    /// The last failed setup no longer stands: the next use tries at once
+    /// (what failed it is mended).
+    pub(super) fn forgive(&mut self) {
+        self.failed = None;
+    }
+
     /// How long the last failed setup stands, while it is the last.
     #[cfg(test)]
     pub(super) fn standing(&self) -> Option<Duration> {

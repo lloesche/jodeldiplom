@@ -23,7 +23,7 @@ pub(super) const STAMP: &str = "checked.txt";
 const DISK: &str = "Check that the disk can be read, then try again.";
 
 /// What to do when the store could not be written to.
-const STORE: &str = "Check that the data folder can be written to, then try again.";
+pub(super) const STORE: &str = "Check that the data folder can be written to, then try again.";
 
 /// Where `path` is now.
 fn located(path: &Path) -> PathBuf {
@@ -72,8 +72,34 @@ pub(super) fn stamp(store: &Path, sha256: &str, path: &Path) -> Result<(), Failu
         })
         .collect();
     lines.push(line);
-    durable::write_atomic(&store.join(STAMP), (lines.join("\n") + "\n").as_bytes())
-        .map_err(|e| failure(format!("{}: {e}", store.join(STAMP).display()), STORE))
+    write_stamps(store, &lines)
+}
+
+/// Keeps `lines` as the store's stamps (a stamp file made read-only made
+/// writable again: it is the player's own).
+fn write_stamps(store: &Path, lines: &[String]) -> Result<(), Failure> {
+    let file = store.join(STAMP);
+    durable::make_replaceable(&file);
+    let text = lines.iter().map(|l| format!("{l}\n")).collect::<String>();
+    durable::write_atomic(&file, text.as_bytes())
+        .map_err(|e| failure(format!("{}: {e}", file.display()), STORE))
+}
+
+/// Forgets the stamps of the files at `paths`: each is hashed again the
+/// next time it is looked at.
+pub(super) fn forget(store: &Path, paths: &[PathBuf]) -> Result<(), Failure> {
+    let tails: Vec<String> = (paths.iter())
+        .map(|p| format!(" {}", located(p).display()))
+        .collect();
+    let lines = stamp_lines(store);
+    let kept: Vec<String> = (lines.iter())
+        .filter(|l| !tails.iter().any(|t| l.ends_with(t.as_str())))
+        .cloned()
+        .collect();
+    if kept.len() == lines.len() {
+        return Ok(());
+    }
+    write_stamps(store, &kept)
 }
 
 /// Whether a file is at `path` at `sum`'s length.

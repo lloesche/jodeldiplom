@@ -19,6 +19,12 @@
 //!   durable in its parent (so a file's first folder survives with it).
 //! - [`sync_dir`]: a folder's entries made durable (a directory handle's
 //!   flush on Windows, `fsync` of the folder elsewhere).
+//! - [`Resumable`]: a file filled over more than one run (a download that
+//!   may be cut off) under a fixed name beside it, `NAME.partial`, kept on
+//!   purpose so that the next run goes on from it, and never swept; it
+//!   takes the file's name only on [`Resumable::commit`].
+//! - [`make_replaceable`]: a file's read-only mark taken off, so that a
+//!   rename over it or its removal is not refused (Windows).
 //! - [`is_temporary`], [`sweep`]: the temporaries a crash left behind
 //!   (never a file's name, so nothing reads them), removed once old
 //!   ([`STALE`]).
@@ -32,6 +38,32 @@ use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
+
+mod resumable;
+
+pub use resumable::{Resumable, RESUMABLE};
+
+/// Takes the read-only mark off the file at `path`, where there is one, so
+/// that it can be renamed over ([`write_atomic`], [`Resumable::commit`]) or
+/// removed: Windows refuses either for a read-only file, the other systems
+/// ask only the folder (nothing is done there). For a file the caller owns
+/// and is about to replace; no other permission is widened.
+pub fn make_replaceable(path: &Path) {
+    #[cfg(windows)]
+    if let Ok(meta) = fs::metadata(path) {
+        let mut permissions = meta.permissions();
+        if permissions.readonly() {
+            #[expect(
+                clippy::permissions_set_readonly_false,
+                reason = "Windows: clears the read-only attribute, nothing more"
+            )]
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(path, permissions);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}
 
 /// The suffix of every temporary name.
 pub const TEMPORARY: &str = ".tmp";
@@ -98,10 +130,11 @@ pub fn temporary(path: &Path) -> PathBuf {
 }
 
 /// Whether `name` is a temporary of [`temporary`]'s, or one of the
-/// player's copies under way that do not go through here yet: a
-/// download's `.partial`, a moved file's `.moving`.
+/// player's copies under way that do not go through here yet: a moved
+/// file's `.moving`. A [`Resumable`]'s `.partial` is not one: it is kept on
+/// purpose, to be gone on from.
 pub fn is_temporary(name: &str) -> bool {
-    name.ends_with(TEMPORARY) || name.ends_with(".partial") || name.ends_with(".moving")
+    name.ends_with(TEMPORARY) || name.ends_with(".moving")
 }
 
 /// Removes the temporaries in `dir` (not below it) last written more than
@@ -520,10 +553,18 @@ mod tests {
 
     #[test]
     fn temporaries_are_told_apart_and_old_ones_swept() {
-        for name in ["a.flac.1234-0.tmp", "x.partial", "y.stems.moving"] {
+        for name in ["a.flac.1234-0.tmp", "y.stems.moving"] {
             assert!(is_temporary(name), "{name}");
         }
-        for name in ["song.stems", "lyrics.txt", "a.tmp.flac", "temp", "x.tmpdir"] {
+        // A resumable download's is kept on purpose.
+        for name in [
+            "song.stems",
+            "lyrics.txt",
+            "a.tmp.flac",
+            "temp",
+            "x.tmpdir",
+            "x.partial",
+        ] {
             assert!(!is_temporary(name), "{name}");
         }
         let dir = temp("sweep");

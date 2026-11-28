@@ -300,7 +300,8 @@ pub fn start_setup(
             .iter()
             .map(|s| (s.title().to_owned(), s.why().to_owned()))
             .collect(),
-        run: Box::new(move |paths, next| {
+        run: Box::new(move |paths, repair, next| {
+            options.repair = Some(repair);
             set_models(&mut options, &paths);
             let app = App::start(options, &mut |_| next());
             *player.lock().unwrap_or_else(PoisonError::into_inner) = Some(app);
@@ -323,11 +324,14 @@ pub fn set_models(options: &mut AppOptions, paths: &[(String, PathBuf)]) {
     let models = crate::work::lyrics::models::Models::new(speech.clone(), asr);
     options.model = Some(speech);
     let stems = options.data.as_ref().map(crate::store::dirs::Data::stems);
+    let unreadable = (options.repair.as_ref()).map_or_else(
+        crate::setup::Unreadable::none,
+        crate::setup::Repair::unreadable,
+    );
     if let Some(lyrics) = &mut options.lyrics {
-        lyrics.timer = Some(
-            Arc::new(crate::work::lyrics::timer::SpeechTimer::new(models, stems))
-                as Arc<dyn crate::work::lyrics::WordTimer>,
-        );
+        lyrics.timer = Some(Arc::new(crate::work::lyrics::timer::SpeechTimer::new(
+            models, stems, unreadable,
+        )) as Arc<dyn crate::work::lyrics::WordTimer>);
     }
 }
 

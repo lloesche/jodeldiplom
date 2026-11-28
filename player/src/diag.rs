@@ -133,7 +133,7 @@ fn scenes(data: &crate::store::dirs::Data) -> Vec<String> {
         format!("found: {}", models.depth.display()),
         format!("found: {}", models.matte.display()),
     ];
-    let nets = GpuNets::new(models);
+    let nets = GpuNets::new(models, crate::setup::Unreadable::none());
     let picture = crate::work::art::sample_cover(1024);
     let derive = || {
         let started = std::time::Instant::now();

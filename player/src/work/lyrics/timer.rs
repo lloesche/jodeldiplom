@@ -15,8 +15,9 @@ use jodel_lyrics::prepare::{self, Text};
 use jodel_lyrics::speech::Wav2Vec2;
 use jodel_lyrics::{Lyrics, Maker};
 
-use super::models::Models;
+use super::models::{Models, ASR_FILE, MODEL_FILE};
 use super::{relined, WordTimer, TOO_LITTLE_HEARD};
+use crate::setup::Unreadable;
 use crate::work::stages::{self, Stage};
 use crate::work::voice::{voice, voice_16k, Voice};
 
@@ -48,6 +49,9 @@ pub struct SpeechTimer {
     cpu: Mutex<Option<Arc<Wav2Vec2>>>,
     /// The recogniser on the GPU.
     asr: Arc<Kept<GpuAsr>>,
+    /// Told of a model gone, or that could not be read (checked, and got
+    /// again where it is gone or damaged).
+    unreadable: Unreadable,
 }
 
 /// The bytes of the file at `path`, where it is there.
@@ -71,27 +75,33 @@ impl Acoustic for OnGpu {
 impl SpeechTimer {
     /// The timer for `models` (each read when first needed), the voice
     /// taken from the stems kept in `stems` where they are there; its
-    /// models registered for their stages.
-    pub fn new(models: Arc<Models>, stems: Option<PathBuf>) -> SpeechTimer {
+    /// models registered for their stages; one gone, or that cannot be
+    /// read or set up, told to `unreadable`.
+    pub fn new(models: Arc<Models>, stems: Option<PathBuf>, unreadable: Unreadable) -> SpeechTimer {
         let (on_disk, read) = (Arc::clone(&models), Arc::clone(&models));
+        let told = unreadable.clone();
         let gpu = Arc::new(Kept::new(
             move || bytes_of(&on_disk.speech_now()).map(GpuSpeech::footprint),
             Box::new(move || {
-                let speech = GpuSpeech::new(&Wav2Vec2::open(&read.speech_now())?)?;
+                let opened = told.report(MODEL_FILE, Wav2Vec2::open(&read.speech_now()))?;
+                let speech = GpuSpeech::new(&opened)?;
                 let name = speech.name().to_owned();
                 Ok((speech, name))
             }),
         ));
+        unreadable.retries(MODEL_FILE, &gpu);
         let (on_disk, read) = (Arc::clone(&models), Arc::clone(&models));
+        let told = unreadable.clone();
         let asr = Arc::new(Kept::new(
             move || bytes_of(&on_disk.asr_now()).map(GpuAsr::footprint),
             Box::new(move || {
-                let packed = jodel_lyrics::asr::packed::PackedModel::open(&read.asr_now())?;
-                let asr = GpuAsr::new(&packed)?;
+                let packed = jodel_lyrics::asr::packed::PackedModel::open(&read.asr_now());
+                let asr = GpuAsr::new(&told.report(ASR_FILE, packed)?)?;
                 let name = asr.name().to_owned();
                 Ok((asr, name))
             }),
         ));
+        unreadable.retries(ASR_FILE, &asr);
         stages::register(Stage::Timing, Arc::clone(&gpu) as Arc<dyn Resident>);
         stages::register(Stage::Hearing, Arc::clone(&asr) as Arc<dyn Resident>);
         SpeechTimer {
@@ -100,12 +110,14 @@ impl SpeechTimer {
             gpu,
             cpu: Mutex::new(None),
             asr,
+            unreadable,
         }
     }
 
     /// The speech recogniser, where it is there.
     fn recogniser(&self) -> Option<&Kept<GpuAsr>> {
-        self.models.has_asr().then_some(&*self.asr)
+        let there = (self.unreadable).present(ASR_FILE, &self.models.asr_now());
+        (there && self.models.has_asr()).then_some(&*self.asr)
     }
 
     /// What the speech recogniser `asr` (where it is there) hears in the
@@ -133,7 +145,7 @@ impl SpeechTimer {
         path: &Path,
         f: impl FnOnce(Arc<dyn Acoustic + Send + Sync>) -> T,
     ) -> Result<T, String> {
-        if !self.models.speech_now().is_file() {
+        if !(self.unreadable).present(MODEL_FILE, &self.models.speech_now()) {
             return Err("the speech model is not here".into());
         }
         let name = crate::work::song_name(path);
@@ -151,7 +163,8 @@ impl SpeechTimer {
         if let Some(model) = cpu.as_ref() {
             return Ok(Arc::clone(model) as _);
         }
-        let mut model = Wav2Vec2::open(&self.models.speech_now())?;
+        let opened = Wav2Vec2::open(&self.models.speech_now());
+        let mut model = self.unreadable.report(MODEL_FILE, opened)?;
         let threads = (thread::available_parallelism().map_or(2, |n| n.get()) / 2).max(1);
         crate::trace::note(format_args!(
             "lyrics: the speech model runs on {threads} processor threads (not on the GPU)"
@@ -165,7 +178,7 @@ impl SpeechTimer {
 
 impl WordTimer for SpeechTimer {
     fn ready(&self) -> bool {
-        self.models.speech_now().is_file()
+        (self.unreadable).present(MODEL_FILE, &self.models.speech_now())
     }
 
     fn maker(&self) -> Maker {

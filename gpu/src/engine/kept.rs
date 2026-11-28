@@ -147,6 +147,12 @@ impl<T: OnDevice> Kept<T> {
         work(slot.on.as_mut().expect("set up"))
     }
 
+    /// A failed setup no longer stands: the next use sets it up at once
+    /// (its files were got again, say).
+    pub fn retry_now(&self) {
+        self.lock().forgive();
+    }
+
     /// The GPU's name, once set up.
     pub fn name(&self) -> String {
         self.name.get().cloned().unwrap_or_default()
@@ -270,6 +276,15 @@ mod tests {
         assert!(kept.usable());
         assert!(kept.usable());
         assert_eq!(setups.load(Ordering::SeqCst), 2, "tried again, then kept");
+        // What failed it mended: tried at once, not after its while.
+        let (kept, setups, _) = fake(RETRY, Arc::clone(&fail));
+        fail.store(true, Ordering::SeqCst);
+        assert!(!kept.usable());
+        fail.store(false, Ordering::SeqCst);
+        assert!(!kept.usable(), "it stands");
+        kept.retry_now();
+        assert!(kept.usable());
+        assert_eq!(setups.load(Ordering::SeqCst), 2);
     }
 
     #[test]

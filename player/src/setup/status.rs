@@ -60,6 +60,10 @@ pub struct Failure {
     pub what: String,
     /// What to do about it.
     pub advice: String,
+    /// Trying again would end the same (what the server sends is not the
+    /// file, or packing gives other bytes): a repair while the player runs
+    /// gives the model up until the next start.
+    pub lasting: bool,
 }
 
 /// A failure: `what` went wrong, `advice` says what to do.
@@ -67,6 +71,15 @@ pub(super) fn failure(what: impl Into<String>, advice: impl Into<String>) -> Fai
     Failure {
         what: what.into(),
         advice: advice.into(),
+        lasting: false,
+    }
+}
+
+/// A failure that trying again would not mend ([`Failure::lasting`]).
+pub(super) fn lasting(what: impl Into<String>, advice: impl Into<String>) -> Failure {
+    Failure {
+        lasting: true,
+        ..failure(what, advice)
     }
 }
 

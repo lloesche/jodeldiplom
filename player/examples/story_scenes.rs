@@ -63,10 +63,13 @@ fn main() {
     };
     scenes.write(&dir).expect("the scenes described");
     println!("{} scenes in {}", scenes.scenes.len(), dir.display());
-    let nets = GpuNets::new(SceneModels {
-        depth: models.join(DEPTH_FILE),
-        matte: models.join(MATTE_FILE),
-    });
+    let nets = GpuNets::new(
+        SceneModels {
+            depth: models.join(DEPTH_FILE),
+            matte: models.join(MATTE_FILE),
+        },
+        jodeldiplom::setup::Unreadable::none(),
+    );
     let started = Instant::now();
     let found = store().scenes_of(&song).expect("the song's scenes");
     let taken = stages::run(&[Stage::Scenes], "the scenes", || {

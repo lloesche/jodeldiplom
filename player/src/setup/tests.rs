@@ -53,6 +53,12 @@ fn temp(name: &str) -> PathBuf {
 struct Fake {
     web: Vec<(String, Vec<u8>)>,
     offline: std::sync::atomic::AtomicBool,
+    /// Every download fails on the disk.
+    disk_full: std::sync::atomic::AtomicBool,
+    /// The files on the web are others now (their bytes reversed).
+    changed: std::sync::atomic::AtomicBool,
+    /// A download panics.
+    panics: std::sync::atomic::AtomicBool,
     /// Downloads asked for (offline too).
     downloads: AtomicUsize,
     free: Option<u64>,
@@ -60,23 +66,35 @@ struct Fake {
 }
 
 impl Work for Fake {
-    fn download(
-        &self,
-        part: &Part,
-        to: &Path,
-        progress: &mut dyn FnMut(u64),
-    ) -> Result<(), String> {
+    fn download(&self, part: &Part, to: &Path, progress: &mut dyn FnMut(u64)) -> Result<(), Fault> {
         self.downloads.fetch_add(1, Ordering::SeqCst);
         if self.offline.load(Ordering::SeqCst) {
-            return Err("no network".into());
+            return Err(Fault::Web("no network".into()));
         }
-        let data = &self.web.iter().find(|(u, _)| *u == part.url).unwrap().1;
+        assert!(!self.panics.load(Ordering::SeqCst), "a download panicked");
+        if self.disk_full.load(Ordering::SeqCst) {
+            return Err(Fault::Disk("there is no space left on the device".into()));
+        }
+        let mut data = self
+            .web
+            .iter()
+            .find(|(u, _)| *u == part.url)
+            .unwrap()
+            .1
+            .clone();
+        if self.changed.load(Ordering::SeqCst) {
+            data.reverse();
+        }
         progress(data.len() as u64);
-        if data.len() as u64 != part.sum.bytes || sha(data) != part.sum.sha256 {
-            return Err("not the file".into());
+        if data.len() as u64 != part.sum.bytes || sha(&data) != part.sum.sha256 {
+            return Err(Fault::Wrong("not the file".into()));
         }
+        // As the real one: beside, then over a file there (made writable).
         fs::create_dir_all(to.parent().unwrap()).unwrap();
-        fs::write(to, data).map_err(|e| e.to_string())
+        let partial = to.with_extension("partial");
+        fs::write(&partial, &data).map_err(|e| Fault::Disk(e.to_string()))?;
+        durable::make_replaceable(to);
+        fs::rename(&partial, to).map_err(|e| Fault::Disk(e.to_string()))
     }
 
     fn pack(
@@ -146,6 +164,9 @@ fn fake() -> (Vec<Need>, Fake) {
         Fake {
             web,
             offline: false.into(),
+            disk_full: false.into(),
+            changed: false.into(),
+            panics: false.into(),
             downloads: AtomicUsize::new(0),
             free: Some(1 << 40),
             memory: Some(16 << 30),
@@ -611,4 +632,352 @@ fn a_stamp_goes_stale_when_the_file_changes() {
     drop(file);
     assert_eq!(look(&manifest[0], &places), Lookup::Unchecked(path));
     assert_eq!(ready(&manifest, &places), None);
+}
+
+/// Setup run once over `manifest` into a fresh `places` under `name`,
+/// everything got: its folder, the places, and the made-up web.
+fn set_up(name: &str, manifest: &[Need], work: Fake) -> (PathBuf, Places, Arc<Fake>) {
+    let dir = temp(name);
+    let places = places(&dir);
+    let work = Arc::new(work);
+    let (setup, told) = start(manifest.to_vec(), places.clone(), work.clone());
+    settle(&setup, &told).finished.expect("finished");
+    (dir, places, work)
+}
+
+/// The lines a repair says, in order.
+type Said = Arc<std::sync::Mutex<Vec<Result<String, String>>>>;
+
+/// The repair of `manifest` set up in `places` (each model in the store),
+/// what tells it, and what it says.
+fn repairing(
+    manifest: &[Need],
+    places: &Places,
+    work: &Arc<Fake>,
+) -> (Arc<Repair>, Unreadable, Said) {
+    let paths: Paths = (manifest.iter())
+        .map(|n| (n.file.clone(), n.at(&places.store)))
+        .collect();
+    let repair = Repair::new(manifest.to_vec(), places.clone(), work.clone(), &paths);
+    let said: Said = Arc::default();
+    let heard = Arc::clone(&said);
+    repair.tell_to(Box::new(move |line| heard.lock().unwrap().push(line)));
+    let unreadable = repair.unreadable();
+    (repair, unreadable, said)
+}
+
+/// Where the repair of `file` ends (no longer with its worker).
+fn settled(repair: &Repair, file: &str) -> repair::State {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match repair.state(file) {
+            Some(repair::State::Busy) | None => {}
+            Some(state) => return state,
+        }
+        assert!(Instant::now() < deadline, "{file} not settled");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// `unreadable` told that the model of `file` could not be read.
+fn fails(unreadable: &Unreadable, file: &str) {
+    let _ = unreadable.report(file, Err::<(), _>("not read as its format".to_owned()));
+}
+
+/// `path` written `data`, its time set to `at`.
+fn rewrite(path: &Path, data: &[u8], at: std::time::SystemTime) {
+    fs::write(path, data).unwrap();
+    let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+    file.set_modified(at).unwrap();
+}
+
+/// A file cut short (a download stopped, the disk) or grown: found at the
+/// start by its length alone, nothing hashed, and only that file got
+/// again.
+#[test]
+fn a_file_of_the_wrong_length_is_got_again_alone_without_hashing() {
+    let (manifest, mut work) = fake();
+    let (folder, web) = folder_need();
+    work.web.extend(web);
+    let manifest: Vec<Need> = manifest.into_iter().chain([folder]).collect();
+    let (dir, places, work) = set_up("wrong-length", &manifest, work);
+    for wrong in [&b"the wei"[..], b"the weights and more"] {
+        let at = dir.join("store/story/painter/w.bin");
+        fs::write(&at, wrong).unwrap();
+        assert_eq!(look(&manifest[2], &places), Lookup::Missing);
+        let before = work.downloads.load(Ordering::SeqCst);
+        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
+        let s = settle(&setup, &told);
+        let titles: Vec<&str> = s.steps.iter().map(|st| st.title.as_str()).collect();
+        assert_eq!(titles, ["Downloading the painter (us, 1 KB)"]);
+        assert_eq!(work.downloads.load(Ordering::SeqCst), before + 1);
+        assert_eq!(fs::read(&at).unwrap(), b"the weights");
+        assert!(ready(&manifest, &places).is_some());
+    }
+}
+
+/// A model gone while the player runs (here the packed recogniser) is
+/// got again alone once it is found gone, the user told as it begins and
+/// as it ends.
+#[test]
+fn a_model_gone_while_the_player_runs_is_got_again_alone() {
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("repair-gone", &manifest, work);
+    let asr = dir.join("store/asr.bin");
+    fs::remove_file(&asr).unwrap();
+    let before = work.downloads.load(Ordering::SeqCst);
+    let (repair, unreadable, said) = repairing(&manifest, &places, &work);
+    assert!(!unreadable.present("asr.bin", &asr));
+    assert_eq!(settled(&repair, "asr.bin"), repair::State::Whole);
+    // Its checkpoint's two parts; the speech model left alone.
+    assert_eq!(work.downloads.load(Ordering::SeqCst), before + 2);
+    assert_eq!(fs::read(&asr).unwrap(), b"part a, part b");
+    assert!(!dir.join("store/asr.bin.download").exists());
+    assert!(ready(&manifest, &places).is_some());
+    assert_eq!(
+        *said.lock().unwrap(),
+        [
+            Ok("The recogniser is missing or damaged: getting it again.".to_owned()),
+            Ok("The recogniser is got again and checked.".to_owned()),
+        ]
+    );
+}
+
+/// A model damaged at its length, its time kept (so that the start's
+/// stat takes it as checked), is found by its checksum once it cannot be
+/// read, and got again; its loader's failed setup is then tried again at
+/// once, not after its while.
+#[test]
+fn a_model_damaged_at_its_length_is_found_by_its_checksum_once_it_cannot_be_read() {
+    struct Net;
+    impl jodel_gpu::OnDevice for Net {
+        fn lost(&self) -> bool {
+            false
+        }
+    }
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("repair-damaged", &manifest, work);
+    let path = dir.join("store/speech.bin");
+    let was = fs::metadata(&path).unwrap().modified().unwrap();
+    rewrite(&path, b"the speech MODEL", was);
+    assert_eq!(look(&manifest[0], &places), Lookup::Checked(path.clone()));
+    let (repair, unreadable, said) = repairing(&manifest, &places, &work);
+    let (read, told) = (path.clone(), unreadable.clone());
+    let kept = Arc::new(jodel_gpu::Kept::new(
+        || None,
+        Box::new(move || {
+            let right = fs::read(&read).map_err(|e| e.to_string())? == b"the speech model";
+            let opened = right.then_some(Net).ok_or_else(|| "not a model".to_owned());
+            Ok((told.report("speech.bin", opened)?, "a GPU".to_owned()))
+        }),
+    ));
+    unreadable.retries("speech.bin", &kept);
+    assert!(!kept.usable());
+    assert_eq!(settled(&repair, "speech.bin"), repair::State::Whole);
+    assert_eq!(fs::read(&path).unwrap(), b"the speech model");
+    assert_eq!(said.lock().unwrap().len(), 2);
+    assert!(ready(&manifest, &places).is_some());
+    assert!(kept.usable(), "tried again at once");
+}
+
+/// A whole model that will not set up (the GPU's fault, say) is hashed
+/// once: nothing got, nothing said, and not looked at again while it stays
+/// as it is.
+#[test]
+fn a_whole_model_that_will_not_set_up_is_hashed_once_and_left() {
+    let (manifest, work) = fake();
+    let (_dir, places, work) = set_up("repair-whole", &manifest, work);
+    let before = work.downloads.load(Ordering::SeqCst);
+    let (repair, unreadable, said) = repairing(&manifest, &places, &work);
+    fails(&unreadable, "speech.bin");
+    assert_eq!(settled(&repair, "speech.bin"), repair::State::Whole);
+    fails(&unreadable, "speech.bin");
+    assert_eq!(
+        repair.state("speech.bin"),
+        Some(repair::State::Whole),
+        "not again"
+    );
+    fails(&unreadable, "not a model");
+    assert_eq!(repair.state("not a model"), None);
+    assert_eq!(work.downloads.load(Ordering::SeqCst), before);
+    assert!(said.lock().unwrap().is_empty());
+    assert!(ready(&manifest, &places).is_some(), "stamped again");
+}
+
+/// A model that cannot be got again (offline) is said, then rests a
+/// while: the failed reads meanwhile ask nothing.
+#[test]
+fn a_model_that_cannot_be_got_again_is_said_and_rests() {
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("repair-offline", &manifest, work);
+    fs::remove_file(dir.join("store/speech.bin")).unwrap();
+    work.offline.store(true, Ordering::SeqCst);
+    let before = work.downloads.load(Ordering::SeqCst);
+    let (repair, unreadable, said) = repairing(&manifest, &places, &work);
+    fails(&unreadable, "speech.bin");
+    let failed = settled(&repair, "speech.bin");
+    assert!(matches!(failed, repair::State::Failed(_)), "{failed:?}");
+    let Some(Err(line)) = said.lock().unwrap().last().cloned() else {
+        panic!("not said");
+    };
+    assert!(
+        line.contains("no network") && line.contains("online"),
+        "{line}"
+    );
+    fails(&unreadable, "speech.bin");
+    assert_eq!(repair.state("speech.bin"), Some(failed), "it rests");
+    assert_eq!(work.downloads.load(Ordering::SeqCst), before + 1);
+}
+
+/// A model whose source sends another file now is given up for the run:
+/// said once, never fetched again however often it fails to read.
+#[test]
+fn a_model_whose_source_sends_another_file_is_given_up_for_the_run() {
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("repair-wrong", &manifest, work);
+    fs::remove_file(dir.join("store/speech.bin")).unwrap();
+    work.changed.store(true, Ordering::SeqCst);
+    let before = work.downloads.load(Ordering::SeqCst);
+    let (repair, unreadable, said) = repairing(&manifest, &places, &work);
+    fails(&unreadable, "speech.bin");
+    assert_eq!(settled(&repair, "speech.bin"), repair::State::GivenUp);
+    for _ in 0..3 {
+        fails(&unreadable, "speech.bin");
+    }
+    assert_eq!(repair.state("speech.bin"), Some(repair::State::GivenUp));
+    assert_eq!(work.downloads.load(Ordering::SeqCst), before + 1);
+    let Some(Err(line)) = said.lock().unwrap().last().cloned() else {
+        panic!("not said");
+    };
+    assert!(line.contains("not tried again"), "{line}");
+}
+
+/// Two models told at once (the image model's two folders, say) are
+/// checked one after the other: both got again, and both stamped (no
+/// write to the stamps lost).
+#[test]
+fn two_models_told_at_once_are_both_got_again_and_stamped() {
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("repair-two", &manifest, work);
+    let speech = dir.join("store/speech.bin");
+    let was = fs::metadata(&speech).unwrap().modified().unwrap();
+    rewrite(&speech, b"the speech MODEL", was);
+    fs::remove_file(dir.join("store/asr.bin")).unwrap();
+    let (repair, unreadable, said) = repairing(&manifest, &places, &work);
+    fails(&unreadable, "speech.bin");
+    fails(&unreadable, "asr.bin");
+    assert_eq!(settled(&repair, "speech.bin"), repair::State::Whole);
+    assert_eq!(settled(&repair, "asr.bin"), repair::State::Whole);
+    assert_eq!(said.lock().unwrap().len(), 4);
+    assert_eq!(ready(&manifest, &places).map(|p| p.len()), Some(2));
+}
+
+/// While the data folder moves, a model gone is got again where the data
+/// folder goes, its stamp there: not into the folder left.
+#[test]
+fn a_model_is_got_again_where_the_data_folder_is_moving_to() {
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("repair-moving", &manifest, work);
+    let moved = dir.join("moved");
+    crate::store::mover::begin(
+        &dir.join("settings"),
+        &[(places.store.clone(), moved.clone())],
+    )
+    .unwrap();
+    fs::remove_file(places.store.join("speech.bin")).unwrap();
+    let (repair, unreadable, _) = repairing(&manifest, &places, &work);
+    fails(&unreadable, "speech.bin");
+    assert_eq!(settled(&repair, "speech.bin"), repair::State::Whole);
+    assert_eq!(
+        fs::read(moved.join("speech.bin")).unwrap(),
+        b"the speech model"
+    );
+    assert!(!places.store.join("speech.bin").exists());
+    let stamps = fs::read_to_string(moved.join(stamp::STAMP)).unwrap();
+    assert!(stamps.contains("speech.bin"), "{stamps}");
+    // Checked where it went (the rest comes over with the move).
+    let now = Places {
+        look: vec![dir.join("beside"), moved.clone()],
+        store: moved.clone(),
+    };
+    let at = moved.join("speech.bin");
+    assert_eq!(look(&manifest[0], &now), Lookup::Checked(at));
+}
+
+/// A damaged model made read-only, and a read-only stamp file, are
+/// replaced: they are the player's own.
+#[test]
+fn a_read_only_damaged_model_and_stamp_file_are_replaced() {
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("read-only", &manifest, work);
+    let path = dir.join("store/speech.bin");
+    let was = fs::metadata(&path).unwrap().modified().unwrap();
+    rewrite(&path, b"the speech MODEL", was + Duration::from_secs(1));
+    for file in [&path, &places.store.join(stamp::STAMP)] {
+        let mut permissions = fs::metadata(file).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(file, permissions).unwrap();
+    }
+    let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
+    let s = settle(&setup, &told);
+    assert_eq!(s.failure, None);
+    assert_eq!(fs::read(&path).unwrap(), b"the speech model");
+    assert!(ready(&manifest, &places).is_some());
+}
+
+/// A download the disk let down says to check the data folder, not the
+/// network.
+#[test]
+fn a_disk_fault_is_not_said_as_the_networks() {
+    let dir = temp("disk-fault");
+    let (manifest, work) = fake();
+    work.disk_full.store(true, Ordering::SeqCst);
+    let (setup, told) = start(manifest, places(&dir), Arc::new(work));
+    let f = settle(&setup, &told).failure.expect("a failure");
+    assert!(f.what.contains("no space left"), "{f:?}");
+    assert!(f.advice.contains("data folder can be written"), "{f:?}");
+}
+
+/// Downloads cut off that no model needed goes on from any more (one no
+/// longer needed on this machine, or renamed) are removed after setup;
+/// one a model goes on from stays.
+#[test]
+fn downloads_cut_off_that_no_model_needs_are_removed() {
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("partials", &manifest, work);
+    let store = &places.store;
+    let unneeded = [
+        store.join("old-model.bin.partial"),
+        store.join("story").join("painter").join("w.bin.partial"),
+    ];
+    let wanted = store.join("asr.bin.download").join("a.partial");
+    for file in unneeded.iter().chain([&wanted]) {
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, b"cut off").unwrap();
+    }
+    let (setup, told) = start(manifest, places.clone(), work);
+    settle(&setup, &told).finished.expect("finished");
+    for file in &unneeded {
+        assert!(!file.exists(), "{}", file.display());
+    }
+    assert!(wanted.exists(), "a model's own is gone on from later");
+    assert!(dir.join("store/speech.bin").is_file());
+}
+/// A repair that panics fails that model alone: the worker goes on, and
+/// the next model told is got again.
+#[test]
+fn a_repair_that_panics_fails_its_model_and_the_next_is_still_repaired() {
+    let (manifest, work) = fake();
+    let (dir, places, work) = set_up("repair-panics", &manifest, work);
+    fs::remove_file(dir.join("store/speech.bin")).unwrap();
+    work.panics.store(true, Ordering::SeqCst);
+    let (repair, unreadable, _) = repairing(&manifest, &places, &work);
+    fails(&unreadable, "speech.bin");
+    let failed = settled(&repair, "speech.bin");
+    assert!(matches!(failed, repair::State::Failed(_)), "{failed:?}");
+    work.panics.store(false, Ordering::SeqCst);
+    fs::remove_file(dir.join("store/asr.bin")).unwrap();
+    fails(&unreadable, "asr.bin");
+    assert_eq!(settled(&repair, "asr.bin"), repair::State::Whole);
+    assert!(dir.join("store/asr.bin").is_file());
 }

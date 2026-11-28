@@ -12,7 +12,9 @@ never a torn mix, and nothing half written ever has a file's name.
 | `rename_durable(from, to)` | a rename, both folders made durable |
 | `create_dir_all(dir)` | the folders missing made, each new one's entry made durable in its parent (the writers above make their folders this way) |
 | `sync_dir(dir)` | a folder's entries made durable (a directory handle's flush on Windows; nothing more where a file system cannot flush a folder) |
-| `is_temporary(name)`, `sweep(dir, older_than)`, `STALE` | the temporaries a crash left (`NAME.PID-N.tmp` files and folders, and the player's own copies under way, `.partial` and `.moving`), removed once old (a day, at the players' sweeps); a folder is as old as the youngest file directly in it |
+| `Resumable` | a file filled over more than one run (a download that may be cut off) under a fixed name beside it, `NAME.partial`: opened again it holds what was kept, `keep_only(n)` cuts it back, `sync()` keeps what came on the disk, `commit()` makes it durable and renames it over the file (made replaceable first); what it holds is the caller's to check first (a download's checksum). Never swept: it is kept on purpose (the player's setup removes those of its store that no model it needs goes on from) |
+| `make_replaceable(path)` | a file's read-only mark taken off (Windows), so that a rename over it or its removal is not refused; nothing else is widened |
+| `is_temporary(name)`, `sweep(dir, older_than)`, `STALE` | the temporaries a crash left (`NAME.PID-N.tmp` files and folders, and the player's moved copies under way, `.moving`), removed once old (a day, at the players' sweeps); a folder is as old as the youngest file directly in it |
 
 Users: the player's settings, session, queues, grids, caches (analyses,
 waveforms, lyrics), setup's downloads, stamps and packed model, the data
@@ -26,4 +28,5 @@ a file written in pieces and seeked has its name only once committed (and
 none when dropped), a failed commit leaves no temporary, a folder filled
 has its name only once committed (none when dropped or its name is taken;
 a rename refused for a while waited out, on Windows), folders made level
-by level, temporaries told apart and swept only once old.
+by level, temporaries told apart and swept only once old, a resumable file
+gone on from and cut back, a read-only file replaced.
