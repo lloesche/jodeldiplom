@@ -22,6 +22,9 @@
 # It needs bash, git and the POSIX tools (awk, grep, sort, xargs), GNU or
 # BSD: Linux, macOS, Git Bash on Windows. Exit status 1 if a rule fails.
 set -u
+# The POSIX tools come first: a Windows PATH can put System32's `sort` and
+# `find` ahead of them.
+PATH="/usr/bin:/bin:$PATH"
 
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root" || exit 2
