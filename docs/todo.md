@@ -61,47 +61,6 @@ Work agreed on but not started, roughly in the order it was raised.
     where it clearly helps (a repeated chorus drawn twice: reuse the
     first?). Every repair and every follow-up in the trace, to see what
     to fix in the prompt.
-- **Next, in this order:** the look shaders finished (the rest of the
-  passes, hundreds of presets, every one dancing to the song, the
-  guards), then the story generator's first version in the player, as
-  the prototype's v1: one picture per scene, taken apart by its depth
-  map into layers (cut-outs) and moved in parallax, faces held flat.
-- **Story scenes instead of the cover** (prototyped, kept outside the
-  repository; worth porting as an optional story mode). The language
-  model (Gemma 4 E4B at 4 bits, greedy so the same song gives the same
-  plan) reads the lyrics alone for the story (characters, scenes by the
-  song's sections); then, with that storyboard in its context, the look
-  from the file's tags, what it knows of the artist and album, genre,
-  era and mood: the art style from a wide list, palette, motifs, and the
-  song's look shaders (a preset from the catalogue, knob tweaks within
-  range, which music signal drives what, mood tags), its output held to
-  the catalogue's schema as it is written. One answer: the look's fields
-  come last in the plan's JSON, so every scene is already written when
-  the model chooses it. FLUX.2 klein 4B (Apache-2.0, BFL's FP8
-  weights, 4 steps; about 3 s a picture, 7.3 GB at its peak, so it fits
-  8 GB) draws one whole picture per scene; it won a bake-off against
-  SDXL-Lightning and Z-Image Turbo hands down (faces, following the
-  scene). Its text encoder is Qwen3-4B (Qwen's FP8), run for all of a
-  song's prompts and unloaded before the image model loads. Characters
-  from the lyrics get a portrait each, given to the scenes as klein's
-  own reference images (no IP-Adapter); the cover as a style reference
-  only when it is striking, its lettering painted out first. No face
-  redrawing afterwards (tried: it changed good faces and planted
-  features on profiles). Distilled, it takes no negative prompt: the
-  prompt itself asks for no text, writing or lettering; no text check
-  (the owner: what slips through is unreadable anyway). Each scene
-  moves by a slow camera push and either a depth
-  warp from its depth map (no edge to tear, so stronger than the
-  prototype's 1.5 %; the depth held flat over each whole head, found
-  from the face and the depth around it so a profile's nose and the
-  hair come with it, so a head moves as one piece and never bends)
-  or, where its depth splits cleanly (a subject well
-  in front of its background), two or three depth layers in parallax
-  with their edges feathered and lit into the scene (v1 and v2 of "Into
-  the Great Wide Open" show it working, painted styles most of all);
-  cut on the downbeats, the look's shaders over it. No second language-model pass to judge the pictures.
-  Dropped after trying: every layer drawn apart (a collage, bad faces),
-  an upscaling model, Gemma's audio input (useless for music).
 - **The song's objects in the game, not in the story:** a few objects
   per song (from the look's motifs) replacing the game's generic
   graphics where it already puts things: the coin out of a word hit,
@@ -117,34 +76,6 @@ Work agreed on but not started, roughly in the order it was raised.
   rows); if they should be tried out on the tab too, a row's layers
   become user data the way the patches are.
 
-- **Preparing by model, not by song.** The big models don't fit beside
-  each other and take about a minute to load, so the work for the songs
-  in the queue goes by stage: one queue per model (the language model's
-  questions and plans, then the image model's scenes and sprites, then
-  depth and the cut), and one GPU scheduler that, where the models do
-  not fit together, keeps one big model at a time and drains its queue
-  for every song before it swaps: the language model writes every
-  waiting song's storyboard, then the image model draws them all; a song
-  queued meanwhile waits until the image model's queue is empty, then
-  the language model is loaded again for it. Once every queue is empty
-  and has stayed so for a minute, every model is let go, on any card:
-  the memory goes back to the game and the other programs. Each queue
-  is first in, first out, no exceptions (not even for the song playing
-  next). Singing takes the GPU first. How many models stay loaded
-  follows the card's memory, read per backend through wgpu's escape
-  hatch (wgpu itself does not say): `VK_EXT_memory_budget` on Vulkan,
-  the device's recommended working set on Metal. A model stays resident
-  while what is loaded fits the budget less a margin for the window and
-  other programs, and is let go only when the next one would not fit
-  (the oldest unused first): on 16 GB the language model, the encoder
-  and the image model stay loaded together, on 8 GB they take turns,
-  slower but the same results.
-  Going over must never be found out by failing: Windows pages video
-  memory out to system memory silently and everything crawls. Each
-  model says what it holds and its peak while it works, so the plan is
-  made before loading. The existing workers (stems, the speech model,
-  word timing, the scenes' depth and cut-out) under the same scheduler;
-  each stage its icon in the queue, lit only when done.
 - **A theme as one file** (the owner, 2026-11-27): rework theming so a
   theme is a single file (YAML or similar) holding everything, loaded
   from disk instead of compiled in: its assets, its sounds' patches (in
@@ -157,44 +88,18 @@ Work agreed on but not started, roughly in the order it was raised.
   but the built-in themes are Rust constants and the conductor's
   patterns (when a sound lands, the arpeggios) are code.
 
-## The player
+## Faster inference on Apple's GPUs (jodel-gpu)
 
-- **Start-up (being done):** the window took about 20 s to show. It
-  opens at once on the setup screen, which shows what is loading, and
-  goes to the player when it is ready.
-- **Ctrl to preview (being done):** right after start nothing played
-  until a song had been started and stopped in the queue.
-- **AAC/M4A:** refused only because the decoder's `aac` feature is off;
-  turn it on once checked (gapless, seeks, HE-AAC refused).
+Measured on the owner's M4 Max (Metal, the f32 path), 2026-11-28:
 
-## Faster inference (jodel-gpu)
-
-All our networks run on our own WGSL kernels, so one engine's speed-ups
-help the speech model, the stems, the beats, the word timing and the
-scenes' depth and cut-out alike. Measure first (per-kernel GPU time,
-submissions and waits per network, bandwidth- or compute-bound), then in
-order of what it buys:
-
-- **Q4 matmuls on int8 dot products:** two nibbles a word into int8
-  lanes (`w & 0x0F0F0F0F`, `(w >> 4) & 0x0F0F0F0F`), the inputs rounded
-  to int8 per block of 32 in the same even/odd order with a per-block
-  sum for the zero point (as llama.cpp's q8_1), four multiply-adds an
-  instruction with `dot4I8Packed` (DP4a on NVIDIA, AMD, Intel; Metal
-  emulates it, so the path is picked per adapter).
-- **f16** for the activations where accuracy allows (twice the rate on
-  Apple and AMD).
-- **Matmul tiling:** workgroup-memory tiles, several outputs a thread,
-  vec4 loads, subgroup reductions; a GEMV kernel for one token at a time
-  and a GEMM one for batches.
-- **Fusion:** bias, activation, residual and norm in the matmul's tail;
-  flash attention (online softmax) for the long sequences.
-- **Fewer round trips:** the decoder's loop on the GPU (argmax there,
-  the tokens read back in batches), more dispatches a submission, no
-  per-run buffers or staging, bind groups kept.
-- **Workgroup sizes** per vendor, tuned once and kept; background work
-  flat out while the window rests.
-
-Being measured and done; the Mac's numbers to follow.
+- **Gemma's one-row matrix multiplies** (`gemv_f32_q4k` 6.4 s of 12.5 s
+  GPU in a 512-token answer, 53 tok/s): the target is the 70 to 101
+  tok/s others get on the same chip. Shape them as MLX and llama.cpp's
+  Metal kernels do (gpu/README.md, "Rules for kernels").
+- **Gemma's prompt** on Apple's 8x8 matrices, as klein's multiply and
+  attention already are.
+- **klein's attention** with its keys and values double-buffered (about
+  24 s a picture now; others report 18 to 27 s at about 1 MP).
 
 ## Checks on the Mac (the owner)
 
