@@ -163,13 +163,6 @@ impl Gpu {
         })
     }
 
-    /// A storage buffer of `bytes` (a multiple of 4), in whole vectors
-    /// ([`whole_vectors`]).
-    pub(crate) fn buffer(&self, label: &str, bytes: u64) -> Result<wgpu::Buffer, String> {
-        self.program
-            .storage(label, whole_vectors((bytes / 4) as usize))
-    }
-
     /// The bytes the device has taken from the GPU's memory now (its
     /// allocator's blocks), where the backend tells.
     pub(crate) fn reserved(&self) -> Option<u64> {

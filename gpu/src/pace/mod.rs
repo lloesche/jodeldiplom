@@ -94,6 +94,13 @@ const WORKING: Duration = Duration::from_millis(250);
 /// How long one submission should take on the GPU (and a picture model's
 /// dispatch at most: `image::plan`).
 pub(crate) const PIECE: Duration = Duration::from_millis(5);
+/// The dispatches a run's first submission takes where nothing is learned
+/// yet: one, no longer than a piece (`image::plan` cuts the long ones),
+/// the next sized from its time towards [`PIECE`], at most twice the last
+/// (`submit::learned`). An eighth of the run, as it was, put some 3 s of
+/// klein's first picture on the M4 Max in one submission (Gemma's first
+/// words 0.8 s), and the window's frames waited behind it.
+pub(crate) const FIRST: usize = 1;
 /// The longest rest after one.
 const LONGEST_REST: Duration = Duration::from_millis(60);
 /// The longest background work waits for other work at a time.
@@ -469,7 +476,7 @@ fn owe(pieces: &mut Pieces, took: Duration, duty: f32) {
 /// keeps to (the process's).
 #[derive(Clone, Debug)]
 pub(crate) struct Pieces {
-    /// Unknown yet (0): an eighth of a run's dispatches at first.
+    /// [`FIRST`] at first, then learned from each submission's time.
     per: usize,
     rests: bool,
     owed: Duration,
@@ -481,7 +488,7 @@ impl Pieces {
     /// For work that does not rest (the stems of the track playing).
     pub(crate) fn foreground() -> Pieces {
         Pieces {
-            per: 0,
+            per: FIRST,
             rests: false,
             owed: Duration::ZERO,
             counts: Counts::default(),
@@ -514,6 +521,19 @@ impl Pieces {
     /// What its runs cost so far.
     pub(crate) fn tally(&self) -> Tally {
         self.counts.tally()
+    }
+
+    /// Where the submission from dispatch `start` of a run of `len` ends:
+    /// as many as it takes now, in whole steps of `whole` dispatches
+    /// (`Recorded::whole`).
+    pub(crate) fn end(&self, start: usize, whole: usize, len: usize) -> usize {
+        (start + self.per.next_multiple_of(whole)).min(len)
+    }
+
+    /// `n` dispatches (of a run of `all`) took `took`: how many the next
+    /// submissions take, learned from it ([`submit::learned`]).
+    pub(crate) fn learn(&mut self, n: usize, all: usize, took: Duration) {
+        self.per = submit::learned(self.per, n, all, took);
     }
 
     /// Before a submission: background work gives way ([`give_way`]).

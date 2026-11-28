@@ -92,8 +92,8 @@ impl Net {
         let gpu = Gpu::shared()?;
         let program = &gpu.program;
         let weights = guarded(&program.device, || {
-            let w = program.storage(label, base.len() + tail)?;
-            let mut upload = program.upload();
+            let mut upload = program.upload((base.len() * 4) as u64);
+            let w = upload.storage(label, base.len() + tail, true)?;
             upload.write(&w, 0, &bytes(base))?;
             upload.finish()?;
             Ok(w)
@@ -157,7 +157,7 @@ impl Net {
         let program = &gpu.program;
         let (weights, base) = (&self.weights, self.base);
         let planned = guarded(&program.device, || {
-            let mut upload = program.upload();
+            let mut upload = program.upload((tail.len() * 4) as u64);
             upload.write(weights, (base * 4) as u64, &bytes(tail))?;
             upload.finish()?;
             // The plan's buffers made and zeroed, paced ([`Program::room`]).

@@ -530,13 +530,14 @@ impl Inner {
         let shape = Shape::of(device.adapter_info().backend, precision);
         let program = Program::new(device, queue, limits, "jodel-gpu gemma", &source());
         let mut weights = HashMap::new();
+        let mut upload = program.upload(layout.bytes());
         for (buf, words) in [(Buf::Small, layout.small), (Buf::Shared, layout.shared)]
             .into_iter()
             .chain((0..).zip(layout.groups()).map(|(g, w)| (Buf::Layers(g), w)))
         {
-            weights.insert(buf, program.storage(&format!("gemma {buf:?}"), words)?);
+            let buffer = upload.storage(&format!("gemma {buf:?}"), words, true)?;
+            weights.insert(buf, buffer);
         }
-        let mut upload = program.upload();
         model::load(file, &layout.pieces, |buf, at, data| {
             upload.write(&weights[&buf], (at * 4) as u64, data)
         })?;

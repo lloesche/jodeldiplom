@@ -9,7 +9,7 @@ use std::borrow::Cow;
 
 use jodel_tensors::{DType, Tensors};
 
-use super::gpu::{Gpu, Loaded};
+use super::gpu::{whole_vectors, Gpu, Loaded};
 use super::plan::{Buf, Format, Mat};
 
 /// The most bytes in one buffer of matrices.
@@ -139,7 +139,9 @@ fn fp8_bytes<'a>(
 }
 
 /// A buffer's pieces: each one's offset and bytes (none from
-/// shapes alone).
+/// shapes alone). A matrix made of several tensors' rows (stacked, or
+/// in pairs) is a piece for each run of rows, borrowed from its tensor
+/// as read, not copied into one.
 type Pieces<'a> = Vec<(u64, Option<Cow<'a, [u8]>>)>;
 
 /// A part's weights before they go up: the matrices' buffers (each its
@@ -157,10 +159,13 @@ impl<'a> Packing<'a> {
         }
     }
 
-    /// `len` bytes (`data`, where read) placed in a buffer (16-byte
-    /// aligned): its buffer and its first vector of four words.
-    fn place(&mut self, len: usize, data: Option<Cow<'a, [u8]>>) -> (Buf, usize) {
-        debug_assert!(data.as_ref().is_none_or(|d| d.len() == len));
+    /// `len` bytes (`parts`, where read: whole words each, one after
+    /// another) placed in a buffer (16-byte aligned): its buffer and its
+    /// first vector of four words.
+    fn place(&mut self, len: usize, parts: Option<Vec<Cow<'a, [u8]>>>) -> (Buf, usize) {
+        debug_assert!(parts
+            .as_ref()
+            .is_none_or(|p| p.iter().map(|d| d.len()).sum::<usize>() == len));
         let room = (len as u64).next_multiple_of(16);
         if self.buffers.last().is_none_or(|b| b.0 + room > MOST) {
             self.buffers.push((0, Vec::new()));
@@ -169,7 +174,20 @@ impl<'a> Packing<'a> {
         let b = &mut self.buffers[i];
         let at = b.0;
         b.0 += room;
-        b.1.push((at, data));
+        match parts {
+            Some(parts) => {
+                let mut to = at;
+                for part in parts {
+                    // A part's last word is padded with zeros as it goes
+                    // up (`Upload::write`): it would cover the next part.
+                    assert!(part.len().is_multiple_of(4), "a part of a matrix");
+                    let n = part.len() as u64;
+                    b.1.push((to, Some(part)));
+                    to += n;
+                }
+            }
+            None => b.1.push((at, None)),
+        }
         (Buf::W(i as u8), (at / 16) as usize)
     }
 
@@ -192,10 +210,11 @@ impl<'a> Packing<'a> {
         Ok(self.vector(&v))
     }
 
-    /// FP8 bytes (`n` rows of `k`) with their scales, placed.
+    /// FP8 bytes (`n` rows of `k`, in parts one after another) with their
+    /// scales, placed.
     fn fp8_placed(
         &mut self,
-        bytes: Option<Cow<'a, [u8]>>,
+        bytes: Option<Vec<Cow<'a, [u8]>>>,
         (n, k): (usize, usize),
         scales: &[f32],
     ) -> Mat {
@@ -217,18 +236,17 @@ impl<'a> Packing<'a> {
 
     /// An FP8 matrix as it is.
     pub(crate) fn fp8(&mut self, w: &Fp8<'a>) -> Mat {
-        self.fp8_placed(w.bytes.map(Cow::Borrowed), (w.n, w.k), &w.scales)
+        let bytes = w.bytes.map(|b| vec![Cow::Borrowed(b)]);
+        self.fp8_placed(bytes, (w.n, w.k), &w.scales)
     }
 
     /// FP8 matrices of the same width, one under another.
     pub(crate) fn fp8_stack(&mut self, parts: &[Fp8<'a>]) -> Mat {
         let k = parts[0].k;
         assert!(parts.iter().all(|p| p.k == k));
-        let bytes = parts
-            .iter()
-            .map(|p| p.bytes)
-            .collect::<Option<Vec<_>>>()
-            .map(|b| Cow::Owned(b.concat()));
+        let bytes = (parts.iter())
+            .map(|p| p.bytes.map(Cow::Borrowed))
+            .collect::<Option<Vec<_>>>();
         let scales: Vec<f32> = parts
             .iter()
             .flat_map(|p| p.scales.iter().copied())
@@ -250,13 +268,11 @@ impl<'a> Packing<'a> {
             }
         }
         let bytes = gate.bytes.zip(up.bytes).map(|(gate, up)| {
-            let mut bytes = Vec::with_capacity(2 * n * k);
-            for g in 0..n / 64 {
-                for part in [gate, up] {
-                    bytes.extend_from_slice(&part[g * 64 * k..(g + 1) * 64 * k]);
-                }
-            }
-            Cow::Owned(bytes)
+            (0..n / 64)
+                .flat_map(|g| {
+                    [gate, up].map(|part| Cow::Borrowed(&part[g * 64 * k..(g + 1) * 64 * k]))
+                })
+                .collect()
         });
         self.fp8_placed(bytes, (2 * n, k), &scales)
     }
@@ -270,7 +286,7 @@ impl<'a> Packing<'a> {
     ) -> Result<Mat, String> {
         assert_eq!(k % 32, 0);
         let bytes = src.bytes(name, DType::Bf16, &[n, k])?;
-        let (buf, at) = self.place(n * k * 2, bytes.map(Cow::Borrowed));
+        let (buf, at) = self.place(n * k * 2, bytes.map(|b| vec![Cow::Borrowed(b)]));
         Ok(Mat {
             buf,
             at,
@@ -310,7 +326,7 @@ impl<'a> Packing<'a> {
                     }
                 }
             }
-            Cow::Owned(out)
+            vec![Cow::Owned(out)]
         });
         let bias = self.bf16_vector(src, &format!("{name}.bias"), cout)?;
         let (buf, at) = self.place(cout * ldw * 2, out);
@@ -341,7 +357,7 @@ impl<'a> Packing<'a> {
     /// The bytes it takes on the GPU: its buffers of matrices and its f32
     /// tensors ([`Loaded::bytes`] once uploaded).
     pub(crate) fn bytes(&self) -> u64 {
-        let whole = |floats: usize| (super::gpu::whole_vectors(floats).max(1) * 4) as u64;
+        let whole = |floats: usize| (whole_vectors(floats).max(1) * 4) as u64;
         (self.buffers.iter())
             .map(|b| whole((b.0 / 4) as usize))
             .sum::<u64>()
@@ -354,20 +370,19 @@ impl<'a> Packing<'a> {
         let gpu = Gpu::shared()?;
         let program = &gpu.program;
         let (matrices, small) = crate::engine::guarded(&program.device, || {
-            let mut upload = program.upload();
+            let mut upload = program.upload(self.bytes());
             let mut matrices = Vec::new();
             for (i, (len, pieces)) in self.buffers.iter().enumerate() {
-                let b = gpu.buffer(&format!("{label} matrices {i}"), *len)?;
+                let words = whole_vectors((len / 4) as usize);
+                let b = upload.storage(&format!("{label} matrices {i}"), words, true)?;
                 for (at, data) in pieces {
                     let data = data.as_ref().ok_or("weights of shapes alone")?;
                     upload.write(&b, *at, data)?;
                 }
                 matrices.push(b);
             }
-            let small = gpu.buffer(
-                &format!("{label} tensors"),
-                (self.small.len().max(1) * 4) as u64,
-            )?;
+            let words = whole_vectors(self.small.len().max(1));
+            let small = upload.storage(&format!("{label} tensors"), words, true)?;
             upload.write(&small, 0, &crate::engine::bytes(&self.small))?;
             upload.finish()?;
             Ok((matrices, small))

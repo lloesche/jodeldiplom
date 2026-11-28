@@ -382,7 +382,7 @@ fn emulated_eight() -> Option<Loaded> {
         name: shared.name.clone(),
         coop: Some(Tiles::Eight),
     }));
-    let small = gpu.buffer("test tensors", 16).unwrap();
+    let small = gpu.program.storage("test tensors", 4).unwrap();
     Some(Loaded {
         gpu,
         matrices: Vec::new(),

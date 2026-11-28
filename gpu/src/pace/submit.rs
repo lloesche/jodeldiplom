@@ -4,6 +4,7 @@
 //! of as long ([`Uploading`]), each giving way as [`super`] says.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -113,7 +114,7 @@ pub(crate) fn finish<K: Kernels>(
     if let Some(from) = start {
         let now = Instant::now();
         track.found_done(now);
-        pieces.per = learned(pieces.per, left.n, left.all, now - from);
+        pieces.learn(left.n, left.all, now - from);
     }
     Ok(())
 }
@@ -130,10 +131,15 @@ fn in_a_piece(amount: f64, took: Duration) -> f64 {
 
 /// Towards [`PIECE`] a submission ([`toward`]), from `per` dispatches,
 /// where `n` (of a run of `all`) took `took` (at least one, none where
-/// there are none).
-fn learned(per: usize, n: usize, all: usize, took: Duration) -> usize {
+/// there are none), at most twice the more of `per` and `n` (a submission
+/// of whole steps, or one taken with the one before, takes more than
+/// `per`; a run's short last one fewer): dispatches cost unlike amounts (a
+/// norm some microseconds, a multiply's slice a piece), so a submission of
+/// cheap ones says little of the next, and one twice as long as the last
+/// is the most a wrong guess costs.
+pub(super) fn learned(per: usize, n: usize, all: usize, took: Duration) -> usize {
     let next = toward(per as f64, in_a_piece(n as f64, took)).round() as usize;
-    next.clamp(1, all.max(1))
+    next.min(2 * per.max(n)).clamp(1, all.max(1))
 }
 
 /// Waits until the GPU has done the submission `index` (numbered `number`)
@@ -160,8 +166,8 @@ fn wait<K>(
 }
 
 /// A batch of weights going up ([`Uploading`]): the first's bytes, and
-/// the fewest and the most (wgpu stages each write until it is sent, so a
-/// larger batch holds more staging at once).
+/// the fewest and the most (a batch is staged whole until it is sent, so a
+/// larger one holds more staging at once).
 const UPLOAD_FIRST: u64 = 32 << 20;
 const UPLOAD_LEAST: u64 = 4 << 20;
 const UPLOAD_MOST: u64 = 256 << 20;
@@ -172,47 +178,177 @@ const UPLOAD_MOST: u64 = 256 << 20;
 /// [`UPLOAD_MOST`]), each sent and waited for. A background thread's give
 /// way before each as its runs' submissions do, and count as its work
 /// running, so a window starved while they go up is told
-/// ([`super::tick`]).
+/// ([`super::tick`]). The writes wait for their batch in one staging
+/// buffer, kept from batch to batch ([`Staging`]).
 pub(crate) struct Uploading {
     pieces: Pieces,
     batch: u64,
     /// The fewest and the most bytes a batch takes.
     bounds: (u64, u64),
-    /// The bytes written since the last batch was sent.
-    staged: u64,
+    /// The bytes the batch holds so far, written or zeroed: what its time
+    /// is learned from.
+    batched: u64,
+    /// Where the batch's next write goes in the staging: the batch's
+    /// writes lie in it one after another.
+    cursor: u64,
+    /// The bytes still to be written, as the upload was told (whole
+    /// words): the staging is no larger than they need.
+    left: u64,
+    staging: Option<Staging>,
+    /// The batch's writes, copied from the staging when it is sent.
+    copies: Vec<StagedWrite>,
+}
+
+/// One write of a batch: its bytes' place in the staging (`from`), its
+/// buffer (`to`), where in that (`at`), and how many (`len`).
+struct StagedWrite {
+    from: u64,
+    to: wgpu::Buffer,
+    at: u64,
+    len: u64,
+}
+
+/// Where a batch's writes wait to be copied to their buffers
+/// ([`Uploading`]): a buffer the processor writes, the batch's writes one
+/// after another in it, as large as a batch or what is left to write,
+/// whichever is less (a power of two: made again only where the batches
+/// outgrow it), kept from batch to batch of an upload. `wgpu` zeroes a buffer mapped as it is made on the processor
+/// (besides the system's zeroing of its fresh pages), so it is made no
+/// larger than it must be. `wgpu`'s own writes stage each in a new buffer:
+/// fresh memory for every batch, some 13 GB of it for the story's models.
+/// Unmapped while a batch is copied from it, and mapped again as that
+/// batch is waited for. It goes with its upload: kept by its program, it
+/// would hold up to [`UPLOAD_MOST`] for the program's life that no
+/// footprint counts (the beat network's 99 MB took 386).
+struct Staging {
+    buffer: wgpu::Buffer,
+    /// What tells that it is mapped again, where it is being mapped (it is
+    /// mapped otherwise).
+    mapping: Option<Receiver<Result<(), wgpu::BufferAsyncError>>>,
+}
+
+impl Staging {
+    /// One of `size` bytes on `program`'s device, mapped.
+    fn new<K>(program: &Program<K>, size: u64) -> Staging {
+        Staging {
+            buffer: program.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("jodel-gpu upload"),
+                size,
+                usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: true,
+            }),
+            mapping: None,
+        }
+    }
+
+    /// The buffer, mapped: where it was being mapped, once it is (as the
+    /// batch copied from it was waited for, mostly; else waited for now).
+    fn ready<K: Kernels>(&mut self, program: &Program<K>) -> Result<&wgpu::Buffer, String> {
+        if let Some(rx) = self.mapping.take() {
+            let mapped = match rx.try_recv() {
+                Ok(mapped) => mapped,
+                Err(_) => {
+                    program.wait()?;
+                    rx.recv().map_err(|e| e.to_string())?
+                }
+            };
+            mapped.map_err(|e| e.to_string())?;
+        }
+        Ok(&self.buffer)
+    }
 }
 
 impl Uploading {
-    /// For the calling thread's work.
-    pub(crate) fn new() -> Uploading {
+    /// For the calling thread's work, `bytes` to be written in all.
+    pub(crate) fn new(bytes: u64) -> Uploading {
         Uploading {
             pieces: Pieces::for_this_thread(),
             batch: UPLOAD_FIRST,
             bounds: (UPLOAD_LEAST, UPLOAD_MOST),
-            staged: 0,
+            batched: 0,
+            cursor: 0,
+            left: bytes,
+            staging: None,
+            copies: Vec::new(),
         }
     }
 
-    /// For checks: batches of `batch` bytes, always.
+    /// For checks: batches of `least` bytes to start, learned up to `most`;
+    /// `bytes` to be written.
     #[cfg(test)]
-    pub(crate) fn of(batch: u64) -> Uploading {
+    pub(crate) fn within(least: u64, most: u64, bytes: u64) -> Uploading {
         Uploading {
-            batch,
-            bounds: (batch, batch),
-            ..Uploading::new()
+            batch: least,
+            bounds: (least, most),
+            ..Uploading::new(bytes)
         }
+    }
+
+    /// For checks: batches of `bytes` from the next one on, always.
+    #[cfg(test)]
+    pub(crate) fn batches_of(&mut self, bytes: u64) {
+        (self.batch, self.bounds) = (bytes, (bytes, bytes));
+    }
+
+    /// For checks: the bytes of the staging now (none before a write).
+    #[cfg(test)]
+    pub(crate) fn staging_bytes(&self) -> u64 {
+        self.staging.as_ref().map_or(0, |s| s.buffer.size())
     }
 
     /// The bytes the batch has room for still, whole words (one at least).
     pub(crate) fn room(&self) -> u64 {
-        (self.batch.saturating_sub(self.staged) & !3).max(4)
+        (self.batch.saturating_sub(self.cursor) & !3).max(4)
     }
 
-    /// `n` bytes written to `program`'s queue: the batch sent where it is
-    /// full.
-    pub(crate) fn wrote<K: Kernels>(&mut self, program: &Program<K>, n: u64) -> Result<(), String> {
-        self.staged += n;
-        if self.staged >= self.batch {
+    /// `data` (whole words, no more than [`Uploading::room`]) to go to
+    /// `buffer` from its byte `at` with the batch: staged now, the batch
+    /// sent where it is full.
+    pub(crate) fn write<K: Kernels>(
+        &mut self,
+        program: &Program<K>,
+        buffer: &wgpu::Buffer,
+        at: u64,
+        data: &[u8],
+    ) -> Result<(), String> {
+        let len = data.len() as u64;
+        assert!(len.is_multiple_of(4), "a write of {len} bytes");
+        // A batch's first write makes the staging as large as the batch or
+        // what is left, whichever is less (this write at least), where the
+        // one there is smaller.
+        if self.cursor == 0 {
+            let size = self.batch.min(self.left).max(len).next_power_of_two();
+            if self.staging.as_ref().is_none_or(|s| s.buffer.size() < size) {
+                self.staging = Some(Staging::new(program, size));
+            }
+        }
+        let staging = (self.staging.as_mut()).expect("made at the batch's first write");
+        let from = self.cursor;
+        let staged = staging.ready(program)?;
+        // The staging holds the bytes written and no more: past it, the
+        // upload was told fewer than it writes.
+        assert!(
+            from + len <= staged.size(),
+            "an upload told fewer bytes than it writes"
+        );
+        // A mapping starts on 8 bytes: from the one at or below the write.
+        let start = from & !7;
+        staged
+            .get_mapped_range_mut(start..from + len)
+            .map_err(|e| e.to_string())?
+            .slice((from - start) as usize..)
+            .copy_from_slice(data);
+        self.copies.push(StagedWrite {
+            from,
+            to: buffer.clone(),
+            at,
+            len,
+        });
+        self.cursor = from + len;
+        self.batched += len;
+        self.left = self.left.saturating_sub(len);
+        // Full: no room for another word.
+        if self.cursor + 4 > self.batch {
             self.send(program, None)?;
         }
         Ok(())
@@ -237,31 +373,62 @@ impl Uploading {
         let mut at = 0;
         while at < size {
             let n = self.room().min(size - at);
-            let mut encoder = program
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-            encoder.clear_buffer(buffer, at, Some(n));
-            self.staged += n;
-            self.send(program, Some(encoder.finish()))?;
+            self.send(program, Some((buffer, at, n)))?;
             at += n;
         }
         Ok(())
     }
 
-    /// The bytes written (and `commands`) sent and waited for, after giving
-    /// way; the next batch's size learned from how long it took.
+    /// The batch's writes copied from the staging (and `clear`'s bytes of
+    /// its buffer zeroed after them, counted in the batch: from where, how
+    /// many) sent and waited for, after giving way, the staging mapped again
+    /// meanwhile; the next batch's size learned from how long it took.
     fn send<K: Kernels>(
         &mut self,
         program: &Program<K>,
-        commands: Option<wgpu::CommandBuffer>,
+        clear: Option<(&wgpu::Buffer, u64, u64)>,
     ) -> Result<(), String> {
+        let mut encoder = program
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let copied = !self.copies.is_empty();
+        if copied {
+            let staging = self
+                .staging
+                .as_ref()
+                .expect("made at the batch's first write");
+            staging.buffer.unmap();
+            for c in self.copies.drain(..) {
+                encoder.copy_buffer_to_buffer(&staging.buffer, c.from, &c.to, c.at, c.len);
+            }
+        }
+        if let Some((buffer, at, n)) = clear {
+            encoder.clear_buffer(buffer, at, Some(n));
+            self.batched += n;
+        }
         self.pieces.before();
         let made = Instant::now();
-        program.queue.submit(commands);
+        program.queue.submit([encoder.finish()]);
+        if copied {
+            // Mapped once the GPU has copied from it: the wait below covers
+            // it.
+            let staging = self
+                .staging
+                .as_mut()
+                .expect("made at the batch's first write");
+            let (tx, rx) = std::sync::mpsc::channel();
+            staging
+                .buffer
+                .map_async(wgpu::MapMode::Write, .., move |r| {
+                    let _ = tx.send(r);
+                });
+            staging.mapping = Some(rx);
+        }
         program.wait()?;
         let took = made.elapsed();
-        self.batch = next_batch(self.batch, self.staged, took, self.bounds);
-        self.staged = 0;
+        self.batch = next_batch(self.batch, self.batched, took, self.bounds);
+        self.batched = 0;
+        self.cursor = 0;
         self.pieces.after(took);
         Ok(())
     }
@@ -390,9 +557,6 @@ fn submissions<K: Kernels, B>(
 ) -> Result<Ran, String> {
     let (device, queue, label) = (&program.device, &program.queue, program.label());
     let (groups, ops) = (recorded.groups(), recorded.dispatches());
-    if pieces.per == 0 {
-        pieces.per = ops.len().div_ceil(8).max(1);
-    }
     let _live = (!pieces.rests).then(|| Live::start(pieces.pace));
     let (mut prelude, mut finish) = (Some(prelude), Some(finish));
     let mut start = 0;
@@ -405,7 +569,7 @@ fn submissions<K: Kernels, B>(
     // decoder steps (`Recorded::whole`).
     let whole = recorded.whole;
     loop {
-        let end = (start + pieces.per.next_multiple_of(whole)).min(ops.len());
+        let end = pieces.end(start, whole, ops.len());
         let last = end == ops.len();
         let recording = Instant::now();
         let mut encoder =
@@ -499,7 +663,7 @@ fn settle<K: Kernels>(
     // Towards PIECE a submission, smoothly (at least one, none where there
     // are none).
     if !std::mem::take(&mut timing.after_left) {
-        pieces.per = learned(pieces.per, n, all, took);
+        pieces.learn(n, all, took);
     }
     pieces.after(took);
     Ok(())

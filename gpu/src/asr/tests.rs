@@ -84,8 +84,8 @@ fn a_fused_step_is_the_unfused_one() {
 
 /// A step of the decoder is never split between submissions: the steps
 /// cost a submission each at most, for a piece alone and for pieces heard
-/// together (split, the first submissions, an eighth of a run of four
-/// steps, would be half a step each).
+/// together (split, the first submission, of one dispatch, would be a
+/// part of a step).
 #[test]
 fn a_step_costs_one_round_trip_at_most() {
     let Some(asr) = common::recogniser() else {

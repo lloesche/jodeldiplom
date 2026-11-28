@@ -285,12 +285,21 @@ A run as one submission keeps the GPU until it is done, and a window
 drawing on the same GPU waits for it: a stutter every chunk. So every
 network here (the separator, the beat network, the speech models) goes in
 submissions of about 5 ms of GPU time each, their size learned as they
-run (`pace`), and other work on the GPU gets in between. The next
-submission is made while the last one runs (that one waited for then),
-so the GPU never waits for the processor between them. The recogniser's
-decoder steps are never split (`Recorded::whole`): a submission is
-whole steps, one at least, so a step costs one submission and one wait
-at most; where a step takes longer than 5 ms, the window waits for it.
+run (`pace`), and other work on the GPU gets in between. A run's first
+submission, before anything is learned, is one dispatch (one whole step
+of the recogniser's), and the size learned from a submission's time is
+at most twice the more of the size it had and the dispatches that
+submission held (`pace::submit::learned`; the next is made before the
+last is settled, so it lags one behind): an eighth of the run, as the
+first was before, put some 3 s of klein's first picture on the M4 Max
+in one submission (Gemma's first words 0.8 s), the window's frames
+behind it, and a few cheap dispatches say little of how many costly
+ones fit. The next submission is made while the last one runs (that one
+waited for then), so the GPU never waits for the processor between
+them. The recogniser's decoder steps are never split
+(`Recorded::whole`): a submission is whole steps, one at least, so a
+step costs one submission and one wait at most; where a step takes
+longer than 5 ms, the window waits for it.
 The language model's steps, about 21 ms on an M4 Max, may be split. A
 run left running (a decoding model makes its next run before it reads
 the last) learns from its time, which starts where the run before it,
@@ -336,7 +345,23 @@ background work runs flat out. A model's weights go up the same way
 to start, then learned, 4 to 256 MB; a large tensor written in parts),
 each sent and waited for, a background thread's giving way between them
 and counting as its work running, so that a window starved while a model
-loads (on the M4 Max, as while klein draws) is told and given way to.
+loads (on the M4 Max, as while klein draws) is told and given way to. A
+batch's writes wait in one staging buffer, one after another, the buffer
+as large as the batches or what the upload is left to write, whichever
+is less (`wgpu` fills a buffer mapped as it is made with zeros on the
+processor, so a constants' few KB stage in a few KB, not 32 MB), kept
+from batch to batch of an upload (not past it: no footprint counts it),
+and copied from there to their buffers when the batch is sent: `wgpu`'s
+own writes stage each in a new buffer, fresh memory every time (some
+13 GB of it for the story's models). A matrix made of several tensors'
+rows (klein's and the text encoder's stacked and paired ones) goes up a
+run of rows at a time from the checkpoint as read, not copied into one
+first. The fresh memory a load still takes on the processor is the
+checkpoint's own: `SafeTensors::open` reads a whole `.safetensors` file
+into memory (klein's transformer, autoencoder and text encoder, some
+9.4 GB), and `Gguf::read` each of Gemma's tensors into a buffer of its
+own (some 5 GB in all, one at a time), each page zeroed by the system
+first (`docs/todo.md`: map them instead).
 Every model's weights go so: Gemma's, klein's transformer, text encoder
 and autoencoder, the recogniser's, the depth and cut-out networks', the
 separator's, the beat network's and the speech model's (no tensor is

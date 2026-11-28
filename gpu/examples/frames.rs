@@ -43,12 +43,14 @@ const FRAME: Duration = Duration::from_micros(16_667);
 /// The picture a frame writes: 2560 × 1440.
 const PIXELS: u32 = 2560 * 1440;
 
-/// The parts frames are told apart by: the rest (the start, the first
-/// picture and words, which set the plans up), klein's picture, Gemma's
-/// prompt, Gemma's steps, and each model's load (its weights going up, its
-/// first plan's or context's room made: klein's text encoder and drawer,
-/// some 8 GB; Gemma, some 5 GB; the scenes' depth and cut-out).
-const PARTS: [&str; 9] = [
+/// The parts frames are told apart by: the rest (the start, the prompt's
+/// encoding), klein's picture, Gemma's prompt, Gemma's steps, each model's
+/// load (its weights going up, its first plan's or context's room made:
+/// klein's text encoder and drawer, some 8 GB; Gemma, some 5 GB; the
+/// scenes' depth and cut-out), and each model's first use after its load
+/// (klein's first picture and Gemma's first words, which set the plans up
+/// and are the first work on the weights put up).
+const PARTS: [&str; 11] = [
     "the rest",
     "klein",
     "gemma's prompt",
@@ -58,6 +60,8 @@ const PARTS: [&str; 9] = [
     "gemma loading",
     "depth loading",
     "cut-out loading",
+    "klein's first picture",
+    "gemma's first words",
 ];
 
 /// The window's stand-in: its own device, a pass a frame.
@@ -149,7 +153,7 @@ impl Window {
 
 /// Each part's frames: their latencies, and whether background work was
 /// giving way then ([`jodel_gpu::pace::duty`] below 1).
-type Latencies = Arc<Mutex<[Vec<(Duration, bool)>; 9]>>;
+type Latencies = Arc<Mutex<[Vec<(Duration, bool)>; PARTS.len()]>>;
 
 /// A frame the GPU took this long to do is late: the next starts a quarter
 /// of a frame past its slot.
@@ -245,8 +249,8 @@ fn main() {
             Precision::Fast,
         )
         .unwrap();
-        part.store(0, Ordering::Release);
         // A first picture sets the plans up.
+        part.store(9, Ordering::Release);
         drawer.paint(&embeds, 1, (1344, 768), &[]).unwrap();
         part.store(1, Ordering::Release);
         let started = Instant::now();
@@ -271,7 +275,7 @@ fn main() {
             verse.repeat(64)
         ));
         gemma.reserve(prompt.len() + tokens + 64).unwrap();
-        part.store(0, Ordering::Release);
+        part.store(10, Ordering::Release);
         gemma
             .generate(&prompt, 16, |_| std::ops::ControlFlow::Continue(()))
             .unwrap();

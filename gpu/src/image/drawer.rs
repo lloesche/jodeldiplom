@@ -426,7 +426,9 @@ fn plan(transformer: &Transformer, vae: &Vae, key: &Key, coop: Option<Tiles>) ->
 #[cfg(test)]
 mod tests {
     use super::{pack, plan, Key, Packing, Part, Source, Tiles};
-    use crate::image::plan::{cut, flops, Op};
+    use std::time::Duration;
+
+    use crate::image::plan::{cut, flops, Op, Plan};
     use crate::image::Kernel;
 
     /// A picture of 1344 × 768 with a reference, on f32 and on either
@@ -501,6 +503,75 @@ mod tests {
                 let ms = share * p.piece * 1e3;
                 eprintln!("{coop:?}: the largest dispatch {kernel:?} {groups:?}, about {ms:.1} ms");
             }
+        }
+    }
+
+    /// A picture's submissions as a new background pace sizes them
+    /// ([`crate::pace::Pieces`]: `end` for each, `learn` from each one's
+    /// time once the next is made, as the run does), each dispatch timed at
+    /// the rate its plan sizes its slices by (one not cut 20 µs, a
+    /// submission 150 µs more): the first two take no more than two pieces,
+    /// and none more than its path's bound, a little over what it takes
+    /// now (10.6 pieces on f32, 3.3 on 16 × 16, 8.1 on 8 × 8: a few cheap
+    /// dispatches, then twice as many costly ones, made before the one
+    /// that would shrink them is settled). An eighth of the run, the first
+    /// submission before, took some 3 s on the M4 Max. The first
+    /// submissions' times and the longest are printed (`--nocapture`).
+    #[test]
+    fn a_pictures_submissions_are_short_from_the_first() {
+        let mut packing = Packing::new();
+        let (transformer, vae) =
+            pack((Source::Shapes, Source::Shapes), &mut packing).expect("shapes alone");
+        let key = Key {
+            width: 1344,
+            height: 768,
+            refs: Vec::new(),
+            part: Part::Picture,
+        };
+        let seconds =
+            |p: &Plan, op: &Op| cut(op.kernel).map_or(20e-6, |c| flops(op) / p.budget(c) * p.piece);
+        for coop in [None, Some(Tiles::Sixteen), Some(Tiles::Eight)] {
+            let (p, _) = plan(&transformer, &vae, &key, coop);
+            let all = p.ops.len();
+            let mut pieces = crate::pace::Pieces::resting();
+            let (mut at, mut times, mut running) = (0, Vec::new(), None);
+            while at < all {
+                let end = pieces.end(at, 1, all);
+                let took = 150e-6 + p.ops[at..end].iter().map(|op| seconds(&p, op)).sum::<f64>();
+                times.push(took);
+                // As the run does: the one before is settled once this one
+                // is made.
+                if let Some((n, t)) = running.replace((end - at, took)) {
+                    pieces.learn(n, all, Duration::from_secs_f64(t));
+                }
+                at = end;
+            }
+            let longest = times.iter().copied().fold(0.0, f64::max);
+            let eighth: f64 = (p.ops[..all.div_ceil(8)].iter())
+                .map(|op| seconds(&p, op))
+                .sum();
+            let ms: Vec<String> = times
+                .iter()
+                .take(8)
+                .map(|t| format!("{:.1}", t * 1e3))
+                .collect();
+            eprintln!(
+                "{coop:?}: {} submissions, the first {} ms, the longest {:.1} ms \
+                 (an eighth of the run {:.0} ms)",
+                times.len(),
+                ms.join(" "),
+                longest * 1e3,
+                eighth * 1e3
+            );
+            let first = times[0].max(times[1]);
+            assert!(first <= 2.0 * p.piece, "{coop:?}: the first {first} s");
+            // The most pieces a submission takes on this path.
+            let most = match coop {
+                None => 11.5,
+                Some(Tiles::Sixteen) => 3.6,
+                Some(Tiles::Eight) => 9.0,
+            };
+            assert!(longest <= most * p.piece, "{coop:?}: {longest} s");
         }
     }
 
