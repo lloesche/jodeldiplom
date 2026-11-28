@@ -96,7 +96,7 @@ pub const SAMPLE_RATE: u32 = 22_050;
 
 /// Changes whenever the analysis gives different results, so stored
 /// analyses can be recomputed.
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 
 /// A region whose candidates agree at least this much has a clear beat.
 pub const CLEAR: f64 = 0.5;

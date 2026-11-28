@@ -6,8 +6,10 @@
 //! A Next pressed in the mode on a song still being prepared waits for it
 //! ([`start_when_ready`]).
 
-use super::{in_mode, lyrics_of, song_index, SongLyrics};
-use crate::core::{job_done, job_words, Effect, Gpu, Job, State, StoryFact};
+use std::path::Path;
+
+use super::{in_mode, lyrics_of, lyrics_wanted, song_index, SongLyrics};
+use crate::core::{job_done, job_words, Effect, Gpu, Job, LyricsFacts, State, StoryFact};
 
 /// Why a song with no story cannot be played in the game.
 pub const NO_STORY: &str = "no story could be made for it (it can be sung with the game off)";
@@ -72,21 +74,59 @@ pub fn not_singable(state: &State, index: usize) -> Option<NotSingable> {
     if !left.is_empty() {
         return Some(NotSingable::Preparing(left.join("; ")));
     }
-    match lyrics_of(state, index) {
-        // Done, but not here yet (read from the cache as they are wanted).
-        None | Some(SongLyrics::Pending) => {
-            Some(NotSingable::Preparing(job_words(state, path, Job::Lyrics)))
-        }
-        Some(SongLyrics::NotFound) => Some(NotSingable::Nothing("no lyrics were found for it")),
-        Some(SongLyrics::Instrumental) => Some(NotSingable::Nothing("it is an instrumental")),
-        Some(SongLyrics::Failed(_)) => {
-            Some(NotSingable::Nothing("its lyrics could not be looked up"))
-        }
-        Some(SongLyrics::Found { .. }) => {
+    match words(state, index, path) {
+        Words::Coming => Some(NotSingable::Preparing(job_words(state, path, Job::Lyrics))),
+        Words::Nothing(why) => Some(NotSingable::Nothing(why)),
+        Words::Found => {
             let story = state.facts.get(path).and_then(|f| f.story.as_ref());
             let none = state.config.karaoke_game && story == Some(&StoryFact::NoStory);
             none.then_some(NotSingable::Nothing(NO_STORY))
         }
+    }
+}
+
+/// What a prepared song's lyrics leave to sing ([`words`]).
+enum Words {
+    /// Settled, but not here yet: read from the cache as they are wanted.
+    Coming,
+    /// Nothing to sing, and why.
+    Nothing(&'static str),
+    /// Lyrics to sing.
+    Found,
+}
+
+/// What the lyrics of track `index` (at `path`, its lyrics' job done)
+/// leave to sing: as they are here, read in for showing; lyrics read in
+/// for showing ([`lyrics_wanted`]: karaoke's songs, the lyrics editor's,
+/// the Transition tab's) and not here yet are still to come. A song whose
+/// lyrics nothing shows (further down the queue, or no karaoke shows) is
+/// never read in, so it is as its lyrics were settled
+/// ([`crate::core::QueueFacts::lyrics`]), not still being prepared for
+/// ever.
+fn words(state: &State, index: usize, path: &Path) -> Words {
+    let how = match lyrics_of(state, index) {
+        Some(SongLyrics::Found { .. }) => return Words::Found,
+        Some(SongLyrics::NotFound) => LyricsFacts::NotFound,
+        Some(SongLyrics::Instrumental) => LyricsFacts::Instrumental,
+        Some(SongLyrics::Failed(_)) => LyricsFacts::Failed,
+        None | Some(SongLyrics::Pending) => {
+            let settled = state.facts.get(path).and_then(|f| f.lyrics);
+            // The live list, never the one kept in `state.karaoke`: that
+            // is brought up to date only after the action, so an action
+            // that enters the mode and starts the song (the palette's
+            // enter) would find the song not wanted yet and start it with
+            // no lyrics read in.
+            match settled {
+                Some(l) if !lyrics_wanted(state).iter().any(|p| p == path) => l.how,
+                _ => return Words::Coming,
+            }
+        }
+    };
+    match how {
+        LyricsFacts::Timed | LyricsFacts::Untimed | LyricsFacts::Heard => Words::Found,
+        LyricsFacts::NotFound => Words::Nothing("no lyrics were found for it"),
+        LyricsFacts::Instrumental => Words::Nothing("it is an instrumental"),
+        LyricsFacts::Failed => Words::Nothing("its lyrics could not be looked up"),
     }
 }
 

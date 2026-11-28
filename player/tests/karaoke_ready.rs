@@ -396,6 +396,101 @@ fn every_queued_song_is_wanted_for_its_story_once_its_lyrics_are_settled() {
     }
 }
 
+/// K1b: a song whose lyrics karaoke does not read in (no karaoke shows,
+/// or it is further down the queue than the tab reads) is, once
+/// prepared, as its lyrics were settled: singable, or nothing to sing,
+/// never still being prepared for ever (a headless player making its
+/// queue's stories told every song so); a song whose lyrics karaoke
+/// wants waits until they are read in, then is singable.
+#[test]
+fn a_prepared_song_whose_lyrics_are_not_read_in_is_as_they_were_settled() {
+    use jodel_lyrics::{Lyrics, Source};
+    use jodeldiplom::core::karaoke::NotSingable;
+    use jodeldiplom::core::{Facts, LyricsFacts, SettledLyrics, StoryFact};
+    use jodeldiplom::work::lyrics::Answer;
+    let mut state = common::transition_state(120, 40);
+    state.side = Side::Queue;
+    state.preparing = vec![Job::Rhythm, Job::Lyrics, Job::Story];
+    state.ready.clear();
+    state.karaoke.lyrics.clear();
+    let paths = state.queue.paths.clone();
+    let ready = |state: &mut State, k: usize, job: Job, facts: Option<Facts>| {
+        update(
+            state,
+            Action::Ready {
+                path: paths[k].clone(),
+                job,
+                facts,
+            },
+        );
+    };
+    let settled = |how, print| Some(Facts::Lyrics(SettledLyrics { how, print }));
+    let story = |lyrics, fact| Some(Facts::Story { lyrics, fact });
+    for k in 0..paths.len() {
+        ready(&mut state, k, Job::Rhythm, None);
+    }
+    // Every song made but the last: lyrics timed and a story; the last
+    // has none found (and so no story).
+    let last = paths.len() - 1;
+    for k in 0..last {
+        ready(&mut state, k, Job::Lyrics, settled(LyricsFacts::Timed, 7));
+        ready(&mut state, k, Job::Story, story(7, StoryFact::Made));
+    }
+    ready(
+        &mut state,
+        last,
+        Job::Lyrics,
+        settled(LyricsFacts::NotFound, 0),
+    );
+    let not = |state: &State, k| karaoke::not_singable(state, k);
+    assert!(karaoke::lyrics_wanted(&state).is_empty(), "none read in");
+    for k in 0..last {
+        assert_eq!(not(&state, k), None, "song {k}");
+    }
+    // Not prepared yet: still said what is to come.
+    ready(
+        &mut state,
+        last,
+        Job::Story,
+        story(0, StoryFact::NotNow("x".into())),
+    );
+    assert_eq!(
+        not(&state, last),
+        Some(NotSingable::Preparing("its story: not made now (x)".into()))
+    );
+    ready(&mut state, last, Job::Story, story(0, StoryFact::NoStory));
+    assert_eq!(
+        not(&state, last),
+        Some(NotSingable::Nothing("no lyrics were found for it"))
+    );
+    // The Karaoke tab: the songs it reads wait until their lyrics are
+    // read in; the others stay as settled.
+    state.side = Side::Karaoke;
+    update(&mut state, Action::Tick(1));
+    let read = karaoke::lyrics_wanted(&state);
+    let song = karaoke::song_index(&state).unwrap();
+    assert_eq!(read[0], paths[song]);
+    assert!(read.len() < paths.len(), "{read:?}");
+    for (k, path) in paths.iter().enumerate().take(last) {
+        let waits = read.contains(path);
+        let expected =
+            waits.then(|| NotSingable::Preparing("its lyrics, found or heard, and timed".into()));
+        assert_eq!(not(&state, k), expected, "song {k}");
+    }
+    let lyrics = Lyrics::parse_text("la la la", Source::Lrclib);
+    update(
+        &mut state,
+        Action::Lyrics(
+            paths[song].clone(),
+            Answer::Found {
+                lyrics,
+                timed: None,
+            },
+        ),
+    );
+    assert_eq!(not(&state, song), None);
+}
+
 /// K1b: the story is wanted for the game alone: with the game off a song
 /// is sung once the rest is done, its story still being made; with it on
 /// it waits for its story, the step its story is at said in the tab's why

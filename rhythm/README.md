@@ -262,6 +262,16 @@ a generated track (`tests/fixtures/net_logits.txt`). Ours is within
    drums are, and the bass by how present the bass is (`Cues::new`), so
    what leaks into an absent stem is no cue, here or for the bars.
 
+   The accents and the chord changes are strongest on a bar's first
+   beat, so alone they count bars: a strummed song with a chord a bar
+   (Tracy Chapman's "Fast Car", 104 BPM) once read at 26 BPM, a beat a
+   bar. So a grouping slower than 40 BPM (a beat over 1.5 s, about the
+   lower limit of a felt beat) is never chosen (`Score::slow`): a ballad
+   at 35 to 40 BPM reads at its double, as a listener taps it. On the
+   truth list (below) it changed no other tempo: three songs lost a
+   stretch counted under 40 BPM, their tempo the same, and the beats of
+   three eighth notes (52 and 56 BPM) stay.
+
    A Viterbi path through the groupings picks one per grid beat. The
    grouping may change only on a beat both groupings share, so the beats
    keep their spacing. Each change costs `Weights::switch` (32 with the
@@ -278,16 +288,23 @@ a generated track (`tests/fixtures/net_logits.txt`). Ours is within
    (`--truth LIST --fit` in [the player](../player)): the accent counts
    3, the backbeat and the candidates 1 each, the preference 0.6
    (centred on 110 BPM). The chord change got no weight there (it still
-   marks the bars). With the meter, 7 of 8 tapped tempi are right (5
-   before): two songs whose beat is three eighth notes long now read at
-   that beat, and a slow half-time groove at its half tempo.
+   marks the bars). On those 28 tracks, with the meter, 7 of 8 tapped
+   tempi are right (5 before): two songs whose beat is three eighth notes
+   long now read at that beat, and a slow half-time groove at its half
+   tempo.
 
    Cues from stems are cleaner but scaled differently, so they have their
    own set (`Weights::STEMS`, `Weights::for_parts`, used by
    `Evidence::conclude`): the chord change counts 4, the backbeat 1, the
    accent and the candidates 0.5, the preference 1 (centred on 120 BPM).
-   On the same list: 7 of 8 tapped and 19 of 20 believed tempi right (the
-   mix's set: 18 of 20), the Bach prelude among them.
+   On the same 28 tracks: 7 of 8 tapped and 19 of 20 believed tempi
+   right (the mix's set: 18 of 20), the Bach prelude among them.
+
+   The list has 30 tracks now: a ninth tapped tempo (Dancing In The
+   Dark, 67) and Fast Car (believed, 104). On those 30, before the
+   floor and after it: with stems 8 of 9 tapped both times, and 19 then
+   20 of 21 believed (Fast Car); with the mix's set 8 of 9 and 19 of 21
+   both times (it read Fast Car right already).
 3. **Alignment**: each beat moves onto the strongest full-band onset
    within 30 ms of it, where there is a clear one. The network places
    beats only to a frame or so (20 ms); the onsets are sharper.

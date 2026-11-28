@@ -335,17 +335,20 @@ really found, as its workers tell it: never a progress they did not tell.
   (not none found, an instrumental, or the look-up failed); with the game
   on, a song left with no story for good (no timed sung lines, or a plan
   with nothing to draw) is refused, the why saying it can be sung with the
-  game off. What cannot be done on
-  the machine counts as done, as for the icons, so no song waits for it
-  for ever. Until then the tab's button is disabled, with why beside it
-  as its hint (what is still being done for the song, job by job in the
-  icons' words), entering the mode by any way is refused with the same on
-  the status line, and in the mode Next is greyed out. Plain playback is
-  never held up by any of it.
+  game off. What cannot be done on the machine counts as done, as for the
+  icons, so no song waits for it for ever. Until then the tab's button is
+  disabled, with why beside it as its hint (what is still being done for
+  the song, job by job in the icons' words), entering the mode by any way
+  is refused with the same on the status line, and in the mode Next is
+  greyed out. Plain playback is never held up by any of it. A prepared
+  song whose lyrics nothing reads in (further down the queue than the tab
+  reads, or no karaoke showing) is as its lyrics were settled, never
+  still being prepared.
   - `no_karaoke_without_a_gpu`
   - `no_karaoke_for_a_song_until_it_is_fully_prepared`
   - `no_karaoke_for_a_song_until_its_lyrics_are_ready`
   - `what_cannot_be_done_here_holds_no_song_up`
+  - `a_prepared_song_whose_lyrics_are_not_read_in_is_as_they_were_settled`
   - `the_game_waits_for_the_story_and_says_where_it_is`
 - **K1c.** In the mode, a song held for Next while it is still being
   prepared (a song's end held it, or `N`) is not started: the stage says

@@ -26,6 +26,12 @@
 //! With stems, the cues already count only where their stem is present
 //! ([`Cues::new`]).
 //!
+//! The accents and the chord changes are strongest on the first beat of
+//! a bar, so on their own they would count bars: a strummed song with
+//! a chord a bar read at a beat every bar (a quarter of its tempo). A
+//! grouping slower than [`SLOWEST_BPM`] is no beat a listener counts
+//! ([`Score::slow`]), so it is never chosen.
+//!
 //! A Viterbi path through the groupings, paying for each change, picks
 //! one per beat of the grid, so the level changes only where the music
 //! does (a half-time bridge). The bars then come from [`downbeats`].
@@ -42,6 +48,14 @@ use crate::vote::{within, Candidate, TOLERANCE};
 /// Pulses on each side of a beat whose cues score its grouping: 24 beats
 /// of the grid.
 const RADIUS: usize = 48;
+/// The slowest beat the meter chooses, in BPM: about the lower limit of
+/// a felt beat (1.5 s between beats). A slower grouping is a bar. A
+/// ballad at 35 to 40 BPM reads at its double, as a listener taps it.
+/// The ×2 grouping is never this slow (the trackers stop at 35 BPM, so
+/// it is at least 70), so a path always has a grouping to take. Around
+/// 40 BPM a rubato stretch may change between the levels from window to
+/// window, as far as the price of a change lets it.
+pub const SLOWEST_BPM: f64 = 40.0;
 /// The longest interval of the grid, in its usual intervals, whose
 /// pulses may still be beats.
 const FILL: usize = 4;
@@ -187,6 +201,9 @@ pub struct Score {
     pub candidates: f64,
     /// The tempo preference.
     pub preference: f64,
+    /// Whether the beat is slower than [`SLOWEST_BPM`]: no beat a
+    /// listener counts, never chosen.
+    pub slow: bool,
 }
 
 impl Score {
@@ -300,7 +317,14 @@ fn score(
     let window = lo..hi;
     let beats: Vec<usize> = window.clone().filter(|&j| grouping.is_beat(j)).collect();
     if beats.len() < 4 {
-        return Score::default();
+        // Too few beats to score, but still too slow where it is: its
+        // beat is its pulses at the window's mean pulse.
+        let pulse = (pulses.times[hi - 1] - pulses.times[lo]) / (hi - lo - 1).max(1) as f64;
+        let seconds = pulse * grouping.pulses as f64;
+        return Score {
+            slow: seconds > 0.0 && 60.0 / seconds < SLOWEST_BPM,
+            ..Score::default()
+        };
     }
     let others = || window.clone().filter(|&j| !grouping.is_beat(j));
     let parity = |j: usize| (j / grouping.pulses) % 2;
@@ -336,12 +360,14 @@ fn score(
         total += w;
     }
     let seconds = (times[times.len() - 1] - times[0]) / (times.len() - 1) as f64;
+    let bpm = 60.0 / seconds;
     Score {
         backbeat: (side(0) - side(1)).abs(),
         accent: contrast(&pulses.accent),
         change: contrast(&pulses.change),
         candidates: if total > 0.0 { support / total } else { 0.0 },
-        preference: preference(60.0 / seconds, weights.center_bpm),
+        preference: preference(bpm, weights.center_bpm),
+        slow: bpm < SLOWEST_BPM,
     }
 }
 
@@ -361,8 +387,9 @@ fn scores(pulses: &Pulses, candidates: &[Candidate], weights: &Weights) -> Vec<V
 }
 
 /// The beats: the groupings of `grid` (the vote's winner) a listener
-/// would count, from `cues` and `candidates`, and the spans of each.
-/// Fewer than four grid beats are kept as they are.
+/// would count, from `cues` and `candidates`, and the spans of each,
+/// never a grouping slower than [`SLOWEST_BPM`] ([`Score::slow`]). Fewer
+/// than four grid beats are kept as they are.
 pub fn beats(
     grid: &[f64],
     candidates: &[Candidate],
@@ -381,9 +408,16 @@ pub fn beats(
         return (grid.to_vec(), spans);
     }
     let pulses = Pulses::new(grid, cues);
+    let total = |s: &Score| {
+        if s.slow {
+            f64::NEG_INFINITY
+        } else {
+            s.total(weights)
+        }
+    };
     let totals: Vec<Vec<f64>> = scores(&pulses, candidates, weights)
         .iter()
-        .map(|row| row.iter().map(|s| s.total(weights)).collect())
+        .map(|row| row.iter().map(total).collect())
         .collect();
     let path = choose(&pulses, &totals, weights.switch);
     emit(&pulses, &path)
@@ -472,7 +506,8 @@ fn emit(pulses: &Pulses, path: &[Grouping]) -> (Vec<f64>, Vec<Span>) {
 }
 
 /// Each grouping's score averaged over the track, for reports: what each
-/// cue said about each level.
+/// cue said about each level (slow where it is slower than
+/// [`SLOWEST_BPM`] throughout).
 pub fn explain(
     grid: &[f64],
     candidates: &[Candidate],
@@ -494,6 +529,7 @@ pub fn explain(
                 change: avg(|s| s.change),
                 candidates: avg(|s| s.candidates),
                 preference: avg(|s| s.preference),
+                slow: rows.iter().all(|row| row[s].slow),
             };
             (g, score)
         })
@@ -637,6 +673,51 @@ mod tests {
         assert!(backbeat(4, 2) > 0.9);
         assert!((backbeat(2, 0) - 0.5).abs() < 0.1);
         assert!(backbeat(8, 2) < 0.1);
+    }
+
+    /// The kick and the chord changes on every `every`th beat of a grid
+    /// at `bpm` alone, and the tempo the meter counts there (from its
+    /// longest interval between beats).
+    fn counted_with_accents_every(bpm: f64, every: usize) -> f64 {
+        let g = grid(200, 60.0 / bpm);
+        let mut values = vec![0.0f32; ((g[g.len() - 1] + 2.0) * 100.0) as usize];
+        for &b in g.iter().step_by(every) {
+            values[(b * 100.0).round() as usize] = 1.0;
+        }
+        let accents = Curve { values, fps: 100.0 };
+        let cues = Cues {
+            kick: accents.clone(),
+            change: accents,
+            ..Cues::default()
+        };
+        let (beats, _) = beats(&g, &[], &cues, &Weights::STEMS);
+        let longest = beats.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+        60.0 / longest
+    }
+
+    #[test]
+    fn no_beat_is_slower_than_a_felt_beat() {
+        // Accents on each bar of four at 104 BPM would count bars, at 26
+        // BPM; on each bar of three at 90, at 30. Neither is a beat.
+        assert!(counted_with_accents_every(104.0, 4) >= SLOWEST_BPM);
+        assert!(counted_with_accents_every(90.0, 3) >= SLOWEST_BPM);
+        // Three eighth notes at 150 BPM, a beat at 50: still counted.
+        let third = counted_with_accents_every(150.0, 3);
+        assert!((third - 50.0).abs() < 0.5, "{third}");
+    }
+
+    #[test]
+    fn a_grouping_too_short_to_score_is_still_too_slow() {
+        // Six beats at 104 BPM: a beat a bar has too few beats to score.
+        let g = grid(6, 60.0 / 104.0);
+        let pulses = Pulses::new(&g, &Cues::default());
+        let (lo, hi) = pulses.window(0);
+        let at = |pulses_per_beat| {
+            let grouping = Grouping::new(pulses_per_beat, 0).unwrap();
+            score(grouping, lo, hi, &pulses, &[], &[], &Weights::STEMS)
+        };
+        assert!(at(8).slow);
+        assert!(!at(2).slow);
     }
 
     #[test]

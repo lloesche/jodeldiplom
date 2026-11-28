@@ -5,7 +5,9 @@ use jodel_rhythm::frontend::{Frontend, FrontendConfig};
 use jodel_rhythm::metrics::f_measure;
 use jodel_rhythm::parts::Parts;
 use jodel_rhythm::presence::Levels;
-use jodel_rhythm::synth::{arpeggios, backbeat, band, beat_times, six_eight, Hit, Track};
+use jodel_rhythm::synth::{
+    arpeggios, backbeat, band, beat_times, six_eight, Hit, Track, PROGRESSION,
+};
 use jodel_rhythm::{analyze_with, Analysis, Analyzer, Evidence, Method, SAMPLE_RATE};
 
 /// Both methods, then each alone.
@@ -364,6 +366,46 @@ fn the_drum_stem_votes_only_where_the_drums_play() {
     );
     let a = evidence.conclude();
     check_beats(&a, &truth, 0.9);
+}
+
+/// A strummed song at `bpm` in bars of `meter` beats, its cues from
+/// stems: a strum on every beat, a chord a bar, the bass and the kick on
+/// each bar's first beat (in 4/4 a soft snare on 2 and 4). The bars hold
+/// the most accents and chord changes, so alone they would count a beat
+/// a bar (the waltz did, at 30 BPM, before the meter's floor); it is
+/// counted in its beats.
+fn strummed_song_is_counted_in_beats(bpm: f64, meter: usize) {
+    let seconds = 60.0;
+    let truth = beat_times(0.5, seconds - 0.5, |_| bpm);
+    let (mut drums, mut tonal) = (Track::new(seconds), Track::new(seconds));
+    for (i, &b) in truth.iter().enumerate() {
+        let chord = PROGRESSION[(i / meter) % 4];
+        for &note in &chord {
+            tonal.hit(b, Hit::Pluck(note * 2.0), 0.12);
+        }
+        if i % meter == 0 {
+            let end = truth.get(i + meter).copied().unwrap_or(seconds);
+            tonal.chord(b, end, &chord, 0.15);
+            tonal.hit(b, Hit::Pluck(chord[0] / 2.0), 0.4);
+            drums.hit(b, Hit::Kick, 0.6);
+        } else if meter == 4 && i % 2 == 1 {
+            drums.hit(b, Hit::Snare, 0.1);
+        }
+    }
+    let a = with_stems(&drums, &Track::new(seconds), &tonal).conclude();
+    check_beats(&a, &truth, 0.9);
+    let s = a.summary.expect("a summary");
+    assert!((s.bpm - bpm).abs() / bpm < 0.02, "{}", report(&a));
+}
+
+#[test]
+fn a_strummed_song_is_counted_in_beats_not_bars() {
+    strummed_song_is_counted_in_beats(104.0, 4);
+}
+
+#[test]
+fn a_strummed_waltz_is_counted_in_beats_not_bars() {
+    strummed_song_is_counted_in_beats(90.0, 3);
 }
 
 #[test]

@@ -9,13 +9,10 @@ Work agreed on but not started, roughly in the order it was raised.
   back on the laptop's screen at the external screen's 4K size, not
   refitted; leaving and entering Karaoke mode fixed it. Refit on a scale
   factor or monitor change.
-- **Beats found wrong** (the story test on the Mac, 2026-11-28): Tracy
-  Chapman's "Fast Car" came out at 26.1 BPM steady (128 beats in 4:56;
-  the song is about 104), Kettcar's "Deiche" at 189.8, likely double.
-  Check the beat vote and the tempo's octave on both.
-- **A made song still says it is preparing its lyrics** (the same run):
-  after "Deiche" was made at 632 s its status stayed
-  Preparing("its lyrics, found or heard, and timed") to the end.
+- **Deiche's tempo needs a tap** (the story test on the Mac, 2026-11-28):
+  Kettcar's "Deiche" reads 95 in some sections and 190 in others (7 of
+  8 candidates read 190, the snare on every other beat, the meter's two
+  levels nearly tied). Tap it, add it to the truth list, refit if needed.
 - **The look over the lyrics** (the owner, 2026-11-28): the story's look
   shaders were a bit much and the pills with the words hard to read;
   tune the strength over the lyric band.
