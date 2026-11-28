@@ -309,21 +309,50 @@ pub(crate) fn report() -> Vec<String> {
 }
 
 /// The first `count` f32s of `staging` (a buffer to map for reading),
-/// after a [`crate::pace::dispatch`] that wrote them (done, so this waits
-/// for no GPU work: not a wait in its tally).
+/// after the run that wrote them is done ([`crate::pace::dispatch`], so
+/// not a wait in its tally); everything else sent to the device is waited
+/// for too.
 pub(crate) fn read_back(
     device: &wgpu::Device,
     staging: &wgpu::Buffer,
     count: usize,
+) -> Result<Vec<f32>, String> {
+    read_when(device, staging, count, wgpu::PollType::wait_indefinitely())
+}
+
+/// [`read_back`] once the submission `written` that wrote them is done
+/// (done already: not a wait in a tally), leaving the work sent after it
+/// running: a decoding model's next run, made while this one ran.
+/// `staging` must not be used by work sent after `written`: its mapping
+/// would wait for that work, which nothing here waits for, and this would
+/// never return.
+pub(crate) fn read_after(
+    device: &wgpu::Device,
+    staging: &wgpu::Buffer,
+    count: usize,
+    written: wgpu::SubmissionIndex,
+) -> Result<Vec<f32>, String> {
+    let poll = wgpu::PollType::Wait {
+        submission_index: Some(written),
+        timeout: None,
+    };
+    read_when(device, staging, count, poll)
+}
+
+/// [`read_back`]'s values, the device polled as `poll` says until they
+/// can be read.
+fn read_when(
+    device: &wgpu::Device,
+    staging: &wgpu::Buffer,
+    count: usize,
+    poll: wgpu::PollType,
 ) -> Result<Vec<f32>, String> {
     let slice = staging.slice(..(count * 4) as u64);
     let (tx, rx) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .map_err(|e| e.to_string())?;
+    device.poll(poll).map_err(|e| e.to_string())?;
     rx.recv()
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::{bytes, guarded, Access, Dispatch, Kernels, Op, PARAM_STRIDE};
-use crate::pace::{self, Left, Pieces};
+use crate::pace::{self, Pieces, Ran, Track};
 use crate::profile::Stamps;
 
 /// A device and a program of kernels on it: the module, the bind group
@@ -22,10 +22,8 @@ pub(crate) struct Program<K> {
     label: &'static str,
     /// Set when the device is lost (its callback).
     lost: Arc<AtomicBool>,
-    /// Whether the last run on the device was left running
-    /// ([`Program::run_left`]): the next run's first wait may wait for it
-    /// too ([`pace`]).
-    pub(crate) left: AtomicBool,
+    /// Its submissions as its runs' timing needs them ([`pace`]).
+    pub(crate) track: Track,
     layout: wgpu::BindGroupLayout,
     pipelines: HashMap<K, wgpu::ComputePipeline>,
     /// The most a buffer may be bound with.
@@ -45,6 +43,11 @@ pub(crate) struct Recorded<K, B> {
     params: wgpu::Buffer,
     /// The most dispatches its parameters have room for.
     room: usize,
+    /// The dispatches a submission takes a multiple of ([`pace::dispatch`]):
+    /// those of one of the recogniser's decoder steps, set for each run of
+    /// them, so a step is never split between two; 1 (any dispatch may end
+    /// one) unless set.
+    pub(crate) whole: usize,
 }
 
 /// What a run reads back: `count` f32s of `from` from its `first`,
@@ -125,10 +128,10 @@ pub(crate) fn using<I, K, R>(
 }
 
 /// A run made and maybe still running ([`Program::run_left`]): its last
-/// submission where it was left running, and what it reads back
-/// ([`Program::finish`] waits for it and reads that).
+/// submission, how to time it where it was left running, and what it
+/// reads back ([`Program::finish`] waits for it and reads that).
 pub(crate) struct InFlight {
-    left: Option<Left>,
+    ran: Ran,
     staging: Option<wgpu::Buffer>,
     count: usize,
 }
@@ -228,7 +231,7 @@ impl<K: Kernels> Program<K> {
             queue,
             label,
             lost,
-            left: AtomicBool::new(false),
+            track: Track::default(),
             layout,
             pipelines,
             most: limits
@@ -374,6 +377,7 @@ impl<K: Kernels> Program<K> {
             index: HashMap::new(),
             params: self.params_buffer(room),
             room,
+            whole: 1,
         }
     }
 
@@ -426,9 +430,8 @@ impl<K: Kernels> Program<K> {
         read: Option<Read>,
     ) -> Result<InFlight, String> {
         guarded(&self.device, || {
-            let left = pace::dispatch_left(self, pieces, recorded, copy(read))?;
             Ok(InFlight {
-                left,
+                ran: pace::dispatch_left(self, pieces, recorded, copy(read))?,
                 staging: read.map(|r| r.staging.clone()),
                 count: read.map_or(0, |r| r.count),
             })
@@ -436,18 +439,22 @@ impl<K: Kernels> Program<K> {
     }
 
     /// Waits for `in_flight` (what it took learnt in `pieces`, those it
-    /// was run with) and reads back what it copied.
+    /// was run with) and reads back what it copied, the runs made after it
+    /// left running (a decoding model's next steps).
     pub(crate) fn finish(
         &self,
         in_flight: InFlight,
         pieces: &mut Pieces,
     ) -> Result<Vec<f32>, String> {
         guarded(&self.device, || {
-            if let Some(left) = in_flight.left {
-                pace::finish(pieces, &self.device, left)?;
+            let Ran { last, left } = in_flight.ran;
+            if let Some(left) = left {
+                pace::finish(pieces, self, left, &last)?;
             }
             match &in_flight.staging {
-                Some(staging) => crate::device::read_back(&self.device, staging, in_flight.count),
+                Some(staging) => {
+                    crate::device::read_after(&self.device, staging, in_flight.count, last)
+                }
                 None => Ok(Vec::new()),
             }
         })
@@ -561,7 +568,10 @@ impl<K: Kernels, B: Copy + Eq + Hash> Recorded<K, B> {
     }
 
     /// Its dispatches `times` over, one after the other (dispatches that
-    /// read where they are from the GPU: the language model's steps).
+    /// read where they are from the GPU: the language model's steps). Its
+    /// steps may still be split between submissions (`whole` stays as it
+    /// is): one takes about 21 ms on an M4 Max, too long to keep the
+    /// window waiting for.
     pub(crate) fn repeat(&mut self, times: usize) {
         let once = std::mem::take(&mut self.dispatches);
         self.dispatches = (0..times).flat_map(|_| once.iter().copied()).collect();

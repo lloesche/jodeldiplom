@@ -2,8 +2,8 @@
 //! its Metal and HLSL writers (on any machine); and, on the model when it
 //! is here (`JODEL_ASR_MODEL`, else the data folder's, skipped with a note
 //! where it or a usable GPU is not), the fused step against the unfused
-//! one and a piece past the room of pieces heard together heard again
-//! alone.
+//! one, a step's round trips, and a piece past the room of pieces heard
+//! together heard again alone.
 
 use super::*;
 
@@ -79,6 +79,26 @@ fn a_fused_step_is_the_unfused_one() {
         if margin > 4.0 * worst {
             assert_eq!(best(fused).0, a);
         }
+    }
+}
+
+/// A step of the decoder is never split between submissions: the steps
+/// cost a submission each at most, for a piece alone and for pieces heard
+/// together (split, the first submissions, an eighth of a run of four
+/// steps, would be half a step each).
+#[test]
+fn a_step_costs_one_round_trip_at_most() {
+    let Some(asr) = common::recogniser() else {
+        return;
+    };
+    let pieces = common::pieces(3, jodel_lyrics::glimpses::GLIMPSE);
+    let all: Vec<&[f32]> = pieces.iter().map(|p| &p[..]).collect();
+    for heard in [&all[..1], &all[..]] {
+        let before = asr.hearing().unwrap();
+        asr.tokens_of(heard).unwrap();
+        let h = asr.hearing().unwrap().since(&before);
+        assert!(h.steps > 0, "{h}");
+        assert!(h.step_gpu.submissions <= h.steps as u64, "{h}");
     }
 }
 

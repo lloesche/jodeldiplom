@@ -285,7 +285,21 @@ network here (the separator, the beat network, the speech models) goes in
 submissions of about 5 ms of GPU time each, their size learned as they
 run (`pace`), and other work on the GPU gets in between. The next
 submission is made while the last one runs (that one waited for then),
-so the GPU never waits for the processor between them.
+so the GPU never waits for the processor between them. The recogniser's
+decoder steps are never split (`Recorded::whole`): a submission is
+whole steps, one at least, so a step costs one submission and one wait
+at most; where a step takes longer than 5 ms, the window waits for it.
+The language model's steps, about 21 ms on an M4 Max, may be split. A
+run left running (a decoding model makes its next run before it reads
+the last) learns from its time, which starts where the run before it,
+timed so, was found done, only where no submission made after it was
+waited for before it was finished: the caller's waits on the next run
+come first, and its own wait then says nothing of its time
+(`pace::Track`). What a run left running
+reads back is read once its own last submission is done
+(`device::read_after`), not once everything sent is: the next run, made
+while it ran, stays on the GPU while the processor reads (before, each
+read drained the queue, a round trip a read that no tally counted).
 
 Background work gives way while the window draws at the display's
 refresh (something on it moving smoothly): `GpuSeparator::background()` (a

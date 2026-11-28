@@ -428,7 +428,7 @@ impl Inner {
         read: Option<(Buf, usize, usize)>,
         phase: Phase,
     ) -> Result<Vec<f32>, String> {
-        let in_flight = self.submit(ops, read, phase, 0)?;
+        let in_flight = self.submit(ops, 1, read, phase, 0)?;
         self.read(in_flight, phase)
     }
 
@@ -442,20 +442,24 @@ impl Inner {
     /// buffer `staging`, but not waited for: it may still run when this
     /// returns ([`Inner::read`] waits for it and reads it). The next run's
     /// parameters are written in the queue's order, after this one's
-    /// dispatches.
+    /// dispatches. A submission takes a multiple of `whole` dispatches:
+    /// those of a decoder step where `ops` are steps (a step costs a round
+    /// trip at most), else 1. While calibrating, which adds dispatches of
+    /// its own, any dispatch may end one (it is not paced for the window).
     fn submit(
         &mut self,
         ops: &[Op],
+        whole: usize,
         read: Option<(Buf, usize, usize)>,
         phase: Phase,
         staging: usize,
     ) -> Result<InFlight, String> {
         let counted;
-        let ops = if self.stats.on {
+        let (ops, whole) = if self.stats.on {
             counted = self.stats.counted(ops);
-            &counted[..]
+            (&counted[..], 1)
         } else {
-            ops
+            (ops, whole)
         };
         let buffers = &self.buffers;
         // A kernel's buffers: src, aux, dst, the weights, the second dst.
@@ -465,6 +469,7 @@ impl Inner {
                     .map(|buf| &buffers[&buf])
                     .to_vec()
             })?;
+        self.recorded.whole = whole;
         let read = read.map(|(buf, first, count)| Read {
             from: &buffers[&buf],
             first,

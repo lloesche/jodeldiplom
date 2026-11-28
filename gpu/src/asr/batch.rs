@@ -12,7 +12,9 @@
 //! next steps run, so the GPU does not wait for the reads, the steps
 //! running one read past its end. Pieces heard together (glimpses, their
 //! tokens few) wait for each read instead: a read more of steps for all of
-//! them would cost more than the waits.
+//! them would cost more than the waits. A step is never split between
+//! submissions (`Recorded::whole`): however the GPU is shared with the
+//! window, a step costs one submission and one wait at most.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -158,7 +160,8 @@ impl Inner {
         // its tokens a piece), in their order, each into its own staging
         // buffer: two at most (the prompts and the first steps; a piece
         // alone's steps), else one.
-        let mut flying = VecDeque::from([(self.submit(&ops, read_all, Phase::Prompt, 0)?, r, 1)]);
+        let encoded = self.submit(&ops, 1, read_all, Phase::Prompt, 0)?;
+        let mut flying = VecDeque::from([(encoded, r, 1)]);
         let mut t1 = None;
         // None until the prompts' first tokens are read.
         let mut written: Option<Vec<Written>> = None;
@@ -171,10 +174,13 @@ impl Inner {
             if flying.len() < ahead && !done && r + made + a_read < cap {
                 let mut ops = Vec::new();
                 let pos = r + made - 1;
-                for k in 0..a_read {
+                self.step_ops(&mut ops, &shape, pos);
+                // A step's dispatches, kept whole in a submission.
+                let whole = ops.len();
+                for k in 1..a_read {
                     self.step_ops(&mut ops, &shape, pos + k);
                 }
-                let running = self.submit(&ops, read_all, Phase::Steps, runs % 2)?;
+                let running = self.submit(&ops, whole, read_all, Phase::Steps, runs % 2)?;
                 flying.push_back((running, pos + 1, a_read));
                 (made, steps, runs) = (made + a_read, steps + a_read, runs + 1);
                 continue;
