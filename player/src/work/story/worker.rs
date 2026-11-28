@@ -58,7 +58,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use jodel_gpu::image::{Drawer, TextEncoder};
@@ -104,6 +104,9 @@ pub const MOST_RETRY: Duration = Duration::from_secs(15 * 60);
 
 /// The story's models, each run in its stage's turn.
 pub trait Models: Send + Sync {
+    /// The context the language model writes in on this card
+    /// ([`super::context`]); why there is none now.
+    fn context(&self) -> Result<usize, String>;
     /// `job` planned, its news told to `tell`.
     fn plan(&self, job: &StoryJob, tell: &mut dyn FnMut(Story)) -> Result<Plan, Failure>;
     /// The prompts of `drawing`'s pictures still to draw, encoded.
@@ -127,10 +130,39 @@ pub trait Models: Send + Sync {
     ) -> Result<TakenApart, String>;
 }
 
+/// The language model's file and its context on this card, decided once
+/// (the first time it can be: the file there, a GPU) and kept: the
+/// stages' count of its room, the room each plan makes and the comparison
+/// of a song short of room take the same value ([`super::context`] works
+/// it out from a budget that moves).
+struct Language {
+    file: PathBuf,
+    context: OnceLock<usize>,
+}
+
+impl Language {
+    /// Its context, decided on the first ask that can.
+    fn context(&self) -> Result<usize, String> {
+        if let Some(&context) = self.context.get() {
+            return Ok(context);
+        }
+        let context = super::context(&locate(&self.file))?;
+        Ok(*self.context.get_or_init(|| context))
+    }
+
+    /// Its file, where it is now.
+    fn file(&self) -> PathBuf {
+        locate(&self.file)
+    }
+}
+
 /// The story's models on the GPU, where setup put them: each held for
 /// its stage and registered there, set up on its first use in a turn.
 pub struct GpuModels {
-    language: Arc<jodel_gpu::Kept<Gemma>>,
+    /// The language model's file and the context decided for it.
+    language: Arc<Language>,
+    /// The language model, held for the story's plans.
+    writer: Arc<jodel_gpu::Kept<Gemma>>,
     encoder: Arc<jodel_gpu::Kept<TextEncoder>>,
     drawer: Arc<jodel_gpu::Kept<Drawer>>,
     nets: GpuNets,
@@ -145,18 +177,25 @@ impl GpuModels {
         use crate::work::story_models::{
             ENCODER_DIR, LANGUAGE_FILE, PIPELINE_DIR, TRANSFORMER_DIR,
         };
-        let (planned, language) = (files.language.clone(), files.language.clone());
+        let language = Arc::new(Language {
+            file: files.language.clone(),
+            context: OnceLock::new(),
+        });
+        let (planned, opened) = (Arc::clone(&language), Arc::clone(&language));
         let told = unreadable.clone();
-        let language = Arc::new(jodel_gpu::Kept::new(
-            move || super::memory(&locate(&planned)).ok(),
+        let writer = Arc::new(jodel_gpu::Kept::new(
+            move || {
+                let context = planned.context().ok()?;
+                Gemma::planned(&planned.file(), context).ok()
+            },
             Box::new(move || {
-                let opened = Gemma::open(&locate(&language), Precision::Fast);
+                let opened = Gemma::open(&opened.file(), Precision::Fast);
                 let gemma = told.report(LANGUAGE_FILE, opened)?;
                 let name = gemma.gpu_name().to_owned();
                 Ok((gemma, name))
             }),
         ));
-        unreadable.retries(LANGUAGE_FILE, &language);
+        unreadable.retries(LANGUAGE_FILE, &writer);
         let encoder = files.encoder.clone();
         let told = unreadable.clone();
         let encoder = Arc::new(jodel_gpu::Kept::new(
@@ -184,7 +223,7 @@ impl GpuModels {
         ));
         unreadable.retries(TRANSFORMER_DIR, &drawer);
         unreadable.retries(PIPELINE_DIR, &drawer);
-        stages::register(Stage::StoryPlan, Arc::clone(&language) as Arc<dyn Resident>);
+        stages::register(Stage::StoryPlan, Arc::clone(&writer) as Arc<dyn Resident>);
         stages::register(
             Stage::StoryEncode,
             Arc::clone(&encoder) as Arc<dyn Resident>,
@@ -192,6 +231,7 @@ impl GpuModels {
         stages::register(Stage::StoryDraw, Arc::clone(&drawer) as Arc<dyn Resident>);
         GpuModels {
             language,
+            writer,
             encoder,
             drawer,
             nets: GpuNets::new(scenes, unreadable),
@@ -204,10 +244,15 @@ impl GpuModels {
 /// its device was lost runs its job again, the plan's words already told
 /// not told twice ([`past`]).
 impl Models for GpuModels {
+    fn context(&self) -> Result<usize, String> {
+        self.language.context()
+    }
+
     fn plan(&self, job: &StoryJob, tell: &mut dyn FnMut(Story)) -> Result<Plan, Failure> {
+        let context = self.context().map_err(Failure::Model)?;
         let told = &mut 0;
-        (self.language)
-            .run(|gemma| Ok(job.run(gemma, &mut past(told, &mut *tell))))
+        (self.writer)
+            .run(|gemma| Ok(job.run(gemma, context, &mut past(told, &mut *tell))))
             .unwrap_or_else(|why| Err(Failure::Model(why)))
     }
 
@@ -484,7 +529,7 @@ pub fn round(songs: &[StorySong], ask: &Ask, tried: &mut Tried) -> Next {
         .collect();
     let mut stands = Songs::new();
     for song in looked {
-        match stands_of(song, ask.places) {
+        match stands_of(song, ask) {
             Ok(stand) => stands.push((song, stand)),
             Err(fact) => finish(ask, tried, song, fact),
         }
@@ -697,17 +742,28 @@ fn turn<T, E>(
     })
 }
 
-/// Where `song`'s story stands, looking at what is kept in `places`
-/// alone: to plan, to draw, to take apart; or how it ends (`Err`): made,
-/// none for good (no lyrics, no timed sung lines, or a plan that did not
-/// hold), or not now (its lyrics, its file or its scenes not read now).
-fn stands_of(song: &StorySong, places: &Places) -> Result<Stands, StoryFact> {
+/// Where `song`'s story stands, looking at what is kept in the places
+/// `ask` has alone: to plan, to draw, to take apart; or how it ends
+/// (`Err`): made, none for good (no lyrics, no timed sung lines, a plan
+/// that did not hold, or no room for it in a context as large as the
+/// language model's now), or not now (its lyrics, its file, its scenes,
+/// or the model's context where a song short of room asks for it, not
+/// read now).
+fn stands_of(song: &StorySong, ask: &Ask) -> Result<Stands, StoryFact> {
+    let places = ask.places;
     let lyrics = (places.lyrics)(&song.path).map_err(StoryFact::NotNow)?;
     let lyrics = lyrics.ok_or(StoryFact::NoStory)?;
     let job = job_of(&song.path, &lyrics, places)?;
     let plan = match job.kept() {
         Some(Kept::Plan(plan)) => *plan,
         Some(Kept::NoStory(_)) => return Err(StoryFact::NoStory),
+        Some(Kept::Short { context: had, .. }) => {
+            let context = ask.models.context().map_err(StoryFact::NotNow)?;
+            return match context > had {
+                true => Ok(Stands::Plan(job)),
+                false => Err(StoryFact::NoStory),
+            };
+        }
         None => return Ok(Stands::Plan(job)),
     };
     let drawing = Drawing::new(song.path.clone(), plan, &places.scenes);

@@ -183,10 +183,12 @@ pub const PATCH: Schema = Schema {
 
 /// A song's story planned for the karaoke ([`crate::work::story`]): what
 /// made it and what it was asked (compared when it is read), then the
-/// plan as JSON, or why the song has none.
+/// plan as JSON, or why the song has none, or the context that was short
+/// of room for it and why. Version 1 hashed the context with what was
+/// asked, and had no line for a context short of room.
 pub const STORY_PLAN: Schema = Schema {
     name: "story-plan",
-    version: 1,
+    version: 2,
     user_data: false,
 };
 

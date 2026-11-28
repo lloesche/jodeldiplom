@@ -105,6 +105,15 @@ pub const SCENE_SECONDS: (f64, f64) = (10.0, 20.0);
 pub const FEWEST_SCENES: usize = 3;
 /// The most tokens an answer may take.
 pub const MOST_ANSWER: usize = 5_500;
+/// The most tokens a song's prompt is given room for (the measured ones
+/// take 9 268 to 9 480: the looks' catalogue in brief and the lyrics); a
+/// longer one may be short of room for its thought on any card.
+pub const MOST_PROMPT: usize = 16_384;
+/// The most tokens the model's thought may take, where the context leaves
+/// it more: a guard against a thought that never ends (the longest
+/// measured was 1 743 tokens; one that never ends is cut off after about
+/// 3 minutes on an RTX 5080).
+pub const MOST_THOUGHT: usize = 16_384;
 /// What a scene takes of the answer, about (measured: 4 425 tokens for
 /// 30 scenes with the rest), and what the rest takes.
 pub const TOKENS_A_SCENE: usize = 150;

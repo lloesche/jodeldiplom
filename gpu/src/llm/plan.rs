@@ -19,8 +19,8 @@
 //! `prep_rows()`).
 
 use super::kernels::{
-    fields, named, Kernel, ADD, FLASH_LANES, GEMM_TILE, GEMV_ROWS, NONE, OUT, Q8, Q8_BLOCK,
-    Q8_KINDS, SCALE, TOKENS,
+    fields, named, Kernel, ADD, FLASH_LANES, GEMM_TILE, GEMV_ROWS, MOST_SPLITS, NONE, OUT, Q8,
+    Q8_BLOCK, Q8_KINDS, SCALE, TOKENS,
 };
 use super::model::{Layout, Matrix};
 use super::{
@@ -56,23 +56,62 @@ impl Bind {
 
 /// The rows of a prompt a chunk takes at most.
 pub(super) const CHUNK: usize = 512;
-/// The splits of a step's attention (`attend`, each taking every so
-/// many chunks of 64 positions): a sliding layer's window is 8 chunks.
+/// The splits of a step's attention (`attend`, taking chunks of 64
+/// positions in turn): a sliding layer's window is 8 chunks, a split each.
+/// A global layer's are 16, and one more for every so many chunks
+/// ([`super::Shape::per`]) where that is more as its positions grow, up
+/// to [`MOST_SPLITS`] (the workgroups dispatched): the long contexts'
+/// chunks spread over the GPU.
 const LOCAL_SPLITS: usize = 8;
 const GLOBAL_SPLITS: usize = 16;
+// The splits at work never more than those dispatched (WGSL's `clamp` is
+// left open where its low bound is over its high one).
+const _: () = assert!(GLOBAL_SPLITS <= MOST_SPLITS && LOCAL_SPLITS <= MOST_SPLITS);
+/// A global layer's chunks for one more split where the plans are kept
+/// token for token as they were (Vulkan): 18, so up to the 18 432
+/// positions a context had at most before its splits are the 16 they
+/// were. A choice for the same tokens, not for the GPU: more splits would
+/// be faster there too past a few thousand positions.
+pub(super) const KEPT_CHUNKS_A_SPLIT: usize = 18;
+/// A global layer's chunks for one more split where the GPU takes many
+/// workgroups to fill and was never held to the sums before (Apple's):
+/// 2, so a context of 12K positions has 94 splits, 188 workgroups.
+pub(super) const SPREAD_CHUNKS_A_SPLIT: usize = 2;
 /// The head's workgroups.
 const HEAD_GROUPS: usize = VOCAB / GEMV_ROWS;
-/// The most positions of a context: as many as keep the cache (every
-/// layer's keys and values, 112 KB a position, in one buffer) within the
-/// 2 GB a storage binding takes on most GPUs (Direct3D 12's), in whole
-/// chunks (2.1 GB; a chunk more is over it).
-const MOST_POSITIONS: usize = 18_432;
+/// The most positions of a context: the 128K the model was trained for
+/// (its global layers' rotary positions go no further).
+const MOST_POSITIONS: usize = 131_072;
 /// The positions past a context the steps may run (those made after a
 /// stop, before it is read: two runs of steps).
 const PAST: usize = 2 * STEPS_A_READ;
 /// The largest context [`super::Gemma::reserve`] takes (a prompt and what
 /// it writes): the most positions, less those the steps may run past it.
 pub const MOST_CONTEXT: usize = MOST_POSITIONS - PAST;
+/// The positions a context is chosen in ([`ContextPlan::fitting`]), and
+/// the least chosen: the most there was room for before the sliding
+/// layers kept rings (every layer's keys and values in one buffer), so a
+/// plan that fitted then fits on any card.
+const STEP: usize = 2048;
+const LEAST_POSITIONS: usize = 9 * STEP;
+/// The least context [`super::Gemma::fitting`] chooses.
+pub const LEAST_CONTEXT: usize = LEAST_POSITIONS - PAST;
+/// A sliding layer's ring of keys and values: the places of its window
+/// and of a chunk's rows (a chunk writes over none of the positions its
+/// first row still reads), a power of two (a position's place is its low
+/// bits).
+pub(super) const RING: usize = 1024;
+const _: () = assert!(RING.is_power_of_two() && RING >= WINDOW + CHUNK);
+/// The layers with keys and values of their own, of each kind.
+const SLIDING: usize = OWN_KV - GLOBALS;
+const GLOBALS: usize = {
+    let (mut l, mut n) = (0, 0);
+    while l < OWN_KV {
+        n += is_global(l) as usize;
+        l += 1;
+    }
+    n
+};
 /// The words of a staging buffer (the logits, or a run's tokens).
 pub(super) const STAGING_WORDS: usize = VOCAB;
 const _: () = assert!(VOCAB >= STEPS_A_READ);
@@ -92,11 +131,13 @@ impl engine::Matrix for Matrix {
 /// each, and where things are in them.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Sizes {
-    /// The cache's positions.
+    /// The cache's positions (a global layer's places).
     pub(super) positions: usize,
-    pub(super) cache: usize,
-    /// Where the queries of the rows under way are in the cache.
-    pub(super) queries: usize,
+    /// The sliding layers' rings and the queries under way of their rows
+    /// ([`Buf::Ring`]); a global layer's keys and values and the queries
+    /// under way of its rows (each [`Buf::Global`]).
+    pub(super) ring: usize,
+    pub(super) global: usize,
     pub(super) rope: usize,
     pub(super) x: usize,
     /// A matrix multiply's products, and the per-layer inputs after them
@@ -118,23 +159,35 @@ fn kv_words(l: usize) -> usize {
     2 * KV_HEADS * head_of(l)
 }
 
+/// Where a layer's keys and values are: their buffer, where its keys, its
+/// values and the queries under way of its rows start there, the places
+/// a key's value has, and the mask that takes a position to its place.
+#[derive(Clone, Copy, Debug)]
+struct Kv {
+    buf: Buf,
+    keys: usize,
+    values: usize,
+    queries: usize,
+    places: usize,
+    mask: usize,
+}
+
 impl Sizes {
     /// The sizes for a cache of `positions`.
     pub(super) fn new(positions: usize) -> Sizes {
-        let cache: usize = (0..OWN_KV).map(|l| kv_words(l) * positions).sum();
         let qa = TOKENS + positions;
         let qs = qa + CHUNK * FF;
         let best = qs + CHUNK * FF / Q8_BLOCK * 2;
         Sizes {
             positions,
-            cache: cache + CHUNK * HEADS * GLOBAL_HEAD,
-            queries: cache,
-            rope: positions * (LOCAL_HEAD / 2 + GLOBAL_HEAD / 2) * 2,
+            ring: SLIDING * 2 * KV_HEADS * LOCAL_HEAD * RING + CHUNK * HEADS * LOCAL_HEAD,
+            global: 2 * KV_HEADS * GLOBAL_HEAD * positions + CHUNK * HEADS * GLOBAL_HEAD,
+            rope: positions * (LOCAL_HEAD / 2 + GLOBAL_TURNED) * 2,
             x: CHUNK * DIM,
             h: CHUNK * (FF + PER_LAYER),
             pli: CHUNK * FF,
             per_layer: CHUNK * PER_LAYERS,
-            parts: HEADS * GLOBAL_SPLITS * (GLOBAL_HEAD + 2),
+            parts: HEADS * MOST_SPLITS * (GLOBAL_HEAD + 2),
             ints: best + HEAD_GROUPS * 2,
             qa,
             qs,
@@ -143,9 +196,10 @@ impl Sizes {
     }
 
     /// Every buffer and its words (the vocabulary's logits too).
-    pub(super) fn buffers(&self) -> [(Buf, usize); 9] {
-        [
-            (Buf::Cache, self.cache),
+    pub(super) fn buffers(&self) -> Vec<(Buf, usize)> {
+        let mut all = vec![(Buf::Ring, self.ring)];
+        all.extend((0..GLOBALS).map(|g| (Buf::Global(g), self.global)));
+        all.extend([
             (Buf::Rope, self.rope),
             (Buf::X, self.x),
             (Buf::H, self.h),
@@ -154,29 +208,52 @@ impl Sizes {
             (Buf::Logits, VOCAB),
             (Buf::Ints, self.ints),
             (Buf::Spare, 1),
-        ]
+        ]);
+        all
     }
 
-    /// Where layer `l`'s keys and values are in the cache (a layer that
-    /// shares another's: that one's).
-    fn kv(&self, l: usize) -> (usize, usize) {
+    /// Where layer `l`'s keys and values are (a layer that shares
+    /// another's: that one's): a sliding layer's in its ring, a global
+    /// layer's in a buffer of its own.
+    fn kv(&self, l: usize) -> Kv {
         let l = kv_of(l);
-        let at: usize = (0..l).map(|e| kv_words(e) * self.positions).sum();
-        (at, at + kv_words(l) / 2 * self.positions)
+        let words = kv_words(l);
+        // The layers of its kind before it with keys and values of their own.
+        let before = (0..l).filter(|&e| is_global(e) == is_global(l)).count();
+        if is_global(l) {
+            Kv {
+                buf: Buf::Global(before),
+                keys: 0,
+                values: words / 2 * self.positions,
+                queries: words * self.positions,
+                places: self.positions,
+                mask: u32::MAX as usize,
+            }
+        } else {
+            let at = before * words * RING;
+            Kv {
+                buf: Buf::Ring,
+                keys: at,
+                values: at + words / 2 * RING,
+                queries: SLIDING * words * RING,
+                places: RING,
+                mask: RING - 1,
+            }
+        }
     }
 
-    /// Where the rotary table of a layer's kind is.
-    fn rope_at(&self, l: usize) -> usize {
+    /// Where the rotary table of a layer's kind is, and the pairs it turns.
+    fn rope_of(&self, l: usize) -> (usize, usize) {
         if is_global(l) {
-            self.positions * LOCAL_HEAD
+            (self.positions * LOCAL_HEAD, GLOBAL_TURNED)
         } else {
-            0
+            (0, LOCAL_HEAD / 2)
         }
     }
 
     /// The rotary tables: for each position, a layer kind's cosine and sine
-    /// of each pair (a sliding layer's 128 pairs, then a global layer's
-    /// 256, of which the first 64 turn).
+    /// of each pair it turns (a sliding layer's 128 pairs, then the first
+    /// 64 of a global layer's 256: the others stay).
     pub(super) fn rope(&self) -> Vec<f32> {
         let mut table = Vec::with_capacity(self.rope);
         for (dim, base, turned) in [
@@ -190,11 +267,15 @@ impl Sizes {
                 dim,
                 turned,
             };
-            table.extend(engine::rotary(
-                0..self.positions,
-                freqs,
-                engine::Angles::F32ThenF64,
-            ));
+            // 1024 positions at a time, each position's pairs turned kept
+            // (`engine::rotary` writes every pair of each position: in
+            // pieces, its whole-width table of 131 072 positions is never
+            // held).
+            for from in (0..self.positions).step_by(1024) {
+                let to = (from + 1024).min(self.positions);
+                let some = engine::rotary(from..to, freqs, engine::Angles::F32ThenF64);
+                table.extend(some.chunks(dim).flat_map(|p| &p[..2 * turned]));
+            }
         }
         table
     }
@@ -221,20 +302,22 @@ impl ContextPlan {
             ));
         }
         let sizes = Sizes::new(context + PAST);
-        // Either path's dispatches are as many.
+        // Either path's dispatches are as many, and a chunk's are as many
+        // wherever it is and however many rows it has (the last's more).
         let plan = Plan {
             layout,
             sizes,
-            q8: true,
+            shape: super::Shape {
+                q8: true,
+                per: KEPT_CHUNKS_A_SPLIT,
+            },
         };
         let step = plan.step().len();
-        let prompt = (0..context)
-            .step_by(CHUNK)
-            .map(|first| {
-                let rows = CHUNK.min(context - first);
-                plan.chunk(first, rows, first + rows == context).len()
-            })
-            .sum();
+        let chunks = context.div_ceil(CHUNK);
+        let prompt = match chunks {
+            0 => 0,
+            _ => (chunks - 1) * plan.chunk(0, CHUNK, false).len() + plan.chunk(0, 1, true).len(),
+        };
         Ok(ContextPlan {
             context,
             sizes,
@@ -255,14 +338,53 @@ impl ContextPlan {
     pub(super) fn peak_bytes(&self) -> u64 {
         self.held_bytes() + self.prompt as u64 * PARAM_STRIDE
     }
+
+    /// The largest context whose room at its most, with the `weights`
+    /// bytes beside it, takes at most `room` bytes, each of its buffers
+    /// bound within `binding` bytes, and that is no larger than `need`
+    /// takes (rounded up): whole steps of [`STEP`] positions (less those the
+    /// steps may run past it), from [`LEAST_CONTEXT`] to [`MOST_CONTEXT`];
+    /// the least where none fits, or no room is told.
+    pub(super) fn fitting(
+        layout: &Layout,
+        weights: u64,
+        (room, binding): (Option<u64>, u64),
+        need: usize,
+    ) -> usize {
+        let context = |steps: usize| steps * STEP - PAST;
+        let fits = |steps: usize| {
+            let Ok(plan) = ContextPlan::new(layout, context(steps)) else {
+                return false;
+            };
+            let bound = plan
+                .sizes
+                .buffers()
+                .iter()
+                .all(|b| b.1 as u64 * 4 <= binding);
+            bound && room.is_some_and(|room| weights + plan.peak_bytes() <= room)
+        };
+        // The room grows with the context: the most steps that fit.
+        let least_steps = LEAST_POSITIONS / STEP;
+        let needed = (need + PAST).div_ceil(STEP).max(least_steps);
+        let (mut least, mut most) = (least_steps, (MOST_POSITIONS / STEP).min(needed));
+        while least < most {
+            let mid = (least + most).div_ceil(2);
+            if fits(mid) {
+                least = mid;
+            } else {
+                most = mid - 1;
+            }
+        }
+        context(least)
+    }
 }
 
-/// What a plan needs: where the weights are, the context's sizes, whether
-/// the quantised matrices take their rows at 8 bits.
+/// What a plan needs: where the weights are, the context's sizes, and how
+/// the decoder is shaped for its GPU.
 pub(super) struct Plan<'a> {
     pub(super) layout: &'a Layout,
     pub(super) sizes: Sizes,
-    pub(super) q8: bool,
+    pub(super) shape: super::Shape,
 }
 
 impl Plan<'_> {
@@ -270,7 +392,7 @@ impl Plan<'_> {
     /// bits ([`Q8`]) where it is quantised and the plan takes rows so, else
     /// as f32s (0).
     fn mode(&self, m: Matrix) -> usize {
-        if self.q8 && Q8_KINDS.contains(&m.kind) {
+        if self.shape.q8 && Q8_KINDS.contains(&m.kind) {
             Q8
         } else {
             0
@@ -482,10 +604,11 @@ impl Plan<'_> {
     fn prep(&self, ops: &mut Vec<Op>, l: usize, rows: usize, first: Option<usize>, qkv: usize) {
         let layer = &self.layout.layers[l];
         let kv = if shares(l) { 0 } else { KV_HEADS };
-        let (k_at, v_at) = self.sizes.kv(l);
+        let at = self.sizes.kv(l);
+        let (rope, turned) = self.sizes.rope_of(l);
         ops.push(Op {
             kernel: Kernel::Prep,
-            buffers: Bind::rows(Buf::H, Buf::Cache),
+            buffers: Bind::rows(Buf::H, at.buf),
             params: named(
                 "prep",
                 &[
@@ -497,13 +620,15 @@ impl Plan<'_> {
                     ("q_norm", layer.q_norm),
                     // Unread where the layer has no keys of its own (kv 0).
                     ("k_norm", layer.k_norm.unwrap_or(0)),
-                    ("queries", self.sizes.queries),
-                    ("keys", k_at),
-                    ("values", v_at),
-                    ("positions", self.sizes.positions),
-                    ("rope", self.sizes.rope_at(l)),
+                    ("queries", at.queries),
+                    ("keys", at.keys),
+                    ("values", at.values),
+                    ("positions", at.places),
+                    ("rope", rope),
                     ("kv", kv),
                     ("heads", HEADS),
+                    ("mask", at.mask),
+                    ("turned", turned),
                 ],
             ),
             groups: [rows as u32, (HEADS + 2 * kv) as u32, 1],
@@ -514,25 +639,30 @@ impl Plan<'_> {
     /// splits, then joined), written for its output's matrix.
     fn attend_step(&self, ops: &mut Vec<Op>, l: usize) {
         let d = head_of(l);
-        let (window, splits) = if is_global(l) {
-            (0, GLOBAL_SPLITS)
+        // The workgroups dispatched, the least at work, the chunks for one
+        // more.
+        let (window, splits, least, per) = if is_global(l) {
+            (0, MOST_SPLITS, GLOBAL_SPLITS, self.shape.per)
         } else {
-            (WINDOW, LOCAL_SPLITS)
+            (WINDOW, LOCAL_SPLITS, LOCAL_SPLITS, 1)
         };
-        let (k_at, v_at) = self.sizes.kv(l);
+        let at = self.sizes.kv(l);
         ops.push(Op {
             kernel: Kernel::Attend,
-            buffers: Bind::rows(Buf::Cache, Buf::Parts),
+            buffers: Bind::rows(at.buf, Buf::Parts),
             params: named(
                 "attend",
                 &[
                     ("d", d),
                     ("window", window),
-                    ("queries", self.sizes.queries),
-                    ("keys", k_at),
-                    ("values", v_at),
-                    ("positions", self.sizes.positions),
+                    ("queries", at.queries),
+                    ("keys", at.keys),
+                    ("values", at.values),
+                    ("positions", at.places),
                     ("splits", splits),
+                    ("mask", at.mask),
+                    ("least", least),
+                    ("per", per),
                 ],
             ),
             groups: [splits as u32, KV_HEADS as u32, 1],
@@ -551,7 +681,7 @@ impl Plan<'_> {
                     ("heads", HEADS),
                 ],
             ),
-            groups: [1, 1, 1],
+            groups: [HEADS as u32, 1, 1],
         });
     }
 
@@ -560,11 +690,11 @@ impl Plan<'_> {
     fn flash(&self, ops: &mut Vec<Op>, l: usize, rows: usize, first: usize) {
         let d = head_of(l);
         let window = if is_global(l) { 0 } else { WINDOW };
-        let (k_at, v_at) = self.sizes.kv(l);
+        let at = self.sizes.kv(l);
         let per_block = FLASH_LANES / (d / 16);
         ops.push(Op {
             kernel: Kernel::Flash,
-            buffers: Bind::rows(Buf::Cache, Buf::H),
+            buffers: Bind::rows(at.buf, Buf::H),
             params: named(
                 "flash",
                 &[
@@ -572,12 +702,13 @@ impl Plan<'_> {
                     ("first", first),
                     ("d", d),
                     ("window", window),
-                    ("queries", self.sizes.queries),
-                    ("keys", k_at),
-                    ("values", v_at),
-                    ("positions", self.sizes.positions),
+                    ("queries", at.queries),
+                    ("keys", at.keys),
+                    ("values", at.values),
+                    ("positions", at.places),
                     ("heads", HEADS),
                     ("group", HEADS / KV_HEADS),
+                    ("mask", at.mask),
                 ],
             ),
             groups: [rows.div_ceil(per_block) as u32, HEADS as u32, 1],
@@ -796,36 +927,111 @@ mod tests {
     use super::*;
 
     /// Either path's step and chunks are as many dispatches (the room is
-    /// planned on one); a position more of context holds its keys and
-    /// values in each layer with its own, its rows of both rotary tables
-    /// and its token, and nothing else; a prompt's numbers are recorded on
-    /// top at the most.
+    /// planned on one); a position more of context holds the keys and
+    /// values of each global layer with its own, its rows of both rotary
+    /// tables (a global layer's pairs turned only) and its token, and
+    /// nothing else (the sliding layers' rings stay as they are); a
+    /// prompt's numbers are recorded on top at the most.
     #[test]
     fn the_room_is_as_planned_on_either_path() {
         let layout = super::super::model::tests::gemma();
-        let context = CHUNK + 100;
+        let context = 2 * CHUNK + 100;
         let room = ContextPlan::new(&layout, context).unwrap();
         let [fast, full] = [true, false].map(|q8| Plan {
             layout: &layout,
             sizes: room.sizes,
-            q8,
+            shape: super::super::Shape {
+                q8,
+                per: SPREAD_CHUNKS_A_SPLIT,
+            },
         });
         assert_eq!(fast.step().len(), full.step().len());
         let mut prompt = 0;
-        for (first, rows, last) in [(0, CHUNK, false), (CHUNK, 100, true)] {
+        for (first, rows, last) in [
+            (0, CHUNK, false),
+            (CHUNK, CHUNK, false),
+            (2 * CHUNK, 100, true),
+        ] {
             let n = full.chunk(first, rows, last).len();
             assert_eq!(fast.chunk(first, rows, last).len(), n, "chunk at {first}");
             prompt += n as u64;
         }
         let more = ContextPlan::new(&layout, context + 1).unwrap();
-        let kv: usize = (0..OWN_KV).map(|l| 2 * KV_HEADS * head_of(l)).sum();
-        let a_position = (kv + LOCAL_HEAD + GLOBAL_HEAD + 1) as u64 * 4;
+        let kv: usize = (0..OWN_KV)
+            .filter(|&l| is_global(l))
+            .map(|l| 2 * KV_HEADS * head_of(l))
+            .sum();
+        let a_position = (kv + LOCAL_HEAD + 2 * GLOBAL_TURNED + 1) as u64 * 4;
         assert_eq!(more.held_bytes() - room.held_bytes(), a_position);
         assert_eq!(room.peak_bytes(), room.held_bytes() + prompt * PARAM_STRIDE);
         assert!(ContextPlan::new(&layout, MOST_CONTEXT + 1).is_err());
-        // The largest cache within the 2 GB of a binding, in whole chunks.
-        let binding = 1 << 31;
-        assert!(Sizes::new(MOST_POSITIONS).cache * 4 <= binding);
-        assert!(Sizes::new(MOST_POSITIONS + CHUNK).cache * 4 > binding);
+        // The largest context's buffers each within the 2 GB of a binding
+        // as wgpu has it.
+        let binding = (1 << 31) - 4;
+        let most = ContextPlan::new(&layout, MOST_CONTEXT).unwrap();
+        assert!(most.sizes.buffers().iter().all(|b| b.1 * 4 <= binding));
+    }
+
+    /// A sliding layer's ring takes each position to its own place for as
+    /// long as its window and a chunk's rows read it; a global layer's
+    /// every position; the rotary tables hold each position's turned
+    /// pairs.
+    #[test]
+    fn a_ring_keeps_a_window_and_a_chunk() {
+        let sizes = Sizes::new(5000);
+        let sliding = sizes.kv(0);
+        assert_eq!((sliding.buf, sliding.places), (Buf::Ring, RING));
+        let reads = |pos: usize| (pos + 1).saturating_sub(WINDOW)..=pos;
+        for first in [0, 300, 1000, 2047] {
+            // A chunk's rows written, then every row's window read.
+            let written: Vec<usize> = (first..first + CHUNK).collect();
+            for row in &written {
+                for p in reads(*row) {
+                    let clash = written
+                        .iter()
+                        .any(|&w| w != p && w & sliding.mask == p & sliding.mask);
+                    assert!(!clash, "position {p} overwritten in the chunk from {first}");
+                }
+            }
+        }
+        let global = sizes.kv(5);
+        assert_eq!((global.buf, global.places), (Buf::Global(0), 5000));
+        assert_eq!(4999 & global.mask, 4999);
+        // The shared layers read the last of their kind's.
+        assert_eq!(sizes.kv(41).buf, Buf::Global(GLOBALS - 1));
+        assert_eq!(sizes.kv(40).keys, sizes.kv(22).keys);
+        assert_eq!(sizes.rope().len(), sizes.rope);
+    }
+
+    /// The context chosen is the largest whose room fits, in whole steps,
+    /// within the least and the most and no larger than the need (rounded
+    /// up to a step); a binding too small for a global layer's buffer
+    /// holds it back too.
+    #[test]
+    fn the_context_is_the_largest_that_fits() {
+        let layout = super::super::model::tests::gemma();
+        let weights = 1 << 30;
+        let peak = |c: usize| weights + ContextPlan::new(&layout, c).unwrap().peak_bytes();
+        let binding = (1 << 31) - 4;
+        let at = |positions: usize| positions - PAST;
+        let fit =
+            |room, binding, need| ContextPlan::fitting(&layout, weights, (room, binding), need);
+        assert_eq!(fit(None, binding, MOST_CONTEXT), LEAST_CONTEXT);
+        assert_eq!(fit(Some(0), binding, MOST_CONTEXT), LEAST_CONTEXT);
+        assert_eq!(fit(Some(u64::MAX), binding, MOST_CONTEXT), MOST_CONTEXT);
+        let room = peak(at(20 * STEP));
+        assert_eq!(fit(Some(room), binding, MOST_CONTEXT), at(20 * STEP));
+        assert_eq!(fit(Some(room - 1), binding, MOST_CONTEXT), at(19 * STEP));
+        // The need rounded up to a step; never under the least.
+        assert_eq!(
+            fit(Some(u64::MAX), binding, at(12 * STEP) + 1),
+            at(13 * STEP)
+        );
+        assert_eq!(fit(Some(u64::MAX), binding, at(12 * STEP)), at(12 * STEP));
+        assert_eq!(fit(Some(u64::MAX), binding, 1000), LEAST_CONTEXT);
+        // A binding only as large as a global layer's buffer at 32 steps
+        // (520 MiB: its keys and values, and its queries).
+        let small = (Sizes::new(32 * STEP).global * 4) as u64;
+        assert_eq!(fit(Some(u64::MAX), small, MOST_CONTEXT), at(32 * STEP));
     }
 }

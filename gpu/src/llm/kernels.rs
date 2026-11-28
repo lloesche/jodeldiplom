@@ -116,6 +116,9 @@ pub(super) const LOGIT_CAP: f32 = 30.0;
 /// The invocations of a workgroup of flash attention, each 16 of a
 /// query's values (`flash`: a block of FLASH_LANES / (D / 16) queries).
 pub(super) const FLASH_LANES: usize = 256;
+/// The most splits of a step's attention (`attend`'s workgroups a key/value
+/// head; `join` weighs each in workgroup memory of as many).
+pub(super) const MOST_SPLITS: usize = 128;
 /// The words before the tokens in `ints` (the state).
 pub(super) const TOKENS: usize = 16;
 /// No norm (`residual`), no other rows (`quant`).
@@ -205,6 +208,8 @@ const NUMBERS: [(&str, &[&str]); 10] = [
             "rope",
             "kv",
             "heads",
+            "mask",
+            "turned",
         ],
     ),
     (
@@ -217,6 +222,9 @@ const NUMBERS: [(&str, &[&str]); 10] = [
             "values",
             "positions",
             "splits",
+            "mask",
+            "least",
+            "per",
         ],
     ),
     ("join", &["d", "splits", "qa", "qs", "mode", "heads"]),
@@ -233,6 +241,7 @@ const NUMBERS: [(&str, &[&str]); 10] = [
             "positions",
             "heads",
             "group",
+            "mask",
         ],
     ),
 ];
@@ -271,6 +280,7 @@ fn constants() -> String {
         ("GEMV_ROWS", GEMV_ROWS),
         ("GEMM_TILE", GEMM_TILE),
         ("FLASH_LANES", FLASH_LANES),
+        ("MOST_SPLITS", MOST_SPLITS),
         ("GELU", After::Gelu.flag()),
         ("GEGLU", After::GeGlu.flag()),
         ("ARGMAX", After::Argmax { stride: 0 }.flag()),

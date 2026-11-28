@@ -21,6 +21,13 @@ pub const IDLE: Duration = Duration::from_secs(60);
 /// the window's pictures.
 pub const MARGIN: u64 = 1 << 30;
 
+/// What the stages' models may hold in all on a card of `budget` bytes
+/// where the process holds `other` bytes beside them: the budget less
+/// [`MARGIN`] and that.
+pub fn room(budget: u64, other: u64) -> u64 {
+    budget.saturating_sub(MARGIN).saturating_sub(other)
+}
+
 /// A stage as the plan keeps it.
 #[derive(Debug, Default)]
 struct Slot {
@@ -205,10 +212,7 @@ impl Plan {
         // What the stages' models may hold in all: the budget less the
         // margin and what else the process holds (what is told beyond the
         // plan, at least the floor).
-        let room = budget.map(|b| {
-            let other = b.usage.saturating_sub(held).max(self.floor);
-            b.budget.saturating_sub(MARGIN).saturating_sub(other)
-        });
+        let room = budget.map(|b| room(b.budget, b.usage.saturating_sub(held).max(self.floor)));
         if self.deadline().is_some_and(|due| now >= due) {
             for stage in Stage::ALL {
                 let slot = self.slot(stage);

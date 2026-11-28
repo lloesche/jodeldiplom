@@ -82,23 +82,34 @@ pub struct Chosen {
     /// The best adapter: a high-performance one preferred, a software
     /// renderer refused; why there is none, if there is none.
     pub adapter: Result<wgpu::Adapter, String>,
-    /// The same card ([`card`]) through DirectX 12, kept only where
-    /// [`Chosen::adapter`] is on another backend and the card has
-    /// DirectX 12 too.
-    pub sibling: Option<wgpu::Adapter>,
 }
+
+/// The one backend the models and the window run on: Metal on Apple's
+/// systems, Vulkan everywhere else (the only backends built).
+const BACKEND: &str = if cfg!(target_vendor = "apple") {
+    "Metal"
+} else {
+    "Vulkan"
+};
+
+/// What is said where [`BACKEND`] finds no graphics card: on Vulkan, that
+/// its driver may not be installed (Metal is always there).
+const NO_CARD: &str = if cfg!(target_vendor = "apple") {
+    "no graphics card on Metal"
+} else {
+    "no graphics card on Vulkan (is its driver installed?)"
+};
 
 /// The GPU's choice, made once.
 static CHOSEN: OnceLock<Chosen> = OnceLock::new();
 
-/// The card an adapter is on: its PCI vendor and device ids, the same on
-/// every backend.
+/// The card an adapter is on: its PCI vendor and device ids.
 pub fn card(info: &wgpu::AdapterInfo) -> (u32, u32) {
     (info.vendor, info.device)
 }
 
 /// The process's GPU: chosen on first use, in a turn ([`setting_up`]),
-/// from every adapter on every backend, and kept (a failed choice too:
+/// from every adapter on [`BACKEND`], and kept (a failed choice too:
 /// no GPU is looked for again). Listing the adapters starts every GPU's
 /// driver (an unused integrated one's too), so the choice does it once;
 /// the adapters not kept are dropped then.
@@ -115,11 +126,10 @@ pub fn chosen() -> &'static Chosen {
 /// Lists the adapters and chooses ([`chosen`]).
 fn choose() -> Chosen {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let (adapter, sibling) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let adapter = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
         // As `request_adapter` sorts them for high performance: a discrete
-        // GPU first, then an integrated one; the backends in their order
-        // within each.
+        // GPU first, then an integrated one.
         adapters.sort_by_key(|a| match a.get_info().device_type {
             wgpu::DeviceType::DiscreteGpu => 0,
             wgpu::DeviceType::IntegratedGpu => 1,
@@ -127,39 +137,17 @@ fn choose() -> Chosen {
             wgpu::DeviceType::VirtualGpu => 3,
             wgpu::DeviceType::Cpu => 4,
         });
-        let mut adapters = adapters.into_iter();
-        let Some(best) = adapters.next() else {
-            return (
-                Err(
-                    "no graphics card on any backend (Vulkan, Metal, DirectX 12, OpenGL)"
-                        .to_string(),
-                ),
-                None,
-            );
+        let Some(best) = adapters.into_iter().next() else {
+            return Err(NO_CARD.to_owned());
         };
         let info = best.get_info();
         if info.device_type == wgpu::DeviceType::Cpu {
-            return (
-                Err(format!("only {}, a software renderer", info.name)),
-                None,
-            );
+            return Err(format!("only {}, a software renderer", info.name));
         }
-        let sibling = (info.backend != wgpu::Backend::Dx12)
-            .then(|| {
-                adapters.find(|a| {
-                    let other = a.get_info();
-                    other.backend == wgpu::Backend::Dx12 && card(&other) == card(&info)
-                })
-            })
-            .flatten();
-        (Ok(best), sibling)
+        Ok(best)
     }))
-    .unwrap_or_else(|_| (Err("looking for a graphics card panicked".into()), None));
-    Chosen {
-        instance,
-        adapter,
-        sibling,
-    }
+    .unwrap_or_else(|_| Err("looking for a graphics card panicked".into()));
+    Chosen { instance, adapter }
 }
 
 /// The adapter every device here comes from ([`chosen`]). Only in a turn
@@ -236,6 +224,37 @@ pub(crate) fn open_on<T, W>(
     Ok((made, info.name))
 }
 
+/// The most bytes a buffer of the process's GPU ([`chosen`]) is bound
+/// with (`wgpu`'s storage binding, within its largest buffer); without a
+/// usable GPU, why there is none.
+pub(crate) fn binding() -> Result<u64, String> {
+    let limits = chosen().adapter.as_ref().map_err(Clone::clone)?.limits();
+    Ok(limits
+        .max_storage_buffer_binding_size
+        .min(limits.max_buffer_size))
+}
+
+/// The most bytes the Vulkan driver of `adapter` binds a storage buffer
+/// with (`maxStorageBufferRange`), for the report beside what `wgpu`
+/// allows (it keeps every backend within 2 GiB); `None` on Metal.
+#[cfg(not(target_vendor = "apple"))]
+fn driver_binding(adapter: &wgpu::Adapter) -> Option<u64> {
+    // SAFETY: `as_hal`'s contract: the hal adapter is used only while the
+    // guard lives (this call), and its physical device is only queried.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    let instance = hal.shared_instance().raw_instance();
+    // SAFETY: the physical device is the instance's, alive through the
+    // call.
+    let properties = unsafe { instance.get_physical_device_properties(hal.raw_physical_device()) };
+    Some(u64::from(properties.limits.max_storage_buffer_range))
+}
+
+/// [`driver_binding`] on Metal: none.
+#[cfg(target_vendor = "apple")]
+fn driver_binding(_: &wgpu::Adapter) -> Option<u64> {
+    None
+}
+
 /// The name of the GPU the separator would use, without setting it up;
 /// without a usable one, why there is none. Once the GPU is chosen
 /// ([`chosen`]), it waits for no setup.
@@ -247,9 +266,9 @@ pub fn gpu_name() -> Result<String, String> {
 }
 
 /// The adapters' lines of the diagnostic report ([`crate::report`]): every
-/// adapter `wgpu` sees on every backend with the limits the separator
-/// needs (listed again, on demand only), the one chosen (or why none) and
-/// its sibling. In a turn.
+/// adapter `wgpu` sees with the limits the networks need (listed again, on
+/// demand only; on Vulkan with the driver's own storage binding beside
+/// `wgpu`'s), and the one chosen (or why none). In a turn.
 pub(crate) fn report() -> Vec<String> {
     let _turn = setting_up();
     let mut lines = Vec::new();
@@ -260,9 +279,7 @@ pub(crate) fn report() -> Vec<String> {
     }));
     match adapters {
         Err(_) => lines.push("adapters: listing them panicked".into()),
-        Ok(adapters) if adapters.is_empty() => {
-            lines.push("adapters: none on any backend (Vulkan, Metal, DirectX 12, OpenGL)".into())
-        }
+        Ok(adapters) if adapters.is_empty() => lines.push(format!("adapters: none on {BACKEND}")),
         Ok(adapters) => {
             lines.push("adapters:".into());
             for a in adapters {
@@ -279,9 +296,11 @@ pub(crate) fn report() -> Vec<String> {
                     info.driver_info
                 ));
                 lines.push(format!(
-                    "      max buffer {}, max storage binding {}, workgroup storage {} KB, {} invocations per workgroup",
+                    "      max buffer {}, max storage binding {}{}, workgroup storage {} KB, {} invocations per workgroup",
                     mb(limits.max_buffer_size),
                     mb(limits.max_storage_buffer_binding_size),
+                    driver_binding(&a)
+                        .map_or_else(String::new, |b| format!(" (the driver's {})", mb(b))),
                     limits.max_compute_workgroup_storage_size / 1024,
                     limits.max_compute_invocations_per_workgroup
                 ));
@@ -297,13 +316,6 @@ pub(crate) fn report() -> Vec<String> {
             ));
         }
         Err(e) => lines.push(format!("the separator would use: none ({e})")),
-    }
-    if let Some(a) = &chosen.sibling {
-        let info = a.get_info();
-        lines.push(format!(
-            "the same card kept on: {} ({:?})",
-            info.name, info.backend
-        ));
     }
     lines
 }

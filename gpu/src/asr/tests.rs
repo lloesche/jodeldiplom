@@ -1,5 +1,5 @@
 //! The recogniser's kernels: their source through naga's validation and
-//! its Metal and HLSL writers (on any machine); and, on the model when it
+//! its Metal writer (on any machine); and, on the model when it
 //! is here (`JODEL_ASR_MODEL`, else the data folder's, skipped with a note
 //! where it or a usable GPU is not), the fused step against the unfused
 //! one, a step's round trips, and a piece past the room of pieces heard
@@ -10,10 +10,10 @@ use super::*;
 #[path = "../../tests/common/mod.rs"]
 mod common;
 
-/// The kernels parse and validate, and Metal's and DirectX's writers take
-/// them (as wgpu would, on a Mac and through DirectX 12).
+/// The kernels parse and validate, and Metal's writer takes them (as wgpu
+/// would, on a Mac).
 #[test]
-fn the_kernels_validate_and_write_for_metal_and_directx() {
+fn the_kernels_validate_and_write_for_metal() {
     // unpack2x16float (the scales and offsets); no f16 arithmetic, no
     // subgroups.
     let entries: Vec<&str> = Kernel::ALL.iter().map(|k| k.entry()).collect();

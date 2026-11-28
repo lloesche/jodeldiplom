@@ -99,7 +99,6 @@ pub(super) fn written(backend: wgpu::Backend) -> &'static str {
         wgpu::Backend::Metal => {
             "four multiply-adds of packed_char4 bytes (Metal has no packed dot instruction)"
         }
-        wgpu::Backend::Dx12 => "dot4add_i8packed from shader model 6.4 (else shifts and multiplies)",
         _ => "shifts and multiplies",
     }
 }

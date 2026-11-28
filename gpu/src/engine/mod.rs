@@ -278,9 +278,9 @@ pub(crate) fn shared_source(more: &[&str]) -> String {
     parts.join("\n")
 }
 
-/// Every kernel of `source` parses and validates, and Metal's and DirectX's
-/// writers take it (as wgpu would on a Mac and through DirectX 12), on any
-/// machine; each of `entries` is in both outputs.
+/// Every kernel of `source` parses and validates, and Metal's writer takes
+/// it (as wgpu would on a Mac), on any machine; each of `entries` is in its
+/// output.
 #[cfg(test)]
 pub(crate) fn check_source(
     source: &str,
@@ -298,27 +298,17 @@ pub(crate) fn check_source(
         &naga::back::msl::PipelineOptions::default(),
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    let mut hlsl = String::new();
-    naga::back::hlsl::Writer::new(
-        &mut hlsl,
-        &naga::back::hlsl::Options::default(),
-        &naga::back::hlsl::PipelineOptions::default(),
-    )
-    .write(&module, &info, None)
-    .unwrap_or_else(|e| panic!("{e}"));
     for e in entries {
         assert!(msl.contains(e), "{e} in Metal");
-        assert!(hlsl.contains(e), "{e} in HLSL");
     }
 }
 
 #[cfg(test)]
 mod tests {
     /// The separator's, the beat network's and the speech model's kernels
-    /// (with the shared prelude and helpers) validate and write for Metal
-    /// and DirectX.
+    /// (with the shared prelude and helpers) validate and write for Metal.
     #[test]
-    fn the_kernels_validate_and_write_for_metal_and_directx() {
+    fn the_kernels_validate_and_write_for_metal() {
         for (more, entry) in [
             (include_str!("../separator.wgsl"), "attention"),
             (include_str!("../net.wgsl"), "net_attention"),

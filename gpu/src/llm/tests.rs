@@ -1,5 +1,5 @@
 //! The language model's kernels: through naga's validation and its Metal
-//! and HLSL writers (on any machine), and each on small shapes against a
+//! writer (on any machine), and each on small shapes against a
 //! reference on the processor, on both paths and for every kind of
 //! matrix (where there is a usable GPU: skipped with a note where there
 //! is none). The blocks' reference is llama.cpp's `dequantize_row_*`, as
@@ -12,10 +12,10 @@ use crate::engine::{params, Kernels, Op, PARAM_STRIDE};
 use jodel_tensors::gguf::Kind;
 use jodel_tensors::half::{bf16_to_f32, f16_to_f32, f32_to_f16};
 
-/// The kernels parse and validate, and Metal's and DirectX's writers take
-/// them (as wgpu would, on a Mac and through DirectX 12).
+/// The kernels parse and validate, and Metal's writer takes them (as wgpu
+/// would, on a Mac).
 #[test]
-fn the_kernels_validate_and_write_for_metal_and_directx() {
+fn the_kernels_validate_and_write_for_metal() {
     let entries: Vec<&str> = Kernel::ALL.iter().map(|k| k.entry()).collect();
     crate::engine::check_source(
         &source(),
@@ -673,9 +673,17 @@ impl Heads {
         }
     }
 
+    /// Pair `i`'s cosine and sine at `pos` by a table of `base`.
+    fn turn(&self, i: usize, pos: usize, base: f32) -> (f32, f32) {
+        let f = 1.0 / base.powf((2 * i) as f32 / self.d as f32);
+        let a = f64::from(pos as f32 * f);
+        (a.cos() as f32, a.sin() as f32)
+    }
+
     /// Head `h` (of 12: queries, keys, values) of row `r` normed and
-    /// turned at `pos` by a table of `base` turning all pairs.
-    fn prepared(&self, r: usize, h: usize, pos: usize, base: f32) -> Vec<f32> {
+    /// turned at `pos` by a table of `base` turning the first `turned`
+    /// pairs.
+    fn prepared(&self, r: usize, h: usize, pos: usize, (base, turned): (f32, usize)) -> Vec<f32> {
         let d = self.d;
         let x = &self.qkv[(r * 12 + h) * d..(r * 12 + h + 1) * d];
         let inv = rms(x);
@@ -692,26 +700,22 @@ impl Heads {
         }
         let half = d / 2;
         let mut out = v.clone();
-        for i in 0..half {
-            let f = 1.0 / base.powf((2 * i) as f32 / d as f32);
-            let a = f64::from(pos as f32 * f);
-            let (c, s) = (a.cos() as f32, a.sin() as f32);
+        for i in 0..turned {
+            let (c, s) = self.turn(i, pos, base);
             out[i] = v[i] * c - v[i + half] * s;
             out[i + half] = v[i + half] * c + v[i] * s;
         }
         out
     }
 
-    /// The rotary table for `positions` of heads of `d`, `base`.
-    fn table(&self, positions: usize, base: f32) -> Vec<u32> {
-        let half = self.d / 2;
+    /// The rotary table for `positions` of heads of `d`, `base`, its first
+    /// `turned` pairs.
+    fn table(&self, positions: usize, (base, turned): (f32, usize)) -> Vec<u32> {
         let mut t = Vec::new();
         for pos in 0..positions {
-            for i in 0..half {
-                let f = 1.0 / base.powf((2 * i) as f32 / self.d as f32);
-                let a = f64::from(pos as f32 * f);
-                t.push((a.cos() as f32).to_bits());
-                t.push((a.sin() as f32).to_bits());
+            for i in 0..turned {
+                let (c, s) = self.turn(i, pos, base);
+                t.extend([c.to_bits(), s.to_bits()]);
             }
         }
         t
@@ -747,39 +751,66 @@ fn attention(
     out
 }
 
-/// The cache's layout (as the kernels keep it) of the keys and values of
-/// rows prepared at positions 0 on, and the queries after them.
-fn prepare(rig: &Rig, heads: &Heads, rows: usize, positions: usize, base: f32) -> Data {
+/// Where the cache keeps its keys, values and queries for heads of `d`
+/// with `places` a key's value: from its start, the queries after them.
+fn layout(d: usize, places: usize) -> (usize, usize, usize) {
+    (0, 2 * d * places, 4 * d * places)
+}
+
+/// `rows` rows from position `first` prepared into `cache` (as the
+/// kernels keep it: `places` a key's value, a position's place masked by
+/// `mask`; the queries of these rows after the keys and values), the
+/// rotary table of `turn` (its base and the pairs it turns).
+fn prepare_into(
+    rig: &Rig,
+    heads: &Heads,
+    (first, rows): (usize, usize),
+    (places, mask): (usize, usize),
+    turn: (f32, usize),
+    cache: Vec<f32>,
+) -> Vec<f32> {
     let d = heads.d;
-    let (k_at, v_at, q_at) = (0, 2 * d * positions, 4 * d * positions);
+    let (k_at, v_at, q_at) = layout(d, places);
     let data = Data {
-        src: heads.qkv.clone(),
+        src: heads.qkv[first * 12 * d..(first + rows) * 12 * d].to_vec(),
         aux: [heads.q_norm.clone(), heads.k_norm.clone()].concat(),
-        dst: vec![0.0; q_at + rows * 8 * d],
-        wq: heads.table(positions, base),
+        dst: cache,
+        wq: heads.table(first + rows, turn),
         ints: vec![0; TOKENS],
     };
-    rig.run(
-        Kernel::Prep,
-        &[
-            rows,
-            0,
-            0,
-            d,
-            12 * d,
-            0,
-            d,
-            q_at,
-            k_at,
-            v_at,
-            positions,
-            0,
-            2,
-            8,
-        ],
-        [rows as u32, 12, 1],
-        &data,
-    )
+    let numbers = [
+        rows,
+        first,
+        0,
+        d,
+        12 * d,
+        0,
+        d,
+        q_at,
+        k_at,
+        v_at,
+        places,
+        0,
+        2,
+        8,
+        mask,
+        turn.1,
+    ];
+    rig.run(Kernel::Prep, &numbers, [rows as u32, 12, 1], &data)
+        .dst
+}
+
+/// The mask of a cache with a place for every position (a global layer's).
+const ALL_BITS: usize = u32::MAX as usize;
+
+/// A cache for `rows` rows of heads of `d` with `places` a key's value.
+fn empty_cache(d: usize, places: usize, rows: usize) -> Vec<f32> {
+    vec![0.0; layout(d, places).2 + rows * 8 * d]
+}
+
+/// Every pair of heads of `d` turned, at base 10⁴.
+fn all_turned(d: usize) -> (f32, usize) {
+    (10_000.0, d / 2)
 }
 
 #[test]
@@ -788,21 +819,100 @@ fn queries_keys_and_values_go_normed_and_turned_to_their_places() {
     let mut noise = Noise(6);
     let (rows, d, positions) = (3, 128, 8);
     let heads = Heads::new(&mut noise, rows, d);
-    let got = prepare(&rig, &heads, rows, positions, 10_000.0).dst;
-    let (v_at, q_at) = (2 * d * positions, 4 * d * positions);
-    for r in 0..rows {
-        for h in 0..12 {
-            let want = heads.prepared(r, h, r, 10_000.0);
-            let have: Vec<f32> = (0..d)
-                .map(|i| match h {
-                    0..=7 => got[q_at + (r * 8 + h) * d + i],
-                    8 | 9 => got[((h - 8) * d + i) * positions + r],
-                    _ => got[v_at + ((h - 10) * positions + r) * d + i],
-                })
-                .collect();
-            assert!(off(&have, &want) < 1e-5, "row {r}, head {h}");
+    // Every pair turned, and (as a global layer's) the first quarter.
+    for turn in [all_turned(d), (1e6, d / 8)] {
+        let cache = empty_cache(d, positions, rows);
+        let got = prepare_into(&rig, &heads, (0, rows), (positions, ALL_BITS), turn, cache);
+        let (_, v_at, q_at) = layout(d, positions);
+        for r in 0..rows {
+            for h in 0..12 {
+                let want = heads.prepared(r, h, r, turn);
+                let have: Vec<f32> = (0..d)
+                    .map(|i| match h {
+                        0..=7 => got[q_at + (r * 8 + h) * d + i],
+                        8 | 9 => got[((h - 8) * d + i) * positions + r],
+                        _ => got[v_at + ((h - 10) * positions + r) * d + i],
+                    })
+                    .collect();
+                assert!(off(&have, &want) < 1e-5, "row {r}, head {h}, {turn:?}");
+            }
         }
     }
+}
+
+/// The step's attention at `last` (its queries the first row's place in
+/// `cache`, as they were written) in `splits` splits (`least` at work, or
+/// one every `per` chunks where that is more), joined, against `want` (its
+/// eight heads') on both paths.
+fn step_is(
+    rig: &Rig,
+    (d, window): (usize, usize),
+    (places, mask): (usize, usize),
+    (cache, last): (Vec<f32>, usize),
+    (splits, least, per): (usize, usize, usize),
+    want: &[f32],
+) {
+    let (k_at, v_at, q_at) = layout(d, places);
+    let mut ints = vec![0u32; TOKENS];
+    ints[0] = last as u32;
+    let data = Data {
+        src: cache,
+        // Junk where nothing is written (every total above 0): a split
+        // past those at work must write its 0 for the join to leave it out.
+        dst: vec![1.0e3; 8 * splits * (d + 2)],
+        ints,
+        ..Data::default()
+    };
+    let numbers = [
+        d, window, q_at, k_at, v_at, places, splits, mask, least, per,
+    ];
+    let parts = rig.run(Kernel::Attend, &numbers, [splits as u32, 2, 1], &data);
+    for q8 in PATHS {
+        let qs = 8 * d;
+        // Every split joined, those idle left out by their totals of 0.
+        let data = Data {
+            src: parts.dst.clone(),
+            dst: vec![0.0],
+            ints: vec![0; qs + 8 * d / 32 * 2],
+            ..Data::default()
+        };
+        let got = rig.run(
+            Kernel::Join,
+            &[d, splits, 0, qs, usize::from(q8), 8],
+            [8, 1, 1],
+            &data,
+        );
+        let (want_words, _) = written(want, q8, qs);
+        let e = off(
+            &held(&got.ints, 8 * d, q8, qs),
+            &held(&want_words, 8 * d, q8, qs),
+        );
+        assert!(
+            e < 1e-5,
+            "step: window {window}, places {places}, q8 {q8}: {e}"
+        );
+    }
+}
+
+/// A prompt's attention over `rows` rows from `first` (their queries in
+/// `cache`), through flash.
+fn flash(
+    rig: &Rig,
+    (d, window): (usize, usize),
+    (places, mask): (usize, usize),
+    (cache, first, rows): (&[f32], usize, usize),
+) -> Vec<f32> {
+    let (k_at, v_at, q_at) = layout(d, places);
+    let data = Data {
+        src: cache.to_vec(),
+        dst: vec![0.0; rows * 8 * d],
+        ints: vec![0; TOKENS],
+        ..Data::default()
+    };
+    let per_block = 256 / (d / 16);
+    let numbers = [rows, first, d, window, q_at, k_at, v_at, places, 8, 4, mask];
+    let groups = [rows.div_ceil(per_block) as u32, 8, 1];
+    rig.run(Kernel::Flash, &numbers, groups, &data).dst
 }
 
 #[test]
@@ -811,35 +921,32 @@ fn a_steps_attention_and_a_prompts_are_the_reference() {
     let mut noise = Noise(7);
     let (rows, d, positions) = (150, 128, 160);
     let heads = Heads::new(&mut noise, rows, d);
-    let cache = prepare(&rig, &heads, rows, positions, 10_000.0).dst;
-    let (k_at, v_at, q_at) = (0, 2 * d * positions, 4 * d * positions);
+    let turn = all_turned(d);
+    let whole = (positions, ALL_BITS);
+    let cache = prepare_into(
+        &rig,
+        &heads,
+        (0, rows),
+        whole,
+        turn,
+        empty_cache(d, positions, rows),
+    );
+    let q_at = layout(d, positions).2;
     let kv = |g: usize, kind: usize| -> Vec<Vec<f32>> {
         (0..rows)
-            .map(|r| heads.prepared(r, 8 + 2 * kind + g, r, 10_000.0))
+            .map(|r| heads.prepared(r, 8 + 2 * kind + g, r, turn))
             .collect()
     };
     for window in [0, 40] {
         let want = |r: usize, h: usize| {
-            let q = heads.prepared(r, h, r, 10_000.0);
+            let q = heads.prepared(r, h, r, turn);
             attention(&q, &kv(h / 4, 0), &kv(h / 4, 1), r, window)
         };
         // A prompt's: all rows, from row 0, through flash.
-        let data = Data {
-            src: cache.clone(),
-            dst: vec![0.0; rows * 8 * d],
-            ints: vec![0; TOKENS],
-            ..Data::default()
-        };
-        let per_block = 256 / (d / 16);
-        let got = rig.run(
-            Kernel::Flash,
-            &[rows, 0, d, window, q_at, k_at, v_at, positions, 8, 4],
-            [rows.div_ceil(per_block) as u32, 8, 1],
-            &data,
-        );
+        let got = flash(&rig, (d, window), whole, (&cache, 0, rows));
         for r in [0, 1, 39, 40, 41, 100, rows - 1] {
             for h in [0, 3, 4, 7] {
-                let have = &got.dst[(r * 8 + h) * d..(r * 8 + h + 1) * d];
+                let have = &got[(r * 8 + h) * d..(r * 8 + h + 1) * d];
                 assert!(
                     off(have, &want(r, h)) < 1e-5,
                     "flash: window {window}, row {r}, head {h}"
@@ -850,43 +957,70 @@ fn a_steps_attention_and_a_prompts_are_the_reference() {
         let last = rows - 1;
         let mut src = cache.clone();
         src.copy_within(q_at + last * 8 * d..q_at + rows * 8 * d, q_at);
-        // Splits idle (the window's one chunk), and one taking two chunks (of 3).
-        let splits = if window > 0 { 3 } else { 2 };
-        let mut ints = vec![0u32; TOKENS];
-        ints[0] = last as u32;
-        let data = Data {
-            src,
-            dst: vec![0.0; 8 * splits * (d + 2)],
-            ints: ints.clone(),
-            ..Data::default()
+        // Splits idle (the window's one chunk), and one taking two chunks
+        // (of 3); then as many as the chunks, or one every two, of more
+        // dispatched (the rest idle).
+        let want_all: Vec<f32> = (0..8).flat_map(|h| want(last, h)).collect();
+        let step = |splits| {
+            step_is(
+                &rig,
+                (d, window),
+                whole,
+                (src.clone(), last),
+                splits,
+                &want_all,
+            )
         };
-        let parts = rig.run(
-            Kernel::Attend,
-            &[d, window, q_at, k_at, v_at, positions, splits],
-            [splits as u32, 2, 1],
-            &data,
-        );
-        for q8 in PATHS {
-            let qs = 8 * d;
-            let data = Data {
-                src: parts.dst.clone(),
-                dst: vec![0.0],
-                ints: vec![0; qs + 8 * d / 32 * 2],
-                ..Data::default()
-            };
-            let got = rig.run(
-                Kernel::Join,
-                &[d, splits, 0, qs, usize::from(q8), 8],
-                [1, 1, 1],
-                &data,
-            );
-            let want_all: Vec<f32> = (0..8).flat_map(|h| want(last, h)).collect();
-            let (want_words, _) = written(&want_all, q8, qs);
-            let e = off(
-                &held(&got.ints, 8 * d, q8, qs),
-                &held(&want_words, 8 * d, q8, qs),
-            );
-            assert!(e < 1e-5, "step: window {window}, q8 {q8}: {e}");
+        if window > 0 {
+            step((3, 3, 1));
+        } else {
+            step((2, 2, 1));
+            step((4, 1, 1));
+            step((4, 1, 2));
         }
     }
+}
+
+/// A sliding layer's keys and values in a ring of 64 places (its window
+/// of 40 and chunks of 24 rows), its rows prepared and attended a chunk at
+/// a time as a prompt's are, then a step at the last: each the reference
+/// over every position, the ring wrapped many times (the step's window
+/// across its end).
+#[test]
+fn a_ring_holds_what_the_window_reads() {
+    let Some(rig) = rig() else { return };
+    let mut noise = Noise(8);
+    let (rows, d, window, chunk) = (281, 128, 40, 24);
+    let ring = (64, 63);
+    let heads = Heads::new(&mut noise, rows, d);
+    let turn = all_turned(d);
+    let kv = |g: usize, kind: usize| -> Vec<Vec<f32>> {
+        (0..rows)
+            .map(|r| heads.prepared(r, 8 + 2 * kind + g, r, turn))
+            .collect()
+    };
+    let want = |r: usize, h: usize| {
+        let q = heads.prepared(r, h, r, turn);
+        attention(&q, &kv(h / 4, 0), &kv(h / 4, 1), r, window)
+    };
+    let mut cache = empty_cache(d, ring.0, chunk);
+    for first in (0..rows).step_by(chunk) {
+        let n = chunk.min(rows - first);
+        cache = prepare_into(&rig, &heads, (first, n), ring, turn, cache);
+        let got = flash(&rig, (d, window), ring, (&cache, first, n));
+        for r in first..first + n {
+            for h in [0, 5] {
+                let have = &got[((r - first) * 8 + h) * d..((r - first) * 8 + h + 1) * d];
+                assert!(
+                    off(have, &want(r, h)) < 1e-5,
+                    "flash in a ring: row {r}, head {h}"
+                );
+            }
+        }
+    }
+    // The last row as a step would have it: prepared alone at its position.
+    let last = rows - 1;
+    let cache = prepare_into(&rig, &heads, (last, 1), ring, turn, cache);
+    let want_all: Vec<f32> = (0..8).flat_map(|h| want(last, h)).collect();
+    step_is(&rig, (d, window), ring, (cache, last), (3, 3, 1), &want_all);
 }

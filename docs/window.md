@@ -17,9 +17,10 @@ of its own. `iced_test` is taken from the same commit, for the headless
 tests and examples.
 
 Its features: the `wgpu` renderer without `wgpu`'s own backends (ours pick
-Vulkan, DirectX 12 or Metal), the CPU renderer (`vello-cpu`) where there
-is no GPU, `canvas`, images without codecs (ours decode), `advanced` for
-our own widgets. `JODELDIPLOM_SOFTWARE=1` runs on the CPU renderer as a
+them: Vulkan on Windows and Linux, Metal on the Mac, the backends the
+models run on too), the CPU renderer (`vello-cpu`) where there is no
+GPU, `canvas`, images without codecs (ours decode), `advanced` for our
+own widgets. `JODELDIPLOM_SOFTWARE=1` runs on the CPU renderer as a
 machine without a GPU would.
 
 ## The pieces

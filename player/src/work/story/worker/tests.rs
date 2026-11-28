@@ -45,7 +45,10 @@ type Log = Arc<Mutex<Vec<String>>>;
 /// its seed's colour (`painted` counting them; where `gate` says, it
 /// waits after its picture of that count until let go), the scenes are
 /// taken apart by their red; each logs what it does; none runs where
-/// `none`, the encoder fails where `no_encoder`.
+/// `none` (and the language model has no context), the encoder fails
+/// where `no_encoder`; the language model writes in a context of
+/// `context` positions, its answer cut off where `cut`, its thought
+/// never ending (cut off by the context) where `endless`.
 struct Fakes {
     log: Log,
     answer: Mutex<String>,
@@ -54,6 +57,8 @@ struct Fakes {
     none: bool,
     no_encoder: bool,
     cut: bool,
+    endless: bool,
+    context: Mutex<usize>,
 }
 
 impl Fakes {
@@ -66,6 +71,8 @@ impl Fakes {
             none: false,
             no_encoder: false,
             cut: false,
+            endless: false,
+            context: Mutex::new(jodel_gpu::llm::LEAST_CONTEXT),
         }
     }
 
@@ -101,6 +108,15 @@ struct Paints<'a>(&'a Fakes);
 impl Writer for Writes<'_> {
     fn write(&self, _: &str, _: usize, seen: &mut dyn FnMut(Writing)) -> Result<Written, Failure> {
         self.0.did("plan".into());
+        if self.0.endless {
+            seen(Writing::Thinking);
+            return Ok(Written {
+                thinking: true,
+                thought_tokens: 3_000,
+                thought_room: 3_000,
+                ..Written::default()
+            });
+        }
         seen(Writing::Answer(&self.1));
         Ok(Written {
             text: self.1.clone(),
@@ -150,10 +166,16 @@ fn paint((w, h): (usize, usize), refs: usize) -> String {
 }
 
 impl Models for Fakes {
+    fn context(&self) -> Result<usize, String> {
+        self.up()?;
+        Ok(*self.context.lock().unwrap())
+    }
+
     fn plan(&self, job: &StoryJob, tell: &mut dyn FnMut(Story)) -> Result<Plan, Failure> {
         self.up().map_err(Failure::Model)?;
         let answer = self.answer.lock().unwrap().clone();
-        job.run(&Writes(self, answer), tell)
+        let context = self.context().map_err(Failure::Model)?;
+        job.run(&Writes(self, answer), context, tell)
     }
 
     fn encode(&self, drawing: &Drawing) -> Result<Encoded, String> {
@@ -446,6 +468,13 @@ fn a_song_made_is_not_made_again() {
     assert!(round_of(&song, &fakes, &places, &out).is_empty());
     assert_eq!(fakes.took(), Vec::<String>::new());
     assert_eq!(of(&told(&rx), &paths[0]), ["story"], "ready at once");
+    // With no GPU (no context to be had) too.
+    let gone = Fakes {
+        none: true,
+        ..Fakes::new()
+    };
+    assert!(round_of(&song, &gone, &places, &out).is_empty());
+    assert_eq!(of(&told(&rx), &paths[0]), ["story"], "made, with no GPU");
     assert!(round_with(&song, ask, &always, &mut tried).is_empty());
     assert!(rx.try_iter().next().is_none(), "not looked at again");
     // The second scene's picture gone: it alone, with its two portraits.
@@ -694,6 +723,49 @@ fn a_plan_cut_off_is_refused_once_and_not_tried_again() {
         "kept: not planned again"
     );
     assert_eq!(of(&told(&rx), &paths[0]), ["none"]);
+}
+
+/// A thought cut off by the context: no story, kept with that context and
+/// not planned again in one as large (nor where there is no context to
+/// be had now: not now), but planned again in a larger one.
+#[test]
+fn a_song_short_of_room_is_planned_again_in_a_larger_context() {
+    let (_dir, places, paths, _) = setting("short", 1);
+    let fakes = Fakes {
+        endless: true,
+        ..Fakes::new()
+    };
+    let (out, rx) = outbox();
+    let song = [wanted(&paths[0])];
+    let with = (&fakes, &places, &out);
+    let always = |_: &StorySong| true;
+    let (drawn, next) = next_round(&song, with, &always, &mut Tried::default());
+    assert!(drawn.is_empty());
+    assert_eq!(next, Next::Wait, "not tried again");
+    assert_eq!(fakes.took(), ["plan"]);
+    assert_eq!(
+        of(&told(&rx), &paths[0]),
+        ["on", "planning", "thinking", "off", "none"]
+    );
+    let (_, next) = next_round(&song, with, &always, &mut Tried::default());
+    assert_eq!(next, Next::Wait);
+    assert_eq!(fakes.took(), Vec::<String>::new(), "as large: not again");
+    assert_eq!(of(&told(&rx), &paths[0]), ["none"]);
+    let gone = Fakes {
+        none: true,
+        ..Fakes::new()
+    };
+    let (_, next) = next_round(
+        &song,
+        (&gone, &places, &out),
+        &always,
+        &mut Tried::default(),
+    );
+    assert!(matches!(next, Next::At(_)));
+    assert_eq!(of(&told(&rx), &paths[0]), ["not now: no GPU"]);
+    *fakes.context.lock().unwrap() += 2048;
+    next_round(&song, with, &always, &mut Tried::default());
+    assert_eq!(fakes.took(), ["plan"], "larger: planned again");
 }
 
 /// A song is still wanted while it is in the list of the very same

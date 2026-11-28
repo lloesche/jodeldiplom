@@ -32,11 +32,10 @@
 //! three times, each scene in three layers by a made-up depth (nearer
 //! towards its middle), a head held flat in the middle: the dearest a
 //! scene draws; one cut in and the next scene sent over within the second
-//! timed. The GPU must write
-//! timestamps (Vulkan, DirectX 12, Metal on Apple's chips). `--png
-//! OUT_DIR`: the last frame of each as a PNG (`<scene>-<W>x<H>.png`,
-//! written whole), to hold the look to. Each scene's stage is also timed
-//! kind by kind (the frame drawn with that kind of shape alone: its stage,
+//! timed. The GPU must write timestamps (Vulkan, Metal on Apple's chips).
+//! `--png OUT_DIR`: the last frame of each as a PNG
+//! (`<scene>-<W>x<H>.png`, written whole), to hold the look to. Each
+//! scene's stage is also timed kind by kind (the frame drawn with that kind of shape alone: its stage,
 //! screen-pass and top steps) and effect by effect (the frame with that
 //! effect's shapes alone, its light and its text in its treatment too: its
 //! stage, light, screen-pass and top steps); the diploma's only once its

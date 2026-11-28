@@ -535,6 +535,13 @@ fn story_plan_files_are_pinned() {
         &Kept::NoStory("2 scenes: 15 to 30 were asked for".into()),
     );
     assert!(none.ends_with("\nnone 2 scenes: 15 to 30 were asked for\n"));
+    let short = Kept::Short {
+        context: 32_752,
+        why: "the thought did not end".into(),
+    };
+    let text = to_text(asked, &short);
+    assert!(text.ends_with("\nshort 32752 the thought did not end\n"));
+    assert_eq!(from_text(&text, asked), Some(short));
 }
 
 /// A song's story scenes as the drawing step leaves them, and the parts
