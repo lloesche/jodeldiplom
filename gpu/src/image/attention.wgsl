@@ -1,11 +1,13 @@
 // Attention over heads of 128 laid out [head][token][128] (flash
 // attention: an online softmax over tiles of keys, the scores never
-// stored). The numbers, for both kernels (this one on f32 multiply-adds,
-// `attention_coop.wgsl` on cooperative matrices): n0 queries, n1 keys, n2
+// stored). The numbers, for every attention kernel (this one on f32
+// multiply-adds, `attention_coop.wgsl` and `attention8.wgsl` on cooperative
+// matrices): n0 queries, n1 keys, n2
 // heads, n3 query heads a key head serves, n4 the queries' offset, n5 the
 // keys', n6 the values', n7 the output's (token-major: head h's 128
 // values at h·128 of a row), n8 its stride, n9 the scale's bits, n10 1 for
-// causal, n11 the keys that count (those from it on are left out).
+// causal, n11 the keys that count (those from it on are left out), n12 the
+// dispatch's first block of queries (a dispatch cut into slices).
 //
 // Here a workgroup takes 64 queries of a head, two invocations a query,
 // each with half of the head (64 values) in registers; keys come 16 at a
@@ -42,7 +44,7 @@ fn attention(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_ind
 fn attention_f32(wg: vec3<u32>, li: u32) {
     let h = wg.y;
     let kvh = h / p.n3;
-    let query = wg.x * 64u + li / 2u;
+    let query = (wg.x + p.n12) * 64u + li / 2u;
     let half = li % 2u;
     let live = query < p.n0;
     var q = h64_zero();

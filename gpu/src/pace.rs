@@ -63,8 +63,9 @@ const START: f32 = 0.5;
 /// Background work gives way this long after the window's last frame at
 /// the display's refresh.
 const MOVING: Duration = Duration::from_millis(500);
-/// How long one submission should take on the GPU.
-const PIECE: Duration = Duration::from_millis(5);
+/// How long one submission should take on the GPU (and a picture model's
+/// dispatch at most: `image::plan`).
+pub(crate) const PIECE: Duration = Duration::from_millis(5);
 /// The longest rest after one.
 const LONGEST_REST: Duration = Duration::from_millis(60);
 /// The longest background work waits for other work at a time.

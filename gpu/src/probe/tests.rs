@@ -1,7 +1,10 @@
 //! The probe's maths and formatting, without a GPU.
 
 use super::bounds::{held, judge_read, judge_write, Read, Wrote, BOUND};
-use super::fast::{dot4_i8, dot4_u8, native, product, which_product, Product};
+use super::fast::{
+    by_rows_expected, dot4_i8, dot4_u8, native, outcome, product, which_product, Outcome, Product,
+    SENTINEL,
+};
 use super::half::{from_f16, to_f16, ulps16};
 use super::lanes::{expected, Layout, Vector};
 use super::maths::{breaks, function, judge, substitute, ulps, Edge, Op, Verdict};
@@ -218,6 +221,43 @@ fn products_are_told_by_their_layout() {
         Product::Columns
     );
     assert_eq!(which_product(&a, &b, &[0.0; 4], 2, 1e-3), Product::Wrong);
+    assert_eq!(
+        which_product(&a, &b, &[2.0, 1.0, 4.0, SENTINEL], 2, 1e-3),
+        Product::Unwritten
+    );
+}
+
+/// A product with its operations by rows is reckoned as the layouts say:
+/// all by columns is B·A by rows plus C transposed; A and B by rows,
+/// stored by rows, is A·B; a sentinel left anywhere is "never written".
+#[test]
+fn products_by_rows_are_reckoned() {
+    let a = [1.0, 2.0, 3.0, 4.0];
+    let b = [0.0, 1.0, 1.0, 0.0];
+    let c = [10.0, 20.0, 30.0, 40.0];
+    let zero = [0.0; 4];
+    assert_eq!(
+        by_rows_expected((&a, &b, &zero), 2, [false; 4]),
+        product(&b, &a, 2)
+    );
+    assert_eq!(
+        by_rows_expected((&a, &b, &zero), 2, [true, true, false, true]),
+        product(&a, &b, 2)
+    );
+    // C by columns, stored by columns: C comes back where it was.
+    assert_eq!(
+        by_rows_expected((&zero, &zero, &c), 2, [false; 4]),
+        c.to_vec()
+    );
+    // C by rows, stored by columns: transposed.
+    assert_eq!(
+        by_rows_expected((&zero, &zero, &c), 2, [false, false, true, false]),
+        vec![10.0, 30.0, 20.0, 40.0]
+    );
+    let want = [1.0, 2.0];
+    assert_eq!(outcome(&want, &[1.0, 2.0], 1e-3), Outcome::Right);
+    assert_eq!(outcome(&want, &[2.0, 1.0], 1e-3), Outcome::Wrong);
+    assert_eq!(outcome(&want, &[1.0, SENTINEL], 1e-3), Outcome::Unwritten);
 }
 
 #[test]

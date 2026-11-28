@@ -19,7 +19,8 @@
 // (`cv_up`, nearest); the group norm's means and inverse spreads in
 // `src2` (`gn_at`, a pair per group), its weights' and biases' offsets in
 // `small` (`gn_weight`, `gn_bias`), its channels a group (`gn_group`),
-// `GN_*` (`gn_flags`).
+// `GN_*` (`gn_flags`); the dispatch's first row of tiles (`mm_y0`: a
+// multiply cut into slices).
 //
 // The flags (declared by the plan): the engine's (the bias added, the
 // products added to what is there, and SwiGLU: here each tile's 128

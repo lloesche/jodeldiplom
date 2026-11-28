@@ -426,7 +426,83 @@ fn plan(transformer: &Transformer, vae: &Vae, key: &Key, coop: Option<Tiles>) ->
 #[cfg(test)]
 mod tests {
     use super::{pack, plan, Key, Packing, Part, Source, Tiles};
+    use crate::image::plan::{cut, flops, Op};
     use crate::image::Kernel;
+
+    /// A picture of 1344 × 768 with a reference, on f32 and on either
+    /// tiles (no GPU: the weights' shapes alone): every cut kernel's
+    /// slices ([`cut`]) tile its dispatch's axis from its first workgroup
+    /// to its last with none twice, their FLOPs add up to the whole's, and
+    /// no slice takes more than its plan's budget (one workgroup along the
+    /// axis at most twice it). The largest dispatch of each path, and the
+    /// time it takes at its rate, are printed (`--nocapture`).
+    #[test]
+    fn no_dispatch_takes_more_than_its_budget() {
+        let mut packing = Packing::new();
+        let (transformer, vae) =
+            pack((Source::Shapes, Source::Shapes), &mut packing).expect("shapes alone");
+        let key = Key {
+            width: 1344,
+            height: 768,
+            refs: vec![(1024, 1024)],
+            part: Part::Picture,
+        };
+        // Whether `b` is the slice of the same dispatch right after `a`:
+        // the same kernel, buffers and numbers but the first workgroup,
+        // which is where `a`'s workgroups end.
+        let continues = |a: &Op, b: &Op| {
+            let Some(c) = cut(a.kernel) else {
+                return false;
+            };
+            let (mut x, mut y) = (a.clone(), b.clone());
+            (x.params[c.first], y.params[c.first]) = (0, 0);
+            (x.groups[c.axis], y.groups[c.axis]) = (0, 0);
+            a.kernel == b.kernel
+                && (x.params, x.groups, x.buffers) == (y.params, y.groups, y.buffers)
+                && b.params[c.first] == a.params[c.first] + a.groups[c.axis] as usize
+        };
+        for coop in [None, Some(Tiles::Sixteen), Some(Tiles::Eight)] {
+            let (p, _) = plan(&transformer, &vae, &key, coop);
+            let mut largest: Option<(f64, Kernel, [u32; 3])> = None;
+            for slices in p.ops.chunk_by(continues) {
+                let first = &slices[0];
+                let Some(c) = cut(first.kernel) else {
+                    continue;
+                };
+                let what = format!("{:?} on {coop:?}", first.kernel);
+                assert_eq!(first.params[c.first], 0, "{what} starts at 0");
+                let budget = p.budget(c);
+                for s in slices {
+                    let work = flops(s);
+                    let one = s.groups[c.axis] == 1;
+                    assert!(
+                        work <= budget || (one && work <= 2.0 * budget),
+                        "{what} {:?}: {} GFLOP, the budget {}",
+                        s.groups,
+                        work / 1e9,
+                        budget / 1e9
+                    );
+                    if largest.is_none_or(|(w, _, _)| work / budget > w) {
+                        largest = Some((work / budget, s.kernel, s.groups));
+                    }
+                }
+                // The slices tile the whole axis, their work the whole's.
+                let groups: usize = slices.iter().map(|s| s.groups[c.axis] as usize).sum();
+                assert_eq!(groups, first.params[0].div_ceil(c.rows), "{what} tiled");
+                let mut whole = first.clone();
+                whole.groups[c.axis] = groups as u32;
+                let (sum, whole): (f64, f64) = (slices.iter().map(flops).sum(), flops(&whole));
+                assert!(
+                    (sum - whole).abs() <= 1e-9 * whole,
+                    "{what}: {sum} of {whole}"
+                );
+            }
+            if let Some((share, kernel, groups)) = largest {
+                let ms = share * p.piece * 1e3;
+                eprintln!("{coop:?}: the largest dispatch {kernel:?} {groups:?}, about {ms:.1} ms");
+            }
+        }
+    }
 
     /// Every part's plan, with and without references, on f32 and on
     /// either tiles, writes a slot it takes over before it reads it, and

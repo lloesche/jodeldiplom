@@ -1,5 +1,5 @@
 // Attention on cooperative matrices of 16 × 16 (the numbers of
-// `attention.wgsl`; not on 8 × 8: `Tiles::attention`): a workgroup takes
+// `attention.wgsl`; on 8 × 8 `attention8.wgsl`): a workgroup takes
 // 128 queries of a head, each of its eight subgroups 16 of
 // them, the queries (scaled) held as eight tiles of 16 × 16 in f16
 // (`coop.wgsl`); keys and values come 32 at a time as f16, shared by all
@@ -199,7 +199,7 @@ fn fc_pv(o: CmC, p0: CmA, p1: CmA, d: u32) -> CmC {
 fn attention_coop(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
     let h = wg.y;
     let kvh = h / p.n3;
-    let q0 = wg.x * 128u;
+    let q0 = (wg.x + p.n12) * 128u;
     let sg = li / 32u;
     let lane = li % 32u;
     let row = lane % 16u;

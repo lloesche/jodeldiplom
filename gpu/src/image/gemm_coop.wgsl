@@ -70,7 +70,7 @@ fn gemm_coop(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_ind
     let lane = li % 32u;
     let wm = 32u * (sg / 2u);
     let wn = 32u * (sg % 2u);
-    let row0 = wg.y * 128u;
+    let row0 = (wg.y + mm_y0()) * 128u;
     let col0 = wg.x * 128u;
     // Each invocation reads four values of rows li/CM_Q + CM_R·i of A a
     // step (values 4·(li%CM_Q)..) and CM_K/2 of one row of W (li/2, values

@@ -2,12 +2,18 @@
 //! f32 multiply-adds and (where the GPU has them) tensor cores. Where there
 //! is no usable GPU, each says so and passes.
 
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::Arc;
+use std::time::Duration;
+
 use jodel_tensors::SafeTensors;
 
-use super::gpu::{Gpu, Made, Tiles};
-use super::plan::{At, Buf, Conv, Mat, Norm, Plan, Rope, Tail};
+use super::gpu::{Gpu, Loaded, Made, Tiles};
+use super::plan::{At, Buf, Conv, Mat, Norm, Plan, Rope, Tail, FA_X0, MM_Y0};
 use super::weights::{Fp8, Packing, Source};
-use crate::engine::{Input, Output};
+use super::Kernel;
+use crate::engine::{Input, Output, Program};
+use crate::Turned;
 
 /// A slot handed over is caught where its next use reads it (as an input,
 /// or adding into it) and passes where that use writes it (no GPU).
@@ -46,13 +52,12 @@ fn a_slot_handed_over_and_read_is_caught() {
 /// Metal and DirectX; with them, they validate on both tiles, each
 /// tensor-core kernel within the workgroup memory its tiles are chosen for
 /// (`Tiles::memory`; on 8 × 8 within Apple's 32 KB), and on the 8 × 8 ones
-/// (Metal's simdgroup matrices: the multiply, the attention f32) write for
-/// Metal in every language version wgpu may take there (2.3, the first
-/// with them, to 4.0), their products as simdgroup matrices of f16 into
-/// f32.
+/// (Metal's simdgroup matrices: the multiply and `attention8.wgsl`) write
+/// for Metal in every language version wgpu may take there (2.3, the
+/// first with them, to 4.0), their products as simdgroup matrices of f16
+/// into f32.
 #[test]
 fn the_kernels_validate() {
-    use super::Kernel;
     use crate::engine::Kernels;
     let entries = |coop| -> Vec<&str> { Kernel::on(coop).iter().map(|k| k.entry()).collect() };
     crate::engine::check_source(
@@ -84,7 +89,7 @@ fn the_kernels_validate() {
         all.sort_unstable();
         points.sort_unstable();
         assert_eq!(points, all, "{tiles:?}");
-        for entry in ["gemm_coop", "attention_coop"] {
+        for entry in ["gemm_coop", "attention_coop", "attention8"] {
             if !all.contains(&entry) {
                 continue;
             }
@@ -269,7 +274,31 @@ fn run(
     }
     Gpu::shared().expect("the picture kernels set up on the GPU");
     let loaded = pack.upload("test").unwrap();
-    let mut p = Plan::new(coop().filter(|_| fast));
+    Some(run_on(
+        &loaded,
+        coop().filter(|_| fast),
+        build,
+        inputs,
+        read,
+    ))
+}
+
+/// How long a test waits for a run on the GPU: past it the run faulted or
+/// timed out (wgpu waits for such a run forever), and the test fails.
+const DEADLINE: Duration = Duration::from_secs(60);
+
+/// [`run`] on `loaded`, its plan's tensor-core kernels on `coop`'s tiles;
+/// the run on a thread of its own, waited for at most [`DEADLINE`] (a run
+/// that never ends fails the test instead of hanging it; its thread stays
+/// blocked until the process ends).
+fn run_on(
+    loaded: &Loaded,
+    coop: Option<Tiles>,
+    build: impl FnOnce(&mut Plan),
+    inputs: &[(u8, usize, Vec<f32>)],
+    read: (u8, usize, usize),
+) -> Vec<f32> {
+    let mut p = Plan::new(coop);
     // The tests' slots: 0 to 3.
     for _ in 0..4 {
         p.slot(0);
@@ -279,18 +308,101 @@ fn run(
     }
     p.need(read.0, read.1 + read.2);
     build(&mut p);
-    let mut made = Made::new(&loaded, &p, read.2).unwrap();
-    let inputs: Vec<Input<u8>> = inputs
-        .iter()
-        .map(|(buf, at, v)| Input {
-            buf: *buf,
-            at: *at,
-            values: v.as_slice(),
-        })
-        .collect();
-    let (buf, first, count) = read;
-    let output = Output { buf, first, count };
-    Some(made.run(&loaded, &inputs, output).unwrap())
+    let mut made = Made::new(loaded, &p, read.2).unwrap();
+    let (loaded, owned) = (loaded.clone(), inputs.to_vec());
+    let (done, result) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let inputs: Vec<Input<u8>> = owned
+            .iter()
+            .map(|(buf, at, v)| Input {
+                buf: *buf,
+                at: *at,
+                values: v.as_slice(),
+            })
+            .collect();
+        let (buf, first, count) = read;
+        let output = Output { buf, first, count };
+        // The test may have given up waiting: nobody to tell.
+        let _ = done.send(made.run(&loaded, &inputs, output));
+    });
+    match result.recv_timeout(DEADLINE) {
+        Ok(got) => got.unwrap(),
+        Err(RecvTimeoutError::Timeout) => {
+            panic!("the GPU did not finish a run in {DEADLINE:?}: it faulted or timed out")
+        }
+        // The run panicked: its panic, as it was.
+        Err(RecvTimeoutError::Disconnected) => {
+            std::panic::resume_unwind(thread.join().expect_err("the run ended without a result"))
+        }
+    }
+}
+
+/// The 8 × 8 attention (`attention8.wgsl`) on its matrices written out on
+/// f32s (`matrix8_emulated.wgsl`), a program of its own on the picture
+/// models' device: Apple's attention held to the processor where the GPU
+/// has no 8 × 8 matrices of its own. Only on a GPU with tensor cores of 16
+/// × 16 (the 5080): each invocation holds sixteen matrices of 64 f32s
+/// there, which such a GPU runs in a second, and the M4 Max never finished
+/// (where a GPU has 8 × 8 matrices, the tests run the real kernel
+/// instead). `None` elsewhere.
+fn emulated_eight() -> Option<Loaded> {
+    if let Err(e) = &crate::chosen().adapter {
+        eprintln!("no GPU for the picture kernels: {e}");
+        return None;
+    }
+    if coop() != Some(Tiles::Sixteen) {
+        eprintln!("the 8 x 8 attention is written out only on 16 x 16 tensor cores");
+        return None;
+    }
+    let shared = Gpu::shared().expect("the picture kernels set up on the GPU");
+    let device = shared.program.device.clone();
+    let source = [
+        "enable f16;\n",
+        include_str!("prelude.wgsl"),
+        &super::constants(),
+        include_str!("../common.wgsl"),
+        include_str!("attention.wgsl"),
+        include_str!("matrix8_emulated.wgsl"),
+        include_str!("attention8.wgsl"),
+    ]
+    .join("\n");
+    let program = crate::engine::guarded(&device, || {
+        Ok(Program::of(
+            device.clone(),
+            shared.program.queue.clone(),
+            &device.limits(),
+            "jodel-gpu image, 8 x 8 written out",
+            &source,
+            &[Kernel::Attention8],
+        ))
+    })
+    .unwrap();
+    let gpu = Arc::new(Turned::new(Gpu {
+        program,
+        name: shared.name.clone(),
+        coop: Some(Tiles::Eight),
+    }));
+    let small = gpu.buffer("test tensors", 16).unwrap();
+    Some(Loaded {
+        gpu,
+        matrices: Vec::new(),
+        small,
+    })
+}
+
+/// What an output is filled with before a run: no kernel's output here
+/// comes near it, so one still there was never written (the kernel
+/// faulted, timed out or never ran), which reads as zeros otherwise.
+const SENTINEL: f32 = 7777.0;
+
+/// Fails where `got` (named `what`) still holds the sentinel anywhere.
+fn written(got: &[f32], what: &str) {
+    let left = got.iter().filter(|&&v| v == SENTINEL).count();
+    assert!(
+        left == 0,
+        "{what}: {left} of {} values never written (the kernel faulted, timed out or never ran)",
+        got.len()
+    );
 }
 
 /// The tiles of the GPU's tensor cores (without them the fast kernels are
@@ -310,10 +422,13 @@ fn worst(got: &[f32], want: &[f32]) -> f32 {
         / scale
 }
 
+/// The tolerance of the tensor-core kernels, their inputs rounded to f16.
+const F16_TOLERANCE: f32 = 4e-3;
+
 /// The tolerances of the f32 kernels and of the f16 inputs.
 fn tolerance(fast: bool) -> f32 {
     if fast && coop().is_some() {
-        4e-3
+        F16_TOLERANCE
     } else {
         1e-5
     }
@@ -762,50 +877,214 @@ fn attention_cpu(
 
 /// Flash attention: all keys over 150 tokens and 2 heads; causal with
 /// the padding's keys left out over 4 query heads on 2 key heads; scores
-/// spread wide (a later key 30 above the first ones moves the largest).
+/// spread wide (a later key 30 above the first ones moves the largest);
+/// on f32 multiply-adds and on the GPU's tensor cores.
 #[test]
 fn attention_matches_the_processor() {
     for fast in [false, true] {
-        for (heads, kv, causal, valid) in [(2, 2, false, 150), (4, 2, true, 97)] {
-            let n = 150;
-            let q: Vec<f32> = values(30, heads * n * 128)
-                .iter()
-                .map(|v| v * 4.0)
-                .collect();
-            let mut k: Vec<f32> = values(31, kv * n * 128).iter().map(|v| v * 4.0).collect();
-            // A key far above the rest, late.
-            for d in 0..128 {
-                k[(n - 20) * 128 + d] = q[d] * 3.0;
+        let what = format!("fast {fast}");
+        attention_cases(&what, 3.0 * tolerance(fast), &|build, inputs, read| {
+            run(Packing::new(), fast, build, inputs, read)
+        });
+    }
+}
+
+/// Apple's attention (`attention8.wgsl`) on its matrices written out
+/// ([`emulated_eight`]: on a GPU with 16 × 16 tensor cores): the same
+/// cases, to the f16 inputs' tolerance. On a GPU with 8 × 8 matrices the
+/// kernel itself is [`attention_matches_the_processor`]'s fast run.
+#[test]
+fn the_apple_attention_matches_the_processor() {
+    let Some(loaded) = emulated_eight() else {
+        return;
+    };
+    let tolerance = 3.0 * F16_TOLERANCE;
+    attention_cases("8 x 8 written out", tolerance, &|build, inputs, read| {
+        Some(run_on(&loaded, Some(Tiles::Eight), build, inputs, read))
+    });
+}
+
+/// A run of a plan: what `build` makes, `inputs` written first, `read`
+/// read back (`None` without a GPU).
+type Runner<'a> = &'a dyn Fn(
+    &dyn Fn(&mut Plan),
+    &[(u8, usize, Vec<f32>)],
+    (u8, usize, usize),
+) -> Option<Vec<f32>>;
+
+/// The attention's cases ([`attention_matches_the_processor`]) run by
+/// `go`, each held to the processor within `tolerance`, its output filled
+/// with the sentinel first ([`written`]).
+fn attention_cases(what: &str, tolerance: f32, go: Runner) {
+    for (heads, kv, causal, valid) in [(2, 2, false, 150), (4, 2, true, 97)] {
+        let n = 150;
+        let q: Vec<f32> = values(30, heads * n * 128)
+            .iter()
+            .map(|v| v * 4.0)
+            .collect();
+        let mut k: Vec<f32> = values(31, kv * n * 128).iter().map(|v| v * 4.0).collect();
+        // A key far above the rest, late.
+        for d in 0..128 {
+            k[(n - 20) * 128 + d] = q[d] * 3.0;
+        }
+        let v = values(32, kv * n * 128);
+        let want = attention_cpu((&q, &k, &v), (n, heads, kv), causal, valid);
+        let mut all = q.clone();
+        all.extend(&k);
+        all.extend(&v);
+        let (ko, vo) = (heads * n * 128, (heads + kv) * n * 128);
+        let out = n * heads * 128;
+        let Some(got) = go(
+            &|p| {
+                p.attention(
+                    (n, n, valid),
+                    (heads, kv),
+                    (At::new(0, 0), At::new(0, ko), At::new(0, vo)),
+                    (At::new(1, 0), heads * 128),
+                    causal,
+                )
+            },
+            &[(0, 0, all), (1, 0, vec![SENTINEL; out])],
+            (1, 0, out),
+        ) else {
+            return;
+        };
+        let case = format!("attention {heads}/{kv} causal {causal} {what}");
+        written(&got, &case);
+        let e = worst(&got, &want);
+        assert!(e < tolerance, "{case}: {e}");
+    }
+}
+
+/// A multiply or an attention past the plan's budget is cut into slices,
+/// one a row of tiles (or a block of queries) where the budget is tiny,
+/// each slice's first in its numbers; within it, one dispatch (no GPU).
+#[test]
+fn a_dispatch_past_the_budget_is_cut() {
+    for piece in [None, Some(1e-15)] {
+        let mut p = Plan::new(None);
+        if let Some(t) = piece {
+            p.piece = t;
+        }
+        let (x, y, z) = (p.slot(300 * 160), p.slot(192 * 160), p.slot(300 * 256));
+        let w = Mat::of_slot(At::new(y, 0), 192, 160, 160);
+        p.gemm(
+            (At::new(x, 0), 160),
+            300,
+            &w,
+            (At::new(z, 0), 192),
+            Tail::Store,
+        );
+        p.attention(
+            (150, 150, 150),
+            (2, 2),
+            (At::new(x, 0), At::new(x, 0), At::new(x, 0)),
+            (At::new(z, 0), 256),
+            false,
+        );
+        let cut = piece.is_some();
+        assert_eq!(p.ops.len(), if cut { 3 + 3 } else { 2 }, "piece {piece:?}");
+        if cut {
+            for (i, op) in p.ops[..3].iter().enumerate() {
+                assert_eq!(
+                    (op.groups, op.params[MM_Y0]),
+                    ([2, 1, 1], i),
+                    "row of tiles {i}"
+                );
             }
-            let v = values(32, kv * n * 128);
-            let want = attention_cpu((&q, &k, &v), (n, heads, kv), causal, valid);
-            let mut all = q.clone();
-            all.extend(&k);
-            all.extend(&v);
-            let (ko, vo) = (heads * n * 128, (heads + kv) * n * 128);
-            let Some(got) = run(
-                Packing::new(),
-                fast,
-                |p| {
-                    p.attention(
-                        (n, n, valid),
-                        (heads, kv),
-                        (At::new(0, 0), At::new(0, ko), At::new(0, vo)),
-                        (At::new(1, 0), heads * 128),
-                        causal,
-                    )
-                },
-                &[(0, 0, all)],
-                (1, 0, n * heads * 128),
-            ) else {
-                return;
+            for (i, op) in p.ops[3..].iter().enumerate() {
+                assert_eq!(
+                    (op.groups, op.params[FA_X0]),
+                    ([1, 2, 1], i),
+                    "block of queries {i}"
+                );
+            }
+        }
+    }
+}
+
+/// Dispatches cut into slices give the very values of the whole ones: a
+/// multiply adding into its output (rows past the tiles), a convolution
+/// and the attention, on f32 multiply-adds and the GPU's tensor cores
+/// (Apple's attention itself on 8 × 8 ones), and Apple's attention written
+/// out where the GPU has 16 × 16 ones ([`emulated_eight`]).
+#[test]
+fn cut_dispatches_give_the_same_values() {
+    let (m, n, k) = (300, 192, 160);
+    let inputs = [
+        (0, 0, values(60, m * k)),
+        (1, 0, values(62, m * n)),
+        (2, 0, values(61, n * k)),
+    ];
+    let gemm = |cut: bool| {
+        move |p: &mut Plan| {
+            if cut {
+                p.piece = 1e-15;
+            }
+            let w = Mat::of_slot(At::new(2, 0), n, k, k);
+            p.gemm((At::new(0, 0), k), m, &w, (At::new(1, 0), n), Tail::Add);
+        }
+    };
+    // A convolution: 20 × 20 pixels of 4 channels (four rows of tiles),
+    // 3 × 3, into 32 channels, its weights' rows 64 apart.
+    let conv = |cut: bool| {
+        move |p: &mut Plan| {
+            if cut {
+                p.piece = 1e-15;
+            }
+            let conv = Conv {
+                input: At::new(0, 0),
+                h: 20,
+                w: 20,
+                cin: 4,
+                size: 3,
+                stride: 1,
+                pad: 1,
+                trail: 1,
+                up: false,
             };
-            let e = worst(&got, &want);
-            assert!(
-                e < 3.0 * tolerance(fast && coop().is_some_and(Tiles::attention)),
-                "attention {heads}/{kv} causal {causal} fast {fast}: {e}"
+            let w = Mat::of_slot(At::new(2, 0), 32, 36, 64);
+            p.conv(conv, &w, At::new(1, 0), Tail::Add, None);
+        }
+    };
+    for fast in [false, true] {
+        let read = (1, 0, m * n);
+        let whole = run(Packing::new(), fast, gemm(false), &inputs, read);
+        let cut = run(Packing::new(), fast, gemm(true), &inputs, read);
+        assert!(whole == cut, "the multiply cut, fast {fast}");
+        let read = (1, 0, 400 * 32);
+        let whole = run(Packing::new(), fast, conv(false), &inputs, read);
+        let cut = run(Packing::new(), fast, conv(true), &inputs, read);
+        assert!(whole == cut, "the convolution cut, fast {fast}");
+    }
+    let (heads, tokens) = (2, 150);
+    let attention = |cut: bool| {
+        move |p: &mut Plan| {
+            if cut {
+                p.piece = 1e-15;
+            }
+            let ko = heads * tokens * 128;
+            p.attention(
+                (tokens, tokens, tokens),
+                (heads, heads),
+                (At::new(0, 0), At::new(0, ko), At::new(0, 2 * ko)),
+                (At::new(1, 0), heads * 128),
+                false,
             );
         }
+    };
+    let read = (1, 0, tokens * heads * 128);
+    let inputs = [(0, 0, values(63, 3 * heads * tokens * 128))];
+    for fast in [false, true] {
+        let whole = run(Packing::new(), fast, attention(false), &inputs, read);
+        let cut = run(Packing::new(), fast, attention(true), &inputs, read);
+        assert!(whole == cut, "the attention cut, fast {fast}");
+    }
+    if let Some(loaded) = emulated_eight() {
+        let eight = Some(Tiles::Eight);
+        let whole = run_on(&loaded, eight, attention(false), &inputs, read);
+        let cut = run_on(&loaded, eight, attention(true), &inputs, read);
+        assert!(whole == cut, "the 8 x 8 attention cut");
     }
 }
 

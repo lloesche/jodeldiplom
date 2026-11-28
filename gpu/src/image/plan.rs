@@ -4,6 +4,8 @@
 //! the same slot (wgpu binds a buffer one way a dispatch); a dispatch that
 //! adds to what is there reads it through its output.
 
+use std::ops::Range;
+
 use super::gpu::Tiles;
 use super::Kernel;
 use crate::engine::{self, params, spread, After, Matrix, Mul, MUL_NUMBERS};
@@ -24,7 +26,8 @@ pub(crate) const GN_SILU: usize = 2;
 /// stride; a convolution's input rows, columns and channels, the output's
 /// columns, the kernel's size, stride and padding, the doubling; the group
 /// norm's statistics, weights, biases, channels a group and flags; the
-/// kernel's own flags.
+/// kernel's own flags; the dispatch's first row of tiles (a multiply cut
+/// into slices: [`cut`]).
 const MM_SCALES: usize = MUL_NUMBERS.len();
 const MM_PER: usize = 11;
 const MM_GATES: usize = 12;
@@ -32,10 +35,13 @@ const MM_LDW: usize = 13;
 const CV_H: usize = 14;
 const GN_AT: usize = 22;
 const MX_FLAGS: usize = 27;
+pub(crate) const MM_Y0: usize = 28;
+/// The attention's number of its dispatch's first block of queries.
+pub(crate) const FA_X0: usize = 12;
 
 /// Those places by the names the kernels read them by (each a function of
 /// the source).
-pub(crate) const MM_NUMBERS: [(&str, usize); 18] = [
+pub(crate) const MM_NUMBERS: [(&str, usize); 19] = [
     ("mm_scales", MM_SCALES),
     ("mm_per", MM_PER),
     ("mm_gates", MM_GATES),
@@ -54,7 +60,114 @@ pub(crate) const MM_NUMBERS: [(&str, usize); 18] = [
     ("gn_group", GN_AT + 3),
     ("gn_flags", GN_AT + 4),
     ("mx_flags", MX_FLAGS),
+    ("mm_y0", MM_Y0),
 ];
+
+/// How a kernel's dispatch is cut into slices ([`cut`]): the kernels it is
+/// one of, along its workgroups' `axis`, each slice's first workgroup there
+/// at the number `first`, a workgroup taking `rows` of its `n0` rows (a
+/// multiply's rows of A, an attention's queries).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Cut {
+    pub(crate) family: Family,
+    pub(crate) axis: usize,
+    pub(crate) first: usize,
+    pub(crate) rows: usize,
+}
+
+/// The kernels that are cut: the matrix multiplies and the attentions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Family {
+    Multiply,
+    Attention,
+}
+
+/// How `kernel`'s dispatches are cut into slices: a matrix multiply by rows
+/// of tiles, an attention by blocks of queries; the others are never long
+/// and are not cut. A pace ([`crate::pace`]) gives way to the window
+/// between submissions, never inside a dispatch: on the M4 Max a multiply
+/// of 515 GFLOP took 55 ms as one dispatch and the attention 150 ms, and
+/// the player's window stopped answering while a picture was drawn.
+pub(crate) fn cut(kernel: Kernel) -> Option<Cut> {
+    let (family, axis, first, rows) = match kernel {
+        Kernel::Gemm | Kernel::GemmCoop => (Family::Multiply, 1, MM_Y0, 128),
+        Kernel::Attention => (Family::Attention, 0, FA_X0, 64),
+        Kernel::AttentionCoop => (Family::Attention, 0, FA_X0, 128),
+        Kernel::Attention8 => (Family::Attention, 0, FA_X0, 32),
+        _ => return None,
+    };
+    Some(Cut {
+        family,
+        axis,
+        first,
+        rows,
+    })
+}
+
+// The rates measured, in FLOP/s, a slice of a cut kernel is sized by
+// (`Plan::budget`): the 5080's tensor cores (a multiply of 515 GFLOP in
+// 10.9 ms, an attention of 254 GFLOP in 7.0 ms), the M4 Max's 8 × 8 (the
+// multiply in 55 ms; `attention8.wgsl` 28.6 GFLOP in 9.0 ms a slice), and
+// the M4 Max on f32 multiply-adds (the multiply in 146 ms, the attention in
+// 150 ms), which size any GPU's f32 path (the 5080's `Precision::Full` too:
+// cut more than it needs).
+const RTX_5080_MULTIPLY: f64 = 47e12;
+const RTX_5080_ATTENTION: f64 = 36e12;
+const M4_MAX_MULTIPLY_8X8: f64 = 9.4e12;
+const M4_MAX_ATTENTION_8X8: f64 = 3.2e12;
+const M4_MAX_MULTIPLY_F32: f64 = 3.5e12;
+const M4_MAX_ATTENTION_F32: f64 = 1.7e12;
+
+/// The rate a slice of `family` runs at on `coop`'s tiles (each tile's
+/// kernels: `GemmCoop` and `AttentionCoop` on 16 × 16, `GemmCoop` and
+/// `Attention8` on 8 × 8, `Gemm` and `Attention` on none).
+fn rate(family: Family, coop: Option<Tiles>) -> f64 {
+    match (family, coop) {
+        (Family::Multiply, Some(Tiles::Sixteen)) => RTX_5080_MULTIPLY,
+        (Family::Attention, Some(Tiles::Sixteen)) => RTX_5080_ATTENTION,
+        (Family::Multiply, Some(Tiles::Eight)) => M4_MAX_MULTIPLY_8X8,
+        (Family::Attention, Some(Tiles::Eight)) => M4_MAX_ATTENTION_8X8,
+        (Family::Multiply, None) => M4_MAX_MULTIPLY_F32,
+        (Family::Attention, None) => M4_MAX_ATTENTION_F32,
+    }
+}
+
+/// The GPU time a slice takes at most on `coop`'s tiles, in seconds: a
+/// pace's piece ([`crate::pace::PIECE`]); two on 16 × 16, which cuts only
+/// the 5080's largest multiplies (its dispatches took up to 11 ms and its
+/// window never waited; cut to one piece, a picture took 5 % longer).
+fn piece(coop: Option<Tiles>) -> f64 {
+    let pieces = if coop == Some(Tiles::Sixteen) {
+        2.0
+    } else {
+        1.0
+    };
+    pieces * crate::pace::PIECE.as_secs_f64()
+}
+
+/// The FLOPs a row (of a multiply's A, or an attention's query) of `op`
+/// costs, `op` of `family`: a multiply's 2 · n · k, an attention's 4 ·
+/// keys · 128 · heads.
+fn row_flops(op: &Op, family: Family) -> f64 {
+    let n = |i: usize| op.params[i] as f64;
+    match family {
+        Family::Multiply => 2.0 * n(1) * n(2),
+        Family::Attention => 4.0 * n(1) * 128.0 * n(2),
+    }
+}
+
+/// The FLOPs of a cut kernel's dispatch `op` (its slice of rows of tiles
+/// or blocks of queries; the last rows past `n0` not counted), else 0:
+/// what the tests hold the slices to.
+#[cfg(test)]
+pub(crate) fn flops(op: &Op) -> f64 {
+    let Some(c) = cut(op.kernel) else {
+        return 0.0;
+    };
+    let from = op.params[c.first] * c.rows;
+    let rows = (op.groups[c.axis] as usize * c.rows).min(op.params[0].saturating_sub(from));
+    rows as f64 * row_flops(op, c.family)
+}
 
 /// The buffers a dispatch binds: a part's matrices, its f32 tensors, and
 /// the plan's slots.
@@ -217,13 +330,17 @@ impl Conv {
     }
 }
 
-/// A plan: its slots' sizes (in f32s), its dispatches, and the tiles its
-/// tensor-core kernels run on, where they do.
+/// A plan: its slots' sizes (in f32s), its dispatches, the tiles its
+/// tensor-core kernels run on, where they do, and the GPU time a dispatch
+/// of it takes at most.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Plan {
     pub(crate) slots: Vec<usize>,
     pub(crate) ops: Vec<Op>,
     pub(crate) coop: Option<Tiles>,
+    /// In seconds ([`piece`]): a matrix multiply or an attention that would
+    /// take longer is cut into slices of about it ([`cut`]).
+    pub(crate) piece: f64,
     /// Slots taken over by another use, and from which dispatch.
     handovers: Vec<(u8, usize)>,
     /// The dispatches that read the slot they write (adding into it, or
@@ -235,6 +352,7 @@ impl Plan {
     pub(crate) fn new(coop: Option<Tiles>) -> Plan {
         Plan {
             coop,
+            piece: piece(coop),
             ..Plan::default()
         }
     }
@@ -282,7 +400,24 @@ impl Plan {
             .sum()
     }
 
-    fn push(&mut self, kernel: Kernel, bufs: [Buf; 5], values: &[usize], groups: [u32; 3]) {
+    /// The most work a dispatch cut as `cut` takes, in FLOPs: its
+    /// family's rate here times [`Plan::piece`].
+    pub(crate) fn budget(&self, cut: Cut) -> f64 {
+        rate(cut.family, self.coop) * self.piece
+    }
+
+    /// `kernel`'s dispatch of `groups` workgroups, cut into slices where it
+    /// is a cut kernel ([`cut`]): as many workgroups along the cut's axis a
+    /// slice as a full one's FLOPs fit [`Plan::budget`] (one at least), each
+    /// slice's first in its numbers; the same work, each workgroup's the
+    /// same. The dispatches pushed, by index.
+    fn push(
+        &mut self,
+        kernel: Kernel,
+        bufs: [Buf; 5],
+        values: &[usize],
+        groups: [u32; 3],
+    ) -> Range<usize> {
         let out = bufs[DST];
         debug_assert!(
             !matches!(out, Buf::W(_) | Buf::Small),
@@ -292,17 +427,31 @@ impl Plan {
             !reads(&bufs, out),
             "{kernel:?} binds the slot it writes to read ({out:?})"
         );
-        self.ops.push(Op {
+        let start = self.ops.len();
+        let mut op = Op {
             kernel,
             buffers: bufs,
             params: params(values),
             groups,
-        });
+        };
+        let Some(c) = cut(kernel) else {
+            self.ops.push(op);
+            return start..self.ops.len();
+        };
+        let all = groups[c.axis];
+        let one = c.rows as f64 * row_flops(&op, c.family);
+        let per = (self.budget(c) / one).floor().min(f64::from(all)).max(1.0) as u32;
+        for first in (0..all).step_by(per as usize) {
+            op.params[c.first] = first as usize;
+            op.groups[c.axis] = per.min(all - first);
+            self.ops.push(op.clone());
+        }
+        start..self.ops.len()
     }
 
-    /// The dispatch just pushed reads the slot it writes too.
-    fn reads_its_output(&mut self) {
-        self.in_place.push(self.ops.len() - 1);
+    /// The dispatches `ops` read the slot they write too.
+    fn reads_its_output(&mut self, ops: Range<usize>) {
+        self.in_place.extend(ops);
     }
 
     /// A matrix multiply's numbers: the engine's [`Mul`]'s ten (`m` rows
@@ -371,14 +520,14 @@ impl Plan {
         assert!(a.0.off.is_multiple_of(4) && a.1.is_multiple_of(4) && w.k.is_multiple_of(4));
         let (numbers, src2) = self.mm_numbers(a, m, w, c, tail);
         let kernel = self.mm_kernel();
-        self.push(
+        let ops = self.push(
             kernel,
             [a.0.buf(), w.buf, c.0.buf(), Buf::Small, src2],
             &numbers,
             [w.n.div_ceil(128) as u32, m.div_ceil(128) as u32, 1],
         );
         if matches!(tail, Tail::Add | Tail::Gated(_)) {
-            self.reads_its_output();
+            self.reads_its_output(ops);
         }
     }
 
@@ -415,14 +564,14 @@ impl Plan {
             src2 = n.stats.buf();
         }
         let kernel = self.mm_kernel();
-        self.push(
+        let ops = self.push(
             kernel,
             [conv.input.buf(), w.buf, out.buf(), Buf::Small, src2],
             &numbers,
             [w.n.div_ceil(128) as u32, m.div_ceil(128) as u32, 1],
         );
         if tail == Tail::Add {
-            self.reads_its_output();
+            self.reads_its_output(ops);
         }
     }
 
@@ -576,12 +725,8 @@ impl Plan {
     ) {
         assert!(q.slot == k.slot && k.slot == v.slot);
         let scale = 1.0f32 / 128f32.sqrt();
-        // 128 queries a workgroup on tensor cores, else 64.
-        let (kernel, per) = if self.coop.is_some_and(Tiles::attention) {
-            (Kernel::AttentionCoop, 128)
-        } else {
-            (Kernel::Attention, 64)
-        };
+        let kernel = self.coop.map_or(Kernel::Attention, Tiles::attention);
+        let per = cut(kernel).expect("an attention is cut").rows;
         self.push(
             kernel,
             [q.buf(), Buf::Small, out.buf(), Buf::Small, Buf::Small],
@@ -605,13 +750,13 @@ impl Plan {
 
     /// x (`count` values at `x`) += dt · d (at `d`).
     pub(crate) fn euler(&mut self, count: usize, x: At, d: At, dt: f32) {
-        self.push(
+        let ops = self.push(
             Kernel::Euler,
             [d.buf(), Buf::Small, x.buf(), Buf::Small, Buf::Small],
             &[count, x.off, d.off, dt.to_bits() as usize],
             spread(count),
         );
-        self.reads_its_output();
+        self.reads_its_output(ops);
     }
 
     /// y = silu(x), `count` values.
@@ -714,13 +859,13 @@ impl Plan {
     /// A softmax over each of `rows` rows of `n` at `x` (its stride), in
     /// place, the values times `scale` first.
     pub(crate) fn softmax(&mut self, rows: usize, n: usize, (x, xs): (At, usize), scale: f32) {
-        self.push(
+        let ops = self.push(
             Kernel::Softmax,
             [Buf::Small, Buf::Small, x.buf(), Buf::Small, Buf::Small],
             &[rows, n, x.off, xs, scale.to_bits() as usize],
             [rows as u32, 1, 1],
         );
-        self.reads_its_output();
+        self.reads_its_output(ops);
     }
 
     /// y (its stride) = the transpose of `rows × cols` at `x` (its stride).

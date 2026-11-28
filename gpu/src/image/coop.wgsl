@@ -8,7 +8,8 @@
 // `CmB`, `CmC`) and the multiply's functions (`cm_ld_at`, `cm_ld_b`,
 // `cm_mma`, `cm_st_c`, `cm_ld_c`; on 16 × 16 `cm_mma` is the matrices' own
 // product, written in its place), so the multiply is the same on both; the
-// attention runs on 16 × 16 only (`Tiles::attention`).
+// attention on 16 × 16 is written on these tiles too, Apple's 8 × 8 has
+// one of its own (`attention8.wgsl`, `Tiles::attention`).
 // The layer also sets the step of k the multiply takes (`CM_K`: 64, or 32
 // where the workgroup memory is Apple's 32 KB), so the size of `cm_h`
 // (`CM_H`): on 8 × 8 the multiply takes 20 KB of f16 and 9 KB of f32; on

@@ -26,7 +26,7 @@ fn gemm_b4(i: u32) -> vec4<f32> {
 fn gemm_f32(wg: vec3<u32>, li: u32) {
     let tx = li % 16u;
     let ty = li / 16u;
-    let row0 = wg.y * 128u;
+    let row0 = (wg.y + mm_y0()) * 128u;
     let col0 = wg.x * 128u;
     // Each invocation reads four values of two rows of A a step (rows
     // li/4 and 64 more, values 4·(li%4)..) and eight of one row of W

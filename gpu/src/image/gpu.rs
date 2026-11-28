@@ -46,17 +46,9 @@ impl Tiles {
         }
     }
 
-    /// Whether the tensor-core attention runs on these tiles. Not on 8 × 8:
-    /// on the M4 Max it took 334 s of a picture's 350 (3.3 s a dispatch,
-    /// the f32 attention's 14.8 s in all) and its test's output was wrong,
-    /// so there the f32 attention runs.
-    pub(crate) fn attention(self) -> bool {
-        self == Tiles::Sixteen
-    }
-
     /// The workgroup memory its kernels take at most (on 16 × 16 the
     /// attention's 46.5 KB, on 8 × 8 the multiply's 29 KB: `coop.wgsl`;
-    /// `the_kernels_validate` sums them).
+    /// the 8 × 8 attention takes 23 KB; `the_kernels_validate` sums them).
     pub(crate) fn memory(self) -> u32 {
         match self {
             Tiles::Sixteen => 47 * 1024,
@@ -79,7 +71,7 @@ impl OnDevice for Gpu {
 /// they need: f16, cooperative matrices of 16 × 16 × 16 (else of 8 × 8 ×
 /// 8) in f16 with f32 sums, subgroups of 32 (eight to a workgroup of 256)
 /// and the workgroup memory the kernels take on those tiles
-/// ([`Tiles::memory`]: the 8 × 8 ones run only the multiply). Through Metal
+/// ([`Tiles::memory`]). Through Metal
 /// the name is all there is to go by: wgpu says subgroups of 4 to 64 for
 /// every Metal adapter and gives no vendor or device (0), and it offers the
 /// same 8 × 8 matrices on Apple's GPUs (family Apple7) and on the Intel and
@@ -199,6 +191,7 @@ pub(crate) fn whole_vectors(len: usize) -> usize {
 
 /// A part's weights on the GPU: its matrices (a few buffers of words) and
 /// its f32 tensors.
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct Loaded {
     pub(crate) gpu: Arc<Turned<Gpu>>,
     pub(crate) matrices: Vec<wgpu::Buffer>,

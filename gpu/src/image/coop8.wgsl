@@ -2,9 +2,9 @@
 // (in f16 with f32 sums: Metal's simdgroup matrices, a subgroup of 32 to a
 // matrix), the quarter at rows 8·i.., columns 8·j.. as `mij`; the
 // multiply's loads, stores and product as `coop16.wgsl`'s, a quarter at a
-// time (the attention does not run on these tiles: `Tiles::attention`). A
-// quarter by rows starts 8·i rows and 8·j values on, by columns 8·j
-// columns and 8·i values on.
+// time (the attention takes its 8 × 8 matrices as they are:
+// `matrix8.wgsl`, `attention8.wgsl`). A quarter by rows starts 8·i rows
+// and 8·j values on, by columns 8·j columns and 8·i values on.
 
 // The multiply's step of k (`coop.wgsl` sizes its tiles by it): 32, so
 // the f16 tiles take 20 KB and a kernel stays within 32 KB.

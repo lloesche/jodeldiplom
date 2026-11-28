@@ -22,15 +22,16 @@
 //! bf16 ones stay bf16. Activations are f32. Where the GPU has cooperative
 //! matrices in f16 with f32 sums, of 16 × 16 × 16 (tensor cores: Vulkan on
 //! NVIDIA, for one) or of 8 × 8 × 8 (Metal on Apple's GPUs), the large
-//! matrix multiplies run on them ([`crate::Precision::Fast`]), their inputs
-//! rounded to f16, and on 16 × 16 the transformer's attention too; else,
-//! and with [`crate::Precision::Full`], on f32 multiply-adds.
+//! matrix multiplies and the transformer's attention run on them
+//! ([`crate::Precision::Fast`]), their inputs rounded to f16; else, and
+//! with [`crate::Precision::Full`], on f32 multiply-adds.
 //!
 //! The kernels (the constants they share with the plan, `prelude.wgsl`,
 //! `../common.wgsl`, then `tail.wgsl`, `gemm.wgsl`, `ops.wgsl`,
 //! `attention.wgsl`, and on such a GPU `coop.wgsl`, its tiles' layer
-//! `coop16.wgsl` or `coop8.wgsl`, `gemm_coop.wgsl`, and on 16 × 16
-//! `attention_coop.wgsl`): the matrix multiply in tiles of 128 × 128 with
+//! `coop16.wgsl` or `coop8.wgsl`, `gemm_coop.wgsl`, and the attention on
+//! those tiles, `attention_coop.wgsl` on 16 × 16, `matrix8.wgsl` and
+//! `attention8.wgsl` on 8 × 8): the matrix multiply in tiles of 128 × 128 with
 //! its tail fused (a bias, added to what is there, times a gate per column,
 //! or SwiGLU's pairs), reading a convolution's patches where they lie (the
 //! group norm and SiLU before it taken on the way); flash attention (an
@@ -38,8 +39,11 @@
 //! LayerNorm with the modulation, the heads' norm and rotary positions,
 //! the group norm's statistics, the latents' patches, a softmax and a
 //! transpose. A picture is one plan of dispatches (`plan.rs`) run in short
-//! submissions that give way to the window ([`crate::pace`]); its buffers
-//! are kept for the next picture of the same size.
+//! submissions that give way to the window ([`crate::pace`]); a pace cannot
+//! cut inside a dispatch, so each multiply and attention is cut into
+//! dispatches of a few milliseconds of the GPU it is for (`Plan::budget`:
+//! rows of tiles, blocks of queries, the same work and the same values);
+//! its buffers are kept for the next picture of the same size.
 
 mod drawer;
 mod encoder;
@@ -71,9 +75,10 @@ pub(crate) enum Kernel {
     LayerNormMod,
     QkPrep,
     Attention,
-    /// Attention on tensor cores (only on 16 × 16 ones:
-    /// [`Tiles::attention`]).
+    /// Attention on tensor cores of 16 × 16 ([`Tiles::attention`]).
     AttentionCoop,
+    /// Attention on Apple's 8 × 8 ([`Tiles::attention`]).
+    Attention8,
     Euler,
     Act,
     Copy,
@@ -94,6 +99,7 @@ impl Kernels for Kernel {
         Kernel::QkPrep,
         Kernel::Attention,
         Kernel::AttentionCoop,
+        Kernel::Attention8,
         Kernel::Euler,
         Kernel::Act,
         Kernel::Copy,
@@ -117,6 +123,7 @@ impl Kernels for Kernel {
             Kernel::QkPrep => "qk_prep",
             Kernel::Attention => "attention",
             Kernel::AttentionCoop => "attention_coop",
+            Kernel::Attention8 => "attention8",
             Kernel::Euler => "euler",
             Kernel::Act => "act",
             Kernel::Copy => "copy",
@@ -132,15 +139,15 @@ impl Kernels for Kernel {
 
 impl Kernel {
     /// The kernels a device runs whose tensor-core kernels take `coop`'s
-    /// tiles: the tensor-core multiply wherever there are tiles, the
-    /// tensor-core attention where they take it too ([`Tiles::attention`]).
+    /// tiles: the tensor-core multiply wherever there are tiles, and their
+    /// attention ([`Tiles::attention`]).
     pub(crate) fn on(coop: Option<Tiles>) -> Vec<Kernel> {
         <Kernel as Kernels>::ALL
             .iter()
             .copied()
-            .filter(|k| match k {
+            .filter(|&k| match k {
                 Kernel::GemmCoop => coop.is_some(),
-                Kernel::AttentionCoop => coop.is_some_and(Tiles::attention),
+                Kernel::AttentionCoop | Kernel::Attention8 => coop.map(Tiles::attention) == Some(k),
                 _ => true,
             })
             .collect()
@@ -172,8 +179,7 @@ fn constants() -> String {
 }
 
 /// The kernels' source, with the tensor-core kernels on `coop`'s tiles
-/// where the device has cooperative matrices and f16 (the attention only
-/// where the tiles take it: [`Kernel::on`]).
+/// where the device has cooperative matrices and f16 ([`Kernel::on`]).
 pub(crate) fn source(coop: Option<Tiles>) -> String {
     let mut parts = Vec::new();
     if coop.is_some() {
@@ -195,14 +201,29 @@ pub(crate) fn source(coop: Option<Tiles>) -> String {
         parts.push(include_str!("coop.wgsl").to_owned());
         parts.push(tiles.layer().to_owned());
         parts.push(tiles.kernel(include_str!("gemm_coop.wgsl")));
-        if tiles.attention() {
-            parts.push(tiles.kernel(include_str!("attention_coop.wgsl")));
+        match tiles {
+            Tiles::Sixteen => parts.push(tiles.kernel(include_str!("attention_coop.wgsl"))),
+            Tiles::Eight => {
+                parts.push(include_str!("matrix8.wgsl").to_owned());
+                parts.push(include_str!("attention8.wgsl").to_owned());
+            }
         }
     }
     parts.join("\n")
 }
 
 impl Tiles {
+    /// The attention on these tiles: on 16 × 16 the multiply's tiles'
+    /// (`attention_coop.wgsl`); on Apple's 8 × 8 a kernel of their own
+    /// (`attention8.wgsl`: the 16 × 16 one's shape there took 334 s of a
+    /// 350 s picture on the M4 Max, and was wrong).
+    pub(crate) fn attention(self) -> Kernel {
+        match self {
+            Tiles::Sixteen => Kernel::AttentionCoop,
+            Tiles::Eight => Kernel::Attention8,
+        }
+    }
+
     /// The kernels' layer for these tiles.
     fn layer(self) -> &'static str {
         match self {
