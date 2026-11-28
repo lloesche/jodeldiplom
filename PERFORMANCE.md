@@ -418,6 +418,16 @@ other, in steps that draw no fire as often as in those that do (Great's
 bloom 5.6 ms in one run, 0.8 in the other; the light 6.7 and 0.9 with
 every effect): the machine's, as the diploma's spike above.
 
+On the owner's M4 Max (Metal, 3024 × 1964 at scale 2, `frame_cost`,
+2026-11-28) every scene is within the budget: the median 2.2 ms a frame
+normal, 2.3–2.9 at Good to Amazing, 3.1 at Diva, 3.2 with every effect
+at once, 2.5 for the diploma; the worst 3.1–3.8 in the tiers' scenes,
+3.9 in the diploma's and 4.05 with every effect at once (one frame). Most
+of a frame is the passes' floor, 0.13–0.25 ms each even where a step
+draws almost nothing (Apple's GPUs load and store the target a pass);
+the effects add tenths (the `fx` step 0.18 normal, 0.43 at Diva, 0.55
+with every effect).
+
 **Themes.** A theme (`theme.rs`) costs the GPU nothing of its own but
 what it holds and grades. How it dresses the effects is one small
 uniform the shaders read anyway (`theme`: the fire's colours, the

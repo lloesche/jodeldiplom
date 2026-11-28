@@ -105,7 +105,6 @@ picture; 18 to 27 s at about 1 MP), so nothing is open there.
 ## Checks on the Mac (the owner)
 
 - The sounds in a real song with the conductor (are they "tinny"?).
-- `frame_cost` with every effect wired, against the budget.
 - `shine --take` on real takes, Diva earned in a row.
 - The mic: unplug it, change its rate, switch mics.
 
