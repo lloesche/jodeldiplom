@@ -5,7 +5,8 @@
 //! a real length drawn once); the scenes described with their times and
 //! the look; a song no longer wanted given up between its pictures; no
 //! models, or no timed lines, no story; the thread taking up the songs
-//! wanted, in their order, their lyrics settled again too. The models'
+//! wanted, in their order, their lyrics settled again too, each round once
+//! the queue has settled. The models'
 //! turns among threads are the stages' (`crate::work::stages`); the whole
 //! of it on the real models, from the app, is `tests/story.rs`.
 
@@ -806,15 +807,78 @@ fn a_song_short_of_room_is_planned_again_in_a_larger_context() {
     assert_eq!(fakes.took(), ["plan"], "larger: planned again");
 }
 
+/// A round is due where the songs were asked anew, a round left songs for
+/// the next, or a song is to be tried again; it starts once the queue has
+/// settled, [`SETTLE`] after the last ask (each ask moving it later), and
+/// takes up the asks to then. With none due, the thread looks again at the
+/// next ask, or when a song is to be tried again.
+#[test]
+fn a_round_is_due_once_the_queue_has_settled() {
+    let t0 = Instant::now();
+    let song = wanted(Path::new("a.flac"));
+    let mut asked = Asked::new(SETTLE);
+    let mut seen = 0;
+    assert_eq!(
+        asked.round_due(Next::Wait, &mut seen, t0),
+        Err(None),
+        "none asked"
+    );
+    asked.ask(vec![song.clone()], t0);
+    let half = t0 + SETTLE / 2;
+    assert_eq!(
+        asked.round_due(Next::Wait, &mut seen, half),
+        Err(Some(t0 + SETTLE))
+    );
+    asked.ask(vec![song.clone()], half);
+    assert_eq!(asked.settles(), half + SETTLE, "from the last ask");
+    let settled = half + SETTLE;
+    let early = settled - Duration::from_millis(1);
+    assert_eq!(
+        asked.round_due(Next::Wait, &mut seen, early),
+        Err(Some(settled))
+    );
+    let songs = asked.round_due(Next::Wait, &mut seen, settled);
+    assert_eq!(
+        (songs, seen),
+        (Ok(vec![song.clone()]), 2),
+        "both asks taken up"
+    );
+    let later = settled + SETTLE;
+    assert_eq!(asked.round_due(Next::Wait, &mut seen, later), Err(None));
+    // Songs left for the next round: at once, unless just asked anew.
+    assert!(asked.round_due(Next::Round, &mut seen, later).is_ok());
+    asked.ask(vec![song.clone()], later);
+    let fresh = asked.round_due(Next::Round, &mut seen, later);
+    assert_eq!(
+        fresh,
+        Err(Some(later + SETTLE)),
+        "a fresh ask settles first"
+    );
+    asked
+        .round_due(Next::Wait, &mut seen, later + SETTLE)
+        .unwrap();
+    // A song to be tried again: looked at then, and then once settled.
+    let retry = later + RETRY;
+    let at = Next::At(retry);
+    assert_eq!(
+        asked.round_due(at, &mut seen, later + SETTLE),
+        Err(Some(retry))
+    );
+    assert!(asked.round_due(at, &mut seen, retry).is_ok());
+    asked.ask(vec![song], retry);
+    assert_eq!(
+        asked.round_due(at, &mut seen, retry),
+        Err(Some(retry + SETTLE))
+    );
+}
+
 /// A song is still wanted while it is in the list of the very same
 /// lyrics: not of others (settled again), nor out of it.
 #[test]
 fn a_song_is_still_wanted_with_its_very_lyrics() {
     let (a, b) = (wanted(Path::new("a.flac")), wanted(Path::new("b.flac")));
-    let asked = Asked {
-        songs: vec![a.clone()],
-        times: 1,
-    };
+    let mut asked = Asked::new(SETTLE);
+    asked.ask(vec![a.clone()], Instant::now());
     assert!(asked.still(&a));
     let again = StorySong { lyrics: 2, ..a };
     assert!(!asked.still(&again), "other lyrics");
@@ -856,11 +920,22 @@ fn the_worker_takes_up_the_songs_wanted_in_order_and_their_new_lyrics() {
 /// How long a test waits for the thread.
 const WAIT: Duration = Duration::from_secs(60);
 
-/// The thread on `fakes`, its stories kept in `places`; what it tells on
-/// its outbox, and the songs it tells finished.
+/// The thread on `fakes`, its stories kept in `places`, each round at once
+/// after its ask (the queue's settling is
+/// [`a_round_starts_once_the_queue_has_settled`]'s); what it tells on its
+/// outbox, and the songs it tells finished.
 fn started(
     fakes: &Arc<Fakes>,
     places: Places,
+) -> (StoryWorker, Receiver<Action>, Receiver<PathBuf>) {
+    settling(fakes, places, Duration::ZERO)
+}
+
+/// [`started`], each round `settle` after the last ask.
+fn settling(
+    fakes: &Arc<Fakes>,
+    places: Places,
+    settle: Duration,
 ) -> (StoryWorker, Receiver<Action>, Receiver<PathBuf>) {
     let (out, told) = outbox();
     let (tx, drawn) = std::sync::mpsc::channel();
@@ -869,11 +944,61 @@ fn started(
         let _ = tx.lock().unwrap().send(path.to_owned());
     });
     let models = Arc::clone(fakes) as Arc<dyn Models>;
-    (
-        StoryWorker::start(models, places, out, on_drawn),
-        told,
-        drawn,
-    )
+    let worker = StoryWorker::start(models, places, out, on_drawn);
+    worker.asked.change(|a| a.settle = settle);
+    (worker, told, drawn)
+}
+
+/// The queue's songs asked for one after another (their lyrics come back
+/// from the cache so) are made in one round once the queue has settled:
+/// every song planned, then every prompt encoded, then every picture
+/// drawn, each model's turns together. No round starts before
+/// [`Asked::settle`] has passed since the last ask, and none is asked for
+/// while asks keep coming (here: the settling held for an hour, then let
+/// go); once the queue has settled, the round starts by itself.
+#[test]
+fn a_round_starts_once_the_queue_has_settled() {
+    let (_dir, places, paths, _) = setting("settling", 3);
+    let fakes = Arc::new(Fakes::new());
+    const HOUR: Duration = Duration::from_secs(3600);
+    let (worker, told, drawn) = settling(&fakes, places, HOUR);
+    let (a, b, c) = (wanted(&paths[0]), wanted(&paths[1]), wanted(&paths[2]));
+    // The second song's lyrics a moment after the first's (the thread let
+    // run meanwhile: nothing told, whatever the moment's length).
+    worker.want(vec![a.clone()]);
+    let moment = Duration::from_millis(100);
+    assert!(
+        told.recv_timeout(moment).is_err(),
+        "no round while it settles"
+    );
+    worker.want(vec![a.clone(), b.clone()]);
+    worker.asked.change(|a| a.settle = Duration::ZERO);
+    assert_eq!(
+        [drawn.recv_timeout(WAIT), drawn.recv_timeout(WAIT)],
+        [Ok(paths[0].clone()), Ok(paths[1].clone())]
+    );
+    let log = fakes.took();
+    let pictures = good().characters.len() + good().scenes.len();
+    assert_eq!(log[..2], ["plan", "plan"], "{log:?}");
+    assert!(log[2..2 + 2 * pictures].iter().all(|e| e == "encode"));
+    assert_eq!(log.iter().filter(|e| *e == "encode").count(), 2 * pictures);
+    // By itself, no sooner than it settles after the last ask (the first
+    // round's news, all told before its last song was, left behind).
+    told.try_iter().for_each(drop);
+    let settle = Duration::from_millis(50);
+    worker.asked.change(|a| a.settle = settle);
+    let before = Instant::now();
+    worker.want(vec![a, b, c]);
+    let first = loop {
+        let news = told.recv_timeout(WAIT).expect("told");
+        if let Action::Working { path, .. } = news {
+            assert_eq!(path, paths[2], "the new song alone worked on");
+            break Instant::now();
+        }
+    };
+    assert!(first >= before + settle, "settled first");
+    assert_eq!(drawn.recv_timeout(WAIT), Ok(paths[2].clone()));
+    drop(worker);
 }
 
 /// A song no longer wanted while the thread draws it is given up there,

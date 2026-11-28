@@ -4,7 +4,12 @@
 //! beside its analysis and its lyrics, told to the app as [`Job::Story`]
 //! (working in each of its turns, then ready: [`Facts::Story`]). It goes
 //! in rounds ([`round`]), by model, each turn a job of the GPU's stages
-//! ([`crate::work::stages`]):
+//! ([`crate::work::stages`]). A round starts once the queue has settled,
+//! no song asked for in [`SETTLE`] (the songs' lyrics come one after
+//! another as the queue is got ready, and a round begun with the first
+//! alone would plan the next only after it drew the first: each model
+//! loaded twice where once does); a song wanted while a round is under
+//! way waits for the next:
 //!
 //! 0. every song looked at, no model run: one whose story is made (its
 //!    plan kept, its pictures drawn, its scenes taken apart), or that has
@@ -101,6 +106,14 @@ pub const RETRY: Duration = Duration::from_secs(60);
 
 /// The longest a song left without its story now is left out.
 pub const MOST_RETRY: Duration = Duration::from_secs(15 * 60);
+
+/// How long the thread waits after the last ask before it starts a round:
+/// the queue settled, every song whose lyrics came one after another is
+/// in the round, each model loaded once for them all. The wait needs no
+/// cap: the app asks only when the songs wanted or their lyrics change
+/// (`crate::core::work::want_stories`), so it ends once the queue's lyrics
+/// are in.
+pub const SETTLE: Duration = Duration::from_secs(2);
 
 /// The story's models, each run in its stage's turn.
 pub trait Models: Send + Sync {
@@ -314,15 +327,64 @@ pub struct Places {
     pub lyrics: LyricsOf,
 }
 
-/// What the thread is asked: the songs wanted, and how many times they
-/// were asked for.
-#[derive(Default)]
+/// What the thread is asked: the songs wanted, how many times they were
+/// asked for and when last, and how long it waits after an ask before it
+/// starts a round ([`SETTLE`]).
 struct Asked {
     songs: Vec<StorySong>,
     times: u64,
+    at: Instant,
+    settle: Duration,
 }
 
 impl Asked {
+    /// Nothing asked yet, a round waiting `settle` after each ask.
+    fn new(settle: Duration) -> Asked {
+        Asked {
+            songs: Vec::new(),
+            times: 0,
+            // Means nothing before the first ask: no round is due then.
+            at: Instant::now(),
+            settle,
+        }
+    }
+
+    /// `songs` asked for at `now`.
+    fn ask(&mut self, songs: Vec<StorySong>, now: Instant) {
+        self.songs = songs;
+        self.times += 1;
+        self.at = now;
+    }
+
+    /// When the queue has settled: `settle` after the last ask.
+    fn settles(&self) -> Instant {
+        self.at + self.settle
+    }
+
+    /// The songs for a round at `now`, after `next` and with the asks up
+    /// to `seen` taken up (counted on to these): where one is due (asked
+    /// anew, songs left for it, or a song to be tried again) and the queue
+    /// has settled. Else when to look again besides the next ask: once
+    /// the queue settles where a round is due, once a song is to be tried
+    /// again where one is.
+    fn round_due(
+        &self,
+        next: Next,
+        seen: &mut u64,
+        now: Instant,
+    ) -> Result<Vec<StorySong>, Option<Instant>> {
+        let retry = next.due();
+        let late = retry.is_some_and(|at| now >= at);
+        if !(next == Next::Round || late || self.times != *seen) {
+            return Err(retry);
+        }
+        if now < self.settles() {
+            return Err(Some(self.settles()));
+        }
+        *seen = self.times;
+        Ok(self.songs.clone())
+    }
+
     /// Whether `song` is still wanted, of the very same lyrics.
     fn still(&self, song: &StorySong) -> bool {
         self.songs.contains(song)
@@ -432,22 +494,18 @@ impl StoryWorker {
         outbox: Outbox,
         on_drawn: OnDrawn,
     ) -> StoryWorker {
-        let asked = Arc::new(Queue::new(Asked::default()));
+        let asked = Arc::new(Queue::new(Asked::new(SETTLE)));
         let thread = Arc::clone(&asked);
         std::thread::Builder::new()
             .name("stories".into())
             .spawn(move || {
                 jodel_gpu::pace::background();
-                // A round goes on where one asked anew, or the last left
-                // songs for the next (at once), or a song is to be tried
-                // again (once its time comes).
+                // A round once one is due and the queue has settled
+                // ([`Asked::round_due`]).
                 let (mut seen, mut next, mut tried) = (0, Next::Wait, Tried::default());
-                while let Some(songs) = thread.next_by(next.due(), |a: &mut Asked, late| {
-                    (next == Next::Round || late || a.times != seen).then(|| {
-                        seen = a.times;
-                        a.songs.clone()
-                    })
-                }) {
+                while let Some(songs) =
+                    thread.next_by(|a: &mut Asked| a.round_due(next, &mut seen, Instant::now()))
+                {
                     let still = |song: &StorySong| !thread.stopped() && thread.lock().still(song);
                     let ask = Ask {
                         models: &*models,
@@ -465,12 +523,9 @@ impl StoryWorker {
 
     /// The stories of exactly `songs` wanted, in this order: the round
     /// under way gives up the songs no longer wanted, and the next takes
-    /// these up.
+    /// these up once the queue has settled ([`SETTLE`]).
     pub fn want(&self, songs: Vec<StorySong>) {
-        self.asked.change(|a| {
-            a.songs = songs;
-            a.times += 1;
-        });
+        self.asked.change(|a| a.ask(songs, Instant::now()));
     }
 }
 

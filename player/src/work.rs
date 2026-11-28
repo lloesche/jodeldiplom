@@ -144,34 +144,36 @@ impl<W> Queue<W> {
     /// The next thing to do, as `take` takes it from the work, waited for;
     /// `None` once stopped.
     pub fn next<T>(&self, mut take: impl FnMut(&mut W) -> Option<T>) -> Option<T> {
-        self.next_by(None, |work, _| take(work))
+        self.next_by(|work| take(work).ok_or(None))
     }
 
-    /// [`Queue::next`], `take` asked again once `due` comes too (told it
-    /// has: whether it is due), as well as at every change before.
+    /// [`Queue::next`], `take` saying when to ask it again where there is
+    /// nothing to take (`Err`): at every change, and at the time given too
+    /// (asked again at once where that time has passed, so a `take` gives
+    /// a time to come); `None` once stopped.
     pub fn next_by<T>(
         &self,
-        due: Option<Instant>,
-        mut take: impl FnMut(&mut W, bool) -> Option<T>,
+        mut take: impl FnMut(&mut W) -> Result<T, Option<Instant>>,
     ) -> Option<T> {
         let mut work = self.lock();
         loop {
             if self.stopped() {
                 return None;
             }
+            let until = match take(&mut work) {
+                Ok(found) => return Some(found),
+                Err(until) => until,
+            };
             let now = Instant::now();
-            let late = due.is_some_and(|due| now >= due);
-            if let Some(found) = take(&mut work, late) {
-                return Some(found);
-            }
-            work = match due.filter(|_| !late) {
-                Some(due) => {
+            work = match until {
+                Some(until) if until > now => {
                     let (work, _) = self
                         .ready
-                        .wait_timeout(work, due - now)
+                        .wait_timeout(work, until - now)
                         .unwrap_or_else(PoisonError::into_inner);
                     work
                 }
+                Some(_) => work,
                 None => self
                     .ready
                     .wait(work)
@@ -396,13 +398,13 @@ mod tests {
         }
     }
 
-    /// A wait until a time ends there, told it is due; a change before
-    /// ends it early, not due yet.
+    /// A wait until a time ends there (asked again no sooner); a change
+    /// before ends it early, the time not come yet.
     #[test]
     fn a_wait_until_a_time_ends_there_or_at_a_change_before() {
         let queue = Arc::new(Queue::new(0u32));
         let due = Instant::now() + Duration::from_millis(50);
-        let took = queue.next_by(Some(due), |_, late| late.then_some(()));
+        let took = queue.next_by(|_| (Instant::now() >= due).then_some(()).ok_or(Some(due)));
         assert!(took.is_some() && Instant::now() >= due);
         let far = Instant::now() + Duration::from_secs(600);
         let asked = Arc::clone(&queue);
@@ -410,7 +412,10 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
             asked.change(|w| *w = 1);
         });
-        let early = queue.next_by(Some(far), |w, late| (*w == 1).then_some(late));
+        let early = queue.next_by(|w| match *w {
+            1 => Ok(Instant::now() >= far),
+            _ => Err(Some(far)),
+        });
         assert_eq!(early, Some(false), "a change before: not due");
         changer.join().unwrap();
     }

@@ -1146,8 +1146,15 @@ really found, as its workers tell it: never a progress they did not tell.
   Karaoke tab or mode, which only read whether a song's story is made):
   wanted once its lyrics are settled, in the order the queue is got ready
   (from the song playing to the end, then from the start), in rounds by
-  model, each turn a job of the GPU's stages (P6). A round first looks
-  at every song wanted, no model run (one whose story is made, or that
+  model, each turn a job of the GPU's stages (P6). A round starts once
+  the queue has settled, no song asked for in two seconds (`SETTLE`: the
+  songs' lyrics come one after another as the queue is got ready, and
+  each model takes its turns for them all together, loaded once where a
+  round begun with the first song alone would load it twice); a song
+  wanted while a round is under way waits for the next (the wait needs
+  no cap: a new ask comes only when the songs wanted or their lyrics
+  change, so it ends once the queue's lyrics are in). A round first
+  looks at every song wanted, no model run (one whose story is made, or that
   has none for good, is told ready at once); then the language model
   plans the songs still to plan, in order, as many as their prompts would
   hold `ENCODED_AHEAD_MB` once encoded, then the image model's text
@@ -1176,7 +1183,8 @@ really found, as its workers tell it: never a progress they did not tell.
   a minute tries it again, twice as long each time again for the same
   lyrics up to a quarter of an hour (other lyrics, or the song made,
   start afresh); a song resting holds no other off, and a new ask
-  meanwhile is taken up at once.
+  meanwhile is taken up once the queue has settled, the rest not waited
+  out.
   - `every_queued_song_is_wanted_for_its_story_once_its_lyrics_are_settled`
   - `a_round_plans_every_song_then_encodes_then_draws_then_takes_apart`,
     `a_round_plans_no_more_songs_than_it_can_draw`,
@@ -1189,7 +1197,9 @@ really found, as its workers tell it: never a progress they did not tell.
     `a_plan_written_again_tells_only_its_words_past_those_told`,
     `a_song_not_made_now_rests_and_holds_no_other_off`,
     `a_song_not_made_now_waits_longer_each_time_again`,
-    `the_worker_takes_up_a_new_ask_while_a_song_rests`
+    `the_worker_takes_up_a_new_ask_while_a_song_rests`,
+    `a_round_is_due_once_the_queue_has_settled`,
+    `a_round_starts_once_the_queue_has_settled`
     (`work::story`)
   - `a_song_s_scenes_are_taken_apart_once_and_made_ready_from_what_is_kept`
     (`work::scenes`)

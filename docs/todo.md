@@ -4,15 +4,6 @@ Work agreed on but not started, roughly in the order it was raised.
 
 ## Karaoke
 
-- **A story round starts once the queue has settled** (the owner,
-  2026-11-28: the goal is the fewest model swaps, not a story soon). At
-  start the queued songs' lyrics come back from the cache one after
-  another and the story worker began its round with the first alone,
-  so the second song's plan waited behind the first one's drawing (two
-  turns of each model where one would do). The worker waits until no
-  song has been asked for in a couple of seconds, then plans every song,
-  encodes every prompt, draws every picture. A song ready mid-round
-  waits for the next round, as agreed.
 - **The scenes show what the song is about,** not its lines word for word
   (on the Echt song the prompts described the lyrics almost literally):
   images and metaphors of its story, with the story-shape change below.
