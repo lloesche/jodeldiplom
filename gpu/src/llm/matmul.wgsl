@@ -1,12 +1,13 @@
 // The language model's matrix multiplies: a row (a token being decoded)
 // through a matrix (`gemv_*`), and many rows (a prompt) through one
 // (`gemm_*`), each written for every kind of matrix it takes
-// (`matmul_q8.wgsl`, `matmul_plain.wgsl`: `_q4k`, `_q6k`, …). On the q8
-// path the rows are at 8 bits and the weights read as signed bytes, four
-// multiply-adds an instruction with dot4I8Packed (16 values are
-// `d_a·s·Σ q_w·q_a`, and each 32 adds `m·d_a·Σ q_a`: the row's scale, the
-// weights' scale and minimum); on the plain one the rows are f32s and the
-// weights read as f32s.
+// (`matmul_q8.wgsl`, `matmul_plain.wgsl`, `gemv_plain.wgsl`: `_q4k`,
+// `_q6k`, …; the plain path's Q4_K and Q6_K rows through a matrix in
+// `gemv_kquant.wgsl`). On the q8 path the rows are at 8 bits and the
+// weights read as signed bytes, four multiply-adds an instruction with
+// dot4I8Packed (16 values are `d_a·s·Σ q_w·q_a`, and each 32 adds
+// `m·d_a·Σ q_a`: the row's scale, the weights' scale and minimum); on the
+// plain one the rows are f32s and the weights read as f32s.
 //
 // Each takes the engine's numbers of a matrix multiply (`Mul::numbers`:
 // m, n, k, the rows' place in `ints` and their values a row, the matrix's
@@ -23,36 +24,72 @@ fn dot16(w: vec4<u32>, x: vec4<u32>) -> i32 {
     return dot4I8Packed(w.x, x.x) + dot4I8Packed(w.y, x.y) + dot4I8Packed(w.z, x.z) + dot4I8Packed(w.w, x.w);
 }
 
-// A row through a matrix: a workgroup takes 16 rows, eight slots of two,
-// each slot's 32 invocations taking every 32nd 16 (q8) or 8 (plain) of
-// its rows' inputs (neighbours reading side by side), their sums then
-// added in their order.
+// A row through a matrix: a workgroup takes 16 rows, eight slots of 32
+// invocations two rows each, each invocation summing its share of the
+// slot's rows' products (q8: every 32nd 16 of the inputs, neighbours
+// reading side by side; plain: `gemv_plain.wgsl`, `gemv_kquant.wgsl`),
+// the slot's sums then added (`gemv_sums`, or on the plain path
+// `gemv_sums_f32`) and written (`gemv_finish`).
 var<workgroup> gemv_sum0: array<f32, 256>;
 var<workgroup> gemv_sum1: array<f32, 256>;
 var<workgroup> best_value: array<f32, 8>;
 var<workgroup> best_row: array<u32, 8>;
 
-// The slots' sums added in their order, and the tail.
-fn gemv_finish(lid: u32, group: u32, r0: u32, acc0: f32, acc1: f32) {
+// Each slot's two sums (`acc0`, `acc1` its invocations') added in their
+// order through workgroup memory, on the slot's first invocation (the
+// others' are not its sums).
+fn gemv_sums(lid: u32, acc0: f32, acc1: f32) -> vec2<f32> {
     gemv_sum0[lid] = acc0;
     gemv_sum1[lid] = acc1;
     workgroupBarrier();
-    let slot = lid / 32u;
-    let flags = mm_flags();
+    var v0 = 0.0;
+    var v1 = 0.0;
     if (lid % 32u == 0u) {
-        var v0 = 0.0;
-        var v1 = 0.0;
         for (var i = 0u; i < 32u; i++) {
             v0 += gemv_sum0[lid + i];
             v1 += gemv_sum1[lid + i];
         }
-        let out = mm_c();
+    }
+    return vec2<f32>(v0, v1);
+}
+
+// Four of the rows' inputs from word `a` of `ints` (the plain path's
+// f32 bits).
+fn ints4(a: u32) -> vec4<f32> {
+    return bitcast<vec4<f32>>(vec4<u32>(ints[a], ints[a + 1u], ints[a + 2u], ints[a + 3u]));
+}
+
+// Product `i` of a GEMV (GELU or gated) written: to dst from `mm_c()`
+// where `mm_into()` is NONE, else (the plain path) into the rows for the
+// next matrix multiply (`ints` from `mm_into()`, f32 bits, as `quant`
+// writes them), times dst's at `mm_times()` where that is not NONE.
+fn gemv_put(i: u32, v: f32) {
+    if (mm_into() == NONE) {
+        dst[mm_c() + i] = v;
+        return;
+    }
+    var x = v;
+    if (mm_times() != NONE) {
+        x *= dst[mm_times() + i];
+    }
+    ints[mm_into() + i] = bitcast<u32>(x);
+}
+
+// The slots' sums (`sums`, on each slot's first invocation: rows r0 and
+// r0 + 1) written as the flags say, and the head's workgroup's largest.
+fn gemv_finish(lid: u32, group: u32, r0: u32, sums: vec2<f32>) {
+    let slot = lid / 32u;
+    let flags = mm_flags();
+    if (lid % 32u == 0u) {
+        let v0 = sums.x;
+        let v1 = sums.y;
         if ((flags & GEGLU) != 0u) {
-            dst[out + r0 / 2u] = gelu_tanh(v0) * v1;
+            gemv_put(r0 / 2u, gelu_tanh(v0) * v1);
         } else if ((flags & GELU) != 0u) {
-            dst[out + r0] = gelu_tanh(v0);
-            dst[out + r0 + 1u] = gelu_tanh(v1);
+            gemv_put(r0, gelu_tanh(v0));
+            gemv_put(r0 + 1u, gelu_tanh(v1));
         } else if ((flags & ARGMAX) != 0u) {
+            let out = mm_c();
             let c0 = tanh_held(v0 / LOGIT_CAP) * LOGIT_CAP;
             let c1 = tanh_held(v1 / LOGIT_CAP) * LOGIT_CAP;
             dst[out + r0] = c0;
@@ -62,8 +99,8 @@ fn gemv_finish(lid: u32, group: u32, r0: u32, acc0: f32, acc1: f32) {
             best_value[slot] = select(c0, c1, second);
             best_row[slot] = select(r0, r0 + 1u, second);
         } else {
-            dst[out + r0] = v0;
-            dst[out + r0 + 1u] = v1;
+            gemv_put(r0, v0);
+            gemv_put(r0 + 1u, v1);
         }
     }
     if ((flags & ARGMAX) != 0u) {

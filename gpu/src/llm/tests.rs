@@ -5,7 +5,7 @@
 //! is none). The blocks' reference is llama.cpp's `dequantize_row_*`, as
 //! written there.
 
-use super::kernels::{PLAIN_KINDS, Q8_KINDS, TOKENS};
+use super::kernels::{NONE, PLAIN_KINDS, Q8_KINDS, TOKENS};
 use super::model::Matrix;
 use super::*;
 use crate::engine::{params, Kernels, Op, PARAM_STRIDE};
@@ -13,15 +13,20 @@ use jodel_tensors::gguf::Kind;
 use jodel_tensors::half::{bf16_to_f32, f16_to_f32, f32_to_f16};
 
 /// The kernels parse and validate, and Metal's writer takes them (as wgpu
-/// would, on a Mac).
+/// would, on a Mac), with subgroups and without.
 #[test]
 fn the_kernels_validate_and_write_for_metal() {
     let entries: Vec<&str> = Kernel::ALL.iter().map(|k| k.entry()).collect();
-    crate::engine::check_source(
-        &source(),
-        naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
-        &entries,
-    );
+    for (sums, subgroups) in [
+        (Sums::Subgroup, naga::valid::Capabilities::SUBGROUP),
+        (Sums::Shared, naga::valid::Capabilities::empty()),
+    ] {
+        crate::engine::check_source(
+            &source(sums),
+            naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32 | subgroups,
+            &entries,
+        );
+    }
 }
 
 /// A small generator of values in [-1, 1).
@@ -41,9 +46,11 @@ impl Noise {
     }
 }
 
-/// The program on the GPU, for single dispatches on buffers of the test's.
+/// The program on the GPU, for single dispatches on buffers of the test's,
+/// and how its f32 GEMVs add their sums.
 struct Rig {
     program: Program<Kernel>,
+    sums: Sums,
 }
 
 /// What a dispatch binds (src, aux, dst, wq, ints) and what it left in
@@ -57,22 +64,52 @@ struct Data {
     ints: Vec<u32>,
 }
 
+/// The program as the model has it on the f32 path (with the features it
+/// takes).
 fn rig() -> Option<Rig> {
-    match crate::device::open("jodel-gpu gemma test", |device, queue, limits| {
-        Ok(Program::new(
-            device,
-            queue,
-            limits,
-            "jodel-gpu gemma test",
-            &source(),
-        ))
-    }) {
-        Ok((program, _)) => Some(Rig { program }),
+    rig_with(true)
+}
+
+/// The program as the f32 path's shape has it ([`Shape::of`]) with the
+/// features the model takes (`wanted`), or without any (its sums through
+/// workgroup memory, as the 8-bit path's).
+fn rig_with(wanted: bool) -> Option<Rig> {
+    match crate::device::open_with(
+        "jodel-gpu gemma test",
+        |adapter| {
+            let features = if wanted {
+                super::kernels::wanted(adapter)
+            } else {
+                wgpu::Features::empty()
+            };
+            (features, wgpu::ExperimentalFeatures::disabled(), ())
+        },
+        |device, queue, limits, ()| {
+            let info = device.adapter_info();
+            let sums = Shape::of(&info, device.features(), Precision::Full).sums;
+            let source = source(sums);
+            let program = Program::new(device, queue, limits, "jodel-gpu gemma test", &source);
+            Ok(Rig { program, sums })
+        },
+    ) {
+        Ok((rig, _)) => Some(rig),
         Err(e) => {
             eprintln!("no usable GPU ({e}): skipped");
             None
         }
     }
+}
+
+/// The program with each way of adding the f32 GEMVs' sums this GPU has:
+/// across subgroups (where they are 32 wide) and through workgroup memory;
+/// said where the first is not tried.
+fn rigs() -> Vec<Rig> {
+    let mut rigs: Vec<Rig> = [true, false].into_iter().filter_map(rig_with).collect();
+    if rigs.first().is_some_and(|r| r.sums == Sums::Shared) {
+        eprintln!("no subgroups of 32 here: the sums across subgroups are not tried");
+        rigs.truncate(1);
+    }
+    rigs
 }
 
 impl Rig {
@@ -383,13 +420,27 @@ fn rows_written_for_a_matrix_multiply_are_the_references() {
 }
 
 /// Each kind's rows of 768 (three blocks: a Q6_K row's second block, and
-/// every odd row, start halfway into a word), on each of its paths; 48
-/// sixteens a row over 32 invocations leave a tail.
+/// every odd row, start halfway into a word) and of 2560 (ten blocks: a
+/// slot takes a Q4_K row's blocks four at a time, a Q6_K row's two), on
+/// each of its paths, with the model's features and without (the plain
+/// path's sums added across subgroups or through workgroup memory: each
+/// way the GPU has, [`rigs`]); 48 sixteens a row over 32 invocations leave
+/// a tail.
 #[test]
 fn a_row_through_a_matrix_is_the_reference_for_every_kind_and_tail() {
-    let Some(rig) = rig() else { return };
+    for rig in rigs() {
+        eprintln!("sums {:?}", rig.sums);
+        for (n, k) in [(64, 768), (32, 2560)] {
+            a_row_through_a_matrix(&rig, (n, k));
+        }
+    }
+}
+
+/// [`a_row_through_a_matrix_is_the_reference_for_every_kind_and_tail`] on
+/// `rig`, rows of `n` × `k`.
+fn a_row_through_a_matrix(rig: &Rig, (n, k): (usize, usize)) {
     let mut noise = Noise(2);
-    let (n, k, at) = (64, 768, 6);
+    let at = 6;
     let x = noise.values(k, 2.0);
     for (kind, q8) in kinds_and_paths() {
         let (wq, m, held) = matrix(&mut noise, kind, (n, k), at);
@@ -421,12 +472,12 @@ fn a_row_through_a_matrix_is_the_reference_for_every_kind_and_tail() {
             };
             let got = rig.run(
                 kernel,
-                &[1, n, k, 0, k, m.at, 0, n, 0, flags, qs, best],
+                &[1, n, k, 0, k, m.at, 0, n, 0, flags, qs, best, NONE, NONE],
                 [(n / 16) as u32, 1, 1],
                 &data,
             );
             let e = off(&got.dst[..want.len()], &want);
-            assert!(e < 1e-5, "{kind:?}, q8 {q8}, flags {flags}: {e}");
+            assert!(e < 1e-5, "{kind:?}, q8 {q8}, k {k}, flags {flags}: {e}");
             if flags == 128 {
                 for g in 0..n / 16 {
                     let part = &want[g * 16..g * 16 + 16];
@@ -434,6 +485,68 @@ fn a_row_through_a_matrix_is_the_reference_for_every_kind_and_tail() {
                     assert_eq!(got.ints[best + 2 * g + 1] as usize, g * 16 + i);
                 }
             }
+        }
+    }
+}
+
+/// A row through a matrix on the plain path written into the rows for the
+/// next matrix multiply (its `into` number: as `quant` writes them, after
+/// the inputs, which stay as they were), GELU taken or gated, each times
+/// dst's values where they are given; with each way of adding the sums
+/// the GPU has ([`rigs`]).
+#[test]
+fn a_row_written_into_the_rows_is_the_reference() {
+    for rig in rigs() {
+        eprintln!("sums {:?}", rig.sums);
+        a_row_written_into_the_rows(&rig);
+    }
+}
+
+/// [`a_row_written_into_the_rows_is_the_reference`] on `rig`.
+fn a_row_written_into_the_rows(rig: &Rig) {
+    let mut noise = Noise(5);
+    let (n, k, at) = (64, 768, 6);
+    let x = noise.values(k, 2.0);
+    let times = noise.values(n, 1.5);
+    for kind in PLAIN_KINDS.iter().copied() {
+        let (wq, m, held) = matrix(&mut noise, kind, (n, k), at);
+        let (ints, xs) = written(&x, false, k);
+        let products: Vec<f32> = (0..n)
+            .map(|r| (0..k).map(|c| held[r * k + c] * xs[c]).sum())
+            .collect();
+        let gelus: Vec<f32> = products.iter().map(|&v| gelu(v)).collect();
+        let gated: Vec<f32> = products.chunks(2).map(|p| gelu(p[0]) * p[1]).collect();
+        for (flags, by, want) in [
+            (4, NONE, gelus.clone()),
+            (4, n, gelus.iter().zip(&times).map(|(g, t)| g * t).collect()),
+            (512, NONE, gated),
+        ] {
+            let out = ints.len();
+            let data = Data {
+                dst: [vec![0.0; n], times.clone()].concat(),
+                wq: wq.clone(),
+                ints: [ints.clone(), vec![0; n]].concat(),
+                ..Data::default()
+            };
+            let numbers = [1, n, k, 0, k, m.at, 0, n, 0, flags, k, 0, out, by];
+            let got = rig.run(
+                Kernel::GemvF32(kind),
+                &numbers,
+                [(n / 16) as u32, 1, 1],
+                &data,
+            );
+            let rows: Vec<f32> = got.ints[out..out + want.len()]
+                .iter()
+                .map(|&w| f32::from_bits(w))
+                .collect();
+            let e = off(&rows, &want);
+            assert!(e < 1e-5, "{kind:?}, flags {flags}, times {by}: {e}");
+            assert_eq!(got.dst[..n], vec![0.0; n], "{kind:?}: nothing in dst");
+            assert_eq!(
+                got.ints[..out],
+                ints[..],
+                "{kind:?}: the inputs as they were"
+            );
         }
     }
 }

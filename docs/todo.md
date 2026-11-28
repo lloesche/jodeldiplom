@@ -47,10 +47,11 @@ Work agreed on but not started, roughly in the order it was raised.
 
 Measured on the owner's M4 Max (Metal, the f32 path), 2026-11-28:
 
-- **Gemma's one-row matrix multiplies** (`gemv_f32_q4k` 6.4 s of 12.5 s
-  GPU in a 512-token answer, 53 tok/s): the target is the 70 to 101
-  tok/s others get on the same chip. Shape them as MLX and llama.cpp's
-  Metal kernels do (gpu/README.md, "Rules for kernels").
+- **Gemma's step, past its one-row matrix multiplies**: those reached the
+  70 to 101 tok/s others get on the same chip (74.2 where it was 50.4,
+  shaped as llama.cpp's Metal kernels). What is left: the residual steps
+  (1.39 s of a 512-token answer, three single-workgroup dispatches a
+  layer) and the cost of each of the 564 dispatches a step.
 - **Gemma's prompt** on Apple's 8x8 matrices, as klein's multiply and
   attention already are (339 tokens a second at 12K today).
 

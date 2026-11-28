@@ -71,18 +71,13 @@ impl OnDevice for Gpu {
 /// they need: f16, cooperative matrices of 16 × 16 × 16 (else of 8 × 8 ×
 /// 8) in f16 with f32 sums, subgroups of 32 (eight to a workgroup of 256)
 /// and the workgroup memory the kernels take on those tiles
-/// ([`Tiles::memory`]). Through Metal
-/// the name is all there is to go by: wgpu says subgroups of 4 to 64 for
-/// every Metal adapter and gives no vendor or device (0), and it offers the
-/// same 8 × 8 matrices on Apple's GPUs (family Apple7) and on the Intel and
-/// AMD GPUs of older Macs (Mac2), whose SIMD-groups need not be 32 wide.
-/// Apple's are 32, and a simdgroup matrix is one of them; their names start
-/// with "Apple", which keeps the others out.
+/// ([`Tiles::memory`]). Through Metal wgpu offers the same 8 × 8 matrices
+/// on Apple's GPUs (family Apple7) and on the Intel and AMD GPUs of older
+/// Macs (Mac2); only Apple's subgroups are known to be 32 wide
+/// ([`crate::device::subgroups_of_32`]), and a simdgroup matrix is one of
+/// them.
 fn tiles(adapter: &wgpu::Adapter) -> Option<Tiles> {
-    let info = adapter.get_info();
-    let of_32 = (info.subgroup_min_size, info.subgroup_max_size) == (32, 32)
-        || (info.backend == wgpu::Backend::Metal && info.name.starts_with("Apple"));
-    if !adapter.features().contains(COOP) || !of_32 {
+    if !adapter.features().contains(COOP) || !crate::device::subgroups_of_32(&adapter.get_info()) {
         return None;
     }
     let memory = adapter.limits().max_compute_workgroup_storage_size;

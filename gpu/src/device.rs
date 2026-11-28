@@ -224,6 +224,21 @@ pub(crate) fn open_on<T, W>(
     Ok((made, info.name))
 }
 
+/// Whether the adapter `info` tells of has subgroups of 32 invocations,
+/// always. Through Metal the name is all there is to go by: wgpu says
+/// subgroups of 4 to 64 for every Metal adapter and gives no vendor or
+/// device (0), on Apple's GPUs and on the Intel and AMD GPUs of older
+/// Macs, whose SIMD-groups need not be 32 wide. Apple's are 32; their names
+/// start with "Apple", which keeps the others out. The kernels written for
+/// it also take a workgroup's invocations 32s to 32s + 31 (by local index,
+/// in one dimension) to be one subgroup: Metal's SIMD-groups are so; on
+/// Vulkan that is what the drivers do, not a guarantee without full
+/// subgroups asked for.
+pub(crate) fn subgroups_of_32(info: &wgpu::AdapterInfo) -> bool {
+    (info.subgroup_min_size, info.subgroup_max_size) == (32, 32)
+        || (info.backend == wgpu::Backend::Metal && info.name.starts_with("Apple"))
+}
+
 /// The most bytes a buffer of the process's GPU ([`chosen`]) is bound
 /// with (`wgpu`'s storage binding, within its largest buffer); without a
 /// usable GPU, why there is none.

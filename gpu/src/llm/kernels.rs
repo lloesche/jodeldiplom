@@ -131,10 +131,13 @@ pub(super) const OUT: usize = 4;
 pub(super) const Q8: usize = 1;
 
 /// A matrix multiply's numbers: the engine's ten ([`MUL_NUMBERS`]), then
-/// the rows' scales in `ints` and (the head) where its workgroups'
-/// largest go.
-const MM: [&str; MUL_NUMBERS.len() + 2] = {
-    let mut all = [""; MUL_NUMBERS.len() + 2];
+/// the rows' scales in `ints`, (the head) where its workgroups' largest
+/// go, and a GEMV's on the f32 path: where in `ints` its products go as
+/// the rows for the next matrix multiply, as `quant` writes them (NONE: to
+/// dst), and where in dst the values they are multiplied by then are
+/// (NONE: none).
+const MM: [&str; MUL_NUMBERS.len() + 4] = {
+    let mut all = [""; MUL_NUMBERS.len() + 4];
     let mut i = 0;
     while i < MUL_NUMBERS.len() {
         all[i] = MUL_NUMBERS[i];
@@ -142,6 +145,8 @@ const MM: [&str; MUL_NUMBERS.len() + 2] = {
     }
     all[i] = "qs";
     all[i + 1] = "best";
+    all[i + 2] = "into";
+    all[i + 3] = "times";
     all
 };
 
@@ -310,15 +315,46 @@ fn constants() -> String {
     out
 }
 
-/// The kernels' source: the matrix multiplies written out for each kind
-/// they take.
-pub(super) fn source() -> String {
+/// The kinds whose row through a matrix on the plain path is a kernel of
+/// their own (`gemv_kquant.wgsl`); the other plain kinds' is written out
+/// from `gemv_plain.wgsl`.
+const KQUANT_GEMV: &[Kind] = &[Kind::Q4K, Kind::Q6K];
+
+/// The device features the kernels take where the adapter has them:
+/// subgroups, where they are 32 wide ([`crate::device::subgroups_of_32`]:
+/// a GEMV's slot of 32 is then one, its sums added across it).
+pub(super) fn wanted(adapter: &wgpu::Adapter) -> wgpu::Features {
+    if crate::device::subgroups_of_32(&adapter.get_info()) {
+        wgpu::Features::SUBGROUP
+    } else {
+        wgpu::Features::empty()
+    }
+}
+
+/// How the f32 GEMVs add each slot's sums (chosen in [`super::Shape::of`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sums {
+    /// Across the slot's subgroup (`gemv_sums_subgroup.wgsl`).
+    Subgroup,
+    /// Through workgroup memory, as the q8 GEMVs (`gemv_sums_shared.wgsl`).
+    Shared,
+}
+
+/// The kernels' source, the matrix multiplies written out for each kind
+/// they take and the f32 GEMVs' sums added as `sums` says.
+pub(super) fn source(sums: Sums) -> String {
+    let sums = match sums {
+        Sums::Subgroup => include_str!("gemv_sums_subgroup.wgsl"),
+        Sums::Shared => include_str!("gemv_sums_shared.wgsl"),
+    };
     let mut source = [
         &constants(),
         include_str!("prelude.wgsl"),
         include_str!("../common.wgsl"),
         include_str!("blocks.wgsl"),
         include_str!("matmul.wgsl"),
+        sums,
+        include_str!("gemv_kquant.wgsl"),
         include_str!("attention.wgsl"),
         include_str!("rows.wgsl"),
     ]
@@ -327,6 +363,9 @@ pub(super) fn source() -> String {
         source += &include_str!("matmul_q8.wgsl").replace("KIND", suffix(kind));
     }
     for &kind in PLAIN_KINDS {
+        if !KQUANT_GEMV.contains(&kind) {
+            source += &include_str!("gemv_plain.wgsl").replace("KIND", suffix(kind));
+        }
         source += &include_str!("matmul_plain.wgsl").replace("KIND", suffix(kind));
     }
     source

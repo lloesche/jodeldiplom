@@ -280,7 +280,7 @@ pub(crate) fn shared_source(more: &[&str]) -> String {
 
 /// Every kernel of `source` parses and validates, and Metal's writer takes
 /// it (as wgpu would on a Mac), on any machine; each of `entries` is in its
-/// output.
+/// output. With `SUBGROUP`, the subgroups' arithmetic in compute kernels.
 #[cfg(test)]
 pub(crate) fn check_source(
     source: &str,
@@ -288,7 +288,14 @@ pub(crate) fn check_source(
     entries: &[&str],
 ) {
     let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|e| panic!("{e}"));
-    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), capabilities)
+    let mut validator =
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), capabilities);
+    if capabilities.contains(naga::valid::Capabilities::SUBGROUP) {
+        validator
+            .subgroup_stages(naga::valid::ShaderStages::COMPUTE)
+            .subgroup_operations(naga::valid::SubgroupOperationSet::ARITHMETIC);
+    }
+    let info = validator
         .validate(&module)
         .unwrap_or_else(|e| panic!("{e:?}"));
     let (msl, _) = naga::back::msl::write_string(

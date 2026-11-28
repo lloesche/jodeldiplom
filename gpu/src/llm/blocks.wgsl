@@ -31,6 +31,15 @@ fn half_at(b: u32) -> u32 {
     return (word(b >> 2u) >> ((b & 2u) * 8u)) & 0xFFFFu;
 }
 
+// The four bytes from byte `b` (even) of `wq`, the first lowest: the word
+// they lie in, or the two around them where `b` is halfway into one (the
+// word after is read either way: `select` takes both).
+fn bytes4(b: u32) -> u32 {
+    let i = b >> 2u;
+    let lo = word(i);
+    return select(lo, (lo >> 16u) | (word(i + 1u) << 16u), (b & 2u) != 0u);
+}
+
 // Four words from byte `b` (even) of `wq`, the first lowest: read
 // as they lie, or from the words around them where `b` is halfway into
 // one.
@@ -91,7 +100,8 @@ fn row_bytes(kind: u32, cols: u32) -> u32 {
 
 // The scale and minimum (d·sc, dmin·m) of the 32 values at `s` of a Q4_K
 // or Q5_K block from its first four words (d and dmin, the 12 bytes of
-// scales and minimums).
+// scales and minimums). `q4k_run` (`gemv_kquant.wgsl`) unpacks the same
+// bytes two at a time: a change to the format changes both.
 fn k_scale_min(head: vec4<u32>, s: u32) -> vec2<f32> {
     let dm = unpack2x16float(head.x);
     let j = (s & 3u) * 8u;

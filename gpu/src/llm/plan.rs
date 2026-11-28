@@ -9,7 +9,9 @@
 //! A prompt's chunk runs the layers that have keys and values of their own
 //! over all its rows, through the tiled matrix multiplies and flash
 //! attention; the layers after them only need the prompt's last row (they
-//! write no keys or values), which goes through them as a step does.
+//! write no keys or values), which goes through them as a step does. The
+//! layers, the steps and the chunks are planned in [`layer`]; their
+//! dispatches' helpers are here.
 //!
 //! Every matrix multiply is the engine's [`Mul`]: from the rows written
 //! for it in `ints` (at 8 bits or as f32s: [`Plan::mode`]), through a
@@ -18,14 +20,16 @@
 //! ([`super::kernels::named`]: the kernels read them by the same names,
 //! `prep_rows()`).
 
+mod layer;
+
 use super::kernels::{
-    fields, named, Kernel, ADD, FLASH_LANES, GEMM_TILE, GEMV_ROWS, MOST_SPLITS, NONE, OUT, Q8,
-    Q8_BLOCK, Q8_KINDS, SCALE, TOKENS,
+    fields, named, Kernel, Sums, ADD, FLASH_LANES, GEMM_TILE, GEMV_ROWS, MOST_SPLITS, NONE, OUT,
+    Q8, Q8_BLOCK, Q8_KINDS, SCALE, TOKENS,
 };
 use super::model::{Layout, Matrix};
 use super::{
     head_of, is_global, kv_of, shares, Buf, DIM, EMBED_SCALE, FF, GLOBAL_BASE, GLOBAL_HEAD,
-    GLOBAL_TURNED, HEADS, KV_HEADS, LAYERS, LOCAL_BASE, LOCAL_HEAD, OWN_KV, PER_LAYER, PER_LAYERS,
+    GLOBAL_TURNED, HEADS, KV_HEADS, LOCAL_BASE, LOCAL_HEAD, OWN_KV, PER_LAYER, PER_LAYERS,
     PER_LAYER_EMBED_SCALE, PER_LAYER_PROJECTION_SCALE, STEPS_A_READ, VOCAB, WINDOW,
 };
 use crate::engine::{self, params, spread, After, Mul, PARAM_STRIDE};
@@ -360,27 +364,30 @@ impl ContextPlan {
             ));
         }
         let sizes = Sizes::new(context + PAST);
-        // Either path's step is as many dispatches. A chunk is as many on
-        // the 8-bit path wherever it is and however many rows it has (the
-        // last's more); on the f32 path its attention is cut finer the
-        // deeper it is (`flash_slices`), so the room is planned on that
-        // path, each chunk before the last as many as the deepest of them.
-        let plan = Plan {
+        // Each piece as the more dispatches of the two paths; the chunks
+        // before the last each as many as the deepest of them (the f32
+        // path's attention is cut finer the deeper it is: `flash_slices`).
+        let plans = [true, false].map(|q8| Plan {
             layout,
             sizes,
             shape: super::Shape {
-                q8: false,
+                q8,
                 per: KEPT_CHUNKS_A_SPLIT,
+                sums: Sums::Shared,
             },
-        };
-        let step = plan.step().len();
+        });
+        let most =
+            |ops: &dyn Fn(&Plan) -> Vec<Op>| plans.iter().map(|p| ops(p).len()).fold(0, usize::max);
+        let step = most(&|p| p.step());
         let chunks = context.div_ceil(CHUNK);
         let prompt = match chunks {
             0 => 0,
             _ => {
                 let last = (chunks - 1) * CHUNK;
-                let deepest = plan.chunk(last.saturating_sub(CHUNK), CHUNK, false).len();
-                (chunks - 1) * deepest + plan.chunk(last, context - last, true).len()
+                let deep = last.saturating_sub(CHUNK);
+                let deepest = most(&|p| p.chunk(deep, CHUNK, false));
+                let tail = most(&|p| p.chunk(last, context - last, true));
+                (chunks - 1) * deepest + tail
             }
         };
         Ok(ContextPlan {
@@ -464,19 +471,81 @@ impl Plan<'_> {
         }
     }
 
-    /// `rows` rows written for a matrix multiply through `m` (in `wq`) to
-    /// `dst` (from `at`, rows `ld` apart), as `after` says: a GEMV for a
-    /// row, else the tiled GEMM; each of `m`'s kind, on its path.
+    /// `rows` rows written for a matrix multiply (from `from` in `ints`)
+    /// through `m` (in `wq`) to `dst` (from `at`, rows `ld` apart), as
+    /// `after` says: a GEMV for a row, else the tiled GEMM; each of `m`'s
+    /// kind, on its path.
     fn matmul(
+        &self,
+        ops: &mut Vec<Op>,
+        (rows, from): (usize, usize),
+        (m, wq): (Matrix, Buf),
+        to: (Buf, usize, usize),
+        after: After,
+    ) {
+        self.mul(ops, (rows, from), (m, wq), to, after, (NONE, NONE));
+    }
+
+    /// `rows` rows (at the rows' place) through `m` (in `wq`, as `after`
+    /// says) made the rows for a matrix multiply through `next`, each times
+    /// `H`'s at `times` where that is given; where in `ints` they start. A
+    /// step's row where `next` takes f32s is one GEMV that writes them
+    /// itself, after the row it reads ([`Plan::rows_after`]: no workgroup
+    /// writes over inputs another still reads); else the products go to
+    /// `H` and `quant` writes the rows from there.
+    fn rows_for(
         &self,
         ops: &mut Vec<Op>,
         rows: usize,
         (m, wq): (Matrix, Buf),
+        after: After,
+        (next, times): (Matrix, Option<usize>),
+    ) -> usize {
+        let qa = self.sizes.qa;
+        if rows == 1 && self.mode(next) != Q8 {
+            let into = self.rows_after();
+            let to = (Buf::H, 0, m.rows);
+            self.mul(
+                ops,
+                (1, qa),
+                (m, wq),
+                to,
+                after,
+                (into, times.unwrap_or(NONE)),
+            );
+            return into;
+        }
+        let to = (Buf::H, 0, next.cols);
+        self.matmul(ops, (rows, qa), (m, wq), to, after);
+        self.quant(ops, rows, next, times);
+        qa
+    }
+
+    /// Where a step's GEMV writes the next one's rows ([`Plan::rows_for`]):
+    /// past the widest row at the rows' place.
+    fn rows_after(&self) -> usize {
+        const _: () = assert!(DIM <= FF && PER_LAYER <= FF && CHUNK >= 2);
+        self.sizes.qa + FF
+    }
+
+    /// [`Plan::matmul`], a GEMV's products written `into` that place in
+    /// `ints` as the rows for the next matrix multiply, each times dst's at
+    /// `times` (NONE: to dst, and none; [`Plan::rows_for`]).
+    fn mul(
+        &self,
+        ops: &mut Vec<Op>,
+        (rows, from): (usize, usize),
+        (m, wq): (Matrix, Buf),
         (dst, at, ld): (Buf, usize, usize),
         after: After,
+        (into, times): (usize, usize),
     ) {
+        assert!(
+            rows == 1 || (into, times) == (NONE, NONE),
+            "a GEMM writes its products to dst"
+        );
         let mul = Mul {
-            from: (Buf::Ints, self.sizes.qa, m.cols),
+            from: (Buf::Ints, from, m.cols),
             to: (dst, at, ld),
             m: rows,
             n: m.rows,
@@ -486,7 +555,7 @@ impl Plan<'_> {
             after,
         };
         let mut numbers = mul.numbers().to_vec();
-        numbers.extend([self.sizes.qs, self.sizes.best]);
+        numbers.extend([self.sizes.qs, self.sizes.best, into, times]);
         debug_assert_eq!(
             numbers.len(),
             fields("mm").len(),
@@ -624,7 +693,7 @@ impl Plan<'_> {
         self.residual(ops, (rows, 0), None, None, Some((NONE, per_layer)));
         self.matmul(
             ops,
-            rows,
+            (rows, self.sizes.qa),
             (per_layer, Buf::Shared),
             (Buf::PerLayer, 0, PER_LAYERS),
             After::Store,
@@ -847,154 +916,6 @@ impl Plan<'_> {
             groups: [1, 1, 1],
         });
     }
-
-    /// Layer `l` for `rows` rows from position `first` (a prompt's, through
-    /// flash attention), or for one at the decoder's (`None`, through the
-    /// step's attention); its rows in `X` from row `x_row` (and the
-    /// per-layer projection's from that row); the rows end written for the
-    /// next layer's matrices (the head's after the last) where `next`.
-    fn layer(
-        &self,
-        ops: &mut Vec<Op>,
-        l: usize,
-        (rows, x_row): (usize, usize),
-        first: Option<usize>,
-        next: bool,
-    ) {
-        let layer = &self.layout.layers[l];
-        let w = Buf::Layers(layer.group);
-        let kv = if shares(l) { 0 } else { KV_HEADS };
-        let qkv = (HEADS + 2 * kv) * head_of(l);
-        for (m, row) in self.qkv(l) {
-            self.matmul(ops, rows, (m, w), (Buf::H, row, qkv), After::Store);
-        }
-        self.prep(ops, l, rows, first, qkv);
-        match first {
-            None => self.attend_step(ops, l),
-            Some(first) => {
-                self.flash(ops, l, rows, first);
-                self.quant(ops, rows, layer.o, None);
-            }
-        }
-        self.matmul(
-            ops,
-            rows,
-            (layer.placed(layer.o), w),
-            (Buf::H, 0, DIM),
-            After::Store,
-        );
-        self.residual(
-            ops,
-            (rows, x_row),
-            Some(layer.post_attn),
-            None,
-            Some((layer.pre_ff, layer.gate_up)),
-        );
-        self.matmul(
-            ops,
-            rows,
-            (layer.placed(layer.gate_up), w),
-            (Buf::H, 0, FF),
-            After::GeGlu,
-        );
-        self.quant(ops, rows, layer.down, None);
-        self.matmul(
-            ops,
-            rows,
-            (layer.placed(layer.down), w),
-            (Buf::H, 0, DIM),
-            After::Store,
-        );
-        self.residual(
-            ops,
-            (rows, x_row),
-            Some(layer.post_ff),
-            None,
-            Some((NONE, layer.gate)),
-        );
-        self.per_layer(ops, l, (rows, x_row), first);
-        self.matmul(
-            ops,
-            rows,
-            (layer.placed(layer.gate), w),
-            (Buf::H, 0, PER_LAYER),
-            After::Gelu,
-        );
-        self.quant(ops, rows, layer.proj, Some(self.sizes.pli));
-        self.matmul(
-            ops,
-            rows,
-            (layer.placed(layer.proj), w),
-            (Buf::H, 0, DIM),
-            After::Store,
-        );
-        let out = next.then(|| {
-            self.layout
-                .layers
-                .get(l + 1)
-                .map_or((self.layout.final_norm, self.layout.embed), |n| {
-                    (n.input_norm, n.q)
-                })
-        });
-        self.residual(
-            ops,
-            (rows, x_row),
-            Some(layer.post_ple),
-            Some(layer.scalar),
-            out,
-        );
-    }
-
-    /// The layers from `from` for the row `x_row` of `X` at the decoder's
-    /// position (written for `from`'s matrices already), then the head and
-    /// the next token.
-    fn last_row(&self, ops: &mut Vec<Op>, from: usize, x_row: usize) {
-        for l in from..LAYERS {
-            self.layer(ops, l, (1, x_row), None, true);
-        }
-        self.matmul(
-            ops,
-            1,
-            (self.layout.embed, Buf::Shared),
-            (Buf::Logits, 0, VOCAB),
-            After::Argmax { stride: 0 },
-        );
-        self.argmax(ops);
-    }
-
-    /// A step: the token at the decoder's position through every layer,
-    /// the next one chosen and put after it, the position moved on.
-    pub(super) fn step(&self) -> Vec<Op> {
-        let mut ops = Vec::new();
-        self.embed(&mut ops, 1, None);
-        self.last_row(&mut ops, 0, 0);
-        ops
-    }
-
-    /// A prompt's chunk: `rows` rows from position `first` through the
-    /// layers with keys and values of their own; where it is the `last`,
-    /// its last row through the rest, and the first token chosen (the
-    /// decoder's position must be that row's).
-    pub(super) fn chunk(&self, first: usize, rows: usize, last: bool) -> Vec<Op> {
-        assert!((1..=CHUNK).contains(&rows), "{rows} rows in a chunk");
-        let mut ops = Vec::new();
-        self.embed(&mut ops, rows, Some(first));
-        for l in 0..OWN_KV {
-            self.layer(&mut ops, l, (rows, 0), Some(first), l + 1 < OWN_KV);
-        }
-        if last {
-            let next = &self.layout.layers[OWN_KV];
-            self.residual(
-                &mut ops,
-                (1, rows - 1),
-                None,
-                None,
-                Some((next.input_norm, next.q)),
-            );
-            self.last_row(&mut ops, OWN_KV, rows - 1);
-        }
-        ops
-    }
 }
 
 #[cfg(test)]
@@ -1032,6 +953,7 @@ mod tests {
             shape: super::super::Shape {
                 q8,
                 per: KEPT_CHUNKS_A_SPLIT,
+                sums: Sums::Shared,
             },
         });
         let flashes = |plan: &Plan| {
@@ -1042,9 +964,9 @@ mod tests {
         assert!(flashes(&full) > OWN_KV, "{}", flashes(&full));
     }
 
-    /// Either path's step is as many dispatches, and the f32 path's chunks
-    /// the most (its attention cut finest: the room is planned on it); a
-    /// position more of context holds the keys and
+    /// The room holds the more dispatches of the two paths for a step and
+    /// for each chunk (a chunk deeper as many or more); a position more of
+    /// context holds the keys and
     /// values of each global layer with its own, its rows of both rotary
     /// tables (a global layer's pairs turned only) and its token, and
     /// nothing else (the sliding layers' rings stay as they are); a
@@ -1060,21 +982,21 @@ mod tests {
             shape: super::super::Shape {
                 q8,
                 per: SPREAD_CHUNKS_A_SPLIT,
+                sums: Sums::Shared,
             },
         });
-        assert_eq!(fast.step().len(), full.step().len());
-        for (first, rows, last) in [
-            (0, CHUNK, false),
-            (CHUNK, CHUNK, false),
-            (2 * CHUNK, 100, true),
-        ] {
-            let n = full.chunk(first, rows, last).len();
-            assert!(fast.chunk(first, rows, last).len() <= n, "chunk at {first}");
+        // Each piece planned as the more of the two paths', the chunks
+        // before the last each as the deepest of them.
+        let most = |ops: &dyn Fn(&Plan) -> usize| ops(&fast).max(ops(&full));
+        assert_eq!(room.step, most(&|p| p.step().len()));
+        for p in [&fast, &full] {
+            let shallow = p.chunk(0, CHUNK, false).len();
+            assert!(shallow <= p.chunk(CHUNK, CHUNK, false).len());
         }
-        // Planned at the most: each chunk before the last as the deepest of
-        // them on the f32 path.
-        let deepest = full.chunk(CHUNK, CHUNK, false).len();
-        let prompt = (2 * deepest + full.chunk(2 * CHUNK, 100, true).len()) as u64;
+        let deepest = most(&|p| p.chunk(CHUNK, CHUNK, false).len());
+        let last = most(&|p| p.chunk(2 * CHUNK, 100, true).len());
+        let prompt = (2 * deepest + last) as u64;
+        assert_eq!(room.prompt as u64, prompt);
         let more = ContextPlan::new(&layout, context + 1).unwrap();
         let kv: usize = (0..OWN_KV)
             .filter(|&l| is_global(l))

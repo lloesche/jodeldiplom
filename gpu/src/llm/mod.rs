@@ -65,7 +65,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use self::kernels::{source, Kernel};
+use self::kernels::{source, Kernel, Sums};
 use self::model::Layout;
 use self::plan::{Bind, ContextPlan, Plan, CHUNK};
 pub use self::plan::{LEAST_CONTEXT, MOST_CONTEXT};
@@ -238,9 +238,19 @@ impl Gemma {
         let mut file = Gguf::open(path)?;
         let tokens = Tokenizer::from_gguf(&file)?;
         let layout = Layout::of(&file)?;
-        let (inner, name) = crate::device::open("jodel-gpu gemma", |device, queue, limits| {
-            Inner::new(device, queue, limits, &mut file, layout, precision)
-        })?;
+        let (inner, name) = crate::device::open_with(
+            "jodel-gpu gemma",
+            |adapter| {
+                (
+                    kernels::wanted(adapter),
+                    wgpu::ExperimentalFeatures::disabled(),
+                    (),
+                )
+            },
+            |device, queue, limits, ()| {
+                Inner::new(device, queue, limits, &mut file, layout, precision)
+            },
+        )?;
         Ok(Gemma {
             name,
             tokens,
@@ -498,21 +508,39 @@ pub(super) struct Shape {
     pub(super) q8: bool,
     /// A global layer's chunks of a step's attention for one more split.
     pub(super) per: usize,
+    /// How the f32 GEMVs add their sums.
+    pub(super) sums: Sums,
 }
 
 impl Shape {
-    /// The shape on `backend` reckoning as `precision` says: the rows at 8
-    /// bits where it is fast and `dot4I8Packed` is native ([`q8_on`]); a
-    /// global layer's splits spread on Metal (Apple's GPUs take many
-    /// workgroups to fill), elsewhere kept as they were so the plans come
-    /// out token for token as before ([`plan::KEPT_CHUNKS_A_SPLIT`]).
-    fn of(backend: wgpu::Backend, precision: Precision) -> Shape {
+    /// The shape on the adapter `info` tells of, with the device
+    /// `features`, reckoning as `precision` says: the rows at 8 bits where
+    /// it is fast and `dot4I8Packed` is native ([`q8_on`]); a global layer's
+    /// splits spread on Metal (Apple's GPUs take many workgroups to fill),
+    /// elsewhere kept as they were so the plans come out token for token as
+    /// before ([`plan::KEPT_CHUNKS_A_SPLIT`]); the f32 path's GEMV sums
+    /// across subgroups where they are 32 wide and the device has them (the
+    /// 8-bit path's through workgroup memory, its answers token for token
+    /// as before).
+    pub(super) fn of(
+        info: &wgpu::AdapterInfo,
+        features: wgpu::Features,
+        precision: Precision,
+    ) -> Shape {
+        let q8 = precision == Precision::Fast && q8_on(info.backend);
+        let subgroups =
+            features.contains(wgpu::Features::SUBGROUP) && crate::device::subgroups_of_32(info);
         Shape {
-            q8: precision == Precision::Fast && q8_on(backend),
-            per: if backend == wgpu::Backend::Metal {
+            q8,
+            per: if info.backend == wgpu::Backend::Metal {
                 plan::SPREAD_CHUNKS_A_SPLIT
             } else {
                 plan::KEPT_CHUNKS_A_SPLIT
+            },
+            sums: if subgroups && !q8 {
+                Sums::Subgroup
+            } else {
+                Sums::Shared
             },
         }
     }
@@ -527,8 +555,9 @@ impl Inner {
         layout: Layout,
         precision: Precision,
     ) -> Result<Inner, String> {
-        let shape = Shape::of(device.adapter_info().backend, precision);
-        let program = Program::new(device, queue, limits, "jodel-gpu gemma", &source());
+        let shape = Shape::of(&device.adapter_info(), device.features(), precision);
+        let source = source(shape.sums);
+        let program = Program::new(device, queue, limits, "jodel-gpu gemma", &source);
         let mut weights = HashMap::new();
         let mut upload = program.upload(layout.bytes());
         for (buf, words) in [(Buf::Small, layout.small), (Buf::Shared, layout.shared)]

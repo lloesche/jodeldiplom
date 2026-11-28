@@ -21,7 +21,7 @@ fn gemv_q8_KIND(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id
         acc0 += w0.s * da * f32(dot16(w0.q, x)) + w0.m * sa;
         acc1 += w1.s * da * f32(dot16(w1.q, x)) + w1.m * sa;
     }
-    gemv_finish(lid, wid.x, r0, acc0, acc1);
+    gemv_finish(lid, wid.x, r0, gemv_sums(lid, acc0, acc1));
 }
 
 @compute @workgroup_size(256)

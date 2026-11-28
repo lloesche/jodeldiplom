@@ -671,9 +671,22 @@ same plan (`src/llm/`).
   from the GPU, and the head's largest logit (capped, the first of equals)
   is put after it as the next token, the position moved on. Steps go eight
   at a time between reads of the tokens, the next eight made while those
-  run. A matrix multiply of one row (`gemv_*`) is 16 rows a workgroup, 32
-  invocations a row each taking every 32nd 16 (or 8, as f32s) of its
-  inputs; attention is split (the splits taking chunks of 64 positions in
+  run. A matrix multiply of one row (`gemv_*`) is 16 rows a workgroup,
+  eight slots of 32 invocations two rows each. At 8 bits each invocation
+  takes every 32nd 16 of its inputs. As f32s the Q4_K and Q6_K ones are
+  shaped as llama.cpp's Metal kernels (`gemv_kquant.wgsl`): an invocation
+  holds a run of 32 (Q4_K) or 16 (Q6_K) of a block's inputs and takes it
+  through both rows, the weights read a word at a time, their scales
+  decoded once a run and the values masked where they lie in their words,
+  a slot taking a row's blocks four (Q6_K two) at a time; the others take
+  every 32nd 8. On the f32 path a slot's sums are added across its
+  subgroup where subgroups are 32 wide (`subgroupAdd`: the device is
+  asked for `SUBGROUP` there), else through workgroup memory; on the
+  8-bit path always through workgroup memory, its F32 and BF16 GEMVs'
+  too, so its answers stay token for token as they were. The
+  GEMVs before the per-layer projections, and as f32s those before the
+  down projections, write those projections' rows themselves (no
+  `quant` between); attention is split (the splits taking chunks of 64 positions in
   turn with an online softmax) and joined, a workgroup a head: 8 splits
   on a sliding layer (its window's 8 chunks), 16 on a global one, and
   where that is more one for every so many chunks as the positions grow,
@@ -709,7 +722,11 @@ Q6_K 0.8, the F32 per-layer gates and projections 0.9, their 220 MB in 84
 small multiplies), then the residual steps, the attention, its joins and
 the rows written for the matrices (650 dispatches a step). Our own 4-bit
 file before it (5 bits a weight, everything at 4 bits) took 0.58 s and 8.5
-ms a step in 4450 MB.
+ms a step in 4450 MB. With the f32 path's GEMVs shaped as llama.cpp's
+and writing the next rows themselves (2026-11-28; 512 tokens after a
+37-token prompt), the f32 path writes 132 tokens a second where it wrote
+105, and the 8-bit path 128 where it wrote 123, each answer token for
+token as before.
 
 Over a long context (RTX 5080, q8, 512 tokens written after a prompt of
 the length given; the tokens are those of one cache of every layer, and
@@ -736,6 +753,18 @@ holds it back, at about a fifth of the chip's 532 GB/s), the residual
 steps 1.8 s, `gemm_f32_q6k` 1.5 s, `gemv_f32_q6k` 1.3 s, the rows written
 for the matrices 0.7 s, `gemv_f32_f32` 0.67 s. `cargo test --release -p
 jodel-gpu --lib llm::` passes there (23).
+
+With the one-row matrix multiplies shaped as llama.cpp's Metal kernels
+(`gemv_kquant.wgsl`, their sums across subgroups) and the rows of the
+down and per-layer projections written by the GEMVs before them
+(2026-11-28, a 512-token answer), the M4 Max writes 74.2 tokens a second
+where it wrote 50.4, its answer token for token as before: 288 868
+dispatches where there were 331 912, `gemv_f32_q4k` 3.38 s (was 5.16),
+`gemv_f32_q6k` 0.81 s (1.13), the `quant` dispatches gone (0.58 s); the
+residual steps (1.39 s) and the step's attention (0.70 s) as they were.
+Others get 70 to 101 tokens a second on the same chip (MLX, llama.cpp).
+The probe there finds subgroups 32 wide and every subgroup operation
+right; the GPU tests pass (94, `llm::` 26).
 
 Against the reference (Hugging Face's own `Gemma4ForCausalLM` in f32 with
 the GGUF's weights dequantised as llama.cpp does):
