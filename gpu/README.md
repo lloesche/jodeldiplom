@@ -732,6 +732,21 @@ attention in a ring (wrapped many times) and with its splits growing too.
 finds a word given 33K tokens before the question, past every sliding
 layer's ring.
 
+A conversation goes on from what the cache holds (`Gemma::go_on`, for the
+story planner's follow-up): the next turn (`Tokenizer::next_turn`) runs
+through the decoder from where the last answer ended, the last token
+written run again, the prompt and the answer before not run at all, so a
+follow-up of 229 tokens took 0.6 s after a 9.7K prompt. It takes the
+length of the conversation it goes on from and refuses any other (another
+generation since, or the room made again). `tests/conversation.rs`
+(`--ignored`, `JODEL_GEMMA`) holds the second turn's answer to the whole
+conversation's run from the start, token for token for a short answer:
+the first answer's keys and values come by two paths (the steps', the
+prompt's chunks), and at 8 bits their roundings part after some 70
+tokens. Not yet run on the Mac (the f32 path): `cargo test --release -p
+jodel-gpu --test conversation -- --ignored --nocapture` with `JODEL_GEMMA`
+set.
+
 `examples/gemma.rs` writes after a prompt file (one user turn) from the
 GGUF, with the timings and the memory held, or writes the logits after it.
 

@@ -799,22 +799,31 @@ fn turn<T, E>(
 
 /// Where `song`'s story stands, looking at what is kept in the places
 /// `ask` has alone: to plan, to draw, to take apart; or how it ends
-/// (`Err`): made, none for good (no lyrics, no timed sung lines, a plan
-/// that did not hold, or no room for it in a context as large as the
-/// language model's now), or not now (its lyrics, its file, its scenes,
-/// or the model's context where a song short of room asks for it, not
-/// read now).
+/// (`Err`): made, none for good (no lyrics, no timed sung lines, an
+/// answer with nothing to draw, or no room for it in a context as large
+/// as the language model's now), or not now (its lyrics, its file, its
+/// scenes, or the model's context where a song short of room asks for it,
+/// not read now). A plan settled short of room is planned again where the
+/// language model's context is larger now.
 fn stands_of(song: &StorySong, ask: &Ask) -> Result<Stands, StoryFact> {
     let places = ask.places;
     let lyrics = (places.lyrics)(&song.path).map_err(StoryFact::NotNow)?;
     let lyrics = lyrics.ok_or(StoryFact::NoStory)?;
     let job = job_of(&song.path, &lyrics, places)?;
+    let larger = |had: usize| -> Result<bool, StoryFact> {
+        Ok(ask.models.context().map_err(StoryFact::NotNow)? > had)
+    };
     let plan = match job.kept() {
-        Some(Kept::Plan(plan)) => *plan,
+        // Settled short of room: planned again in a larger context.
+        // (Where the context cannot be read now, what is kept is drawn.)
+        Some(Kept::Plan {
+            settled_short_at: Some(had),
+            ..
+        }) if larger(had).unwrap_or(false) => return Ok(Stands::Plan(job)),
+        Some(Kept::Plan { plan, .. }) => *plan,
         Some(Kept::NoStory(_)) => return Err(StoryFact::NoStory),
         Some(Kept::Short { context: had, .. }) => {
-            let context = ask.models.context().map_err(StoryFact::NotNow)?;
-            return match context > had {
+            return match larger(had)? {
                 true => Ok(Stands::Plan(job)),
                 false => Err(StoryFact::NoStory),
             };

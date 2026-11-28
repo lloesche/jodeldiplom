@@ -485,6 +485,7 @@ fn story_plan_files_are_pinned() {
             last_line: 3,
             from: 0.0,
             to: 41.5,
+            same_as: None,
             section: "verse 1".into(),
             shot: Shot::CloseUp,
             characters: vec!["narrator".into()],
@@ -513,13 +514,25 @@ fn story_plan_files_are_pinned() {
     let asked = "0123456789abcdef";
     // What made it is versioned apart: the sample says "x".
     let made = format!("\nmade story {VERSION}\n");
-    let text =
-        to_text(asked, &Kept::Plan(Box::new(plan.clone()))).replace(&made, "\nmade story x\n");
+    let text = to_text(
+        asked,
+        &Kept::Plan {
+            plan: Box::new(plan.clone()),
+            settled_short_at: None,
+        },
+    )
+    .replace(&made, "\nmade story x\n");
     let kept = pinned(&cache::STORY_PLAN, "txt", text.as_bytes());
     let kept = String::from_utf8(kept)
         .unwrap()
         .replace("\nmade story x\n", &made);
-    assert_eq!(from_text(&kept, asked), Some(Kept::Plan(Box::new(plan))));
+    assert_eq!(
+        from_text(&kept, asked),
+        Some(Kept::Plan {
+            plan: Box::new(plan),
+            settled_short_at: None
+        })
+    );
     let none = to_text(
         asked,
         &Kept::NoStory("2 scenes: 15 to 30 were asked for".into()),

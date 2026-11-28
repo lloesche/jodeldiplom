@@ -27,7 +27,7 @@ use crate::core::story::pictures::{PORTRAIT, SCENE};
 use crate::core::story::tests::{song, GOOD};
 use crate::work::scenes::ByRed;
 use crate::work::story::draw::{Encoder, Painter, REFERENCE};
-use crate::work::story::{Writer, Writing, Written};
+use crate::work::story::{Conversation, Writer, Writing, Written};
 
 /// A song's length, seconds: not a round one, as no real song's is.
 const LENGTH: f64 = 213.4567;
@@ -50,8 +50,8 @@ type Log = Arc<Mutex<Vec<String>>>;
 /// taken apart by their red; each logs what it does; none runs where
 /// `none` (and the language model has no context), the encoder fails
 /// where `no_encoder`; the language model writes in a context of
-/// `context` positions, its answer cut off where `cut`, its thought
-/// never ending (cut off by the context) where `endless`.
+/// `context` positions, its thought never ending (cut off by the context)
+/// where `endless`, and no room for a follow-up where `cramped`.
 struct Fakes {
     log: Log,
     answer: Mutex<String>,
@@ -59,8 +59,8 @@ struct Fakes {
     gate: Mutex<Option<(usize, Receiver<()>)>>,
     none: bool,
     no_encoder: bool,
-    cut: bool,
     endless: bool,
+    cramped: bool,
     context: Mutex<usize>,
 }
 
@@ -73,8 +73,8 @@ impl Fakes {
             gate: Mutex::new(None),
             none: false,
             no_encoder: false,
-            cut: false,
             endless: false,
+            cramped: false,
             context: Mutex::new(jodel_gpu::llm::LEAST_CONTEXT),
         }
     }
@@ -109,7 +109,25 @@ struct Encodes<'a>(&'a Fakes);
 struct Paints<'a>(&'a Fakes);
 
 impl Writer for Writes<'_> {
-    fn write(&self, _: &str, _: usize, seen: &mut dyn FnMut(Writing)) -> Result<Written, Failure> {
+    fn converse(&self, _: usize) -> Box<dyn Conversation + '_> {
+        Box::new(Writes(self.0, self.1.clone()))
+    }
+}
+
+impl Conversation for Writes<'_> {
+    fn say(
+        &mut self,
+        words: &str,
+        _: (usize, usize),
+        seen: &mut dyn FnMut(Writing),
+    ) -> Result<Written, Failure> {
+        if words.starts_with(crate::core::story::follow::PREAMBLE) {
+            self.0.did("follow-up".into());
+            if self.0.cramped {
+                return Err(Failure::Short("no room for the follow-up".into()));
+            }
+            return Ok(Written::default());
+        }
         self.0.did("plan".into());
         if self.0.endless {
             seen(Writing::Thinking);
@@ -123,7 +141,7 @@ impl Writer for Writes<'_> {
         seen(Writing::Answer(&self.1));
         Ok(Written {
             text: self.1.clone(),
-            stopped: !self.0.cut,
+            stopped: true,
             ..Written::default()
         })
     }
@@ -370,7 +388,14 @@ fn good() -> Plan {
         duration: frames() as f64 / f64::from(RATE),
         ..song()
     };
-    crate::core::story::check::read(GOOD, &song).unwrap()
+    let read = crate::core::story::check::read(GOOD, &song).expect("a plan");
+    read.plan().0
+}
+
+/// The pictures `plan` draws: a portrait of each character, a picture of
+/// each scene not shown again.
+fn pictures_of(plan: &Plan) -> usize {
+    plan.characters.len() + plan.scenes.iter().filter(|s| s.same_as.is_none()).count()
 }
 
 /// The folder of the song at `path`'s scenes in `places`.
@@ -435,17 +460,18 @@ fn a_round_plans_every_song_then_encodes_then_draws_then_takes_apart() {
     let songs: Vec<StorySong> = paths.iter().map(|p| wanted(p)).collect();
     assert_eq!(round_of(&songs, &fakes, &places, &out), paths);
     let plan = good();
-    let pictures = plan.characters.len() + plan.scenes.len();
+    let pictures = pictures_of(&plan);
     let mut want = vec!["plan".to_owned(); paths.len()];
     want.extend(vec!["encode".to_owned(); paths.len() * pictures]);
     for _ in &paths {
         want.extend(vec![paint(PORTRAIT, 0); plan.characters.len()]);
-        want.extend((plan.scenes.iter()).map(|s| paint(SCENE, s.characters.len())));
+        let drawn = plan.scenes.iter().filter(|s| s.same_as.is_none());
+        want.extend(drawn.map(|s| paint(SCENE, s.characters.len())));
     }
     want.extend(vec!["cut".to_owned(); paths.len()]);
     assert_eq!(fakes.took(), want);
     let news = told(&rx);
-    let n = plan.scenes.len();
+    let n = pictures - plan.characters.len();
     let mut drawing = Vec::new();
     for k in 0..n {
         drawing.push(format!("drawing scene {} of {n}", k + 1));
@@ -594,9 +620,7 @@ fn a_song_no_longer_wanted_is_given_up_between_its_pictures() {
     assert!(Scenes::read(&folder).is_none());
     assert_eq!(std::fs::read_dir(&folder).unwrap().count(), DRAWN);
     assert_eq!(round_of(&song, &fakes, &places, &out), paths);
-    let plan = good();
-    let all = plan.characters.len() + plan.scenes.len();
-    assert_eq!(fakes.painted(), all);
+    assert_eq!(fakes.painted(), pictures_of(&good()));
 }
 
 /// No models to run (no GPU): nothing kept, the song told ready as not
@@ -642,7 +666,7 @@ fn without_models_or_timed_lines_there_is_no_story() {
 /// next round (at once): the songs wanted first are made first.
 #[test]
 fn a_round_plans_no_more_songs_than_it_can_draw() {
-    let pictures = good().characters.len() + good().scenes.len();
+    let pictures = pictures_of(&good());
     let per_song = pictures * PROMPT_BYTES;
     let songs = AHEAD.div_ceil(per_song) + 1;
     let (_dir, places, paths, _) = setting("bounded", songs);
@@ -669,7 +693,7 @@ fn a_round_plans_no_more_songs_than_it_can_draw() {
 /// once, but for one when the first is to be tried again.
 #[test]
 fn a_song_not_made_now_rests_and_holds_no_other_off() {
-    let pictures = good().characters.len() + good().scenes.len();
+    let pictures = pictures_of(&good());
     let songs = AHEAD.div_ceil(pictures * PROMPT_BYTES) + 1;
     let (_dir, places, paths, _) = setting("resting", songs);
     let fakes = Fakes {
@@ -733,16 +757,15 @@ fn a_song_not_made_now_waits_longer_each_time_again() {
     assert_eq!(tried.due([&song].into_iter()), None);
 }
 
-/// An answer cut off at its length is the song's for good (written
-/// greedily, it would be cut off again): told ready with no story once,
-/// kept so, and never planned again for the same ask, the round asking
-/// for no retry; a round after (a run after) finds it kept.
+/// An answer with nothing to draw is the song's for good (written
+/// greedily, it would come again): told ready with no story once, kept
+/// so, and never planned again for the same ask, the round asking for no
+/// retry; a round after (a run after) finds it kept.
 #[test]
-fn a_plan_cut_off_is_refused_once_and_not_tried_again() {
-    let (_dir, places, paths, _) = setting("cut-off", 1);
+fn an_answer_with_nothing_to_draw_is_refused_once_and_not_tried_again() {
+    let (_dir, places, paths, _) = setting("nothing", 1);
     let fakes = Fakes {
-        cut: true,
-        answer: Mutex::new(GOOD[..GOOD.len() / 2].to_owned()),
+        answer: Mutex::new("I cannot plan this song.".to_owned()),
         ..Fakes::new()
     };
     let (out, rx) = outbox();
@@ -872,6 +895,51 @@ fn a_round_is_due_once_the_queue_has_settled() {
     );
 }
 
+/// A plan whose follow-up had no room in the context is drawn, kept with
+/// that context, not planned again in one as large (nor where there is no
+/// context to be had now: drawn as kept), and planned again in a larger
+/// one.
+#[test]
+fn a_plan_settled_short_of_room_is_planned_again_in_a_larger_context() {
+    let (_dir, places, paths, _) = setting("cramped", 1);
+    let fakes = Fakes {
+        answer: Mutex::new(GOOD.replacen("\"style\": \"watercolor\"", "\"style\": \"fresco\"", 1)),
+        cramped: true,
+        ..Fakes::new()
+    };
+    let (out, rx) = outbox();
+    let song = [wanted(&paths[0])];
+    let with = (&fakes, &places, &out);
+    let always = |_: &StorySong| true;
+    let (drawn, _) = next_round(&song, with, &always, &mut Tried::default());
+    assert_eq!(drawn, paths, "drawn all the same");
+    assert_eq!(fakes.took()[..2], ["plan", "follow-up"]);
+    assert!(of(&told(&rx), &paths[0]).ends_with(&["story".to_owned()]));
+    next_round(&song, with, &always, &mut Tried::default());
+    assert_eq!(fakes.took(), Vec::<String>::new(), "as large: not again");
+    let gone = Fakes {
+        none: true,
+        ..Fakes::new()
+    };
+    let (drawn, _) = next_round(
+        &song,
+        (&gone, &places, &out),
+        &always,
+        &mut Tried::default(),
+    );
+    assert!(
+        drawn.is_empty() && gone.took().is_empty(),
+        "no context: as kept"
+    );
+    *fakes.context.lock().unwrap() += 2048;
+    next_round(&song, with, &always, &mut Tried::default());
+    assert_eq!(
+        fakes.took()[..2],
+        ["plan", "follow-up"],
+        "larger: planned again"
+    );
+}
+
 /// A song is still wanted while it is in the list of the very same
 /// lyrics: not of others (settled again), nor out of it.
 #[test]
@@ -978,7 +1046,7 @@ fn a_round_starts_once_the_queue_has_settled() {
         [Ok(paths[0].clone()), Ok(paths[1].clone())]
     );
     let log = fakes.took();
-    let pictures = good().characters.len() + good().scenes.len();
+    let pictures = pictures_of(&good());
     assert_eq!(log[..2], ["plan", "plan"], "{log:?}");
     assert!(log[2..2 + 2 * pictures].iter().all(|e| e == "encode"));
     assert_eq!(log.iter().filter(|e| *e == "encode").count(), 2 * pictures);

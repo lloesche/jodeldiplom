@@ -1,6 +1,7 @@
-//! The plan's tries with writers that answer as told (taken, asked again,
-//! refused, cut off, failed), what is kept of them and how, and the whole
-//! job on the model, end to end, where it is here.
+//! The plan's conversations with writers that answer as told (taken at
+//! once, a follow-up asked in the same conversation and its patch merged,
+//! a patch wrong too, refused, cut off, failed), what is kept of them and
+//! how, and the whole job on the model, end to end, where it is here.
 
 use std::cell::RefCell;
 
@@ -10,12 +11,22 @@ use crate::core::story::tests::{song, GOOD};
 /// The context the tests' plans are written in.
 const CONTEXT: usize = 32_752;
 
-/// A writer that answers each prompt with the next of its answers (said
-/// to think first where the answer has a thought), its text streamed in
-/// pieces of seven characters, and keeps the prompts.
+/// A writer that answers each turn with the next of its answers (said to
+/// think first where the answer has a thought), its text streamed in
+/// pieces of seven characters, and keeps each turn's words with its
+/// conversation's number and its rooms.
 struct Fake {
     answers: RefCell<Vec<Result<Written, Failure>>>,
-    asked: RefCell<Vec<String>>,
+    asked: RefCell<Vec<Turn>>,
+    talks: RefCell<usize>,
+}
+
+/// A turn a fake writer was told: its conversation, its words, its rooms.
+#[derive(Clone, Debug, PartialEq)]
+struct Turn {
+    talk: usize,
+    words: String,
+    rooms: (usize, usize),
 }
 
 impl Fake {
@@ -23,19 +34,50 @@ impl Fake {
         Fake {
             answers: RefCell::new(answers),
             asked: RefCell::new(Vec::new()),
+            talks: RefCell::new(0),
         }
+    }
+
+    /// The words of every turn, in order.
+    fn words(&self) -> Vec<String> {
+        self.asked
+            .borrow()
+            .iter()
+            .map(|t| t.words.clone())
+            .collect()
     }
 }
 
+/// A conversation of a [`Fake`].
+struct FakeTalk<'a> {
+    fake: &'a Fake,
+    talk: usize,
+}
+
 impl Writer for Fake {
-    fn write(
-        &self,
-        prompt: &str,
-        _context: usize,
+    fn converse(&self, _context: usize) -> Box<dyn Conversation + '_> {
+        let mut talks = self.talks.borrow_mut();
+        *talks += 1;
+        Box::new(FakeTalk {
+            fake: self,
+            talk: *talks,
+        })
+    }
+}
+
+impl Conversation for FakeTalk<'_> {
+    fn say(
+        &mut self,
+        words: &str,
+        rooms: (usize, usize),
         seen: &mut dyn FnMut(Writing),
     ) -> Result<Written, Failure> {
-        self.asked.borrow_mut().push(prompt.to_owned());
-        let answer = self.answers.borrow_mut().remove(0)?;
+        self.fake.asked.borrow_mut().push(Turn {
+            talk: self.talk,
+            words: words.to_owned(),
+            rooms,
+        });
+        let answer = self.fake.answers.borrow_mut().remove(0)?;
         if answer.thought_tokens > 0 {
             seen(Writing::Thinking);
         }
@@ -56,13 +98,11 @@ fn says(text: &str) -> Result<Written, Failure> {
     })
 }
 
-/// [`GOOD`] with a line of the lyrics in no scene.
-fn broken() -> String {
-    GOOD.replacen(
-        "\"first_line\": 10, \"last_line\": 11",
-        "\"first_line\": 10, \"last_line\": 10",
-        1,
-    )
+/// [`GOOD`] with its style one no one knows and the pass it adds
+/// misspelt: two questions for the follow-up.
+fn unsure() -> String {
+    GOOD.replacen("\"style\": \"watercolor\"", "\"style\": \"fresco\"", 1)
+        .replacen("\"add\": [\"grain\"]", "\"add\": [\"grains\"]", 1)
 }
 
 /// The plan `fake` writes for [`song`], and what it told (its thinking
@@ -145,64 +185,132 @@ fn a_thought_that_never_ends_is_cut_off() {
     assert!(matches!(planned.plan, Err(Failure::CutOff(_))));
 }
 
-/// A good answer is taken at once, its prose told as it came.
+/// A good answer is taken at once, its prose told as it came, the model
+/// asked nothing more.
 #[test]
 fn a_good_answer_is_taken_at_once() {
     let fake = Fake::new(vec![says(GOOD)]);
     let (planned, told) = planned_by(&fake);
     assert!(planned.plan.is_ok());
     assert_eq!(planned.tries.len(), 1);
+    assert_eq!(
+        planned.notes,
+        ["read: scene 5 shows scene 2 again (same_as 4 read as a line of it)"]
+    );
     assert!(told.starts_with("A woman remembers") && told.contains("father: Man, 60s"));
+    assert_eq!(fake.asked.borrow()[0].rooms, (MOST_THOUGHT, MOST_ANSWER));
 }
 
-/// An answer refused is asked again once, the error said with the prompt
-/// (and told), and the second answer taken.
+/// What needs judgement goes back to the model once, in the same
+/// conversation: only what is wrong, its choices listed, a patch the
+/// answer; the patch merged into the plan, the rest of it as it was; the
+/// follow-up and every mending in the notes (for the trace).
 #[test]
-fn a_refused_answer_is_asked_again_with_its_error() {
-    let fake = Fake::new(vec![says(&broken()), says(GOOD)]);
+fn what_needs_judgement_is_asked_in_the_same_conversation() {
+    let patch = "```json\n{\"1\": \"ink wash\", \"2\": \"grain\"}\n```";
+    let fake = Fake::new(vec![says(&unsure()), says(patch)]);
     let (planned, told) = planned_by(&fake);
-    assert!(planned.plan.is_ok());
-    let why = "line 11 is in no scene: the last scene must end at line 11";
-    assert_eq!(planned.tries[0].refused.as_deref(), Some(why));
-    assert_eq!(planned.tries[1].refused, None);
+    let plan = planned.plan.expect("a plan");
+    assert_eq!(plan.art.style, crate::core::story::Style::InkWash);
+    assert!(plan.look.layers.iter().any(|l| l.pass == "grain"));
+    assert_eq!(plan.scenes.len(), 6, "the rest as it was");
     let asked = fake.asked.borrow();
-    assert_eq!(asked[1], prompt::again(&asked[0], why));
-    assert!(told.contains(&format!("(That plan did not hold: {why}. Once more.)")));
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[1].talk, asked[0].talk, "the same conversation");
+    assert_eq!(asked[1].rooms, (FOLLOW_UP_THOUGHT, MOST_PATCH));
+    let follow_up = &asked[1].words;
+    assert!(
+        follow_up.contains("1. The art style \"fresco\" is not one of the styles"),
+        "{follow_up}"
+    );
+    assert!(
+        follow_up.contains(
+            "2. The pass \"grains\" to add is not in the catalogue: which is it? One of \"grain\""
+        ),
+        "{follow_up}"
+    );
+    assert!(!follow_up.contains("You direct"), "only what is wrong");
+    assert_eq!(
+        planned.tries[1].follow_up.as_deref(),
+        Some(follow_up.as_str())
+    );
+    assert!(
+        planned
+            .notes
+            .iter()
+            .any(|n| n.contains("question 1: the style \"ink wash\", as answered")),
+        "{:?}",
+        planned.notes
+    );
+    assert!(
+        told.contains("(Settling 2 things with the model.)"),
+        "{told}"
+    );
+    assert!(!told.contains("ink wash"), "the patch is not prose");
 }
 
-/// Two answers refused: the song has no story (kept as such); the last
-/// cut off at its length: none either (kept as such too: written greedily,
-/// it would be cut off again); a prompt too long or a model that fails: no
-/// second try.
+/// A patch that is wrong too, a follow-up that fails to end its thought,
+/// one with no room in the context, or a model that fails in it: the
+/// nearest valid choices taken, the plan kept (the first answer is not
+/// thrown away). Where the context left the follow-up short of room, the
+/// plan says so (kept with that context: planned again in a larger
+/// one).
 #[test]
-fn a_plan_that_never_holds_is_refused_cut_off_or_failed() {
-    let fake = Fake::new(vec![says(&broken()), says(&broken())]);
-    let (planned, told) = planned_by(&fake);
-    assert!(matches!(planned.plan, Err(Failure::Refused(_))));
-    assert!(told.ends_with(
-        "\nNo story for this song: line 11 is in no scene: the last scene must end at line 11\n"
-    ));
+fn a_patch_wrong_too_takes_the_nearest_valid_choice() {
+    let wrong = "{\"1\": \"pastel crayon\", \"2\": 7}";
+    let unended = Written {
+        thinking: true,
+        ..Written::default()
+    };
+    for (second, cramped) in [
+        (says(wrong), false),
+        (Ok(unended), true),
+        (Err(Failure::Short("no room".into())), true),
+        (Err(Failure::Model("device lost".into())), false),
+    ] {
+        let fake = Fake::new(vec![says(&unsure()), second]);
+        let (planned, _) = planned_by(&fake);
+        assert_eq!(planned.cramped, cramped);
+        let plan = planned.plan.expect("a plan");
+        assert!(
+            plan.look.layers.iter().any(|l| l.pass == "grain"),
+            "grains: the nearest"
+        );
+        assert!(plan.look.faults().is_empty());
+        assert!(
+            planned.notes.iter().any(|n| n.contains("question 2")),
+            "{:?}",
+            planned.notes
+        );
+    }
+}
+
+/// An answer cut off at its room keeps every whole scene, the art and
+/// shaders it never wrote asked in the follow-up; only one with nothing to
+/// draw is refused (for good: kept as no story), and a song is never
+/// asked twice from the start.
+#[test]
+fn only_an_answer_with_nothing_to_draw_is_refused() {
     let cut = Written {
-        text: GOOD[..GOOD.len() / 2].to_owned(),
+        text: GOOD[..GOOD.find("Close view of father").unwrap()].to_owned(),
         stopped: false,
         ..Written::default()
     };
-    let fake = Fake::new(vec![says(&broken()), Ok(cut)]);
+    let patch = "{\"1\": \"watercolor\", \"2\": \"folk\"}";
+    let fake = Fake::new(vec![Ok(cut), says(patch)]);
     let (planned, _) = planned_by(&fake);
-    let Err(Failure::CutOff(why)) = planned.plan else {
-        panic!("cut off: {:?}", planned.plan);
+    let plan = planned.plan.expect("a plan");
+    assert_eq!(plan.scenes.len(), 3);
+    assert_eq!(plan.look.id, "folk+song");
+    assert!(planned.notes[0].contains(&format!("cut off at {MOST_ANSWER} tokens")));
+    let fake = Fake::new(vec![says("I would rather not say.")]);
+    let (planned, told) = planned_by(&fake);
+    let Err(Failure::Refused(why)) = &planned.plan else {
+        panic!("refused: {:?}", planned.plan);
     };
-    assert!(why.ends_with(&format!("(the answer was cut off at {MOST_ANSWER} tokens)")));
-    // A first answer cut off is not asked again (a second call would
-    // find no answer and panic).
-    let cut = Written {
-        text: GOOD[..GOOD.len() / 2].to_owned(),
-        stopped: false,
-        ..Written::default()
-    };
-    let (planned, _) = planned_by(&Fake::new(vec![Ok(cut)]));
-    assert!(matches!(planned.plan, Err(Failure::CutOff(_))));
-    assert_eq!(planned.tries.len(), 1);
+    assert!(why.starts_with(check::NOTHING), "{why}");
+    assert_eq!(fake.asked.borrow().len(), 1, "not asked again");
+    assert!(told.ends_with(&format!("\nNo story for this song: {why}\n")));
     for failure in [
         Failure::Short("too long".into()),
         Failure::Model("device lost".into()),
@@ -229,7 +337,7 @@ fn a_song_with_no_lines_is_not_asked() {
         }
     });
     assert_eq!(planned.plan, Err(Failure::Refused(NO_LINES.into())));
-    assert!(planned.tries.is_empty() && fake.asked.borrow().is_empty());
+    assert!(planned.tries.is_empty() && fake.words().is_empty());
     assert!(told.contains(NO_LINES));
 }
 
@@ -238,11 +346,29 @@ fn a_song_with_no_lines_is_not_asked() {
 /// room with the context it had.
 #[test]
 fn a_plan_is_kept_with_what_made_it() {
-    let plan = check::read(GOOD, &song()).unwrap();
+    let plan = crate::core::story::tests::planned(GOOD);
     let asked = "0123456789abcdef";
-    let text = to_text(asked, &Kept::Plan(Box::new(plan.clone())));
-    assert!(text.starts_with("jodeldiplom-cache story-plan 2 by "));
-    assert_eq!(from_text(&text, asked), Some(Kept::Plan(Box::new(plan))));
+    let text = to_text(
+        asked,
+        &Kept::Plan {
+            plan: Box::new(plan.clone()),
+            settled_short_at: None,
+        },
+    );
+    assert!(text.starts_with("jodeldiplom-cache story-plan 3 by "));
+    assert_eq!(
+        from_text(&text, asked),
+        Some(Kept::Plan {
+            plan: Box::new(plan.clone()),
+            settled_short_at: None
+        })
+    );
+    // Settled short of room: with the context it was settled in.
+    let settled = Kept::Plan {
+        plan: Box::new(plan),
+        settled_short_at: Some(CONTEXT),
+    };
+    assert_eq!(from_text(&to_text(asked, &settled), asked), Some(settled));
     assert_eq!(from_text(&text, "fedcba9876543210"), None, "another ask");
     let older = text.replace(&format!("{MADE} {VERSION}"), &format!("{MADE} 0"));
     assert_eq!(from_text(&older, asked), None, "another maker");
@@ -260,9 +386,9 @@ fn a_plan_is_kept_with_what_made_it() {
 
 /// A job runs its plan, tells it and keeps it, found again for the song
 /// as it is asked (other words: planned again), whatever context wrote
-/// it; a song that has no story is kept as such (its answers refused, or
-/// cut off, its thought at its most too), one short of room with the
-/// context it had; a model that failed is not kept.
+/// it; a song that has no story is kept as such (nothing to draw, its
+/// thought at its most too), one short of room with the context it had; a
+/// model that failed is not kept.
 #[test]
 fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
     let dir = jodel_testkit::TempDir::new("story");
@@ -281,33 +407,24 @@ fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
     let plan = job
         .run(&Fake::new(vec![says(GOOD)]), CONTEXT, tell)
         .unwrap();
-    assert_eq!(job.kept(), Some(Kept::Plan(Box::new(plan))));
+    assert_eq!(
+        job.kept(),
+        Some(Kept::Plan {
+            plan: Box::new(plan),
+            settled_short_at: None
+        })
+    );
     let mut other = song();
     other.lines[0].text = "I ran down to the harbour".into();
     let other = StoryJob::new(file.clone(), other, dir.join("stories"));
     assert_eq!(other.kept(), None, "other words, another ask");
-    let refused = Fake::new(vec![says(&broken()), says(&broken())]);
+    let refused = Fake::new(vec![says("no plan")]);
     assert!(matches!(
         other.run(&refused, CONTEXT, tell),
         Err(Failure::Refused(_))
     ));
     assert!(told.iter().any(|s| matches!(s, Story::Words(_))));
     assert!(matches!(other.kept(), Some(Kept::NoStory(_))));
-    // An answer cut off at its length: kept as none too, for this ask.
-    let mut third = song();
-    third.lines[0].text = "I swam out past the harbour".into();
-    let third = StoryJob::new(dir.join("song.flac"), third, dir.join("stories"));
-    let cut = Written {
-        text: GOOD[..GOOD.len() / 2].to_owned(),
-        stopped: false,
-        ..Written::default()
-    };
-    let cut = Fake::new(vec![Ok(cut)]);
-    assert!(matches!(
-        third.run(&cut, CONTEXT, &mut |_| {}),
-        Err(Failure::CutOff(_))
-    ));
-    assert!(matches!(third.kept(), Some(Kept::NoStory(_))));
     // A thought cut off by the context: kept with that context.
     let job = |line: &str| {
         let mut song = song();
@@ -344,9 +461,10 @@ fn a_job_keeps_what_it_planned_for_the_song_as_asked() {
 /// The whole job on the model, end to end: `JODEL_GEMMA` names the
 /// model's file and `JODEL_STORY_SONG` a song as the plan is made from it
 /// (a [`Song`] as JSON); skipped where either is not there. The song is
-/// planned twice, the same answer both times (greedy), the plan read and
-/// its look checked whole; the plan, the answers and the times go to the
-/// folder `JODEL_STORY_OUT` names, where it names one.
+/// planned twice, the same answers both times (greedy), the plan read and
+/// its look checked whole; the plan, the answers (the follow-up's too),
+/// what was mended and the times go to the folder `JODEL_STORY_OUT`
+/// names, where it names one.
 #[test]
 #[ignore = "runs the language model: JODEL_GEMMA, JODEL_STORY_SONG"]
 fn a_song_is_planned_on_the_model() {
@@ -391,16 +509,15 @@ fn a_song_is_planned_on_the_model() {
         for t in &planned.tries {
             let w = &t.written;
             report.push_str(&format!(
-                "  prompt {} tokens in {:.2} s; answer {} tokens in {:.1} s ({:.0} a second){}{}\n",
+                "  {}prompt {} tokens in {:.2} s; thought {}; answer {} tokens in {:.1} s ({:.0} a second){}\n",
+                if t.follow_up.is_some() { "follow-up: " } else { "" },
                 w.prompt_tokens,
                 w.prompt_time.as_secs_f64(),
+                w.thought_tokens,
                 w.answer_tokens,
                 w.answer_time.as_secs_f64(),
                 w.answer_tokens as f64 / w.answer_time.as_secs_f64().max(1e-9),
                 if w.stopped { "" } else { "; cut off" },
-                t.refused
-                    .as_ref()
-                    .map_or_else(String::new, |why| format!("; refused: {why}"))
             ));
         }
     }
@@ -413,7 +530,11 @@ fn a_song_is_planned_on_the_model() {
         put("prose.txt", prose);
         for (k, t) in first.tries.iter().enumerate() {
             put(&format!("answer-{k}.txt"), &t.written.text);
+            if let Some(asked) = &t.follow_up {
+                put(&format!("follow-up-{k}.txt"), asked);
+            }
         }
+        put("mended.txt", &first.notes.join("\n"));
         if let Ok(plan) = &first.plan {
             put("plan.json", &plan.to_json());
         }

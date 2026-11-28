@@ -4,10 +4,14 @@
 //! [`Plan`]:
 //!
 //! - first the story, from the lyrics alone: what they tell, the
-//!   characters (each with a short visual description, so every picture
-//!   repeats it), and the scenes by the song's sections, each taking
-//!   consecutive lines (its time span is theirs), with what it shows, a
-//!   picture prompt (no text in the picture, ever) and who appears;
+//!   characters where the song is about beings to be seen (each with a
+//!   short visual description, so every picture repeats it), and the
+//!   scenes as the lyrics move (a new place, time, event or feeling: as
+//!   many as the song needs), each from its first line to the next
+//!   one's (its time span is theirs), with what it shows (what the song is
+//!   about, its images and metaphors, not its lines word for word), a
+//!   picture prompt (no text in the picture, ever) and who appears; a
+//!   section that comes back shows its earlier scene again;
 //! - then, so that the whole storyboard is already written when it is
 //!   chosen, the song's art: what the model knows of the artist, the
 //!   album and the song (and how sure it is), the genre, the era, an art
@@ -18,23 +22,28 @@
 //!   as the [`jodel_looks::Look`] they make ([`shader`]).
 //!
 //! What the model is asked is [`prompt::prompt`], every count in it from
-//! [`rules`]; its answer is read and held to every rule strictly
-//! ([`check::read`]): a preset there is none of, a knob out of its range,
-//! a line in no scene or in two, a character no one described, each is a
-//! precise error, and the plan is not taken. While it writes, the prose of
-//! it (the story, the characters, what each scene shows) is told as it
-//! comes ([`prose::Prose`]). The job that asks it, keeps its plan and
-//! tells the preparation view is `crate::work::story`.
+//! [`rules`]; its answer is read forgivingly ([`check::read`], its JSON
+//! mended by [`repair`]): every slip is mended and said, nothing usable
+//! thrown away, and what needs the model's judgement (a scene's first line
+//! that fits nowhere, a preset no one knows, ...) is asked once more in
+//! the same conversation, a small patch for answer ([`follow`]); the
+//! answer is refused only when nothing is left to draw. While it writes,
+//! the prose of it (the story, the characters, what each scene shows) is
+//! told as it comes ([`prose::Prose`]). The job that asks it, keeps its
+//! plan and tells the preparation view is `crate::work::story`.
 //!
 //! What the image model is asked for the plan's pictures (a portrait of
 //! each character, then each scene with those portraits as its reference
 //! pictures) is [`pictures::pictures`]; the job that draws them is
 //! `crate::work::story::draw`.
 
+pub mod cast;
 pub mod check;
+pub mod follow;
 pub mod pictures;
 pub mod prompt;
 pub mod prose;
+pub mod repair;
 pub mod rules;
 pub mod shader;
 
@@ -58,6 +67,11 @@ macro_rules! styles {
             /// Its name, as the model writes it.
             pub fn name(self) -> &'static str {
                 match self { $(Style::$s => $name,)* }
+            }
+
+            /// The style named `name` (case ignored).
+            pub fn named(name: &str) -> Option<Style> {
+                Style::ALL.iter().copied().find(|s| s.name().eq_ignore_ascii_case(name))
             }
 
             /// The words that carry it into the image model's prompts.
@@ -260,9 +274,10 @@ pub fn lines_of(lyrics: &jodel_lyrics::Lyrics) -> Vec<Line> {
     lines
 }
 
-/// A song's plan, read from the model's answer and checked: the story in
-/// two sentences, its characters, its scenes in order (together taking
-/// every line once, each with its time span), the song's art, and the
+/// A song's plan, read from the model's answer: the story in two
+/// sentences, its characters, its scenes in order (together taking every
+/// line once, each with its time span, at most
+/// [`rules::MOST_SCENES`]), the song's art, and the
 /// look the shaders make (the preset, the passes added, the knobs moved,
 /// what the music moves, the mood among its tags). It is kept as it
 /// reads and writes ([`Plan::to_json`]).
@@ -294,8 +309,10 @@ pub struct Character {
 /// A scene: the lines it takes (first and last, from 0), its time span
 /// (from its first line's start, the first scene's from the song's start,
 /// to the next scene's start, the last one's to the song's end), the
-/// song's section it is in, its shot, the characters seen, what it shows
-/// and its picture's prompt.
+/// earlier scene whose picture it shows again (a section that comes back:
+/// nothing new drawn for it), the song's section it is in, its shot, the
+/// characters seen (those its prompt names), what it shows and its
+/// picture's prompt.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Scene {
     /// Its first line.
@@ -306,6 +323,9 @@ pub struct Scene {
     pub from: f64,
     /// When it ends.
     pub to: f64,
+    /// The earlier scene it shows again (its place among the scenes: one
+    /// drawn, never one shown again itself), none where it is drawn.
+    pub same_as: Option<usize>,
     /// The song's section (verse 1, chorus, ...).
     pub section: String,
     /// Its shot.

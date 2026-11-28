@@ -18,54 +18,40 @@ Work agreed on but not started, roughly in the order it was raised.
 - **The look over the lyrics** (the owner, 2026-11-28): the story's look
   shaders were a bit much and the pills with the words hard to read;
   tune the strength over the lyric band.
-- **The scenes show what the song is about,** not its lines word for word
-  (on the Echt song the prompts described the lyrics almost literally):
-  images and metaphors of its story, with the story-shape change below.
-- **The story's shape follows the lyrics** (the owner, 2026-11-28; next
-  once Gemma's context change lands, as it touches the same planner).
-  The story is an alternative to the album cover, the karaoke the game:
-  - **Scenes as the story moves, not by the clock.** A new scene when
-    the lyrics move (a new place, time, event or feeling), not every
-    10–20 s (`SCENE_SECONDS` today forces a count from the length alone:
-    18 for a 4-minute song). The model decides how many; the only limits
-    are at least one (a story needs a picture) and a ceiling of 20 the
-    model is never told (a number in the prompt anchors it): enforced
-    when the plan is read, the scenes past the 20th merged into it (it
-    shows on to the song's end), so every line keeps a picture.
-  - **A repeated section reuses its scene.** A chorus that comes back
-    names the earlier scene it shows again, drawing nothing new.
-  - **Characters only when the song is about people.** The "I" and the
-    "you" need not be people on screen. A story may be places, objects,
-    a journey, nature or abstract imagery (a spaceship, a storm), with no
-    characters at all; a character need not be human. The prompt's
-    example is not anchored on a "narrator".
-  - **Crowds and groups** go in a scene's description, never as a
-    character (no portrait of a crowd).
-  - Most songs then take about 5–10 pictures, some one or two, some 20.
-  - **Forgiving reading** (the owner: be very error tolerant, a tiny
-    model makes mistakes; never discard its work for a slip). Repair
-    what can be, keep everything usable, refuse only when nothing is
-    left to draw:
-    - line ranges from the scenes' starts alone (each scene runs to the
-      next one's start), so gaps, overlaps and a wrong `last_line`
-      cannot happen;
-    - slightly broken JSON repaired before reading (a trailing comma, a
-      missing closing bracket, an unescaped quote, an answer cut off:
-      every whole scene kept);
-    - an unknown name (preset, style, pass): the correction pass, then
-      the nearest valid one;
-    - a value out of range clamped; a missing field its default;
-    - a scene naming a character no one described: the name dropped,
-      the scene kept.
-    What needs judgement goes back to the model in the same conversation
-    (its prompt and answer still in the cache, so a follow-up costs only
-    the new words): only what is wrong, its choices listed, and a small
-    patch for answer, merged into the plan (the owner: keep the context
-    and fix only what is wrong). Only if the patch is wrong too, the
-    nearest valid choice is taken. The same turn can ask a question
-    where it clearly helps (a repeated chorus drawn twice: reuse the
-    first?). Every repair and every follow-up in the trace, to see what
-    to fix in the prompt.
+- **A storyboard, not a portrait session** (the owner, 2026-11-28, on the
+  Echt and "Suddenly I See" pictures: "portrait photography in 9 out of
+  10", "same woman, same pose, different background", "all from the same
+  angle, same subject at the same size, no plot or action visible"; next,
+  once the forgiving reading lands):
+  - **The reference carries identity only.** klein copies the reference
+    picture's pose, framing and expression. The portrait is a neutral
+    reference (neutral expression, plain background, no props, no
+    action), the scene takes its head crop (512², as now), and the scene
+    prompt asks for this person's face and clothes in a new pose and
+    action (find how FLUX.2's guide phrases a reference's role: "subject
+    from image 1"), each character's pose, action and framing always
+    stated in the scene's prompt.
+  - **A plot across the scenes:** a beginning, a turn and an end, so a
+    viewer follows what happens from picture to picture; each scene's
+    `shows` names an event, something that changes, not a mood.
+  - **Storyboard shots:** each scene shows something happening (an event,
+    an action, a meeting, in a place, often with others around: passers-by
+    and crowds in the prompt); characters doing something, often small in
+    the frame or from behind, never posed or looking at the viewer; wide
+    shots of the place, action at medium, a detail or an object in
+    close-up, a face only now and then (at most one scene in five); many
+    scenes with no character at all (the place, an object, a symbol, the
+    weather). The prompt's example does this.
+  - **Camera variety:** angles (eye level, high, low, bird's-eye, from
+    behind, over the shoulder, through a window) as a scene's field or in
+    its prompt, the subject's size and place varied (tiny in a wide
+    landscape, off-centre, partly in frame, a detail filling it); two
+    scenes in a row never share both angle and distance.
+  - **Checks on read, never a refusal:** where more than about half the
+    scenes put the same character in the prompt, close-ups dominate, or
+    one angle and distance does, the follow-up asks once to redraw some
+    of them ("these N scenes all show elara posed; rewrite K of them to
+    show the place, an object or an action"), and the patch is merged.
 - **The song's objects in the game, not in the story:** a few objects
   per song (from the look's motifs) replacing the game's generic
   graphics where it already puts things: the coin out of a word hit,

@@ -1,6 +1,7 @@
 //! What the image model (FLUX.2 [klein] 4B) is asked for a plan's
 //! pictures ([`pictures`]): a portrait of each character, from its looks
-//! in the plan's art style, then a picture of each scene, from its prompt
+//! in the plan's art style, then a picture of each scene drawn (a scene
+//! shown again takes the picture of the one it shows), from its prompt
 //! with the characters named by their looks, its shot and the style, the
 //! portraits of the characters seen as its reference pictures. Every
 //! prompt ends asking for one single picture ([`ONE_PICTURE`]) and no text
@@ -58,13 +59,16 @@ pub struct Ask {
 }
 
 /// A plan's pictures: a portrait of each of its characters, in their
-/// order, and a picture of each of its scenes, in theirs.
+/// order, a picture of each of its scenes drawn, in theirs, and which of
+/// those each scene shows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pictures {
     /// The portraits.
     pub portraits: Vec<Ask>,
     /// The scenes' pictures.
     pub scenes: Vec<Ask>,
+    /// The picture each scene shows (its place among `scenes`).
+    pub shown: Vec<usize>,
 }
 
 /// The pictures of `plan`.
@@ -81,10 +85,22 @@ pub fn pictures(plan: &Plan) -> Pictures {
             refs: Vec::new(),
         })
         .collect();
-    let scenes = (plan.scenes.iter())
-        .map(|s| scene(plan, &style, s))
-        .collect();
-    Pictures { portraits, scenes }
+    let mut scenes = Vec::new();
+    let mut shown: Vec<usize> = Vec::new();
+    for s in &plan.scenes {
+        match s.same_as.and_then(|j| shown.get(j).copied()) {
+            Some(picture) => shown.push(picture),
+            None => {
+                shown.push(scenes.len());
+                scenes.push(scene(plan, &style, s));
+            }
+        }
+    }
+    Pictures {
+        portraits,
+        scenes,
+        shown,
+    }
 }
 
 /// The picture of `scene`, in `style`: its prompt with the characters
@@ -218,19 +234,25 @@ fn replace_names(text: &str, names: &[(&str, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::story::check::read;
-    use crate::core::story::tests::{song, GOOD};
+    use crate::core::story::tests::{planned, GOOD};
 
-    /// A portrait of each character, then a picture of each scene, each
-    /// with its size and the portraits of those seen; the characters named
-    /// by their looks, the style's words first, and every prompt asking
-    /// for no text.
+    /// A portrait of each character, then a picture of each scene drawn
+    /// (one shown again takes the picture it shows), each with its size
+    /// and the portraits of those seen; the characters named by their
+    /// looks, the style's words first, and every prompt asking for no
+    /// text.
     #[test]
     fn a_plan_s_pictures_are_its_portraits_and_its_scenes() {
-        let plan = read(GOOD, &song()).unwrap();
-        let Pictures { portraits, scenes } = pictures(&plan);
+        let plan = planned(GOOD);
+        let Pictures {
+            portraits,
+            scenes,
+            shown,
+        } = pictures(&plan);
         assert_eq!(portraits.len(), plan.characters.len());
-        assert_eq!(scenes.len(), plan.scenes.len());
+        assert_eq!(plan.scenes[5].same_as, Some(2), "the chorus again");
+        assert_eq!(scenes.len(), plan.scenes.len() - 1);
+        assert_eq!(shown, [0, 1, 2, 3, 4, 2]);
         assert_eq!(portraits[0].size, PORTRAIT);
         assert_eq!(
             portraits[0].prompt,

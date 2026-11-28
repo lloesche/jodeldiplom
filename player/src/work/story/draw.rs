@@ -1,8 +1,9 @@
 //! A song's story drawn for the karaoke, from its plan ([`Drawing`]): the
 //! image model's two units of work. In: the plan's pictures as the image
 //! model is asked them ([`pictures::pictures`]: a portrait of each
-//! character, and each scene with the portraits of those in it as its
-//! reference pictures). Out: the pictures, and last their description with
+//! character, and each scene drawn with the portraits of those in it as
+//! its reference pictures; a scene shown again takes the picture of the
+//! one it shows). Out: the pictures, and last their description with
 //! the song's look ([`Scenes`]), in the song's folder in the data folder's
 //! `scenes/` ([`SceneStore::folder`]), where the story's last step takes
 //! them apart. The models they need, opened by whoever runs them (the
@@ -176,14 +177,16 @@ impl Encoded {
     }
 }
 
-/// A song's story to draw: the song's file, its plan, its folder, and its
-/// pictures, each named by what makes it.
+/// A song's story to draw: the song's file, its plan, its folder, its
+/// pictures, each named by what makes it, and the picture each scene
+/// shows.
 pub struct Drawing {
     path: PathBuf,
     plan: Plan,
     folder: PathBuf,
     portraits: Vec<Planned>,
     scenes: Vec<Planned>,
+    shown: Vec<usize>,
 }
 
 impl Drawing {
@@ -193,7 +196,11 @@ impl Drawing {
     pub fn new(path: PathBuf, plan: Plan, store: &SceneStore) -> Drawing {
         let key = crate::work::scenes::song_key(&path);
         let folder = store.folder(&key);
-        let Pictures { portraits, scenes } = pictures::pictures(&plan);
+        let Pictures {
+            portraits,
+            scenes,
+            shown,
+        } = pictures::pictures(&plan);
         let planned = |kind: Kind, asks: Vec<Ask>, portraits: &[Planned]| -> Vec<Planned> {
             (asks.into_iter().enumerate())
                 .map(|(index, ask)| {
@@ -224,6 +231,7 @@ impl Drawing {
             folder,
             portraits,
             scenes,
+            shown,
         }
     }
 
@@ -248,12 +256,17 @@ impl Drawing {
         portraits.chain(scenes)
     }
 
+    /// Each scene of the plan with the picture it shows.
+    fn shown(&self) -> impl Iterator<Item = (&crate::core::story::Scene, &Planned)> {
+        (self.plan.scenes.iter().zip(&self.shown)).map(|(s, &k)| (s, &self.scenes[k]))
+    }
+
     /// Its scenes as they are kept once drawn: each scene's span and
     /// picture, the plan's look, and what made them ([`Drawing::made`]).
     fn described(&self) -> Scenes {
         Scenes {
             made: self.made(),
-            scenes: (self.plan.scenes.iter().zip(&self.scenes))
+            scenes: (self.shown())
                 .map(|(s, p)| Scene {
                     start: s.from,
                     end: s.to,
@@ -269,7 +282,7 @@ impl Drawing {
     fn made(&self) -> String {
         let look = serde_json::to_string(&self.plan.look).expect("a look writes as JSON");
         let mut holds = format!("{VERSION}\n{look}\n");
-        for (s, p) in self.plan.scenes.iter().zip(&self.scenes) {
+        for (s, p) in self.shown() {
             holds += &format!("{} {} {}\n", s.from, s.to, file_name(&p.file));
         }
         cache::name(&holds)

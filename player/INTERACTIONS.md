@@ -334,7 +334,7 @@ really found, as its workers tell it: never a progress they did not tell.
   game on, its story made, where stories are), and it has lyrics to sing
   (not none found, an instrumental, or the look-up failed); with the game
   on, a song left with no story for good (no timed sung lines, or a plan
-  that did not hold) is refused, the why saying it can be sung with the
+  with nothing to draw) is refused, the why saying it can be sung with the
   game off. What cannot be done on
   the machine counts as done, as for the icons, so no song waits for it
   for ever. Until then the tab's button is disabled, with why beside it
@@ -1176,8 +1176,22 @@ really found, as its workers tell it: never a progress they did not tell.
   song plays). A plan kept is not asked again, a song made is not made
   again (told ready, and not looked at again while its lyrics stay), a
   picture kept is not drawn again (a new plan draws only what it
-  changed). A song with no lyrics or no timed sung lines, or whose plan
-  did not hold, has no story for good: the game refuses it (K1b). A model
+  changed). A plan is read forgivingly: every slip of the model mended
+  and said in the trace (its JSON, a field missing or unknown, a count or
+  a number held to its range, a character no one described dropped from
+  its scene, a group no character, a character's looks its appearance
+  alone, a scene's cast who its prompt names), its scenes' lines from their first
+  lines alone, as many scenes as the lyrics need (at most 20, never said
+  to the model: those past it merged into the last), a section that comes
+  back showing its earlier scene again (nothing new drawn); what needs
+  the model's judgement (a scene that fits nowhere, a prompt asking for
+  writing, a style, preset or pass no one knows, a section of the same
+  words drawn twice) is asked once more in the same conversation, a
+  patch for answer, and what it leaves wrong taken as the nearest valid
+  choice; a plan whose follow-up had no room in the context is planned
+  again in a larger one. A song with no lyrics or no timed
+  sung lines, or whose answer had nothing to draw, has no story for good:
+  the game refuses it (K1b). A model
   that fails, or a file not read now, leaves the song without its story
   now: told so (its step says why, "not made now"), and the round after
   a minute tries it again, twice as long each time again for the same
@@ -1199,8 +1213,23 @@ really found, as its workers tell it: never a progress they did not tell.
     `a_song_not_made_now_waits_longer_each_time_again`,
     `the_worker_takes_up_a_new_ask_while_a_song_rests`,
     `a_round_is_due_once_the_queue_has_settled`,
-    `a_round_starts_once_the_queue_has_settled`
+    `a_round_starts_once_the_queue_has_settled`,
+    `what_needs_judgement_is_asked_in_the_same_conversation`,
+    `a_patch_wrong_too_takes_the_nearest_valid_choice`,
+    `only_an_answer_with_nothing_to_draw_is_refused`
     (`work::story`)
+  - `every_slip_is_mended_and_said`,
+    `the_scenes_lines_come_from_their_first_lines_alone`,
+    `a_plan_has_one_scene_or_more_and_at_most_its_ceiling`,
+    `a_scene_shown_again_draws_nothing_new`,
+    `a_group_or_a_character_never_seen_is_no_portrait`,
+    `what_needs_judgement_is_asked_and_the_patch_merged`,
+    `a_chorus_drawn_twice_is_asked_whether_it_shows_the_first_again`,
+    `a_slip_is_read_as_it_was_meant_or_left_out`,
+    `an_answer_cut_off_keeps_every_whole_scene` (`core::story`)
+  - `looks_are_appearance_and_the_cast_follows_the_prompt` (`core::story::cast`)
+  - `containers_nested_too_deep_are_left_out`, `slips_are_mended_and_said`
+    (`core::story::repair`)
   - `a_song_s_scenes_are_taken_apart_once_and_made_ready_from_what_is_kept`
     (`work::scenes`)
   - `shaders_over_the_budget_lose_their_dearest_passes` (`core::story`)

@@ -1,10 +1,15 @@
 //! What the model is asked for a song's plan ([`prompt`]): the story from
 //! the lyrics alone (the numbered lines with their times, the rules of a
-//! scene), then the art from the file's tags, what the model knows of the
-//! artist and the song, and the storyboard it has just written, then the
-//! shaders from the looks' catalogue in brief
+//! scene: what the song is about, not its lines word for word; a new scene
+//! as the lyrics move, as many as the song needs; a section that comes
+//! back showing its earlier scene again; characters only where beings are
+//! to be seen), then the art from the file's tags, what the model knows of
+//! the artist and the song, and the storyboard it has just written, then
+//! the shaders from the looks' catalogue in brief
 //! ([`jodel_looks::catalogue::brief`]), and the answer's JSON laid out
-//! field by field. Every count it asks for is [`super::rules`]'s.
+//! field by field. Every count it asks for is [`super::rules`]'s; the
+//! most scenes a plan has is never said (a number would anchor the
+//! model).
 //!
 //! The prompt is made the same way every time for the same song, so the
 //! same song always gives the same plan.
@@ -18,8 +23,6 @@ use super::{Song, Style};
 
 /// What the model is asked for `song`'s plan.
 pub fn prompt(song: &Song) -> String {
-    let scenes = rules::scenes(song);
-    let last = song.lines.len().saturating_sub(1);
     let mut numbered = String::new();
     for (k, line) in song.lines.iter().enumerate() {
         let _ = writeln!(numbered, "{k}. [{:.1}] {}", line.start, line.text);
@@ -42,25 +45,26 @@ pub fn prompt(song: &Song) -> String {
     } else {
         format!(" by {}", song.artist)
     };
-    let (short, long) = rules::SCENE_SECONDS;
     format!(
-        r##"You direct an illustrated karaoke video for the song "{title}"{by}: still pictures, one after another, that tell the story of the lyrics while they are sung, with a look of their own over them. Write one JSON answer: first the story, then the art, then its shaders.
+        r##"You direct an illustrated karaoke video for the song "{title}"{by}: still pictures, one after another, that show what the song is about while it is sung, with a look of their own over them. Write one JSON answer: first the story, then the art, then its shaders.
 
 THE STORY comes from the lyrics alone. The song's tags and what you know of the artist play no part in it.
 
 The lyrics, numbered lines with their start times in seconds (the song lasts {seconds:.0} seconds):
 {numbered}
 Rules for the story:
+- Show what the song is about: its images, its metaphors, its world and its feeling, not its lines word for word. A line such as "my heart is a frozen lake" is a picture of a frozen lake at dawn, not of someone singing about a heart.
 - What happens comes from the lyrics only: no events, people or places that are not in them.
-- Plan {scenes}. Every numbered line belongs to exactly one scene. The scenes take consecutive lines in order, from line 0 to line {last}: none left out, none taken twice.
-- Scene changes follow the song's sections (verse, chorus, bridge); a scene lasts about {short:.0} to {long:.0} seconds.
-- The characters come from the lyrics (the "I", the "you", others named in the song), not from the singer: {characters}. Describe each once with fixed looks (age, gender, build, hair, clothes), so every picture can repeat them. A name is {name}.
+- A new scene starts where the lyrics move: a new place, time, event or feeling. Plan as many scenes as the song needs, no more: a song that stays in one place may need only one or two, a song that travels many. A scene shows from its first line until the next scene starts; the first starts at line 0.
+- A section that comes back (a chorus sung again, a refrain) shows its earlier scene again: give it "same_as", the first line of that earlier scene, and nothing new is drawn for it.
+- Characters only where the song is about beings to be seen (a person, an animal, a creature, a machine with a face), not from the singer: {characters}, each one single being. The "I" and the "you" need not be seen at all: a song may be places, objects, a journey, the weather or images alone, with no characters. A crowd or a group is never a character: describe it in the scenes' prompts. Describe each character once with fixed looks, appearance only (for a person: age, gender, build, face, hair, clothes), so every picture can repeat them: never an action, a habit, a prop, an expression or a pose in the looks (not "smoking", "holding a guitar", "smiling"); those belong in a scene's prompt. A name is {name}.
 - A scene's fields, each written once, in this order:
-  - "first_line", "last_line": its lines. "section": the song's section (verse 1, chorus, ...).
+  - "first_line": the number of its first line. "section": the song's section (verse 1, chorus, ...).
+  - "same_as": only in a section that comes back: the first_line of the earlier scene it shows again (it needs no prompt then).
   - "shot": "wide", "medium" or "close-up"; vary them.
-  - "characters": the names of the characters seen (may be empty).
+  - "characters": the names of the characters its prompt shows (may be empty).
   - "shows": what the scene shows, one sentence.
-  - "prompt": a concrete visual description for an image generator, {prompt_words}: place, time of day, action, composition, foreground and background. Name characters by their name only. No style words. Nothing written in the picture: never the words text, letters, sign, poster, logo, label, banner, billboard or caption (say "the border at night", not "a border sign").
+  - "prompt": a concrete visual description for an image generator, {prompt_words}: place, time of day, what happens, composition, foreground and background. Name characters by their name only. No style words. Nothing written in the picture: never the words text, letters, sign, poster, logo, label, banner, billboard or caption (say "the border at night", not "a border sign").
 
 THE ART comes once every scene is written: from the file's tags, what you yourself know of the artist, the album and the song (their visual identity, the era, the genre, the mood), and the story above.
 The file's tags:
@@ -79,14 +83,15 @@ THE SHADER, the very last: the shaders drawn over the pictures, from the catalog
 
 {brief}
 Answer only JSON, in this order:
-{{"story": "two sentences on what the lyrics tell",
- "characters": [{{"name": "narrator", "looks": "..."}}],
- "scenes": [{{"first_line": 0, "last_line": 2, "section": "verse 1", "shot": "wide", "characters": ["narrator"], "shows": "...", "prompt": "..."}}],
+{{"story": "two sentences on what the song is about",
+ "characters": [{{"name": "...", "looks": "..."}}],
+ "scenes": [{{"first_line": 0, "section": "verse 1", "shot": "wide", "characters": [], "shows": "...", "prompt": "..."}},
+            {{"first_line": 6, "section": "chorus", "shot": "close-up", "characters": ["..."], "shows": "...", "prompt": "..."}},
+            {{"first_line": 17, "section": "chorus", "same_as": 6}}],
  "art": {{"knowledge": "what you know, 1 to 3 sentences", "confidence": "high, medium or low", "genre": "...", "era": "...", "style": "...", "style_keywords": "...", "palette": ["#rrggbb"], "motifs": ["..."], "why": "one sentence on why this art"}},
  "shader": {{"preset": "an id", "add": [], "knobs": {{}}, "drive": [], "mood": ["..."]}}}}"##,
         title = song.title,
         seconds = song.duration,
-        scenes = scenes.said(),
         characters = CHARACTERS.said(),
         name = rules::NAME,
         prompt_words = PROMPT_WORDS.said(),
@@ -97,13 +102,5 @@ Answer only JSON, in this order:
         about = about.join("\n"),
         styles = styles.join(", "),
         brief = catalogue::brief(),
-    )
-}
-
-/// The prompt asked again after an answer was refused for `why`: said
-/// before it and again after it, where the answer starts.
-pub fn again(prompt: &str, why: &str) -> String {
-    format!(
-        "Your last answer to what follows was refused: {why}\nMend exactly that.\n\n{prompt}\n\nRemember, your last answer was refused: {why}\nWrite the whole JSON again, keeping to every rule."
     )
 }

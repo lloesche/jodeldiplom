@@ -294,6 +294,18 @@ impl Tokenizer {
         self.turns("<|turn>system\n<|think|>\n<turn|>\n", user)
     }
 
+    /// The user's next turn after the model's answer, as the chat template
+    /// writes it: the model's turn ended (its stop token, never among the
+    /// tokens written: [`Tokenizer::stop`]), the user's turn, then the
+    /// model's opened again (thinking as the conversation began:
+    /// [`crate::Gemma::go_on`] goes on with it).
+    pub fn next_turn(&self, user: &str) -> Vec<u32> {
+        self.encode(&format!(
+            "<turn|>\n<|turn>user\n{}<turn|>\n<|turn>model\n",
+            user.trim()
+        ))
+    }
+
     /// The beginning token, `system`, the user's turn, the model's opened.
     fn turns(&self, system: &str, user: &str) -> Vec<u32> {
         let mut ids = vec![self.bos];

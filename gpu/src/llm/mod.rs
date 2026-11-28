@@ -38,7 +38,10 @@
 //! token a step, the step's dispatches recorded once: each kernel reads the
 //! position from the GPU, and the head's largest logit is the next token
 //! there, put after it. Steps go eight at a time between reads, the next
-//! eight made while those run. With [`Precision::Fast`] the matrix
+//! eight made while those run. A conversation goes on from what its cache
+//! holds ([`Gemma::go_on`]): the next turns run from where the last
+//! answer ended, the prompt and the answer before not run again. With
+//! [`Precision::Fast`] the matrix
 //! multiplies of quantised matrices take their rows at 8 bits where the
 //! GPU multiplies bytes four at a time natively (`dot4I8Packed`; not
 //! Metal, where it is emulated), else as f32s; those of BF16 and F32 ones
@@ -314,7 +317,53 @@ impl Gemma {
         most: usize,
         seen: impl FnMut(&[u32]) -> ControlFlow<()>,
     ) -> Result<Generated, String> {
-        self.using(|inner| inner.generate(prompt, (most, self.tokens.stop()), seen))
+        self.using(|inner| inner.generate(prompt, 0, (most, self.tokens.stop()), seen))
+    }
+
+    /// [`Gemma::generate`] going on in the conversation of the last
+    /// generation (or of the last going on), which holds `after` tokens,
+    /// its last `last` (a cheap check that it is that conversation):
+    /// its prompt and the tokens it wrote stay in the cache as they are,
+    /// and only `more` (the next turns as the chat template writes them, its
+    /// end of the model's turn first: [`Tokenizer::next_turn`]) goes
+    /// through the decoder, after the last token written (run again, as its
+    /// keys and values may not have been made yet), so a turn after the
+    /// first costs its own tokens alone. [`Generated::prompt_tokens`] are
+    /// those run. An error, the conversation kept, where the context has no
+    /// room for it and `most`; an error where there is no conversation of
+    /// `after` tokens ending in `last` to go on (none written yet, another
+    /// generation since, or its room let go or made again).
+    pub fn go_on(
+        &self,
+        (after, last): (usize, u32),
+        more: &[u32],
+        most: usize,
+        seen: impl FnMut(&[u32]) -> ControlFlow<()>,
+    ) -> Result<Generated, String> {
+        self.using(|inner| {
+            let context = room(&inner.context)?;
+            let said = context.said.as_deref().unwrap_or_default();
+            if said.len() != after || said.last() != Some(&last) {
+                return Err(format!(
+                    "no conversation of {after} tokens to go on (the cache holds {})",
+                    said.len()
+                ));
+            }
+            let room = context.plan.context;
+            if after + more.len() + most > room {
+                return Err(format!(
+                    "{after} tokens, {} more and {most} to write in a context of {room}",
+                    more.len()
+                ));
+            }
+            let said = (inner.context.as_mut())
+                .and_then(|c| c.said.take())
+                .expect("checked");
+            let from = said.len() - 1;
+            let mut all = said;
+            all.extend_from_slice(more);
+            inner.generate(&all, from, (most, self.tokens.stop()), seen)
+        })
     }
 
     /// [`Gemma::generate`]'s answer as text: `seen` is shown each piece as
@@ -349,7 +398,7 @@ impl Gemma {
     pub fn logits(&self, prompt: &[u32]) -> Result<Vec<f32>, String> {
         self.using(|inner| {
             inner.ready()?;
-            let in_flight = inner.prompt(prompt, Wanted::Logits)?;
+            let in_flight = inner.prompt(prompt, 0, Wanted::Logits)?;
             inner.read(in_flight, Phase::Prompt)
         })
     }
@@ -397,13 +446,19 @@ impl Resident for Gemma {
 }
 
 /// The room for a context: its plan, its buffers, the steps recorded (a
-/// step's dispatches [`STEPS_A_READ`] times), the reads.
+/// step's dispatches [`STEPS_A_READ`] times), the reads, and the
+/// conversation its cache holds.
 struct Context {
     plan: ContextPlan,
     buffers: HashMap<Buf, wgpu::Buffer>,
     steps: Recorded<Kernel, Bind>,
     staging: [wgpu::Buffer; 2],
     bytes: u64,
+    /// The last generation's prompt and the tokens it wrote (its stop
+    /// token not among them), in the cache from the first position: what
+    /// [`Gemma::go_on`] goes on from. None before a generation, and once
+    /// a prompt overwrote it.
+    said: Option<Vec<u32>>,
 }
 
 struct Inner {
@@ -534,6 +589,7 @@ impl Inner {
             steps,
             staging,
             bytes,
+            said: None,
         });
         Ok(())
     }
@@ -565,14 +621,19 @@ impl Inner {
         })
     }
 
-    /// `prompt` through the decoder, its first token chosen; it reads
-    /// back what `read` says.
-    fn prompt(&mut self, prompt: &[u32], wanted: Wanted) -> Result<InFlight, String> {
+    /// `prompt` through the decoder from its position `from` (those before
+    /// it in the cache already, as they are), its first token chosen; it
+    /// reads back what `read` says. The conversation the cache held is
+    /// gone.
+    fn prompt(&mut self, prompt: &[u32], from: usize, wanted: Wanted) -> Result<InFlight, String> {
+        if let Some(context) = &mut self.context {
+            context.said = None;
+        }
         let context = room(&self.context)?;
         let n = prompt.len();
-        if n == 0 || n > context.plan.context {
+        if from >= n || n > context.plan.context {
             return Err(format!(
-                "a prompt of {n} tokens in a context of {}",
+                "a prompt of {n} tokens from its {from}th in a context of {}",
                 context.plan.context
             ));
         }
@@ -583,11 +644,14 @@ impl Inner {
         let at = kernels::TOKENS;
         let mut state = vec![0u32; at];
         state[0] = (n - 1) as u32;
-        state.extend_from_slice(prompt);
         self.program.queue.write_buffer(ints, 0, &bytes(&state));
+        let tokens = &bytes(&prompt[from..]);
+        self.program
+            .queue
+            .write_buffer(ints, ((at + from) * 4) as u64, tokens);
         let plan = self.plan(&context.plan);
         let mut ops = Vec::new();
-        for first in (0..n).step_by(CHUNK) {
+        for first in (from..n).step_by(CHUNK) {
             let rows = CHUNK.min(n - first);
             ops.extend(plan.chunk(first, rows, first + rows == n));
         }
@@ -626,10 +690,13 @@ impl Inner {
     }
 
     /// [`Gemma::generate`]'s work: at most `most` tokens, until one of
-    /// `stop`.
+    /// `stop`, after `prompt` run from its position `from` (those before it
+    /// in the cache already); `prompt` and the tokens written are the
+    /// conversation the cache holds then.
     fn generate(
         &mut self,
         prompt: &[u32],
+        from: usize,
         (most, stop): (usize, &[u32]),
         mut seen: impl FnMut(&[u32]) -> ControlFlow<()>,
     ) -> Result<Generated, String> {
@@ -642,11 +709,12 @@ impl Inner {
             ));
         }
         let started = Instant::now();
-        let mut flying = VecDeque::from([(self.prompt(prompt, Wanted::Token)?, Phase::Prompt)]);
+        let first_run = self.prompt(prompt, from, Wanted::Token)?;
+        let mut flying = VecDeque::from([(first_run, Phase::Prompt)]);
         // The decoder's position after the runs made so far.
         let mut pos = n;
         let mut out = Generated {
-            prompt_tokens: n,
+            prompt_tokens: n - from,
             ..Generated::default()
         };
         let mut first_read = None;
@@ -693,6 +761,9 @@ impl Inner {
         let first = first_read.unwrap_or(started);
         out.prompt_time = first - started;
         out.step_time = first.elapsed();
+        if let Some(context) = &mut self.context {
+            context.said = Some([prompt, &out.tokens].concat());
+        }
         Ok(out)
     }
 }
